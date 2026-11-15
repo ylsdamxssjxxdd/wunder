@@ -1801,6 +1801,63 @@ fn noop_write_reports_unchanged_and_warns_the_model() {
         .starts_with("no_op:"));
 }
 
+/// 预览从未写盘，`changed: true` 会让模型以为改动已经落盘而跳过真正写入。
+#[test]
+fn dry_run_preview_never_claims_the_file_changed() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "action": "edit",
+        "state": "dry_run",
+        "summary": "Validated edit against temp/a.txt without writing content.",
+        "data": {
+            "path": "temp/a.txt",
+            "dry_run": true,
+            "added_lines": 1,
+            "deleted_lines": 0,
+            "changed_files": 1,
+            "hunks_applied": 1
+        }
+    }));
+    let observation = result.to_compact_payload("edit");
+    assert_eq!(
+        observation["data"]["changed"],
+        json!(false),
+        "预览没有写盘，不能报成已变更"
+    );
+    assert_eq!(observation["data"]["would_change"], json!(true));
+    assert_eq!(observation["data"]["would_change_files"], json!(1));
+    assert!(
+        observation["data"].get("changed_files").is_none(),
+        "changed:false 与 changed_files:1 并存会自相矛盾"
+    );
+    assert!(
+        observation["data"].get("no_op").is_none(),
+        "预览不是空写，不该给 no_op 提示"
+    );
+}
+
+/// 预览的空写仍然要说清楚，否则模型会继续重复同一次预览。
+#[test]
+fn dry_run_preview_reports_no_pending_change_when_counts_are_empty() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "action": "edit",
+        "state": "dry_run",
+        "summary": "Validated edit against temp/a.txt without writing content.",
+        "data": {
+            "path": "temp/a.txt",
+            "dry_run": true,
+            "added_lines": 0,
+            "deleted_lines": 0,
+            "changed_files": 1,
+            "hunks_applied": 0
+        }
+    }));
+    let observation = result.to_compact_payload("edit");
+    assert_eq!(observation["data"]["changed"], json!(false));
+    assert_eq!(observation["data"]["would_change"], json!(false));
+}
+
 #[test]
 fn real_write_change_still_reports_changed_without_noop_notice() {
     let result = ToolResultPayload::from_value(json!({

@@ -502,13 +502,78 @@ def build_payload(
     return payload
 
 
-def build_run(stage, output, installer_dir, payload):
+BANNER_MARK = b"# __WUNDER_BANNER__"
+
+
+def read_logo_art(root):
+    """Parse the CLI pixel logo so the installer prints the very same picture.
+
+    The installer ships no second copy of the art: it is read from
+    crates/wunder-cli/welcome_logo_art.rs, which is generated from
+    images/eva01-head.png. A new CLI logo therefore reaches the installer on the
+    next pack run without touching any packaging script.
+    Returns (hex rows, grey ladder, pixel width).
+    """
+    source_path = root / "crates" / "wunder-cli" / "welcome_logo_art.rs"
+    if not source_path.is_file():
+        fail("CLI logo art is missing: " + str(source_path))
+    text = source_path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    rows_match = re.search(r"ROWS:\s*\[&str;\s*(\d+)\]\s*=\s*\[(.*?)\];", text, re.S)
+    palette_match = re.search(r"PALETTE:\s*\[\[u8;\s*3\];\s*(\d+)\]\s*=\s*\[(.*?)\];", text, re.S)
+    width_match = re.search(r"SOURCE_WIDTH:\s*usize\s*=\s*(\d+)", text)
+    if not rows_match or not palette_match or not width_match:
+        fail("could not parse CLI logo art: " + str(source_path))
+    rows = re.findall(r'"([0-9a-f]+)"', rows_match.group(2))
+    if not rows or len(rows) != int(rows_match.group(1)):
+        fail("CLI logo art rows do not match their declared count")
+    width = int(width_match.group(1))
+    if any(len(row) != width * 2 for row in rows):
+        fail("CLI logo art row length does not match SOURCE_WIDTH")
+    greys = [int(match[0]) for match in re.findall(r"\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]", palette_match.group(2))]
+    if len(greys) != int(palette_match.group(1)):
+        fail("CLI logo art palette does not match its declared size")
+    return rows, greys, width
+
+
+def inject_banner(header, installer_dir, version, arch, root):
+    """Splice banner.sh and the CLI logo data into the .run header."""
+    if BANNER_MARK not in header:
+        fail("run-header.sh does not contain the banner marker")
+    banner = (installer_dir / "banner.sh").read_text(encoding="utf-8").replace("\r\n", "\n")
+    rows, greys, width = read_logo_art(root)
+    replacements = (
+        ("__WUNDER_LOGO_ROWS__", " ".join(rows)),
+        ("__WUNDER_LOGO_GREYS__", " ".join(str(grey) for grey in greys)),
+        ("__WUNDER_LOGO_COLUMNS__", str(width)),
+        ("__WUNDER_LOGO_LINES__", str(len(rows))),
+        ("__WUNDER_VERSION__", version),
+        ("__WUNDER_ARCH__", arch),
+    )
+    for placeholder, value in replacements:
+        if placeholder not in banner:
+            fail("banner.sh is missing the placeholder " + placeholder)
+        banner = banner.replace(placeholder, value)
+    if not banner.endswith("\n"):
+        banner += "\n"
+    spliced = header.replace(BANNER_MARK + b"\n", banner.encode("utf-8"))
+    leftovers = [
+        placeholder
+        for placeholder in (item[0] for item in replacements)
+        if placeholder.encode("utf-8") in spliced
+    ]
+    if leftovers:
+        fail("installer header still carries placeholders: " + ", ".join(leftovers))
+    return spliced
+
+
+def build_run(stage, output, installer_dir, payload, version, arch, root):
     header = (installer_dir / "run-header.sh").read_bytes().replace(b"\r\n", b"\n")
     marker = b"__WUNDER_PAYLOAD_BELOW__"
     if marker not in header:
         fail("run-header.sh does not contain the payload marker")
     if not header.endswith(b"\n"):
         header += b"\n"
+    header = inject_banner(header, installer_dir, version, arch, root)
 
     temporary = output.with_name(output.name + ".tmp")
     if temporary.exists():
@@ -635,7 +700,7 @@ def main():
     # User-facing name: wunder-desktop-<version>-linux-<x64|arm64>.run.
     output_name = "wunder-desktop-%s-linux-%s.run" % (version, args.arch)
     output = output_dir / output_name
-    build_run(stage, output, installer_dir, payload)
+    build_run(stage, output, installer_dir, payload, version, args.arch, root)
     installer_hash = sha256_file(output)
     installer_size = output.stat().st_size
 

@@ -29,6 +29,7 @@ pub(super) struct ThreadUiState {
     active_inquiry_panel: Option<InquiryPanelState>,
     inquiry_selected_index: usize,
     last_usage: Option<String>,
+    turn_started_at: Option<Instant>,
     turn_llm_started_at: Option<Instant>,
     turn_llm_active_secs: f64,
     turn_output_tokens: u64,
@@ -71,6 +72,7 @@ impl ThreadUiState {
             active_inquiry_panel: std::mem::take(&mut app.active_inquiry_panel),
             inquiry_selected_index: std::mem::take(&mut app.inquiry_selected_index),
             last_usage: std::mem::take(&mut app.last_usage),
+            turn_started_at: std::mem::take(&mut app.turn_started_at),
             turn_llm_started_at: std::mem::take(&mut app.turn_llm_started_at),
             turn_llm_active_secs: std::mem::take(&mut app.turn_llm_active_secs),
             turn_output_tokens: std::mem::take(&mut app.turn_output_tokens),
@@ -112,6 +114,7 @@ impl ThreadUiState {
         app.active_inquiry_panel = self.active_inquiry_panel;
         app.inquiry_selected_index = self.inquiry_selected_index;
         app.last_usage = self.last_usage;
+        app.turn_started_at = self.turn_started_at;
         app.turn_llm_started_at = self.turn_llm_started_at;
         app.turn_llm_active_secs = self.turn_llm_active_secs;
         app.turn_output_tokens = self.turn_output_tokens;

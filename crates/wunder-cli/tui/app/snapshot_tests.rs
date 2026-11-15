@@ -9,6 +9,7 @@ use super::*;
 use crate::args::Cli;
 use crate::runtime::CliWorkspace;
 use crate::tui::frame_scheduler::spawn_frame_scheduler;
+use crate::tui::ui::layout::CONTENT_GUTTER_COLS;
 use clap::Parser;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
@@ -766,7 +767,7 @@ async fn the_frame_composes_every_card_at_forty_eighty_and_one_hundred_twenty_co
         );
         // The tail is what a narrow frame can always show: the newest cards and the
         // composer. Older entries scroll out, which is the transcript's job.
-        assert!(frame.contains("Ran cargo test"), "command head: {frame}");
+        assert!(frame.contains("cargo test -p demo"), "command head: {frame}");
         assert!(
             frame.contains("running 3 tests"),
             "command output head: {frame}"
@@ -893,7 +894,7 @@ async fn the_working_line_and_the_transcript_view_reach_the_real_frame() {
     let expanded = draw_rows(&mut app, 80, 24).join("\n");
     assert!(expanded.contains("reasoning line 12"), "{expanded}");
     assert!(
-        expanded.contains("Ran cargo test"),
+        expanded.contains("cargo test -p demo"),
         "the rest of the transcript stays put"
     );
 }
@@ -1058,8 +1059,13 @@ async fn stream_end_never_leaves_tool_cards_running() {
                 .map(|span| span.content.as_ref())
                 .collect::<String>()
                 .to_lowercase();
+            // The outcome is the head's bullet: red for a card the stream never resolved.
+            let failed_bullet = rendered
+                .first()
+                .and_then(|line| line.spans.first())
+                .is_some_and(|span| span.style.fg == Some(ratatui::style::Color::Red));
             assert!(
-                text.contains("failed") || text.contains("unavailable"),
+                failed_bullet,
                 "an unreported tool must show a non-success outcome: {text}"
             );
             assert!(
@@ -1482,11 +1488,12 @@ async fn the_acceptance_sample_composes_the_documented_template() {
     let rows = draw_rows(&mut app, 80, 60);
     let frame = rows.join("\n");
     for expected in [
-        "Ran cargo test --workspace",
+        "cargo test --workspace",
+        "(exit 1)",
         "└ ",
         "lines",
         "lines (enter to expand)",
-        "Failed (exit 1)",
+        "(exit 1)",
         "Edited src/main.rs (+12 -3 2 hunks)",
         "esc to interrupt",
         "›",
@@ -1532,7 +1539,7 @@ async fn the_acceptance_sample_composes_the_documented_template() {
         "narrow frame overflow: {narrow:?}"
     );
     let narrow_text = narrow.join("\n");
-    assert!(narrow_text.contains("Failed (exit 1)"), "{narrow_text}");
+    assert!(narrow_text.contains("(exit 1)"), "{narrow_text}");
     assert!(
         narrow_text.contains("Edited src/main.rs"),
         "the edited file keeps its name when the summary is dropped: {narrow_text}"
@@ -1579,17 +1586,22 @@ async fn a_diff_row_keeps_its_tint_across_the_number_column() {
         let row = &buffer.content()[y * width..(y + 1) * width];
         let Some(sign) = row
             .iter()
-            .position(|cell| matches!(cell.symbol(), "+" | "-") && cell.style().bg.is_some())
+            .position(|cell| matches!(cell.symbol(), "+" | "-") && painted(cell))
         else {
             continue;
         };
-        if row[0].style().bg.is_none() {
+        // The margin the layout keeps on both sides is not part of the row: the tint has to
+        // run from the first column of the card, not from the terminal edge.
+        let start = usize::from(CONTENT_GUTTER_COLS);
+        if !painted(&row[start]) {
             continue;
         }
         tinted_rows += 1;
         let sign_bg = row[sign].style().bg;
         assert!(
-            row[..=sign].iter().all(|cell| cell.style().bg == sign_bg),
+            row[start..=sign]
+                .iter()
+                .all(|cell| cell.style().bg == sign_bg),
             "row {y} loses the tint between the prefix and the sign: {:?}",
             row[..=sign]
                 .iter()
@@ -2704,7 +2716,7 @@ async fn a_drag_across_the_transcript_marks_rows_and_the_release_copies_them() {
     let before = draw_rows(&mut app, 80, 24);
     let start = before
         .iter()
-        .position(|row| row.contains("Ran cargo test"))
+        .position(|row| row.contains("cargo test -p demo"))
         .expect("the command card is on screen");
     let _clipboard_turn = ClipboardSeam::arm();
 
@@ -2743,7 +2755,7 @@ async fn a_drag_across_the_transcript_marks_rows_and_the_release_copies_them() {
     assert_eq!(copied.len(), 1, "one release copies once: {copied:?}");
     let lines = copied[0].lines().count();
     assert!(lines >= 2, "the drag covered two rows: {:?}", copied[0]);
-    assert!(copied[0].contains("Ran cargo test"), "{:?}", copied[0]);
+    assert!(copied[0].contains("cargo test -p demo"), "{:?}", copied[0]);
 }
 
 #[tokio::test]
@@ -2756,13 +2768,29 @@ async fn a_drag_on_a_soft_wrapped_row_selects_only_its_own_text() {
     let before = draw_rows(&mut app, 16, 12);
     let row = before
         .iter()
-        .position(|line| line.starts_with("delta"))
+        .position(|line| line.contains("delta"))
         .unwrap_or_else(|| panic!("the second visual row is visible: {before:?}"));
+    let column = before[row].find("delta").expect("the word is on that row") as u16;
     let _clipboard_turn = ClipboardSeam::arm();
 
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, 0);
-    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), row, 5);
-    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, 5);
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        row,
+        column,
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        row,
+        column + 5,
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        row,
+        column + 5,
+    );
 
     assert_eq!(
         ClipboardSeam::copied().as_slice(),
@@ -2791,7 +2819,7 @@ async fn double_and_triple_clicks_take_the_word_and_the_line() {
     let before = draw_rows(&mut app, 80, 24);
     let row = before
         .iter()
-        .position(|line| line.contains("Ran cargo test"))
+        .position(|line| line.contains("cargo test -p demo"))
         .expect("the command card is on screen");
     let column = before[row].find("cargo").expect("the word is on that row") as u16 + 1;
     let _clipboard_turn = ClipboardSeam::arm();
@@ -2823,7 +2851,7 @@ async fn double_and_triple_clicks_take_the_word_and_the_line() {
     assert!(
         copied
             .last()
-            .is_some_and(|text| text.contains("Ran cargo test")),
+            .is_some_and(|text| text.contains("cargo test -p demo")),
         "the third click took the whole line: {copied:?}"
     );
 }
@@ -2891,12 +2919,16 @@ async fn a_tab_in_a_transcript_row_projects_to_the_next_eight_column_stop() {
         .draw(|frame| crate::tui::ui::draw(frame, &mut app))
         .expect("draw");
     let buffer = terminal.backend().buffer().clone();
-    let row = (0..12u16)
-        .find(|&row| buffer[(0, row)].symbol() == "g")
+    let (row, base) = (0..12u16)
+        .find_map(|row| {
+            (0..40u16)
+                .find(|&column| buffer[(column, row)].symbol() == "g")
+                .map(|base| (row, base))
+        })
         .expect("the tab row is on screen");
 
-    assert_eq!(buffer[(3, row)].symbol(), "e", "gate sits at 0..4");
-    for column in 4..8u16 {
+    assert_eq!(buffer[(base + 3, row)].symbol(), "e", "gate sits at 0..4");
+    for column in base + 4..base + 8 {
         assert_eq!(
             buffer[(column, row)].symbol(),
             " ",
@@ -2904,7 +2936,7 @@ async fn a_tab_in_a_transcript_row_projects_to_the_next_eight_column_stop() {
         );
     }
     assert_eq!(
-        buffer[(8, row)].symbol(),
+        buffer[(base + 8, row)].symbol(),
         "v",
         "value resumes at the next eight-column stop"
     );
@@ -2925,15 +2957,16 @@ async fn a_double_click_past_a_tab_hits_the_projected_columns() {
     let before = draw_rows(&mut app, 40, 12);
     let row = before
         .iter()
-        .position(|line| line.starts_with("gate"))
+        .position(|line| line.trim_start().starts_with("gate"))
         .expect("the tab row is on screen");
+    let base = before[row].find("gate").expect("the row shows the text") as u16;
     let _clipboard_turn = ClipboardSeam::arm();
 
-    // Buffer column 6 is tab padding (gate covers 0..4, the tab covers 4..8). Counting
-    // the tab as one column would place column 6 inside "value" instead.
+    // Column base+6 is tab padding (gate covers base..base+4, the tab covers base+4..base+8).
+    // Counting the tab as one column would place it inside "value" instead.
     for _ in 0..2 {
-        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, 7);
-        mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, 7);
+        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, base + 7);
+        mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, base + 7);
     }
     let copied = ClipboardSeam::copied();
     assert_eq!(
@@ -2943,8 +2976,8 @@ async fn a_double_click_past_a_tab_hits_the_projected_columns() {
     );
 
     // A third click on the same spot takes the whole line, and that copy keeps the tab.
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, 7);
-    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, 7);
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, base + 7);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, base + 7);
     let copied = ClipboardSeam::copied();
     assert_eq!(
         copied.last().map(String::as_str),
@@ -2998,7 +3031,7 @@ fn marked_rows(app: &mut TuiApp, width: u16, height: u16) -> Vec<(usize, String)
             let text: String = (0..width)
                 .map(|column| buffer[(column, row)].symbol().to_string())
                 .collect::<String>()
-                .trim_end()
+                .trim()
                 .to_string();
             let marked = (0..width).any(|column| {
                 let cell = &buffer[(column, row)];
@@ -3020,12 +3053,16 @@ fn marked_cards(app: &mut TuiApp, width: u16, height: u16) -> Vec<(usize, String
 /// The rows inside the transcript band that show one of the fixture's cards, in order.
 /// Only the band the layout recorded answers to the pointer and the wheel, and the footer
 /// echoes a card's text too, so a row picked by content alone can be outside the band.
+fn painted(cell: &ratatui::buffer::Cell) -> bool {
+    matches!(cell.style().bg, Some(bg) if bg != ratatui::style::Color::Reset)
+}
+
 fn banded_card_rows(rows: &[String], region: Rect) -> Vec<(usize, String)> {
     let top = usize::from(region.y);
     let bottom = (top + usize::from(region.height)).min(rows.len());
     (top..bottom)
-        .filter(|row| rows[*row].starts_with("item-"))
-        .map(|row| (row, rows[row].trim_end().to_string()))
+        .filter(|row| rows[*row].trim_start().starts_with("item-"))
+        .map(|row| (row, rows[row].trim().to_string()))
         .collect()
 }
 
@@ -3065,9 +3102,24 @@ async fn a_mark_survives_scrolling_away_and_back_to_the_same_text() {
     );
 
     let _clipboard_turn = ClipboardSeam::arm();
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), a28.0, 2);
-    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), a30.0, 6);
-    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), a30.0, 6);
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        a28.0,
+        CONTENT_GUTTER_COLS + 2,
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        a30.0,
+        CONTENT_GUTTER_COLS + 6,
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        a30.0,
+        CONTENT_GUTTER_COLS + 6,
+    );
     let expected = format!("{}\n{}\n{}", &a28.1[2..], &a29.1, &a30.1[..6]);
     let first_copy = ClipboardSeam::copied()
         .pop()
@@ -3219,10 +3271,20 @@ async fn the_mark_still_names_its_own_text_while_the_transcript_grows() {
         &mut app,
         MouseEventKind::Down(MouseButton::Left),
         row - 1,
-        0,
+        CONTENT_GUTTER_COLS,
     );
-    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), row, 4);
-    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, 4);
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        row,
+        CONTENT_GUTTER_COLS + 4,
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        row,
+        CONTENT_GUTTER_COLS + 4,
+    );
     let first_copy = ClipboardSeam::copied().pop().expect("the release copied");
     let anchor_before = app.transcript_selection.expect("a mark is open").anchor;
     let texts_before: Vec<String> = marked_cards(&mut app, 60, 24)
@@ -3277,26 +3339,31 @@ async fn trimming_the_selected_card_clears_the_mark_and_a_neighbour_keeps_its_ow
     let before = draw_rows(&mut app, 60, 24);
     let first = before
         .iter()
-        .position(|line| line.starts_with("item-01"))
+        .position(|line| line.trim_start().starts_with("item-01"))
         .expect("the oldest card is on screen");
     assert!(
-        before[first + 1].starts_with("item-02"),
+        before[first + 1].trim_start().starts_with("item-02"),
         "one raw line per card: {before:?}"
     );
 
     let _clipboard_turn = ClipboardSeam::arm();
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), first, 0);
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        first,
+        CONTENT_GUTTER_COLS,
+    );
     mouse(
         &mut app,
         MouseEventKind::Drag(MouseButton::Left),
         first + 1,
-        7,
+        CONTENT_GUTTER_COLS + 7,
     );
     mouse(
         &mut app,
         MouseEventKind::Up(MouseButton::Left),
         first + 1,
-        7,
+        CONTENT_GUTTER_COLS + 7,
     );
     assert_eq!(
         app.transcript_selection
@@ -3318,11 +3385,26 @@ async fn trimming_the_selected_card_clears_the_mark_and_a_neighbour_keeps_its_ow
     let before = draw_rows(&mut app, 60, 24);
     let second = before
         .iter()
-        .position(|line| line.starts_with("item-02"))
+        .position(|line| line.trim_start().starts_with("item-02"))
         .expect("the second card is on screen");
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), second, 0);
-    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), second, 7);
-    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), second, 7);
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        second,
+        CONTENT_GUTTER_COLS,
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        second,
+        CONTENT_GUTTER_COLS + 7,
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        second,
+        CONTENT_GUTTER_COLS + 7,
+    );
     let picked = ClipboardSeam::copied()
         .pop()
         .expect("the drag copied its own card");
@@ -3380,11 +3462,13 @@ async fn a_shift_click_moves_the_free_end_and_leaves_the_anchor_put_down() {
         "one raw line per card keeps the rows next to each other: {band:?}"
     );
 
+    // The card's text starts one gutter in from the frame's left edge.
+    let base = CONTENT_GUTTER_COLS;
     let _clipboard_turn = ClipboardSeam::arm();
     // Press and drag a short way, so a range is open to extend.
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, 0);
-    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), row, 3);
-    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, 3);
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, base);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), row, base + 3);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, base + 3);
     let short = ClipboardSeam::copied().pop().expect("the drag copied");
     let anchor_before = app.transcript_selection.expect("a mark is open").anchor;
     assert_eq!(short, "ite", "three columns of one line: {short:?}");
@@ -3393,7 +3477,7 @@ async fn a_shift_click_moves_the_free_end_and_leaves_the_anchor_put_down() {
         &mut app,
         MouseEventKind::Down(MouseButton::Left),
         row + 2,
-        5,
+        base + 5,
         KeyModifiers::SHIFT,
     );
     assert_eq!(
@@ -3404,14 +3488,14 @@ async fn a_shift_click_moves_the_free_end_and_leaves_the_anchor_put_down() {
         &mut app,
         MouseEventKind::Up(MouseButton::Left),
         row + 2,
-        5,
+        base + 5,
         KeyModifiers::SHIFT,
     );
 
     let selection = app.transcript_selection.expect("still the same range");
     assert_eq!(selection.anchor, anchor_before, "the anchor stayed put");
     assert_ne!(selection.head, anchor_before, "the free end moved");
-    let landed = before[row + 2].trim_end();
+    let landed = before[row + 2].trim();
     let landed_card = app
         .logs
         .iter()
@@ -3421,11 +3505,15 @@ async fn a_shift_click_moves_the_free_end_and_leaves_the_anchor_put_down() {
         selection.head.cell_id, landed_card.cell_id,
         "and the free end is booked against the card it landed on"
     );
-    let tail: String = before[row + 2].chars().take(5).collect();
+    let tail: String = before[row + 2]
+        .chars()
+        .skip(usize::from(base))
+        .take(5)
+        .collect();
     let expected = format!(
         "{}\n{}\n{}",
-        before[row].trim_end(),
-        before[row + 1].trim_end(),
+        before[row].trim(),
+        before[row + 1].trim(),
         tail.trim_end()
     );
     assert_eq!(
@@ -3439,18 +3527,21 @@ async fn a_shift_click_moves_the_free_end_and_leaves_the_anchor_put_down() {
         &mut app,
         MouseEventKind::Down(MouseButton::Left),
         row - 1,
-        4,
+        base + 4,
         KeyModifiers::SHIFT,
     );
     mouse_held(
         &mut app,
         MouseEventKind::Up(MouseButton::Left),
         row - 1,
-        4,
+        base + 4,
         KeyModifiers::SHIFT,
     );
     let copied = ClipboardSeam::copied().pop().expect("the copy arrived");
-    let backwards: String = before[row - 1].chars().skip(4).collect();
+    let backwards: String = before[row - 1]
+        .chars()
+        .skip(usize::from(base) + 4)
+        .collect();
     assert_eq!(
         copied,
         backwards.trim_end(),
@@ -3476,34 +3567,36 @@ async fn shift_and_double_clicks_on_a_tab_row_answer_at_the_eight_column_stops()
     let before = draw_rows(&mut app, 40, 12);
     let row = before
         .iter()
-        .position(|line| line.starts_with("gate"))
+        .position(|line| line.trim_start().starts_with("gate"))
         .expect("the tab row is on screen");
 
+    // The row starts one gutter in, so every column below is text-relative plus `base`.
+    let base = CONTENT_GUTTER_COLS;
     let _clipboard_turn = ClipboardSeam::arm();
     // gate covers 0..4, the tab its padding 4..8, value sits at 8..13.
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, 0);
-    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), row, 3);
-    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, 3);
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, base);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), row, base + 3);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, base + 3);
     ClipboardSeam::drain();
 
     for (head, expect) in [
-        (6usize, "gate"),
-        (8usize, "gate"),
-        (9usize, "gate\tv"),
-        (13usize, "gate\tvalue"),
+        (base + 6, "gate"),
+        (base + 8, "gate"),
+        (base + 9, "gate\tv"),
+        (base + 13, "gate\tvalue"),
     ] {
         mouse_held(
             &mut app,
             MouseEventKind::Down(MouseButton::Left),
             row,
-            u16::try_from(head).expect("column fits"),
+            head,
             KeyModifiers::SHIFT,
         );
         mouse_held(
             &mut app,
             MouseEventKind::Up(MouseButton::Left),
             row,
-            u16::try_from(head).expect("column fits"),
+            head,
             KeyModifiers::SHIFT,
         );
         assert_eq!(
@@ -3517,21 +3610,21 @@ async fn shift_and_double_clicks_on_a_tab_row_answer_at_the_eight_column_stops()
 
     // A range that starts inside the padding drops the tab: the tab's own column is
     // before the anchor, so it never travels to the clipboard.
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, 6);
-    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), row, 7);
-    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, 7);
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, base + 6);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), row, base + 7);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, base + 7);
     mouse_held(
         &mut app,
         MouseEventKind::Down(MouseButton::Left),
         row,
-        13,
+        base + 13,
         KeyModifiers::SHIFT,
     );
     mouse_held(
         &mut app,
         MouseEventKind::Up(MouseButton::Left),
         row,
-        13,
+        base + 13,
         KeyModifiers::SHIFT,
     );
     assert_eq!(
@@ -3545,8 +3638,8 @@ async fn shift_and_double_clicks_on_a_tab_row_answer_at_the_eight_column_stops()
     // Two clicks on that padding take the word to their left, and the word anchor keeps
     // its own bound when a shift+click walks the free end into the next word.
     for _ in 0..2 {
-        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, 6);
-        mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, 6);
+        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, base + 6);
+        mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, base + 6);
     }
     assert_eq!(
         ClipboardSeam::copied().last().map(String::as_str),
@@ -3558,14 +3651,14 @@ async fn shift_and_double_clicks_on_a_tab_row_answer_at_the_eight_column_stops()
         &mut app,
         MouseEventKind::Down(MouseButton::Left),
         row,
-        12,
+        base + 12,
         KeyModifiers::SHIFT,
     );
     mouse_held(
         &mut app,
         MouseEventKind::Up(MouseButton::Left),
         row,
-        12,
+        base + 12,
         KeyModifiers::SHIFT,
     );
     assert_eq!(
@@ -3597,18 +3690,26 @@ async fn a_marked_transcript_stays_inside_the_frame_at_every_sampled_width() {
             row >= 1,
             "the drag needs a row above it at {width}: {band:?}"
         );
-        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, 1);
+        // Press on the row above and drag down across the last card, from the first text
+        // column to the last one the band actually holds at this width.
+        let end_column = width.saturating_sub(CONTENT_GUTTER_COLS + 1);
+        mouse(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Left),
+            row - 1,
+            CONTENT_GUTTER_COLS,
+        );
         mouse(
             &mut app,
             MouseEventKind::Drag(MouseButton::Left),
-            row - 1,
-            width.saturating_sub(1),
+            row,
+            end_column,
         );
         mouse(
             &mut app,
             MouseEventKind::Up(MouseButton::Left),
-            row - 1,
-            width.saturating_sub(1),
+            row,
+            end_column,
         );
         let rows = draw_rows(&mut app, width, height);
         assert!(
@@ -3616,9 +3717,11 @@ async fn a_marked_transcript_stays_inside_the_frame_at_every_sampled_width() {
                 .all(|line| line.chars().count() <= usize::from(width)),
             "no row may exceed the frame at {width} columns with a mark open"
         );
+        let marks = marked_rows(&mut app, width, height);
+        let selection = app.transcript_selection;
         assert!(
-            !marked_cards(&mut app, width, height).is_empty(),
-            "the mark is drawn at {width} columns"
+            marks.iter().any(|(_, text)| text.contains("item-")),
+            "the mark is drawn at {width} columns: sel {selection:?} marked {marks:?}"
         );
         app.transcript_selection = None;
     }
@@ -3636,7 +3739,7 @@ async fn a_mark_is_booked_against_the_card_not_the_row_it_was_pressed_on() {
     let before = draw_rows(&mut app, 60, 24);
     let row = before
         .iter()
-        .position(|line| line.starts_with("item-02"))
+        .position(|line| line.trim_start().starts_with("item-02"))
         .expect("the middle card is on screen");
 
     let _clipboard_turn = ClipboardSeam::arm();
@@ -3764,8 +3867,8 @@ async fn a_tabbed_draft_wraps_at_the_projected_columns_not_one_per_tab() {
         .get(usize::from(area.y) + 1)
         .expect("the wrapped draft has a second row");
     assert!(
-        continuation.trim_start().starts_with("d a tail"),
-        "the tab must cost columns 4..8, so the break falls before \"a\": {continuation:?}"
+        continuation.trim_start().starts_with("and a tail"),
+        "the tab must cost columns 4..8, so the break falls before \"and\": {continuation:?}"
     );
 }
 
@@ -4666,7 +4769,7 @@ async fn the_gap_counts_the_rows_the_tail_gained_while_the_reader_was_away() {
         text.contains(&gained.to_string()),
         "the band names the {gained} rows it gained: {text:?}"
     );
-    assert!(text.contains("new") && text.contains("End"), "{text:?}");
+    assert!(text.contains("new") && text.contains("Esc"), "{text:?}");
 
     // Returning to the tail clears the count and the band with it, at any count. The
     // count is spent when the tail has actually been painted, not on the scroll itself.
@@ -4696,7 +4799,7 @@ async fn a_mark_in_either_region_retires_the_gap_control() {
     let before = draw_rows(&mut app, 80, 24);
     let start = before
         .iter()
-        .position(|row| row.contains("Ran cargo test"))
+        .position(|row| row.contains("cargo test -p demo"))
         .expect("the command card is on screen");
     mouse(&mut app, MouseEventKind::Down(MouseButton::Left), start, 2);
     mouse(
@@ -4766,8 +4869,111 @@ async fn a_mark_in_either_region_retires_the_gap_control() {
     );
 }
 
-/// The band's rectangle is the control's hit area: a press-release on it follows the tail
-/// again, and the band is gone from the frame that answers.
+/// Away from the tail, Esc is the key the control names, so it does what the control does.
+/// The draft keeps its own meaning: a press with something typed and already at the tail
+/// still clears it.
+#[tokio::test]
+async fn esc_returns_to_the_tail_before_it_touches_the_draft() {
+    let root = TempRoot::new("gap_esc");
+    let mut app = fixture_app(root.path()).await;
+    let _ = draw_rows(&mut app, 80, 24);
+    detach_from_tail(&mut app, 3);
+    assert!(!app.is_at_transcript_tail(), "the reader left the tail");
+
+    app.input = "half a thought".to_string();
+    app.on_key(key(KeyCode::Esc)).await.expect("esc away from the tail");
+    assert!(
+        app.is_at_transcript_tail(),
+        "esc returned to the latest row first"
+    );
+    assert_eq!(
+        app.input, "half a thought",
+        "and it did not throw the draft away on the way"
+    );
+
+    app.on_key(key(KeyCode::Esc)).await.expect("esc at the tail");
+    assert!(app.input.is_empty(), "the second press clears the draft");
+}
+
+/// A round can run for minutes, so the reader scrolls away to read what it already wrote —
+/// and that is exactly when the control is on screen promising Esc. A promise wins over the
+/// interrupt: the jump costs nothing, while interrupting the round discards work. The
+/// interrupt is one press further, on the tail, where the running line names it again.
+#[tokio::test]
+async fn esc_away_from_a_running_tail_returns_to_latest_instead_of_interrupting() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let root = TempRoot::new("gap_esc_running");
+    let mut app = fixture_app(root.path()).await;
+    let session = app.session_id.clone();
+    app.busy = true;
+    app.active_stream_sessions.insert(session.clone());
+    detach_from_tail(&mut app, 3);
+    let esc = || KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+    let logs_before = app.logs.len();
+
+    app.on_key(esc()).await.expect("esc away from the tail");
+    assert!(
+        app.is_at_transcript_tail(),
+        "esc is the jump the control promised"
+    );
+    assert!(app.busy, "the round keeps running");
+    assert_eq!(
+        app.logs.len(),
+        logs_before,
+        "and nothing was written about an interrupt"
+    );
+
+    app.on_key(esc()).await.expect("esc at the tail");
+    assert_eq!(
+        app.logs.len(),
+        logs_before + 1,
+        "the press at the tail is the interrupt again"
+    );
+    assert!(
+        app.logs[logs_before]
+            .text
+            .contains("no cancellable round found"),
+        "{}",
+        app.logs[logs_before].text
+    );
+}
+
+/// The transcript column and the draft share one left edge: a card's bullet and the
+/// composer's prompt start at the same column, and neither touches the frame.
+#[tokio::test]
+async fn the_transcript_and_the_draft_share_one_left_edge() {
+    let root = TempRoot::new("gutter_alignment");
+    let mut app = fixture_app(root.path()).await;
+    let rows = draw_rows(&mut app, 80, 24);
+    let gutter = usize::from(CONTENT_GUTTER_COLS);
+    let card = rows
+        .iter()
+        .position(|row| row.trim_start().starts_with('•'))
+        .expect("a card is on screen");
+    let prompt = rows
+        .iter()
+        .position(|row| row.trim_start().starts_with('›'))
+        .expect("the draft is on screen");
+    assert_eq!(
+        rows[card].find('•'),
+        Some(gutter),
+        "the bullet sits one gutter in: {:?}",
+        rows[card]
+    );
+    assert_eq!(
+        rows[prompt].find('›'),
+        Some(gutter),
+        "and so does the prompt: {:?}",
+        rows[prompt]
+    );
+    // One blank row keeps the last card off the composer band.
+    assert!(
+        rows[prompt - 1].trim().is_empty(),
+        "the band gets a row of its own: {rows:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_click_on_the_gap_control_follows_the_tail_again() {
     use crossterm::event::{MouseButton, MouseEventKind};
@@ -4860,7 +5066,7 @@ async fn a_copy_shows_its_count_in_the_band_then_yields_the_row() {
     let before = draw_rows(&mut app, 80, 24);
     let start = before
         .iter()
-        .position(|row| row.contains("Ran cargo test"))
+        .position(|row| row.contains("cargo test -p demo"))
         .expect("the command card is on screen");
 
     mouse(&mut app, MouseEventKind::Down(MouseButton::Left), start, 2);
@@ -4934,7 +5140,7 @@ async fn a_failed_copy_reports_in_the_band_not_the_transcript() {
     let before = draw_rows(&mut app, 80, 24);
     let start = before
         .iter()
-        .position(|row| row.contains("Ran cargo test"))
+        .position(|row| row.contains("cargo test -p demo"))
         .expect("the command card is on screen");
 
     mouse(&mut app, MouseEventKind::Down(MouseButton::Left), start, 2);
@@ -5050,11 +5256,13 @@ async fn the_gap_carries_its_state_without_color() {
     let line = app
         .composer_gap_line(80, false)
         .expect("the control is decided by state alone");
+    // The control wears the theme accent so it reads as something to press rather than as
+    // dim prose, and the accent is exactly the style the theme degrades to weight-only on a
+    // colourless terminal — the label alone still says what the row does.
     let style = line.spans[0].style;
-    assert!(
-        style.fg.is_none() && style.bg.is_none(),
-        "nothing for a colourless terminal to degrade: {style:?}"
-    );
+    let accent = crate::tui::theme::accent_text();
+    assert_eq!(style.fg, accent.fg, "the control is painted in the accent");
+    assert_eq!(style.add_modifier, accent.add_modifier);
 
     let plain = draw_rows(&mut app, 80, 24);
     let area = app.gap_hit_area();
@@ -5788,26 +5996,27 @@ fn drag_over_run(app: &mut TuiApp, needle: &str, width: u16, height: u16) -> Str
                 frame.rows_text()
             )
         });
+    // `runs` reports columns of the frame, and the transcript band is a window on that
+    // frame, so the gutter is already inside `start`.
     let end = (start + needle.chars().count()) as u16;
-    let region = app.transcript_mouse_region;
     ClipboardSeam::drain();
     mouse(
         app,
         MouseEventKind::Down(MouseButton::Left),
         row,
-        region.x + start as u16,
+        start as u16,
     );
     mouse(
         app,
         MouseEventKind::Drag(MouseButton::Left),
         row,
-        region.x + end,
+        end,
     );
     mouse(
         app,
         MouseEventKind::Up(MouseButton::Left),
         row,
-        region.x + end,
+        end,
     );
     ClipboardSeam::copied()
         .pop()
@@ -6558,5 +6767,139 @@ async fn model_add_registers_without_hijacking_a_working_default() {
     assert!(
         !user_toml.contains("second-chat-model"),
         "config.toml describes the default model's endpoint only: {user_toml}"
+    );
+}
+
+/// The breathing dot used to be baked into the cached transcript lines, so a running
+/// card's status column froze on whatever phase the last rebuild saw. The cache must
+/// keep the resting colour and every painted frame must hand the dot the live one.
+#[tokio::test]
+async fn a_running_card_paints_its_dot_live_while_the_render_cache_holds_still() {
+    use crate::tui::activity_indicator;
+
+    let root = TempRoot::new("pending-dot");
+    let mut app = fixture_app(root.path()).await;
+    app.logs.clear();
+    feed_stream_event(
+        &mut app,
+        "tool_call",
+        json!({"tool":"fixture_tool","tool_call_id":"fixture-call-dot","args": json!({})}),
+        9300,
+    );
+    app.busy = true;
+    app.thread_registry.set_status(
+        &app.session_id,
+        super::super::thread_registry::ThreadRunState::Working,
+    );
+
+    let dot_styles = |lines: &[Line<'static>]| -> Vec<Style> {
+        lines
+            .iter()
+            .filter_map(|line| line.spans.first())
+            .filter(|span| span.content.trim() == activity_indicator::RUNNING_INDICATOR)
+            .map(|span| span.style)
+            .collect()
+    };
+
+    let resting = activity_indicator::pending_indicator_base_style();
+    let live = activity_indicator::pending_indicator_style();
+
+    let first = app.transcript_rendered_view(80, 24, false);
+    let second = app.transcript_rendered_view(80, 24, false);
+    assert!(
+        Arc::ptr_eq(&first.lines, &second.lines),
+        "an unchanged transcript must stay on the cached frame"
+    );
+
+    let mut painted = first.lines.as_ref().clone();
+    assert_eq!(
+        dot_styles(painted.as_slice()),
+        vec![resting],
+        "the cache holds the resting colour, never a frozen phase"
+    );
+    activity_indicator::paint_pending_dots(painted.as_mut_slice());
+    assert_eq!(
+        dot_styles(painted.as_slice()),
+        vec![live],
+        "the painted frame carries the live pulse"
+    );
+}
+
+/// The status clock answered only for the model's own windows, so it stood still through
+/// every tool call and reported a turn shorter than it was.
+#[tokio::test]
+async fn the_running_clock_counts_the_whole_turn_not_only_model_windows() {
+    let root = TempRoot::new("running-clock");
+    let mut app = fixture_app(root.path()).await;
+    app.busy = true;
+    app.turn_started_at = Some(std::time::Instant::now() - std::time::Duration::from_secs(95));
+    // A tool phase closes the model window; the turn itself keeps running.
+    app.turn_llm_started_at = None;
+    app.turn_llm_active_secs = 4.0;
+
+    let line = app.activity_line();
+    assert!(
+        line.contains("1m 35s"),
+        "the clock reads the turn's wall clock: {line}"
+    );
+
+    app.turn_output_tokens = 600;
+    app.finalize_turn_metrics();
+    let elapsed = app
+        .last_turn_elapsed_secs
+        .expect("a settled turn records its time");
+    assert!(
+        elapsed >= 95.0,
+        "the recorded total covers the tool phase too: {elapsed}"
+    );
+    let speed = app.last_turn_speed_tps.expect("speed stays measured");
+    assert!(
+        (speed - 150.0).abs() < 1.0,
+        "speed keeps measuring the model's own window: {speed}"
+    );
+}
+
+/// End to end: the frame the terminal receives carries the live pulse, so the wiring
+/// from the cache to the paint pass is what the reader actually sees.
+#[tokio::test]
+async fn the_painted_frame_repaints_the_running_dot() {
+    let root = TempRoot::new("pending-dot-frame");
+    let mut app = fixture_app(root.path()).await;
+    app.logs.clear();
+    feed_stream_event(
+        &mut app,
+        "tool_call",
+        json!({"tool":"fixture_tool","tool_call_id":"fixture-call-frame","args": json!({})}),
+        9400,
+    );
+    // Idle in every other sense: the only dot on screen is the running card's, and the
+    // status row above the composer stays hidden.
+    app.busy = false;
+
+    let dot_style = |terminal: &Terminal<TestBackend>| -> Option<Style> {
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height).find_map(|y| {
+            (0..buffer.area.width).find_map(|x| {
+                let cell = &buffer[(x, y)];
+                (cell.symbol() == crate::tui::activity_indicator::RUNNING_INDICATOR)
+                    .then(|| Style::default().fg(cell.fg).add_modifier(cell.modifier))
+            })
+        })
+    };
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("terminal");
+    terminal
+        .draw(|frame| crate::tui::ui::draw(frame, &mut app))
+        .expect("first draw");
+    let first = dot_style(&terminal);
+    assert!(first.is_some(), "the running card shows its dot");
+    tokio::time::sleep(std::time::Duration::from_millis(280)).await;
+    terminal
+        .draw(|frame| crate::tui::ui::draw(frame, &mut app))
+        .expect("second draw");
+    let second = dot_style(&terminal);
+    assert_ne!(
+        first, second,
+        "an unchanged transcript still repaints its running dot"
     );
 }

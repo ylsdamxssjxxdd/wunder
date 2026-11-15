@@ -482,6 +482,9 @@ struct CancellingSubmission {
 
 struct State {
     timer: Timer,
+    /// 过程条秒表的定时器：与 33ms 的流泵解耦。流里长时间没有事件（等一次
+    /// 长工具调用）时，泵不会自己动，秒表却必须继续走——用户盯着的就是它。
+    stopwatch: Timer,
     observation: observer::Observation,
     desktop: Arc<NativeDesktop>,
     active: Option<Active>,
@@ -555,9 +558,11 @@ struct State {
     /// Session-scoped plan state (explanation + steps) so the plan card
     /// survives turn boundaries within a thread.
     plans: std::collections::HashMap<String, (String, Vec<(String, String)>)>,
-    /// Change key of the plan model last published to the UI; the flush runs
-    /// per frame, so the slint model is only rebuilt when the plan moved.
-    plan_sig: String,
+    /// What the dock model currently renders. It travels with the rows: a
+    /// signature that outlived them (a reset, a thread switch) would make the
+    /// stale check skip the rebuild and leave the dock empty for a plan it had
+    /// already shown once.
+    plan_view: Option<PlanView>,
     /// Live 问询面板 per thread: the panel outlives the turn that published it,
     /// and an entry is dropped as soon as it is answered or dismissed.
     inquiries: std::collections::HashMap<String, InquiryState>,
@@ -750,6 +755,7 @@ pub(crate) fn close_visible_thread(app: &MainWindow, session: &str) {
         };
         let mut state = state.borrow_mut();
         state.timer.stop();
+        state.stopwatch.stop();
         state.observation.detach();
         state.history_generation.fetch_add(1, Ordering::AcqRel);
         state.history_before = None;
@@ -765,6 +771,9 @@ pub(crate) fn close_visible_thread(app: &MainWindow, session: &str) {
             state.active = None;
         }
         forget_reducer(&mut state, session);
+        // A closed thread's cached plan goes with it: nothing can reopen the
+        // thread, so the entry would only outlive the row that owned it.
+        state.plans.remove(session);
         if app.get_active_session_id() == session {
             // A closed thread's transcript must go, not stay frozen: the next
             // thread starts from its own reducer, and the empty key owns the
@@ -777,6 +786,9 @@ pub(crate) fn close_visible_thread(app: &MainWindow, session: &str) {
             state.reducer_order.push_front(String::new());
             bind_reducer(app, &mut state, "");
         }
+        // The dock is reset inside the closure because emptying the rows must
+        // forget the projection they held, and only `state` knows it.
+        reset_activity(app, &mut state);
         Some(state.desktop.clone())
     });
     app.set_active_session_id("".into());
@@ -790,7 +802,6 @@ pub(crate) fn close_visible_thread(app: &MainWindow, session: &str) {
     app.set_queue_turns(ModelRc::default());
     app.set_queue_overflow(0);
     app.set_pending_attachments(ModelRc::default());
-    reset_activity(app);
     // Release the open lease through the idle-aware reaper rather than an
     // eager close: another surface may still be draining this thread.
     if let Some(desktop) = desktop {
@@ -807,6 +818,7 @@ pub(crate) fn prepare_external_timeline(app: &MainWindow) {
         };
         let mut state = state.borrow_mut();
         state.timer.stop();
+        state.stopwatch.stop();
         state.lease_refresh_timer.stop();
         // The local turn loses its stream here: a cloud page is a different
         // surface, and a reducer with a frozen running row would claim the
@@ -860,7 +872,7 @@ pub(crate) fn prepare_external_timeline(app: &MainWindow) {
         app.set_queue_turns(ModelRc::default());
         app.set_queue_overflow(0);
         app.set_pending_attachments(ModelRc::default());
-        reset_activity(app);
+        reset_activity(app, &mut state);
     });
 }
 
@@ -942,7 +954,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     app.set_chat_loading(false);
     // The dock ships with slint-viewer demo values; a real runtime clears them
     // once and lets the turn flush (or the selection reset) drive it after.
-    reset_activity(app);
+    clear_activity_view(app);
     app.set_conversations(ModelRc::default());
     app.set_agents(ModelRc::default());
     app.set_tools(ModelRc::default());
@@ -950,6 +962,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     let desktop_preview = desktop.clone();
     let state = Rc::new(RefCell::new(State {
         timer: Timer::default(),
+        stopwatch: Timer::default(),
         observation: observer::Observation::default(),
         desktop,
         active: None,
@@ -971,7 +984,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         creating_since: None,
         session_loading_since: None,
         plans: std::collections::HashMap::new(),
-        plan_sig: String::new(),
+        plan_view: None,
         inquiries: std::collections::HashMap::new(),
         consumed_inquiries: std::collections::VecDeque::new(),
         parked: VecDeque::new(),
@@ -1272,10 +1285,70 @@ fn foreground_live(state: &State, session: &str) -> bool {
             .is_some_and(|pending| pending.session == session)
 }
 
+/// What the dock's step model currently renders: the thread it belongs to and
+/// the change key of its content. Same thread + same key means the rows in the
+/// slint model are already the ones a publish would write.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PlanView {
+    session: String,
+    sig: String,
+}
+
+/// Whether the dock model must be rebuilt. Empty content keys to `""`, so the
+/// thread identity is half of the answer: two threads may publish the same
+/// plan, and one plan may be republished after the model was emptied.
+fn plan_view_stale(view: Option<&PlanView>, session: &str, sig: &str) -> bool {
+    match view {
+        None => true,
+        Some(view) => view.session != session || view.sig != sig,
+    }
+}
+
+/// Keep a thread's plan cache in step with its live turn.
+///
+/// The cache is session data, not view state: it is what seeds the next turn of
+/// the same thread. Writing it only for the turn on screen left a thread that
+/// streamed in the background without a cache entry, so a message queued there
+/// started its successor turn with an empty plan and the dock lost the
+/// checklist it had been showing.
+///
+/// A thread with no plan of its own never gains an empty one, and an explicit
+/// empty plan is kept, so the cache always mirrors what the tool last published.
+/// Returns whether the cache moved.
+fn sync_plan_cache(
+    plans: &mut std::collections::HashMap<String, (String, Vec<(String, String)>)>,
+    session: &str,
+    explanation: &str,
+    steps: &[(String, String)],
+) -> bool {
+    match plans.get(session) {
+        Some(cached) if cached.0 == explanation && cached.1 == steps => false,
+        // No plan yet and none published: inventing an empty entry would
+        // shadow whatever this thread published in an earlier turn.
+        None if steps.is_empty() && explanation.is_empty() => false,
+        _ => {
+            plans.insert(session.to_string(), (explanation.to_string(), steps.to_vec()));
+            true
+        }
+    }
+}
+
 /// Reset the status-dock attributes for a thread without a live plan. The
 /// slint-viewer demo values (and any previous thread's state) must never leak
 /// into the view of an idle session.
-fn reset_activity(app: &MainWindow) {
+///
+/// Takes the state because emptying the rows must also forget the projection
+/// they held: a signature that outlived them would make the next publish of
+/// that same plan look "already on screen" and leave the dock hidden until the
+/// plan's text changed.
+fn reset_activity(app: &MainWindow, state: &mut State) {
+    state.plan_view = None;
+    clear_activity_view(app);
+}
+
+/// The view half of [`reset_activity`], for the one call that runs before a
+/// [`State`] exists (window install, where nothing was projected yet).
+fn clear_activity_view(app: &MainWindow) {
     app.set_activity_running(false);
     app.set_activity_steps_done(0);
     app.set_activity_steps_total(0);
@@ -1326,9 +1399,9 @@ fn plan_current(steps: &[(String, String)]) -> (String, i32) {
 }
 
 /// Publish the status-dock projection from the live turn: the plan capsule and
-/// its checklist. Returns the plan signature so the caller can persist it
-/// (plus the session plan) without recomputing.
-fn publish_activity(app: &MainWindow, active: &TurnOutput, last_sig: &str) -> String {
+/// its checklist. Returns the view it just published so the caller records what
+/// the model holds without recomputing the key.
+fn publish_activity(app: &MainWindow, active: &TurnOutput, view: Option<&PlanView>) -> PlanView {
     // The spinner follows the phase: every live phase keeps it turning, and a
     // settled one stops it. Plan data stays for the next turn.
     app.set_activity_running(active.phase.live());
@@ -1351,7 +1424,7 @@ fn publish_activity(app: &MainWindow, active: &TurnOutput, last_sig: &str) -> St
         app.set_activity_plan_expanded(false);
     }
     let sig = plan_signature(&active.plan_explanation, &active.plan_steps);
-    if sig != last_sig {
+    if plan_view_stale(view, &active.session, &sig) {
         let rows: Vec<PlanStep> = active
             .plan_steps
             .iter()
@@ -1362,15 +1435,18 @@ fn publish_activity(app: &MainWindow, active: &TurnOutput, last_sig: &str) -> St
             .collect();
         app.set_activity_plan_steps(ModelRc::new(VecModel::from(rows)));
     }
-    sig
+    PlanView {
+        session: active.session.clone(),
+        sig,
+    }
 }
 
 /// Project a thread's cached plan into the dock while no turn is live, so a
 /// thread switch (or a reopened thread) still shows the plan it last published,
 /// exactly like the web client's composer dock.
-fn publish_idle_plan(app: &MainWindow, state: &State, session: &str) {
-    let Some((explanation, steps)) = state.plans.get(session) else {
-        reset_activity(app);
+fn publish_idle_plan(app: &MainWindow, state: &mut State, session: &str) {
+    let Some((explanation, steps)) = state.plans.get(session).cloned() else {
+        reset_activity(app, state);
         return;
     };
     app.set_activity_running(false);
@@ -1381,19 +1457,26 @@ fn publish_idle_plan(app: &MainWindow, state: &State, session: &str) {
         .count() as i32;
     app.set_activity_steps_done(done);
     app.set_activity_steps_total(total);
-    app.set_activity_plan_complete(plan_all_done(steps));
+    app.set_activity_plan_complete(plan_all_done(&steps));
     app.set_activity_plan_explanation(explanation.as_str().into());
-    let (current, position) = plan_current(steps);
+    let (current, position) = plan_current(&steps);
     app.set_activity_plan_current(current.into());
     app.set_activity_plan_position(position);
-    let rows: Vec<PlanStep> = steps
-        .iter()
-        .map(|(step, status)| PlanStep {
-            step: step.as_str().into(),
-            status: status.as_str().into(),
-        })
-        .collect();
-    app.set_activity_plan_steps(ModelRc::new(VecModel::from(rows)));
+    let sig = plan_signature(&explanation, &steps);
+    if plan_view_stale(state.plan_view.as_ref(), session, &sig) {
+        let rows: Vec<PlanStep> = steps
+            .iter()
+            .map(|(step, status)| PlanStep {
+                step: step.as_str().into(),
+                status: status.as_str().into(),
+            })
+            .collect();
+        app.set_activity_plan_steps(ModelRc::new(VecModel::from(rows)));
+    }
+    state.plan_view = Some(PlanView {
+        session: session.to_string(),
+        sig,
+    });
 }
 
 /// The pending 问询面板 one thread's durable turns still wait on. The waiting
@@ -2050,8 +2133,7 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
             .as_ref()
             .is_some_and(|turn| turn.output.session == id);
         if !keeps_live_turn {
-            reset_activity(&app);
-            state.borrow_mut().plan_sig.clear();
+            reset_activity(&app, &mut state.borrow_mut());
         }
         // The inquiry card follows the same ownership rule as the dock: it
         // belongs to the thread that was asked, so switching shows that
@@ -4636,6 +4718,40 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
             };
             pump_stream(&app, &state);
         });
+    start_stopwatch(app, &state);
+}
+
+/// 过程条右侧的耗时由自己的定时器推进，不跟着工具条目一起动。
+///
+/// 250ms 的采样只为一件事：整秒跳变尽快落到屏幕上。没有跳变的那几拍只做一次
+/// 标签比较就返回，不发布、不重画；轮次结束后定时器停下，不再空转。
+fn start_stopwatch(app: &MainWindow, state: &Rc<RefCell<State>>) {
+    let weak = app.as_weak();
+    let callback_state = Rc::downgrade(state);
+    state
+        .borrow()
+        .stopwatch
+        .start(TimerMode::Repeated, Duration::from_millis(250), move || {
+            let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
+                return;
+            };
+            let foreground = {
+                let state = state.borrow();
+                for turn in state.background.iter() {
+                    turn.timeline.borrow_mut().tick_elapsed();
+                }
+                state.active.as_ref().and_then(|turn| {
+                    turn.timeline
+                        .borrow_mut()
+                        .tick_elapsed()
+                        .then(|| (turn.session.clone(), turn.timeline.clone()))
+                })
+            };
+            let Some((session, timeline)) = foreground else {
+                return;
+            };
+            publish_live_frame(&app, &session, &timeline.borrow());
+        });
 }
 
 fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
@@ -4784,6 +4900,7 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
             app.set_activity_running(false);
         }
         state.timer.stop();
+        state.stopwatch.stop();
     }
     drop(state);
     if visible_done && !durable_busy {
@@ -4817,11 +4934,10 @@ fn drive_turn(
     // the user left must keep growing its own rows.
     let timeline = active.timeline.clone();
     let desktop = state.desktop.clone();
-    let last_plan_sig = state.plan_sig.clone();
+    let last_plan_view = state.plan_view.clone();
     let started = Instant::now();
     let mut done = false;
     let mut dirty = false;
-    let mut new_plan_sig: Option<String> = None;
     if visible {
         app.set_stream_max_backlog(
             app.get_stream_max_backlog()
@@ -4978,13 +5094,8 @@ fn drive_turn(
             break;
         }
     }
-    // 过程条右侧的本轮耗时按真实时间逐秒推进：即使这一帧没有新事件，也要让
-    // 秒表继续走，否则用户看到的是停住的数字加一次跳跃。整秒跳变本身就要把
-    // 帧推给视图，所以它也算 dirty——否则泵只在有事件的那一拍重画，秒表又
-    // 退回“跟着工具条目一起跳”。
-    if !done && timeline.borrow_mut().tick_elapsed() {
-        dirty = true;
-    }
+    // 过程条右侧的耗时由秒表自己的定时器推进（见 start_stopwatch）：泵只在
+    // 有事件时重画，不再为了让数字走而每 33ms 也做一次秒表采样。
     if dirty || done {
         // One frame flush: the active tail block and the measured
         // cells, never the whole history.
@@ -4997,17 +5108,21 @@ fn drive_turn(
         }
         drop(live);
         set_session_status(app, &active.session, active.state(), active.phase);
+        // Plan state is session data, not view state: the cache moves even
+        // when this turn is off screen, because it is what seeds the thread's
+        // next turn. A message queued behind this one must not start with a
+        // hole where the checklist was.
+        sync_plan_cache(
+            &mut state.plans,
+            &active.session,
+            &active.plan_explanation,
+            &active.plan_steps,
+        );
         if visible {
-            // Status dock: capsule state plus plan progress and file
-            // stats; the session plan cache only moves when the plan did.
-            let sig = publish_activity(app, active, &last_plan_sig);
-            if sig != last_plan_sig {
-                state.plans.insert(
-                    active.session.clone(),
-                    (active.plan_explanation.clone(), active.plan_steps.clone()),
-                );
-                new_plan_sig = Some(sig);
-            }
+            // Status dock: capsule state plus plan progress. The projection
+            // records which thread's plan the rows hold, so a switch or a
+            // reset can never leave a signature claiming rows that are gone.
+            state.plan_view = Some(publish_activity(app, active, last_plan_view.as_ref()));
         }
     }
     if done {
@@ -5040,9 +5155,6 @@ fn drive_turn(
         // the engine starts the successor as soon as this lease drops,
         // and the next tick hands it the live slot.
         crate::workspace_files::execution_finished(app, desktop.clone());
-    }
-    if let Some(sig) = new_plan_sig {
-        state.plan_sig = sig;
     }
     if visible {
         app.set_stream_max_ui_ms(
@@ -6009,6 +6121,56 @@ mod turn_tests {
             assert_eq!(stamp.matches(':').count(), 1, "{stamp}");
         }
         assert_eq!(format_time(0.0), "");
+    }
+
+    /// 计划面板「呼不出来」的根因：行被清空（切线程、重置）之后签名还活着，同一份
+    /// 计划再发布时被判成「已经在屏上」，于是面板一直到计划文字改变才回来。
+    #[test]
+    fn a_cleared_dock_accepts_the_same_plan_again() {
+        let sig = plan_signature("收拾行李", &[("列清单".into(), "pending".into())]);
+        assert!(!sig.is_empty());
+        let shown = PlanView {
+            session: "a".into(),
+            sig: sig.clone(),
+        };
+        assert!(
+            !plan_view_stale(Some(&shown), "a", &sig),
+            "an unmoved plan must not rebuild the rows"
+        );
+        assert!(
+            plan_view_stale(None, "a", &sig),
+            "the rows were emptied by a reset: this plan has to be republished"
+        );
+        assert!(
+            plan_view_stale(Some(&shown), "b", &sig),
+            "another thread's plan is never what the model holds"
+        );
+        let moved = plan_signature("收拾行李", &[("列清单".into(), "in_progress".into())]);
+        assert!(plan_view_stale(Some(&shown), "a", &moved));
+    }
+
+    /// 排队等自动发送的那一轮必须接住上一轮的清单：缓存不能只在轮次可见时才写，
+    /// 否则在别的线程里跑完的线程，其排队消息会从一个空计划开始。
+    #[test]
+    fn a_plan_streamed_off_screen_still_seeds_the_next_turn() {
+        let mut plans = std::collections::HashMap::new();
+        let steps = vec![("列清单".to_string(), "in_progress".to_string())];
+        assert!(sync_plan_cache(&mut plans, "a", "收拾行李", &steps));
+        assert_eq!(plans["a"].1.len(), 1);
+        assert!(
+            !sync_plan_cache(&mut plans, "a", "收拾行李", &steps),
+            "an unmoved plan must not rewrite the cache every frame"
+        );
+        assert!(
+            !sync_plan_cache(&mut plans, "b", "", &[]),
+            "a thread with no plan must not gain an empty one"
+        );
+        assert!(!plans.contains_key("b"));
+        assert!(
+            sync_plan_cache(&mut plans, "a", "", &[]),
+            "an explicit empty plan is a real publish and replaces the cache"
+        );
+        assert!(plans["a"].1.is_empty());
     }
 
     #[test]

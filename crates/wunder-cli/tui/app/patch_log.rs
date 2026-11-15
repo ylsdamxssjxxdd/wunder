@@ -20,10 +20,14 @@ use crate::tool_presentation::{
 use crate::tui::activity_indicator;
 use crate::tui::theme;
 
+/// A running card's status column, in the breathing dot's resting colour. The
+/// transcript caches the lines it builds, so the live colour is applied by
+/// `activity_indicator::paint_pending_dots` on every painted frame instead of
+/// being frozen here at build time.
 pub(super) fn pending_status_icon_span() -> Span<'static> {
     Span::styled(
         format!("{} ", activity_indicator::RUNNING_INDICATOR),
-        activity_indicator::pending_indicator_style(),
+        activity_indicator::pending_indicator_base_style(),
     )
 }
 
@@ -67,12 +71,6 @@ impl SpecialLogEntry {
             Self::Command(entry) if entry.status == CommandLogStatus::Pending => {
                 entry.status = CommandLogStatus::Completed;
                 entry.success = false;
-                entry.title = if entry.is_zh {
-                    "结果未知"
-                } else {
-                    "Result unavailable"
-                }
-                .into();
                 entry.metrics = None;
                 true
             }
@@ -359,7 +357,6 @@ enum CommandLogStatus {
 pub(super) struct CommandLogEntry {
     status: CommandLogStatus,
     success: bool,
-    title: String,
     command: String,
     metrics: Option<String>,
     /// The exit code the footer states once the card is open. `None` while the process runs.
@@ -371,7 +368,7 @@ pub(super) struct CommandLogEntry {
 
 impl CommandLogEntry {
     fn summary_text(&self) -> String {
-        format!("{} {}", self.title, self.command)
+        self.command.clone()
     }
 
     fn merged_output_len(&self) -> usize {
@@ -484,47 +481,43 @@ impl CommandLogEntry {
             .map(format_elapsed_ms)
     }
 
-    /// `• Ran <cmd>` on success, `• Failed (exit 1) <cmd>` on failure, with the elapsed
-    /// time as a dim tail. While the command is live the bullet breathes instead.
+    /// `• <cmd>`: the bullet carries the whole state — breathing while the process runs,
+    /// green once it lands, red when it comes back nonzero — and a nonzero exit code rides
+    /// along as a dim tail. The card used to spell the state out in front of the command
+    /// ("running", "ran", "failed (exit 1)"), which repeated what the bullet already said
+    /// and pushed the command itself to the right.
     fn header_line(&self) -> Line<'static> {
         let running = self.status == CommandLogStatus::Pending;
-        let text_style = match (running, self.success) {
-            (true, _) => theme::accent_text(),
-            (false, true) => Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-            (false, false) => theme::danger_text(),
+        let icon = if running {
+            pending_status_icon_span()
+        } else {
+            status_icon_span(
+                "•",
+                Style::default()
+                    .fg(if self.success {
+                        Color::Green
+                    } else {
+                        Color::Red
+                    })
+                    .add_modifier(Modifier::BOLD),
+            )
         };
         let command = self.command.lines().next().unwrap_or_default().to_string();
-        let mut spans = vec![
-            Span::styled(
-                if running {
-                    activity_indicator::RUNNING_INDICATOR
-                } else {
-                    "\u{2022} "
-                }
-                .to_string(),
-                if running {
-                    activity_indicator::pending_indicator_style()
-                } else {
-                    text_style
-                },
-            ),
-            Span::styled(self.title.clone(), text_style),
-            Span::raw(" "),
-            Span::styled(command, command_style()),
-        ];
+        let mut spans = vec![icon, Span::styled(command, command_style())];
         // A multi-line command keeps its head in the header; the rest is a fold, exactly as
         // the reference marks it, whether or not this card is open.
         if self.command.lines().nth(1).is_some() {
+            spans.push(Span::styled(" …".to_string(), theme::secondary_text()));
+        }
+        if let Some(code) = self.exit_code.filter(|code| *code != 0) {
             spans.push(Span::styled(
-                " \u{2026}".to_string(),
+                format!(" (exit {code})"),
                 theme::secondary_text(),
             ));
         }
         if let Some(metrics) = self.metrics.as_ref().filter(|value| !value.is_empty()) {
             spans.push(Span::styled(
-                format!(" \u{00b7} {metrics}"),
+                format!(" · {metrics}"),
                 theme::secondary_text(),
             ));
         }
@@ -1388,11 +1381,6 @@ pub(super) fn build_pending_command_log(args: &Value, is_zh: bool) -> Option<Spe
         status: CommandLogStatus::Pending,
         is_zh,
         success: true,
-        title: if is_zh {
-            "正在运行".to_string()
-        } else {
-            "Running".to_string()
-        },
         command,
         metrics: None,
         exit_code: None,
@@ -1416,42 +1404,6 @@ pub(super) fn build_command_session_log(view: &CommandSessionView, is_zh: bool) 
         CommandSessionDisplayStatus::Exited | CommandSessionDisplayStatus::FailedToStart
     );
     let success = view.success();
-    // The reference implementation puts the exit code in the head, not in the output tail.
-    let exit_note = view
-        .exit_code
-        .filter(|code| *code != 0)
-        .map(|code| format!(" (exit {code})"))
-        .unwrap_or_default();
-    let title = match view.status {
-        CommandSessionDisplayStatus::FailedToStart => {
-            if is_zh {
-                "\u{542f}\u{52a8}\u{5931}\u{8d25}".to_string()
-            } else {
-                "Failed to start".to_string()
-            }
-        }
-        CommandSessionDisplayStatus::Exited => {
-            if success {
-                if is_zh {
-                    "\u{5df2}\u{8fd0}\u{884c}".to_string()
-                } else {
-                    "Ran".to_string()
-                }
-            } else if is_zh {
-                format!("\u{8fd0}\u{884c}\u{5931}\u{8d25}{exit_note}")
-            } else {
-                format!("Failed{exit_note}")
-            }
-        }
-        CommandSessionDisplayStatus::Pending | CommandSessionDisplayStatus::Running => {
-            if is_zh {
-                "\u{6b63}\u{5728}\u{8fd0}\u{884c}".to_string()
-            } else {
-                "Running".to_string()
-            }
-        }
-    };
-
     // Elapsed time is not a header detail: it belongs to the footer a settled card shows
     // when it opens. The header keeps only what a reader cannot get from anywhere else.
     let mut metrics = Vec::new();
@@ -1525,7 +1477,6 @@ pub(super) fn build_command_session_log(view: &CommandSessionView, is_zh: bool) 
             CommandLogStatus::Pending
         },
         success: !terminal || success,
-        title,
         command,
         metrics: (!metrics.is_empty()).then(|| metrics.join(", ")),
         exit_code: terminal.then_some(view.exit_code.unwrap_or(if success { 0 } else { 1 })),
@@ -1591,17 +1542,6 @@ pub(super) fn build_completed_command_log(payload: &Value, is_zh: bool) -> Optio
     if let Some(section) = build_output_section(second_label, second_text, second_style) {
         sections.push(section);
     }
-    let title = if success {
-        if is_zh {
-            "已运行".to_string()
-        } else {
-            "Ran".to_string()
-        }
-    } else if is_zh {
-        format!("运行失败 (exit {returncode})")
-    } else {
-        format!("Failed (exit {returncode})")
-    };
     if sections.is_empty() {
         sections.push(empty_output_section(is_zh));
     }
@@ -1609,7 +1549,6 @@ pub(super) fn build_completed_command_log(payload: &Value, is_zh: bool) -> Optio
     Some(SpecialLogEntry::Command(CommandLogEntry {
         status: CommandLogStatus::Completed,
         success,
-        title,
         command,
         metrics: None,
         exit_code: Some(returncode),
@@ -2597,7 +2536,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_command_log_uses_running_title() {
+    fn a_pending_command_card_keeps_the_command_and_no_state_word() {
         let args = serde_json::json!({ "content": "git status --short" });
         let SpecialLogEntry::Command(entry) =
             build_pending_command_log(&args, false).expect("command")
@@ -2605,8 +2544,21 @@ mod tests {
             panic!("expected command log");
         };
         assert_eq!(entry.status, CommandLogStatus::Pending);
-        assert_eq!(entry.title, "Running");
         assert_eq!(entry.command, "git status --short");
+        // The head is the command and a breathing bullet; nothing spells "running" out.
+        let head: String = entry
+            .header_line()
+            .spans
+            .iter()
+            .map(|span| span.content.to_string())
+            .collect();
+        assert_eq!(
+            head,
+            format!(
+                "{} git status --short",
+                super::activity_indicator::RUNNING_INDICATOR
+            )
+        );
     }
 
     #[test]
@@ -2634,7 +2586,6 @@ mod tests {
         };
         assert_eq!(entry.status, CommandLogStatus::Completed);
         assert!(!entry.success);
-        assert_eq!(entry.title, "Failed (exit 1)");
         // The elapsed time is a footer detail now: the collapsed header keeps the outcome,
         // and opening the card is what spends a row on how long it took.
         assert_eq!(entry.metrics, None);
@@ -3385,7 +3336,6 @@ mod tests {
         let entry = CommandLogEntry {
             status: CommandLogStatus::Completed,
             success: false,
-            title: "Failed (exit 1)".to_string(),
             command: "echo first\necho second".to_string(),
             metrics: None,
             exit_code: Some(1),
@@ -3394,7 +3344,9 @@ mod tests {
             is_zh: false,
         };
         let rendered = flat_command_lines(&entry, 80, false);
-        assert_eq!(rendered[0], "• Failed (exit 1) echo first …");
+        // The head is the command with its state on the bullet: a failed process is a red
+        // bullet and the exit code in the tail, not the word "failed" in front.
+        assert_eq!(rendered[0], "• echo first … (exit 1)");
         assert!(
             !rendered[0].contains("28ms"),
             "the elapsed time is not a header detail: {rendered:?}"
@@ -3442,7 +3394,6 @@ mod tests {
         let entry = CommandLogEntry {
             status: CommandLogStatus::Completed,
             success: true,
-            title: "Ran".to_string(),
             command: "ls".to_string(),
             metrics: None,
             exit_code: None,
@@ -3492,7 +3443,6 @@ mod tests {
         let entry = CommandLogEntry {
             status: CommandLogStatus::Completed,
             success: true,
-            title: "Ran".to_string(),
             command: "ls".to_string(),
             metrics: None,
             exit_code: None,
@@ -3529,7 +3479,6 @@ mod tests {
         let entry = CommandLogEntry {
             status: CommandLogStatus::Completed,
             success: true,
-            title: "已运行".to_string(),
             command: "ls".to_string(),
             metrics: None,
             exit_code: None,

@@ -1070,6 +1070,8 @@ pub fn project_turn(turn: &NativeChatTurn) -> Vec<RowData> {
     let mut user = RowData::new(KIND_USER, format!("{}-user", turn.root_id));
     user.text = turn.user.text.clone();
     user.time = clock_time(turn.user.created_at);
+    // 气泡自己带轮次边界，历史加载完就能读到，不必等 footer。
+    user.user_round = turn.user.user_round;
     rows.push(user);
 
     let final_round = turn
@@ -1371,6 +1373,7 @@ impl LiveTurn {
             let mut row = RowData::new(KIND_USER, format!("{}-user", self.root_id));
             row.text = self.user.clone();
             row.time = Local::now().format("%H:%M").to_string();
+            row.user_round = self.user_round;
             rows.push(row);
         }
 

@@ -33,8 +33,6 @@ pub const UI_TEXT_KEYS: &[&str] = &[
     "changed_files_one",
     "changed_files_count",
     "patch_edited",
-    "tool_failed",
-    "tool_completed",
     "tool_only_summary",
     "gap_follow_full",
     "gap_follow_count",
@@ -56,8 +54,6 @@ pub fn ui_pair(key: &str) -> Option<(&'static str, &'static str)> {
         "changed_files_one" => Some(("1 个文件", "1 file")),
         "changed_files_count" => Some(("{count} 个文件", "{count} files")),
         "patch_edited" => Some(("• 已修改 {files}{metrics}", "• Edited {files}{metrics}")),
-        "tool_failed" => Some(("✘ {tool} 失败", "✘ {tool} failed")),
-        "tool_completed" => Some(("• 已完成 {tool}", "• Completed {tool}")),
         "tool_only_summary" => Some((
             "已完成本轮任务，结果见上方工具输出。",
             "Done. Review the tool results above.",
@@ -65,9 +61,9 @@ pub fn ui_pair(key: &str) -> Option<(&'static str, &'static str)> {
         // The composer gap: one row between the transcript and the draft carrying the
         // return-to-latest control and the copy feedback. Every rung is one display row,
         // so the ladder sheds words before the band ever asks for a second row.
-        "gap_follow_full" => Some(("↓ {count} 条新内容 (End)", "↓ {count} new (End)")),
+        "gap_follow_full" => Some(("↓ {count} 条新内容 (Esc)", "↓ {count} new (Esc)")),
         "gap_follow_count" => Some(("↓ {count} 条新内容", "↓ {count} new")),
-        "gap_follow_back" => Some(("↓ 回到最新 (End)", "↓ back to latest (End)")),
+        "gap_follow_back" => Some(("↓ 回到最新 (Esc)", "↓ back to latest (Esc)")),
         "gap_follow_min" => Some(("↓ 回最新", "↓ latest")),
         "gap_copied" => Some(("已复制 {count} 个字符", "Copied {count} characters")),
         "gap_copied_short" => Some(("已复制 {count} 字", "Copied {count} chars")),
@@ -152,10 +148,10 @@ mod ui_text_table_tests {
 
     #[test]
     fn placeholders_are_substituted_in_both_languages() {
-        let zh = ui_text(true, "tool_completed", &[("tool", "sample_tool")]);
-        let en = ui_text(false, "tool_completed", &[("tool", "sample_tool")]);
-        assert!(zh.contains("sample_tool"), "{zh}");
-        assert!(en.contains("sample_tool"), "{en}");
+        let zh = ui_text(true, "patch_edited", &[("files", "sample.txt"), ("metrics", "")]);
+        let en = ui_text(false, "patch_edited", &[("files", "sample.txt"), ("metrics", "")]);
+        assert!(zh.contains("sample.txt"), "{zh}");
+        assert!(en.contains("sample.txt"), "{en}");
         assert_ne!(zh, en, "the two languages must not collapse to one string");
 
         let zh_count = ui_text(true, "changed_files_count", &[("count", "3")]);

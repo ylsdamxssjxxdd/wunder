@@ -31,6 +31,26 @@ pub(super) fn normalize_edit_args(args: &Value) -> Result<Value, Value> {
         }
         map.remove(alias);
     }
+    // 子命令的「要写进文件的文本」参数名不统一：`create` 用 `file_text`、
+    // `insert` 用 `new_string`，语义却完全相同。模型在两个子命令之间切换时
+    // 极易沿用上一次的参数名，这里按 command 做一次双向补齐，缺哪个就用另一个顶上。
+    let subcommand = map
+        .get("command")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string();
+    if let Some((primary, fallback)) = match subcommand.as_str() {
+        "insert" => Some(("new_string", "file_text")),
+        "create" => Some(("file_text", "new_string")),
+        _ => None,
+    } {
+        if !map.contains_key(primary) {
+            if let Some(value) = map.get(fallback).cloned() {
+                map.insert(primary.to_string(), value);
+            }
+        }
+    }
     for key in [
         "file_path",
         "old_string",

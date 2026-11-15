@@ -315,6 +315,9 @@ export global I18n {
     out property <string> cp_model_empty: zh ? "还没有可用模型。请到「设置 → 模型设置」添加。" : "No models yet. Add one in Settings → Models.";
     out property <string> cp_model_no_match: zh ? "没有匹配的模型" : "No matching model";
     out property <string> cp_model_default_tag: zh ? "默认" : "Default";
+    // 模型行副标题里的上下文量单位：`128K 上下文` / `128K context`。
+    // 云端模型条目的 provider 字段是内部键名 `cloud`，展示成可读文案。
+    out property <string> cp_model_cloud: zh ? "云端模型" : "Cloud model";
     out property <string> cp_model_settings: zh ? "打开模型设置" : "Open model settings";
     out property <string> cp_model_none: zh ? "未选择模型" : "No model selected";
     out property <string> cp_model_setup_hint: zh ? "还没有配置模型，先添加一个模型再开始对话。" : "No model configured yet. Add one to start chatting.";
@@ -1292,7 +1295,8 @@ export global I18n {
     out property <string> tl_md_image_loading: zh ? "图片加载中…" : "Loading image…";
     out property <string> tl_md_image_error: zh ? "图片加载失败 · " : "Image failed to load · ";
     out property <string> tl_stat_round: zh ? "用户轮次" : "User round";
-    public pure function tl_user_round(round: string) -> string { return zh ? "第 " + round + " 个用户轮次" : "User round " + round + ""; }
+    // 轮次只是定位用的坐标，越短越好：`U3` 一眼扫到，不需要整句说明。
+    public pure function tl_user_round(round: string) -> string { return "U" + round; }
     out property <string> tl_stat_credits: zh ? "额度" : "Quota";
     out property <string> tl_stat_speed_hint: zh ? "有效模型输出 token / 生成流式时间；不含等待和工具执行，优先使用本轮已测量的汇总速度。无法可靠测量时显示 -。" : "Measured output tokens per streaming second, excluding wait and tool execution. Uses the turn aggregate when available; - means unavailable.";
     out property <string> tl_stat_context_hint: zh ? "最近一次模型请求观测的上下文占用，不是累计消耗；压缩后重新观测，可能下降。" : "Context occupancy observed for the latest model request, rather than cumulative consumption. It may decrease after compaction.";

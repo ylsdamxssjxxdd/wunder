@@ -20,8 +20,56 @@
 #[path = "welcome_logo_art.rs"]
 mod welcome_logo_art;
 
+use std::sync::OnceLock;
+use std::time::Duration;
+use std::time::Instant;
+
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
+
+/// 启动时欢迎头像从块底升进画面：新行在底部出现，已有的行被顶上去，
+/// 整块高度不变，最先露出来的是头尖。
+///
+/// 约 0.7 s 升到位，之后渲染结果与静止画面逐字节一致，不再排任何帧。
+const REVEAL_DURATION: Duration = Duration::from_millis(680);
+/// 动画期间的刷新节奏，接近一帧一行的观感。结束之后不再安排帧。
+pub(crate) const REVEAL_FRAME: Duration = Duration::from_millis(28);
+
+static REVEAL_START: OnceLock<Instant> = OnceLock::new();
+
+/// 开始计时。首帧之前调用一次，重复调用无副作用（线程切换不会重播）。
+pub(crate) fn start_reveal() {
+    REVEAL_START.get_or_init(Instant::now);
+}
+
+/// 动画是否还在进行；结束后调用方停止为此排帧。
+pub(crate) fn reveal_active() -> bool {
+    reveal_frame().is_some()
+}
+
+/// 动画帧号，静止画面时为 `None`。
+///
+/// 头像的相位是画出来的，不在转录的缓存键里，所以整帧复用会把画面冻在首帧
+/// （和呼吸点、进度条那类随帧变化的样式同一个坑）。转录缓存拿这个值当键的
+/// 一部分：动画期间每换一帧重建一次，停下来的那一帧正好是 `None`，重建出
+/// 静止画面并就此稳定。
+pub(crate) fn reveal_frame() -> Option<u64> {
+    let elapsed = reveal_elapsed()?;
+    Some(elapsed.as_millis() as u64 / REVEAL_FRAME.as_millis().max(1) as u64)
+}
+
+/// 归一化进度 `0.0..1.0`；计时未开始或已经结束都是 `None`（= 静止画面）。
+fn reveal_phase() -> Option<f32> {
+    let elapsed = reveal_elapsed()?;
+    Some(elapsed.as_secs_f32() / REVEAL_DURATION.as_secs_f32())
+}
+
+/// 动画已经跑了多久；没开始或跑完了都是 `None`。
+fn reveal_elapsed() -> Option<Duration> {
+    let started = REVEAL_START.get()?;
+    let elapsed = started.elapsed();
+    (elapsed < REVEAL_DURATION).then_some(elapsed)
+}
 
 /// Below this many columns the art is dropped instead of being squeezed.
 const MIN_COLUMNS: u16 = 24;
@@ -67,7 +115,7 @@ const CELL_SIZE_POLL_SLICE: std::time::Duration = std::time::Duration::from_mill
 /// degrades to the text header instead of painting a smeared blob.
 pub(crate) fn logo_lines_for_cell(columns: u16, cell_aspect: f32) -> Vec<Line<'static>> {
     match fit(columns, cell_aspect) {
-        Some((width, rows)) => render(width, rows, colours_enabled()),
+        Some((width, rows)) => render(width, rows, colours_enabled(), reveal_phase()),
         None => Vec::new(),
     }
 }
@@ -396,15 +444,25 @@ fn max(left: u16, right: u16) -> u16 {
     }
 }
 
-fn render(width: u16, rows: u16, colours: bool) -> Vec<Line<'static>> {
-    let mut lines = Vec::with_capacity(usize::from(rows));
-    for row in 0..usize::from(rows) {
+/// `phase` 为 `None` 时画静止的头像；`Some(0.0..1.0)` 让头像从块底升上来。
+///
+/// 整块高度从头到尾就是 `rows`，一帧里只画出已经升进画面的那一截，缺的行在
+/// 它上面留空。于是新行出现在最下面、已有的行被顶上去，头尖先露头，再逐渐
+/// 看全；块高不变，正文和输入框不会跟着上下跳。
+fn render(width: u16, rows: u16, colours: bool, phase: Option<f32>) -> Vec<Line<'static>> {
+    let row_count = usize::from(rows);
+    let visible = match phase {
+        Some(phase) => reveal_rows(row_count, phase),
+        None => row_count,
+    };
+    let mut lines = vec![Line::default(); row_count.saturating_sub(visible)];
+    for row in 0..visible {
         let mut spans = Vec::with_capacity(usize::from(width));
         for column in 0..usize::from(width) {
             let source_x = column * welcome_logo_art::SOURCE_WIDTH / usize::from(width);
-            let source_y_top = row * welcome_logo_art::SOURCE_HEIGHT / usize::from(rows);
+            let source_y_top = row * welcome_logo_art::SOURCE_HEIGHT / row_count;
             let source_y_bottom =
-                ((row + 1) * welcome_logo_art::SOURCE_HEIGHT / usize::from(rows)).saturating_sub(1);
+                ((row + 1) * welcome_logo_art::SOURCE_HEIGHT / row_count).saturating_sub(1);
             let top = shade(source_x, source_y_top);
             let bottom = shade(source_x, source_y_bottom);
             spans.push(cell(top, bottom, colours));
@@ -412,6 +470,16 @@ fn render(width: u16, rows: u16, colours: bool) -> Vec<Line<'static>> {
         lines.push(Line::from(spans));
     }
     lines
+}
+
+/// 指定进度下已经升进画面的行数：起点只露头尖一行，终点是整幅。
+fn reveal_rows(rows: usize, phase: f32) -> usize {
+    if rows == 0 {
+        return 0;
+    }
+    let steps = rows.saturating_sub(1) as f32;
+    let grown = (phase.clamp(0.0, 1.0) * steps).round() as usize;
+    (grown + 1).min(rows)
 }
 
 fn cell(top: Option<u8>, bottom: Option<u8>, colours: bool) -> Span<'static> {
@@ -627,7 +695,7 @@ mod tests {
 
     #[test]
     fn transparent_cells_paint_nothing() {
-        let lines = render(40, 17, true);
+        let lines = render(40, 17, true, None);
         let painted = lines
             .iter()
             .flat_map(|line| line.spans.iter())
@@ -636,9 +704,69 @@ mod tests {
         assert!(painted > 100, "the head should cover a real area");
     }
 
+    /// 从块底升起来：整块高度不变，新行在底部出现，旧行被顶上去。
+    #[test]
+    fn the_head_rises_with_the_tip_leading() {
+        let rows = 17u16;
+        let settled = render(40, rows, true, None);
+        let mut previous = 0usize;
+        for step in 0..=10 {
+            let phase = step as f32 / 10.0;
+            let frame = render(40, rows, true, Some(phase));
+            assert_eq!(frame.len(), usize::from(rows), "整块高度不变，正文不跟着跳");
+            let visible = reveal_rows(usize::from(rows), phase);
+            assert!(visible >= previous, "已经露出来的行不会再退回去");
+            assert!(visible <= usize::from(rows));
+            previous = visible;
+            // 没升上来的行留在上面且是空的；露出来的那一截贴着块底，
+            // 并且与终态逐字节一致。
+            for line in &frame[..usize::from(rows) - visible] {
+                assert_eq!(line.width(), 0, "还没升上来的行是空的");
+            }
+            assert_same_rows(&frame[usize::from(rows) - visible..], &settled[..visible]);
+        }
+        assert_eq!(previous, usize::from(rows));
+    }
+
+    /// 起点只有头尖一行，它贴在块底；之后整幅往上浮，头尖先露头再看全。
+    #[test]
+    fn the_first_visible_row_is_the_tip_of_the_head() {
+        let rows = 17u16;
+        let settled = render(40, rows, true, None);
+        let first = render(40, rows, true, Some(0.0));
+        assert_eq!(first.len(), usize::from(rows));
+        for line in &first[..usize::from(rows) - 1] {
+            assert_eq!(line.width(), 0, "头尖上面全是空的");
+        }
+        let tip = &first[usize::from(rows) - 1];
+        assert!(tip.width() > 0, "the tip is painted");
+        assert_same_rows(std::slice::from_ref(tip), &settled[..1]);
+        assert_eq!(reveal_rows(usize::from(rows), 0.0), 1);
+        assert_eq!(reveal_rows(usize::from(rows), 1.0), usize::from(rows));
+    }
+
+    /// 动画停下来的那一帧必须就是静止画面，否则欢迎块会抖一下。
+    #[test]
+    fn the_settled_frame_is_the_still_picture() {
+        let settled = render(40, 17, true, None);
+        assert_same_rows(&render(40, 17, true, Some(1.0)), &settled);
+    }
+
+    fn assert_same_rows(left: &[Line<'static>], right: &[Line<'static>]) {
+        assert_eq!(left.len(), right.len());
+        for (left, right) in left.iter().zip(right) {
+            assert_eq!(left.width(), right.width());
+            assert_eq!(left.spans.len(), right.spans.len());
+            for (left, right) in left.spans.iter().zip(&right.spans) {
+                assert_eq!(left.content, right.content);
+                assert_eq!(left.style, right.style);
+            }
+        }
+    }
+
     #[test]
     fn the_no_colour_ramp_never_emits_escape_styling() {
-        let lines = render(40, 17, false);
+        let lines = render(40, 17, false, None);
         for line in lines {
             for span in line.spans {
                 assert!(span.style.fg.is_none() && span.style.bg.is_none());

@@ -186,6 +186,12 @@ async fn run_loop(
         sync_mouse_mode(terminal, app, &mut mouse_capture_enabled)?;
         app.tick_transcript_selection_autoscroll();
 
+        if first_frame_pending {
+            // The welcome head grows while the first screens are painted, so the
+            // clock starts here rather than when the app object was built: any
+            // slow startup work before this point must not eat the animation.
+            crate::empty_state_animation::start_reveal();
+        }
         render_frame(terminal, app)?;
         if first_frame_pending {
             first_frame_pending = false;

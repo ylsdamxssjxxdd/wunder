@@ -3,6 +3,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 
+use crate::tui::activity_indicator;
 use crate::tui::app::TuiApp;
 use crate::tui::text_tabs;
 use crate::tui::theme;
@@ -14,6 +15,9 @@ pub(crate) fn draw(frame: &mut Frame, area: Rect, viewport: Rect, app: &mut TuiA
     // needs one Vec clone to own the lines it is about to mark; a drag no longer
     // re-projects the whole window on every pointer event.
     let mut lines: Vec<Line<'static>> = rendered.lines.as_ref().clone();
+    // A running card's dot is a live glyph: the cache is keyed on content, so the
+    // breathing colour has to be applied per frame rather than at build time.
+    activity_indicator::paint_pending_dots(lines.as_mut_slice());
     // Order matters and is the priority: a search mark is painted first and the pointer
     // selection after it, so where both reach the same text the reader copies what they see
     // marked as selected. A mark is paint only; the selection is the clipboard.
@@ -31,11 +35,13 @@ pub(crate) fn draw_view(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh: 
         .split(area);
     let body_height = chunks[1].height;
 
-    let lines = app
+    let mut lines = app
         .transcript_view_frame(chunks[1].width, body_height)
         .iter()
         .map(text_tabs::expand_line)
         .collect::<Vec<_>>();
+    // The reader view owns its own cache as well, so it paints the running dot live too.
+    activity_indicator::paint_pending_dots(lines.as_mut_slice());
     let status = app.transcript_view_status(chunks[1].width);
     frame.render_widget(
         Paragraph::new(Text::from(view_status_line(status, is_zh))),

@@ -145,18 +145,29 @@ pub fn install(app: &MainWindow) {
         while model.row_count() >= MAX_TURNS * 2 {
             model.remove(0);
         }
-        model.push(fixture_row(
-            crate::timeline::KIND_USER,
-            model.row_count(),
-            text,
-        ));
+        let round = model
+            .iter()
+            .filter(|row| row.kind == crate::timeline::KIND_USER)
+            .count() as i32
+            + 1;
+        let mut user_row = fixture_row(crate::timeline::KIND_USER, model.row_count(), text);
+        user_row.user_round = round;
+        model.push(user_row);
         let reply =
             format!("已收到「{text}」。这是一条本地演示回复，可以继续检查条目展开与滚动效果。");
         let mut body = fixture_row(crate::timeline::KIND_BODY, model.row_count(), &reply);
         body.foldable = true;
         model.push(body);
         let mut footer = fixture_row(crate::timeline::KIND_FOOTER, model.row_count(), &reply);
-        footer.stats = demo_stats("3.6s", "51.0 token/s", "6.1k", "812", "");
+        footer.user_round = round;
+        footer.stats = demo_stats(
+            &round.to_string(),
+            "3.6s",
+            "51.0 token/s",
+            "6.1k",
+            "812",
+            "",
+        );
         let group = model.row_count() as i32;
         let mut bar = fixture_row(
             crate::timeline::KIND_GROUP,
@@ -548,6 +559,7 @@ fn demo_last_answer(model: &Rc<VecModel<TimelineRow>>) -> String {
 /// The preview's metric row: same five metrics, same icon keys, same order the
 /// live and reloaded rows produce.
 fn demo_stats(
+    round: &str,
     duration: &str,
     speed: &str,
     context: &str,
@@ -555,7 +567,7 @@ fn demo_stats(
     tools: &str,
 ) -> slint::ModelRc<crate::TurnStatMetric> {
     let entries = [
-        ("hashtag", "1"),
+        ("hashtag", round),
         ("stopwatch", duration),
         ("gauge-high", speed),
         ("layer-group", context),
@@ -654,7 +666,8 @@ fn demo_timeline() -> Vec<TimelineRow> {
         },
     ];
     let mut footer = fixture_row(crate::timeline::KIND_FOOTER, rows.len(), &rows[1].text);
-    footer.stats = demo_stats("8.2s", "42.5 token/s", "8.4k", "1.2k", "2");
+    footer.user_round = 1;
+    footer.stats = demo_stats("1", "8.2s", "42.5 token/s", "8.4k", "1.2k", "2");
     rows.push(footer);
     rows.push(fixture_row(
         crate::timeline::KIND_USER,
@@ -750,10 +763,19 @@ fn demo_timeline() -> Vec<TimelineRow> {
     );
     answer.foldable = true;
     let mut footer = fixture_row(crate::timeline::KIND_FOOTER, rows.len() + 1, &answer.text);
-    footer.stats = demo_stats("12.4s", "68234.0 token/s", "12.3k", "4.1k", "3");
+    footer.user_round = 2;
+    footer.stats = demo_stats("2", "12.4s", "68234.0 token/s", "12.3k", "4.1k", "3");
     rows.push(answer);
     rows.push(footer);
     crate::timeline_text::process_models(&mut rows);
+    // 演示行与生产行同形：用户气泡自己带轮次边界，footer 的 fork 用同一编号。
+    let mut round = 0;
+    for row in rows.iter_mut() {
+        if row.kind == crate::timeline::KIND_USER {
+            round += 1;
+            row.user_round = round;
+        }
+    }
     rows
 }
 

@@ -58,7 +58,7 @@ fn event_payload(data: &Value) -> &Value {
 
 /// A tool result is a failure when its payload says so at any of the levels the
 /// engine nests it in.
-fn tool_result_failed(payload: &Value) -> bool {
+pub(crate) fn tool_result_failed(payload: &Value) -> bool {
     let result = payload.get("result").unwrap_or(payload);
     let ok = result
         .get("ok")
@@ -1157,7 +1157,7 @@ pub(crate) fn tool_target_preview(payload: &Value, data: &Value) -> Option<Strin
         })
 }
 
-fn format_execute_command_result_lines(tool: &str, result: &Value, is_zh: bool) -> Vec<String> {
+fn format_execute_command_result_lines(tool: &str, result: &Value) -> Vec<String> {
     let data = result.get("data").unwrap_or(result);
     let Some(first) = data
         .get("results")
@@ -1177,11 +1177,12 @@ fn format_execute_command_result_lines(tool: &str, result: &Value, is_zh: bool) 
         result.get("meta").and_then(|meta| meta.get("exit_code")),
     ));
     let duration_ms = number_value(result.get("meta").and_then(|meta| meta.get("duration_ms")));
-    let tool_is_zh = is_zh;
+    // A finished command row names the tool and its numbers; the state is carried by the
+    // bullet, or by the ✘ that marks a nonzero exit.
     let header = if returncode != 0 {
-        crate::locale::ui_text(tool_is_zh, "tool_failed", &[("tool", tool)])
+        format!("✘ {tool}")
     } else {
-        crate::locale::ui_text(tool_is_zh, "tool_completed", &[("tool", tool)])
+        format!("• {tool}")
     };
     let mut metrics = Vec::new();
     metrics.push(format!("exit={returncode}"));
@@ -1407,7 +1408,7 @@ fn format_generic_tool_result_lines(tool: &str, payload: &Value, is_zh: bool) ->
         .and_then(|value| value.get("repair"))
         .or_else(|| payload.get("repair"));
     if is_execute_command_tool_name(tool) {
-        let mut lines = format_execute_command_result_lines(tool, result, is_zh);
+        let mut lines = format_execute_command_result_lines(tool, result);
         if !lines.is_empty() {
             if let Some(badge) = repair.and_then(format_repair_badge) {
                 if let Some(header) = lines.first_mut() {
@@ -1426,9 +1427,9 @@ fn format_generic_tool_result_lines(tool: &str, payload: &Value, is_zh: bool) ->
 
     let tool_is_zh = is_zh;
     let mut header = if ok == Some(false) {
-        crate::locale::ui_text(tool_is_zh, "tool_failed", &[("tool", tool)])
+        format!("✘ {tool}")
     } else {
-        crate::locale::ui_text(tool_is_zh, "tool_completed", &[("tool", tool)])
+        format!("• {tool}")
     };
     if let Some(badge) = repair.and_then(format_repair_badge) {
         header.push(' ');
@@ -1615,45 +1616,29 @@ mod tests {
         assert_ne!(zh[0], en[0], "one header must not serve both languages");
     }
 
+    /// Two glyphs and no words: a landed call is a bullet, a failed one is the cross the
+    /// error line already uses. Neither language has its own sentence for it.
     #[test]
-    fn tool_result_headers_follow_the_display_language() {
+    fn a_tool_result_head_marks_the_state_with_a_glyph_not_a_word() {
         let done = serde_json::json!({ "result": { "ok": true } });
         let failed = serde_json::json!({ "result": { "ok": false } });
         for is_zh in [true, false] {
             let lines = format_generic_tool_result_lines("sample_tool", &done, is_zh);
-            assert_eq!(
-                lines[0],
-                crate::locale::ui_text(is_zh, "tool_completed", &[("tool", "sample_tool")]),
-                "{lines:?}"
-            );
+            assert_eq!(lines[0], "• sample_tool", "{lines:?}");
             let lines = format_generic_tool_result_lines("sample_tool", &failed, is_zh);
-            assert_eq!(
-                lines[0],
-                crate::locale::ui_text(is_zh, "tool_failed", &[("tool", "sample_tool")]),
-                "{lines:?}"
-            );
+            assert_eq!(lines[0], "✘ sample_tool", "{lines:?}");
         }
-        assert_ne!(
-            format_generic_tool_result_lines("sample_tool", &done, true)[0],
-            format_generic_tool_result_lines("sample_tool", &done, false)[0]
-        );
     }
 
     #[test]
-    fn command_result_headers_follow_the_display_language() {
+    fn a_command_result_head_keeps_the_exit_code_beside_the_glyph() {
         let payload = serde_json::json!({
             "results": [{ "command": "python3 demo.py", "returncode": 1 }]
         });
         for is_zh in [true, false] {
-            let lines = format_execute_command_result_lines("sample_tool", &payload, is_zh);
-            assert_eq!(
-                lines[0],
-                format!(
-                    "{} (exit=1)",
-                    crate::locale::ui_text(is_zh, "tool_failed", &[("tool", "sample_tool")])
-                ),
-                "{lines:?}"
-            );
+            let lines = format_execute_command_result_lines("sample_tool", &payload);
+            assert_eq!(lines[0], "✘ sample_tool (exit=1)", "{lines:?}");
+            let _ = is_zh;
         }
     }
 

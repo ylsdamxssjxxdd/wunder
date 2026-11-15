@@ -18,6 +18,8 @@ use crate::tui::activity_indicator;
 use crate::tui::app::TuiApp;
 use crate::tui::text_tabs;
 use crate::tui::theme;
+use crate::tui::ui::layout::padded_columns;
+use crate::tui::ui::layout::CONTENT_GUTTER_COLS;
 
 const INPUT_PROMPT: &str = "› ";
 
@@ -86,13 +88,13 @@ pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh:
         .split(area);
     let mut next = 0usize;
     if let Some(text) = cloud.as_ref() {
-        let cloud_area = sections[next];
+        let cloud_area = padded_columns(sections[next]);
         next += 1;
         let cloud_line = Line::from(Span::styled(text.clone(), theme::warning_text()));
         frame.render_widget(Paragraph::new(cloud_line), cloud_area);
     }
     if let Some((count, hint)) = warning.as_ref() {
-        let warning_area = sections[next];
+        let warning_area = padded_columns(sections[next]);
         next += 1;
         let notice_line = Line::from(vec![
             Span::styled(count.clone(), theme::warning_text()),
@@ -101,19 +103,22 @@ pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh:
         frame.render_widget(Paragraph::new(notice_line), warning_area);
     }
     if let Some(gap_line) = gap {
-        let gap_area = sections[next];
+        let gap_area = padded_columns(sections[next]);
         next += 1;
         render_gap(frame, app, gap_area, gap_line);
     } else {
         // A hidden control owns nothing: an empty rectangle answers every pointer.
         app.set_gap_hit_area(Rect::default());
     }
-    let (band, footer_area) = (sections[next], sections[next + 1]);
+    let (band, footer_area) = (sections[next], padded_columns(sections[next + 1]));
     frame.render_widget(Block::default().style(theme::composer_surface()), band);
+    // The band is full-bleed, so its own text keeps the same gutter the transcript column
+    // uses: the prompt, the draft and every card share one left margin.
     let input_area = Rect::new(
-        band.x.saturating_add(1),
+        band.x.saturating_add(CONTENT_GUTTER_COLS),
         band.y.saturating_add(1),
-        band.width.saturating_sub(2),
+        band.width
+            .saturating_sub(CONTENT_GUTTER_COLS.saturating_mul(2)),
         band.height
             .saturating_sub(2)
             .max(u16::from(band.height > 0)),

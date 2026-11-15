@@ -248,3 +248,36 @@ async fn no_op_edits_leave_workspace_version_unchanged() {
     }
     assert_eq!(fixture.read("sample.txt"), "alpha\n");
 }
+
+/// `create` 的正文参数是 `file_text`、`insert` 的是 `new_string`，两者语义相同。
+/// 模型在两个子命令之间切换时沿用上一个参数名不应被判为缺参。
+#[tokio::test]
+async fn subcommand_text_param_names_are_interchangeable() {
+    let fixture = Fixture::new();
+    fixture.write("sample.txt", "alpha\nbeta\n");
+    let inserted = fixture
+        .call(json!({"command":"insert", "file_path":"sample.txt", "insert_line":1, "file_text":"middle\n"}))
+        .await;
+    assert_ok(&inserted);
+    assert_eq!(fixture.read("sample.txt"), "alpha\nmiddle\nbeta\n");
+    let created = fixture
+        .call(json!({"command":"create", "file_path":"new.txt", "new_string":"body\n"}))
+        .await;
+    assert_ok(&created);
+    assert_eq!(fixture.read("new.txt"), "body\n");
+}
+
+/// 缺参提示要指出同义别名，否则模型只会重复同一个错误调用。
+#[tokio::test]
+async fn missing_subcommand_text_param_names_the_accepted_aliases() {
+    let fixture = Fixture::new();
+    fixture.write("sample.txt", "alpha\n");
+    let missing = fixture
+        .call(json!({"command":"insert", "file_path":"sample.txt", "insert_line":1}))
+        .await;
+    assert_eq!(missing["error_meta"]["code"], "TOOL_SRE_MISSING_PARAM");
+    let hint = missing["error_meta"]["hint"].as_str().unwrap_or_default();
+    assert!(hint.contains("file_text"), "{hint}");
+    let error = missing["error"].as_str().unwrap_or_default();
+    assert!(error.contains("command=insert"), "{error}");
+}

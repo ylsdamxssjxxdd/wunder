@@ -306,6 +306,15 @@ component UserBubble inherits Rectangle {
                 text: root.data.time; color: Theme.muted; font-size: Theme.font-xs;
                 height: 22px; vertical-alignment: center;
             }
+            // The turn boundary is a property of the message the reader is
+            // looking at, so it sits with the send time instead of in the
+            // assistant footer. Rounds below 1 are not yet known (a live send
+            // before the server assigns one), so the label stays absent.
+            if root.data.user-round > 0 : Text {
+                text: I18n.tl_user_round("" + root.data.user-round);
+                color: Theme.muted; font-size: Theme.font-xs;
+                height: 22px; vertical-alignment: center;
+            }
             copy-button := Rectangle {
                 width: 22px; height: 22px; border-radius: Theme.radius-tag;
                 accessible-role: button; accessible-label: I18n.common_copy;

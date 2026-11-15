@@ -1858,19 +1858,17 @@ pub(super) fn format_tool_result_lines(tool: &str, payload: &Value, is_zh: bool)
     }
     let result = extract_tool_result_object(payload);
     if is_execute_command_tool_name(tool) {
-        let lines = format_execute_command_result_lines(tool, result, is_zh);
+        let lines = format_execute_command_result_lines(tool, result);
         if !lines.is_empty() {
             return lines;
         }
     }
 
-    let ok = result.get("ok").and_then(Value::as_bool);
     let tool_is_zh = is_zh;
-    let mut lines = vec![if ok == Some(false) {
-        crate::locale::ui_text(tool_is_zh, "tool_failed", &[("tool", tool)])
-    } else {
-        crate::locale::ui_text(tool_is_zh, "tool_completed", &[("tool", tool)])
-    }];
+    // The head names the tool and nothing else: whether the call landed is the entry's own
+    // icon and colour — the caller pushes a failed head as an error cell — so the card does
+    // not repeat "已完成 / completed" in front of every tool name.
+    let mut lines = vec![tool.to_string()];
     if let Some(error) = result
         .get("error")
         .and_then(Value::as_str)
@@ -1907,11 +1905,7 @@ pub(super) fn format_tool_result_lines(tool: &str, payload: &Value, is_zh: bool)
     lines
 }
 
-pub(super) fn format_execute_command_result_lines(
-    tool: &str,
-    result: &Value,
-    is_zh: bool,
-) -> Vec<String> {
+pub(super) fn format_execute_command_result_lines(tool: &str, result: &Value) -> Vec<String> {
     let data = result.get("data").unwrap_or(result);
     let Some(first) = data
         .get("results")
@@ -1931,12 +1925,7 @@ pub(super) fn format_execute_command_result_lines(
         .or_else(|| value_as_i64(result.get("meta").and_then(|meta| meta.get("exit_code"))));
     let duration_ms = value_as_i64(result.get("meta").and_then(|meta| meta.get("duration_ms")));
 
-    let tool_is_zh = is_zh;
-    let header = if matches!(returncode, Some(code) if code != 0) {
-        crate::locale::ui_text(tool_is_zh, "tool_failed", &[("tool", tool)])
-    } else {
-        crate::locale::ui_text(tool_is_zh, "tool_completed", &[("tool", tool)])
-    };
+    let header = tool.to_string();
     let mut metrics = Vec::new();
     if let Some(returncode) = returncode {
         metrics.push(format!("exit={returncode}"));
@@ -2378,28 +2367,18 @@ mod tool_line_language_tests {
         crate::locale::ui_text(is_zh, key, args)
     }
 
+    /// The head names the tool and never its state: landed or failed is the entry's icon
+    /// and colour, so the same word serves both languages and both outcomes.
     #[test]
-    fn tool_result_headers_follow_the_display_language() {
+    fn a_tool_result_head_names_the_tool_and_leaves_the_state_to_the_icon() {
         let done = serde_json::json!({ "result": { "ok": true } });
         let failed = serde_json::json!({ "result": { "ok": false } });
         for is_zh in [true, false] {
-            let lines = format_tool_result_lines("sample_tool", &done, is_zh);
-            assert_eq!(
-                lines[0],
-                expected("tool_completed", is_zh, &[("tool", "sample_tool")]),
-                "{lines:?}"
-            );
-            let lines = format_tool_result_lines("sample_tool", &failed, is_zh);
-            assert_eq!(
-                lines[0],
-                expected("tool_failed", is_zh, &[("tool", "sample_tool")]),
-                "{lines:?}"
-            );
+            for payload in [&done, &failed] {
+                let lines = format_tool_result_lines("sample_tool", payload, is_zh);
+                assert_eq!(lines[0], "sample_tool", "{lines:?}");
+            }
         }
-        assert_ne!(
-            format_tool_result_lines("sample_tool", &done, true)[0],
-            format_tool_result_lines("sample_tool", &done, false)[0]
-        );
     }
 
     #[test]
@@ -2430,21 +2409,14 @@ mod tool_line_language_tests {
     }
 
     #[test]
-    fn command_result_headers_follow_the_display_language() {
+    fn command_result_headers_name_the_tool_and_keep_the_numbers() {
         let result = serde_json::json!({
             "data": { "results": [{ "command": "python3 demo.py", "returncode": 0 }] }
         });
-        for is_zh in [true, false] {
-            let lines = format_execute_command_result_lines("sample_tool", &result, is_zh);
-            assert_eq!(
-                lines[0],
-                format!(
-                    "{} (exit=0)",
-                    expected("tool_completed", is_zh, &[("tool", "sample_tool")])
-                ),
-                "{lines:?}"
-            );
-        }
+        // One head for both languages: the tool and its numbers, with the state left to
+        // the cell's icon and colour.
+        let lines = format_execute_command_result_lines("sample_tool", &result);
+        assert_eq!(lines[0], "sample_tool (exit=0)", "{lines:?}");
     }
 
     #[test]

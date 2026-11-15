@@ -81,11 +81,21 @@ fn success(action: &str, summary: &str, data: Value) -> Value {
 }
 
 fn missing_param(key: &str, command: &str) -> Value {
+    // 缺参提示直接给出可照做的补救动作：同一语义的文本参数在不同子命令里名字
+    // 不同，只说「缺 new_string」会让模型按自己的猜测反复重试。
+    let hint = match (command, key) {
+        ("insert", "insert_line") => {
+            "insert 需要整数 insert_line：0 表示文件开头，N 表示插到第 N 行之后。"
+        }
+        ("insert", "new_string") => "insert 需要要写入的文本 new_string（别名 file_text 亦可）。",
+        ("create", "file_text") => "create 需要文件内容 file_text（别名 new_string 亦可）。",
+        _ => "补充必需参数后重试。",
+    };
     editor_failure(
-        &format!("Parameter `{key}` is required for command: {command}"),
-        json!({ "missing": key }),
+        &format!("缺少参数「{}」（command={command}）。", key),
+        json!({ "missing": key, "command": command }),
         "TOOL_SRE_MISSING_PARAM",
-        "补充必需参数后重试。",
+        hint,
     )
 }
 

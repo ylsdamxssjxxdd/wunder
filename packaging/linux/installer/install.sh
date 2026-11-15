@@ -278,7 +278,8 @@ for existing in "$HOME_DIR/app/desktop" "$HOME_DIR/bin/wunder-cli"; do
 done
 
 # 已有安装直接原地升级：只替换程序文件与本次组件目录，用户数据不参与。
-printf '\n心舰 Wunder %s · %s\n安装到 %s\n' "$VERSION" "$ARCH" "$HOME_DIR"
+# 版本与架构已由开场画面上报，这里只说明装到哪。
+printf '\n安装到 %s\n' "$HOME_DIR"
 if [ -f "$HOME_DIR/bin/install-manifest.txt" ]; then
   printf '检测到已有安装，升级程序文件与组件目录（配置、会话、工作区保留）。\n'
 fi
@@ -508,6 +509,7 @@ progress_stage 100 "安装完成"
 progress_done
 
 printf '\n完成。\n\n'
+printf '  版本   %s · linux-%s\n' "$VERSION" "$ARCH"
 printf '  桌面版     %s\n' "$HOME_DIR/bin/wunder-desktop"
 printf '  命令行   %s\n' "$HOME_DIR/bin/wunder-cli"
 if [ "$count" -gt 0 ]; then

@@ -2635,16 +2635,36 @@ pub(super) struct FileWriteChange {
 /// * `dry_run`、diff 不可用或缺少判定字段时返回 `None`：无法判定就不能断言
 ///   「没变」，调用方保留原有计数口径。
 pub(super) fn file_write_change(data: &Value) -> Option<FileWriteChange> {
+    file_write_change_impl(data, false)
+}
+
+/// `dry_run` 预览的「真跑一次会改什么」。
+///
+/// 预览从未写盘，所以不能把预览结果当成已发生的事实（[`file_write_change`]
+/// 对 `dry_run` 返回 `None` 正是这个原因）；但预览要回答的恰恰是「若执行会改
+/// 多少」，因此复用同一套计数口径。编辑类的替换/插入结果不带 `existed`，此时
+/// 按 diff 计数判定。
+pub(super) fn file_write_would_change(data: &Value) -> Option<FileWriteChange> {
+    file_write_change_impl(data, true)
+}
+
+fn file_write_change_impl(data: &Value, preview: bool) -> Option<FileWriteChange> {
     let map = model_tool_result_data_map(data)?;
     let path = map.get("path").and_then(Value::as_str)?.to_string();
-    if map.get("dry_run").and_then(Value::as_bool) == Some(true) {
+    if !preview && map.get("dry_run").and_then(Value::as_bool) == Some(true) {
         return None;
     }
-    let existed = map.get("existed").and_then(Value::as_bool)?;
+    let existed = map.get("existed").and_then(Value::as_bool);
+    if existed.is_none() && !preview {
+        return None;
+    }
     let has_counts = ["added_lines", "deleted_lines", "hunks_applied"]
         .iter()
         .any(|key| map.get(*key).and_then(Value::as_u64).is_some());
-    if existed && (!has_counts || map.get("diff_unavailable").is_some()) {
+    if existed == Some(true) && (!has_counts || map.get("diff_unavailable").is_some()) {
+        return None;
+    }
+    if !has_counts && existed.is_none() {
         return None;
     }
     let added_lines = map.get("added_lines").and_then(Value::as_u64).unwrap_or(0);
@@ -2658,7 +2678,7 @@ pub(super) fn file_write_change(data: &Value) -> Option<FileWriteChange> {
         .unwrap_or(0);
     Some(FileWriteChange {
         path,
-        changed: !existed || added_lines > 0 || deleted_lines > 0 || hunks > 0,
+        changed: existed == Some(false) || added_lines > 0 || deleted_lines > 0 || hunks > 0,
         added_lines,
         deleted_lines,
         hunks,
@@ -2693,7 +2713,20 @@ fn project_file_write_success(data: &Value) -> Option<Value> {
             "hunks_applied",
         ],
     );
-    if !projected.contains_key("changed") {
+    let dry_run = map.get("dry_run").and_then(Value::as_bool) == Some(true);
+    if dry_run {
+        // 预览从未写盘：`changed` 只能表示「磁盘已变」，因此恒为 false。
+        // 「若执行会不会改动」单独用 `would_change` 表达，并把 `changed_files`
+        // 同步改名为 `would_change_files`，避免模型看见 changed:false 却带着
+        // changed_files:1 自相矛盾，进而把预览当成已经写入完成。
+        projected.insert("changed".to_string(), Value::Bool(false));
+        if let Some(files) = projected.remove("changed_files") {
+            projected.insert("would_change_files".to_string(), files);
+        }
+        if let Some(would) = file_write_would_change(data).map(|change| change.changed) {
+            projected.insert("would_change".to_string(), Value::Bool(would));
+        }
+    } else if !projected.contains_key("changed") {
         // `changed_files` 只统计「碰了哪些文件」，覆盖写同内容也会是 1，不能
         // 拿来判断是否真的改动了内容。
         let changed = file_write_change(data)
@@ -2706,9 +2739,7 @@ fn project_file_write_success(data: &Value) -> Option<Value> {
             .unwrap_or(true);
         projected.insert("changed".to_string(), Value::Bool(changed));
     }
-    if projected.get("changed").and_then(Value::as_bool) == Some(false)
-        && map.get("dry_run").and_then(Value::as_bool) != Some(true)
-    {
+    if !dry_run && projected.get("changed").and_then(Value::as_bool) == Some(false) {
         projected.insert("no_op".to_string(), Value::Bool(true));
         projected.insert(
             "notice".to_string(),

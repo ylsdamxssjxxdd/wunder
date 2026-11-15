@@ -224,9 +224,10 @@ component ModelPicker inherits Rectangle {
                         source: @image-url("../assets/icons/check.svg");
                         colorize: Theme.accent-ink; image-fit: contain;
                     }
+                    // 模型行与触发器的图标保持一致：模型是「大脑」，不是机器人。
                     Image {
                         x: 26px; y: 13px; width: 14px; height: 14px;
-                        source: @image-url("../assets/icons/robot.svg");
+                        source: @image-url("../assets/icons/brain.svg");
                         colorize: cloud-muted ? Theme.border : (model.key == root.current-key ? Theme.accent-ink : Theme.muted);
                         image-fit: contain;
                     }
@@ -239,7 +240,17 @@ component ModelPicker inherits Rectangle {
                     }
                     Text {
                         x: 48px; y: 21px; width: parent.width - 122px; height: 15px;
-                        text: cloud-muted ? I18n.st_cl_login_needed : model.provider + (model.model-type != "" ? " · " + model.model-type : "");
+                        // 模型类型（llm）对选模型没有信息量，副标题改为最大上下文量：
+                        // 1024 的整数倍按 K 精确换算（32768 → 32K），否则按千位
+                        // 近似（128000 → 128K），与厂商文案一致。「K」本身已是
+                        // 上下文的通用单位，不再追加任何说明词。
+                        property <float> max-ctx: model.max-context.to-float();
+                        property <string> provider-label: model.provider == "cloud" ? I18n.cp_model_cloud : model.provider;
+                        text: cloud-muted ? I18n.st_cl_login_needed
+                            : max-ctx <= 0 ? provider-label
+                            : provider-label + " · "
+                                + (mod(max-ctx, 1024) == 0 ? round(max-ctx / 1024) : round(max-ctx / 1000))
+                                + "K";
                         color: Theme.muted; font-size: Theme.font-xs;
                         vertical-alignment: center; overflow: elide;
                     }

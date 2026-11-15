@@ -204,6 +204,9 @@ struct TranscriptRenderCache {
     archived_entries: usize,
     log_entries: usize,
     raw_output: bool,
+    /// 欢迎头像升起动画的帧号，静止时为 `None`。相位是画出来的而不是转录内容
+    /// 的一部分，所以必须进键：否则动画期间整帧复用，头像冻在首帧。
+    reveal_frame: Option<u64>,
     /// Logical text (tabs intact): what copying, word picks and URL hits read.
     lines: Arc<Vec<Line<'static>>>,
     /// The same lines after eight-column tab projection: what the frame paints.
@@ -671,6 +674,11 @@ pub struct TuiApp {
     popup_recents: Vec<String>,
     popup_selected_index: usize,
     popup_signature: String,
+    /// Wall clock of the running turn, started the moment the prompt is submitted.
+    /// The status clock reads this one: a turn spends most of its life in tools and
+    /// approval waits, and a counter that only advances during model calls freezes
+    /// for the reader and reports less time than the turn actually took.
+    turn_started_at: Option<Instant>,
     turn_llm_started_at: Option<Instant>,
     turn_llm_active_secs: f64,
     turn_output_tokens: u64,
@@ -898,6 +906,7 @@ impl TuiApp {
             popup_recents: Vec::new(),
             popup_selected_index: 0,
             popup_signature: String::new(),
+            turn_started_at: None,
             turn_llm_started_at: None,
             turn_llm_active_secs: 0.0,
             turn_output_tokens: 0,
@@ -1206,6 +1215,12 @@ impl TuiApp {
     }
 
     pub fn schedule_periodic_redraw_if_needed(&self) {
+        // The opening frame rises from the bottom of the terminal; keep the
+        // frames coming until it settles, then stop scheduling for it.
+        if crate::empty_state_animation::reveal_active() {
+            self.frame_requester
+                .schedule_frame_in(crate::empty_state_animation::REVEAL_FRAME);
+        }
         self.schedule_trajectory_redraw();
         // Keep the cross-process open lease alive even while the selected
         // thread is idle and no stream animation is running.
@@ -1331,8 +1346,7 @@ impl TuiApp {
         }
 
         if self.thread_is_running(self.session_id.as_str()) {
-            let elapsed_secs =
-                current_activity_elapsed_secs(self.turn_llm_started_at, self.turn_llm_active_secs);
+            let elapsed_secs = self.running_elapsed_secs();
             return format_busy_activity_line(
                 is_zh,
                 elapsed_secs,
@@ -3612,6 +3626,7 @@ impl TuiApp {
         self.set_transcript_viewport(width, height);
 
         let selected_transcript = self.selected_transcript_index();
+        let reveal_frame = crate::empty_state_animation::reveal_frame();
         if let Some(cache) = self.transcript_render_cache.as_ref().filter(|cache| {
             cache.width == width
                 && cache.height == height
@@ -3621,6 +3636,7 @@ impl TuiApp {
                 && cache.archived_entries == self.history_archived_entries
                 && cache.log_entries == self.logs.len()
                 && cache.raw_output == self.raw_output
+                && cache.reveal_frame == reveal_frame
         }) {
             return TranscriptRenderedView {
                 lines: Arc::clone(&cache.projected),
@@ -3703,6 +3719,7 @@ impl TuiApp {
             archived_entries: self.history_archived_entries,
             log_entries: self.logs.len(),
             raw_output,
+            reveal_frame,
             lines: Arc::clone(&logical),
             projected: Arc::clone(&projected),
             local_scroll: transcript_scroll,
@@ -3880,7 +3897,7 @@ impl TuiApp {
             .iter()
             .map(|(key, args)| crate::locale::ui_text(is_zh, key, args))
             .find(|text| UnicodeWidthStr::width(text.as_str()) <= usize::from(width))
-            .map(|text| Line::from(Span::styled(text, super::theme::secondary_text())))
+            .map(|text| Line::from(Span::styled(text, super::theme::accent_text())))
     }
 
     /// What the gap paints this frame: a live copy result, else the search editor's own row,
@@ -5567,10 +5584,16 @@ impl TuiApp {
 
         match key.code {
             KeyCode::Esc => {
-                // Esc is codex's interrupt key: while this thread has a round running it
-                // asks for that round to stop. Quitting stays on Ctrl+C, so reaching for
-                // Esc can never close the session by accident.
-                if self.thread_is_running(self.session_id.as_str()) {
+                // The reading control in the composer gap prints this key on its face, so
+                // while that control is on screen Esc is what the control says: back to
+                // latest. It outranks the interrupt because a jump loses nothing while an
+                // interrupt discards the running round, and a key the reader was promised
+                // must never be the destructive one. Interrupting stays one press away —
+                // the jump lands on the tail, and the next Esc there is the interrupt.
+                // Quitting stays on Ctrl+C, so Esc can never close the session.
+                if !self.gap_control_hidden() {
+                    self.return_to_latest();
+                } else if self.thread_is_running(self.session_id.as_str()) {
                     self.request_esc_interrupt();
                 } else {
                     self.clear_input_draft();
@@ -8150,6 +8173,7 @@ impl TuiApp {
     }
 
     fn begin_turn_metrics(&mut self) {
+        self.turn_started_at = Some(Instant::now());
         self.turn_llm_started_at = None;
         self.turn_llm_active_secs = 0.0;
         self.turn_output_tokens = 0;
@@ -8157,6 +8181,7 @@ impl TuiApp {
     }
 
     fn reset_turn_metrics_snapshot(&mut self) {
+        self.turn_started_at = None;
         self.turn_llm_started_at = None;
         self.turn_llm_active_secs = 0.0;
         self.turn_output_tokens = 0;
@@ -8180,24 +8205,38 @@ impl TuiApp {
 
     fn finalize_turn_metrics(&mut self) {
         self.stop_llm_active_window();
-        let elapsed = if self.turn_llm_active_secs > f64::EPSILON {
-            Some(self.turn_llm_active_secs)
-        } else {
-            None
-        };
+        let active_secs = self.turn_llm_active_secs;
+        // The turn's own clock is what a reader compares against: it opened when the
+        // prompt was submitted, so tool phases and approval waits count instead of
+        // being skipped. Speed stays measured over the windows the model actually ran,
+        // which is the pace a reader can compare between models.
+        let elapsed = self
+            .turn_started_at
+            .take()
+            .map(|started| started.elapsed().as_secs_f64())
+            .filter(|seconds| *seconds > f64::EPSILON)
+            .or_else(|| (active_secs > f64::EPSILON).then_some(active_secs));
         self.last_turn_elapsed_secs = elapsed;
         self.last_turn_tool_calls = self.turn_tool_calls;
-        self.last_turn_speed_tps = elapsed.map(|seconds| {
-            if seconds <= f64::EPSILON {
-                0.0
-            } else {
-                self.turn_output_tokens as f64 / seconds
-            }
-        });
+        self.last_turn_speed_tps =
+            (active_secs > f64::EPSILON).then(|| self.turn_output_tokens as f64 / active_secs);
         self.turn_llm_started_at = None;
         self.turn_llm_active_secs = 0.0;
         self.turn_output_tokens = 0;
         self.turn_tool_calls = 0;
+    }
+
+    /// Seconds on the running clock. The turn's own wall clock is the anchor: it keeps
+    /// counting while a tool or an approval holds the turn. The model's active window
+    /// only stands in when the turn began before this view owned it (a thread picked up
+    /// mid-flight), where the wall clock was never recorded.
+    fn running_elapsed_secs(&self) -> u64 {
+        match self.turn_started_at {
+            Some(started) => started.elapsed().as_secs(),
+            None => {
+                current_activity_elapsed_secs(self.turn_llm_started_at, self.turn_llm_active_secs)
+            }
+        }
     }
 
     fn handle_stream_message(&mut self, message: StreamMessage) {
@@ -8675,7 +8714,19 @@ impl TuiApp {
                             self.upsert_command_session_log(&update);
                         }
                     } else if !self.complete_command_log(payload) {
-                        for line in format_tool_result_lines(tool, payload, self.is_zh_language()) {
+                        // The head carries the state as an icon: a failed call becomes an
+                        // error cell (red ✕) instead of a line that spells "failed" out.
+                        let mut lines = format_tool_result_lines(tool, payload, is_zh);
+                        let head_kind = if crate::render::tool_result_failed(payload) {
+                            LogKind::Error
+                        } else {
+                            LogKind::Tool
+                        };
+                        if !lines.is_empty() {
+                            let head = lines.remove(0);
+                            self.push_log(head_kind, head);
+                        }
+                        for line in lines {
                             self.push_log(LogKind::Tool, line);
                         }
                     }

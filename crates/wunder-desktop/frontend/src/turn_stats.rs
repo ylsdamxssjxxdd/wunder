@@ -200,6 +200,31 @@ pub fn duration(seconds: f64) -> String {
     }
 }
 
+/// 把 [`duration`] 生成的标签读回秒数。秒表校准只用这一个通道：服务端报的是
+/// 标签，本地需要的是数值基准，读回比另开一条数值字段更不容易走偏。
+pub fn parse_duration(label: &str) -> Option<f64> {
+    let mut total = 0.0;
+    let mut seen = false;
+    for part in label.split_whitespace() {
+        let (value, scale) = if let Some(value) = part.strip_suffix('h') {
+            (value, 3600.0)
+        } else if let Some(value) = part.strip_suffix('m') {
+            (value, 60.0)
+        } else if let Some(value) = part.strip_suffix('s') {
+            (value, 1.0)
+        } else {
+            return None;
+        };
+        let value: f64 = value.parse().ok()?;
+        if !(0.0..=1_000_000.0).contains(&value) {
+            return None;
+        }
+        total += value * scale;
+        seen = true;
+    }
+    seen.then_some(total)
+}
+
 fn count(value: f64) -> String {
     let value = value.trunc();
     if value < 1000.0 {
@@ -230,6 +255,17 @@ pub fn message_stats(payload: &Value) -> Option<&Value> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn duration_labels_parse_back_to_seconds() {
+        assert_eq!(super::parse_duration("0s"), Some(0.0));
+        assert_eq!(super::parse_duration("42s"), Some(42.0));
+        assert_eq!(super::parse_duration("1m 5s"), Some(65.0));
+        assert_eq!(super::parse_duration("1h 2m 3s"), Some(3723.0));
+        // 秒表只接受自己写出的形状：占位符和空串都不能被当成 0 秒。
+        assert_eq!(super::parse_duration("--"), None);
+        assert_eq!(super::parse_duration(""), None);
+    }
+
     use super::*;
     use serde_json::json;
 

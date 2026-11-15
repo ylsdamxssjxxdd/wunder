@@ -962,6 +962,7 @@ pub(crate) fn project_cloud_history(
         );
         user.text = chat.user.content.as_str().into();
         user.time = crate::timeline_text::clock_hhmm(chat.created_time).into();
+        user.user_round = chat.user_round.clamp(0, i32::MAX as i64) as i32;
         user.blocks = previous
             .iter()
             .find(|row| row.id == user.id && row.text == user.text)
@@ -1209,6 +1210,9 @@ fn history_user(message: &wunder_desktop::NativeMessage) -> TimelineRow {
     let mut row = blank_row(crate::timeline::KIND_USER, String::new());
     row.text = message.text.as_str().into();
     row.time = crate::timeline_text::clock_hhmm(message.created_at).into();
+    // The bubble itself carries the turn boundary; a durable message always
+    // knows its round, so the label appears as soon as history loads.
+    row.user_round = message.user_round.clamp(0, i32::MAX as i64) as i32;
     row.blocks = crate::message_blocks::from_text(&user_display_source(message));
     row.foldable = false;
     row

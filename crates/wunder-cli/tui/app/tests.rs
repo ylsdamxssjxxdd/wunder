@@ -414,9 +414,9 @@ fn format_execute_command_result_lines_prioritizes_failure_output() {
         }
     });
 
-    let lines = format_execute_command_result_lines("exec", &payload, false);
+    let lines = format_execute_command_result_lines("exec", &payload);
     assert!(!lines.is_empty());
-    assert!(lines[0].contains("failed"));
+    assert_eq!(lines[0], "exec (exit=1, 15ms)");
     assert!(lines.iter().any(|line| line.starts_with("  stderr:")));
     assert!(!lines
         .iter()

@@ -52,6 +52,12 @@ export const useTurnDurationLabel = (
         settle();
         return;
       }
+      // 首帧统计还没到：从「开始跑」这一刻先本地计数。否则过程条右侧在第一个
+      // 统计帧到达前是空的，用户看不出这一轮已经在计时。
+      if (anchorSeconds === null && resolveAssistantTurnSeconds(message.value) === null) {
+        anchorSeconds = 0;
+        anchorAt = Date.now();
+      }
       advance();
       if (timer === null) timer = window.setInterval(advance, 250);
     },

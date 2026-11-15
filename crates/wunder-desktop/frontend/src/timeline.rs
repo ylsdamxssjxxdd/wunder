@@ -322,8 +322,12 @@ pub struct Timeline {
     /// The live turn ran to its end but its rows are still the only copy: the
     /// durable snapshot has not caught up with it yet.
     settled: bool,
-    /// 本轮秒表起点：运行中过程条右侧的耗时按它推进，`None` 表示没有在走的轮次。
-    elapsed: Option<std::time::Instant>,
+    /// 本轮秒表：起点时刻加基准秒数。基准来自服务端的权威耗时，本地只补上
+    /// 两次统计帧之间的时间，因此数字既逐秒走也不会在统计到达时回退或跳变。
+    /// `None` 表示没有在走的轮次。
+    elapsed: Cell<Option<std::time::Instant>>,
+    /// 秒表基准（秒）：服务端最近一次报告的本轮已耗时。
+    elapsed_base: Cell<f64>,
     /// Whether frozen body blocks get syntax highlighting; the reducer turns
     /// this on for the chat view and off elsewhere.
     /// Whether MainWindow.timeline already observes `model`. Binding once
@@ -474,7 +478,8 @@ impl Timeline {
             turn: None,
             active_user_row: usize::MAX,
             settled: false,
-            elapsed: None,
+            elapsed: Cell::new(None),
+            elapsed_base: Cell::new(0.0),
             published: Cell::new(false),
             markdown_desktop: None,
             markdown_root: String::new(),
@@ -819,7 +824,8 @@ impl Timeline {
         self.settled = false;
         // 本轮秒表从用户提交这一刻起走，过程条右侧的耗时因此逐秒推进，
         // 而不是等统计值到达后一次跳过去。
-        self.elapsed = Some(std::time::Instant::now());
+        self.elapsed.set(Some(std::time::Instant::now()));
+        self.elapsed_base.set(0.0);
         let user_id = format!("user-turn-{root}");
         if let Some(index) = self.model.iter().position(|row| row.id == user_id) {
             if let Some(mut row) = self.model.row_data(index) {
@@ -1677,7 +1683,7 @@ impl Timeline {
         self.interrupt_running();
         self.settled = true;
         // 停表：终值来自运行时统计，秒表不再覆盖它。
-        self.elapsed = None;
+        self.elapsed.set(None);
         if let Some(footer) = self.ensure_footer() {
             let text = self
                 .model
@@ -2056,7 +2062,7 @@ impl Timeline {
         self.turn = None;
         self.active_user_row = usize::MAX;
         self.settled = false;
-        self.elapsed = None;
+        self.elapsed.set(None);
         self.body = None;
         self.close_thinking(false);
         self.tools.clear();
@@ -2148,7 +2154,7 @@ impl Timeline {
             .filter(|value| value != "-" && value != "--")
             .unwrap_or_default();
         if !duration.is_empty() {
-            self.set_process_duration(&duration);
+            self.calibrate_elapsed(&duration);
         }
         let Some(index) = self.ensure_footer() else {
             return;
@@ -2164,6 +2170,33 @@ impl Timeline {
                 row.stats = ModelRc::new(VecModel::from(stats));
                 row.user_round = user_round;
             });
+        }
+    }
+
+    /// 用服务端报告的权威耗时校准秒表：统计帧到达时把基准挪到它报出的秒数，
+    /// 本地继续从那里往前走；因此数字只会前进，不会因为统计值滞后而往回掉。
+    /// 没有本地秒表（已结束的轮次、持久化历史行）就直接落地权威值。
+    fn calibrate_elapsed(&self, label: &str) {
+        let Some(seconds) = crate::turn_stats::parse_duration(label) else {
+            self.set_process_duration(label);
+            return;
+        };
+        let Some(started) = self.elapsed.get() else {
+            self.elapsed_base.set(seconds);
+            self.set_process_duration(label);
+            return;
+        };
+        if self.settled {
+            self.elapsed_base.set(seconds);
+            self.set_process_duration(label);
+            return;
+        }
+        // 只有服务端跑在本地前面时才重锚：统计值本来就常常滞后，跟着它退回去
+        // 会让秒表往回跳。落后时保持本地推进，下一帧继续校准。
+        let shown = self.elapsed_base.get() + started.elapsed().as_secs_f64();
+        if seconds > shown {
+            self.elapsed_base.set(seconds);
+            self.elapsed.set(Some(std::time::Instant::now()));
         }
     }
 
@@ -2188,19 +2221,19 @@ impl Timeline {
     }
 
     /// 秒表推进：只重画过程条右侧的耗时，不动 footer 与折叠体。运行中的轮次
-    /// 用「已走秒数」覆盖统计值，轮次结束（`finish`）后停表并让终值落地。
+    /// 用「基准 + 已走秒数」覆盖统计值，轮次结束（`finish`）后停表并让终值落地。
     ///
-    /// 返回这一拍是否真的改了行。调用方据此把帧推给视图：秒表只在整秒跳变时
-    /// 返回 true，于是 33 ms 的泵在两次跳变之间不产生任何 Slint 通知。
+    /// 返回这一拍是否真的改了行。调用方（秒表定时器）据此把帧推给视图：数字只在
+    /// 整秒跳变时变，两跳之间的采样直接返回 false，不产生任何 Slint 通知。
     pub fn tick_elapsed(&mut self) -> bool {
-        let Some(elapsed) = self.elapsed else {
+        let Some(elapsed) = self.elapsed.get() else {
             return false;
         };
         if self.settled {
-            self.elapsed = None;
+            self.elapsed.set(None);
             return false;
         }
-        let seconds = elapsed.elapsed().as_secs_f64();
+        let seconds = self.elapsed_base.get() + elapsed.elapsed().as_secs_f64();
         let label = crate::turn_stats::duration(seconds);
         // 过程条是这一拍的唯一读者：它的耗时没变，footer 的秒表也一定是同一个
         // 值，整拍可以直接跳过。
@@ -2343,6 +2376,22 @@ impl Timeline {
     pub fn set_user_round(&self, round: i64) {
         if round <= 0 {
             return;
+        }
+        let round = round.min(i32::MAX as i64) as i32;
+        // The submitting bubble shows the boundary too, so a live turn gains
+        // its round as soon as the server assigns one — the durable history
+        // projection later replaces the row with the same value.
+        if self.active_user_row != usize::MAX {
+            let index = self.active_user_row;
+            if self
+                .model
+                .row_data(index)
+                .is_some_and(|row| row.kind == KIND_USER && row.user_round != round)
+            {
+                self.patch(index, |row| {
+                    row.user_round = round;
+                });
+            }
         }
         if let Some(index) = self.ensure_footer() {
             let Some(row) = self.model.row_data(index) else {
@@ -2849,7 +2898,9 @@ mod tests {
         let mut timeline = Timeline::new();
         timeline.begin_turn("fixture-tick", "Fixture input");
         // 运行中：秒表按真实时间推进，统计值不覆盖它。
-        timeline.elapsed = Some(std::time::Instant::now() - std::time::Duration::from_secs(7));
+        timeline
+            .elapsed
+            .set(Some(std::time::Instant::now() - std::time::Duration::from_secs(7)));
         timeline.set_turn_stats(stat_metrics(&crate::turn_stats::metrics(
             &serde_json::json!({"interaction_duration_s": 1.2}),
         )));
@@ -2875,9 +2926,43 @@ mod tests {
             .expect("a process bar");
         assert_eq!(bar.duration, "10s");
         assert!(
-            timeline.elapsed.is_none(),
+            timeline.elapsed.get().is_none(),
             "the stopwatch stops at settlement"
         );
+    }
+
+    #[test]
+    fn stopwatch_calibrates_forward_from_the_server_value() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-calibrate", "Fixture input");
+        // 服务端报 40s，本地秒表才走了 2s：基准前移到权威值，数字不倒退也不
+        // 停在旧值上等下一个事件。
+        timeline
+            .elapsed
+            .set(Some(
+                std::time::Instant::now() - std::time::Duration::from_secs(2),
+            ));
+        timeline.set_turn_stats(stat_metrics(&crate::turn_stats::metrics(
+            &serde_json::json!({"interaction_duration_s": 40.0}),
+        )));
+        assert!(timeline.tick_elapsed());
+        let bar = timeline
+            .model
+            .row_data(timeline.process_bar)
+            .expect("a process bar");
+        assert_eq!(bar.duration, "40s");
+        // 校准之后本地继续往前走：再过 3s 就是 43s。
+        timeline
+            .elapsed
+            .set(Some(
+                std::time::Instant::now() - std::time::Duration::from_secs(3),
+            ));
+        assert!(timeline.tick_elapsed());
+        let bar = timeline
+            .model
+            .row_data(timeline.process_bar)
+            .expect("a process bar");
+        assert_eq!(bar.duration, "43s");
     }
 
     #[test]
@@ -3306,6 +3391,10 @@ mod tests {
         )));
         timeline.set_user_round(57);
         timeline.set_user_round(57);
+        // 用户气泡自己带轮次边界：流式期间就能读到，落库历史替换后值不变。
+        let user = timeline.model.row_data(timeline.active_user_row).unwrap();
+        assert_eq!(user.kind, KIND_USER);
+        assert_eq!(user.user_round, 57);
         let body = timeline.model.row_data(timeline.footer.get()).unwrap();
         assert_eq!(
             body.stats

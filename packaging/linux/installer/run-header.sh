@@ -142,6 +142,10 @@ watch_extract() {
   done
 }
 
+# 开场：先把命令行版的心舰 logo 点亮，再开始解压。banner.sh 由打包脚本注入。
+# __WUNDER_BANNER__
+wunder_banner || true
+
 echo "正在解压安装包…"
 if [ "$WUNDER_PROGRESS" -eq 1 ]; then
   watch_extract &
