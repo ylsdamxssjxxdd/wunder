@@ -2881,35 +2881,43 @@ fn start_tick(
             last_activity = state.plan_rev;
         }
 
-        if state.target == 0 && state.inquiry_rev != last_inquiry {
-            match &state.inquiry {
-                Some(panel) => {
-                    let rows: Vec<InquiryQuestion> = if panel.expanded {
-                        panel
-                            .questions
-                            .iter()
-                            .enumerate()
-                            .map(|(index, question)| inquiry_row(index, question))
-                            .collect()
-                    } else {
-                        let index = panel.current_index();
-                        vec![inquiry_row(index, &panel.questions[index])]
-                    };
-                    ui.set_inquiry_questions(ModelRc::from(Rc::new(VecModel::from(rows))));
-                    ui.set_inquiry_page(panel.current_index() as i32);
-                    ui.set_inquiry_total(panel.questions.len() as i32);
-                    ui.set_inquiry_expanded(panel.expanded);
-                    ui.set_inquiry_ready(panel.ready());
-                }
-                None => {
-                    ui.set_inquiry_questions(ModelRc::default());
-                    ui.set_inquiry_page(0);
-                    ui.set_inquiry_total(0);
-                    ui.set_inquiry_expanded(false);
-                    ui.set_inquiry_ready(false);
-                }
+        if state.target == 0 {
+            // 自由文本不重投影（保住光标与输入法候选），但提交键的门禁要跟着每个
+            // 按键走：面板在的时候每帧按当前答案重算一次，等价于桌面版在
+            // `on_inquiry_other_edited` 里直接写 `inquiry-ready`。
+            if let Some(panel) = state.inquiry.as_ref() {
+                ui.set_inquiry_ready(panel.has_answer());
             }
-            last_inquiry = state.inquiry_rev;
+            if state.inquiry_rev != last_inquiry {
+                match &state.inquiry {
+                    Some(panel) => {
+                        let rows: Vec<InquiryQuestion> = if panel.expanded {
+                            panel
+                                .questions
+                                .iter()
+                                .enumerate()
+                                .map(|(index, question)| inquiry_row(index, question))
+                                .collect()
+                        } else {
+                            let index = panel.current_index();
+                            vec![inquiry_row(index, &panel.questions[index])]
+                        };
+                        ui.set_inquiry_questions(ModelRc::from(Rc::new(VecModel::from(rows))));
+                        ui.set_inquiry_page(panel.current_index() as i32);
+                        ui.set_inquiry_total(panel.questions.len() as i32);
+                        ui.set_inquiry_expanded(panel.expanded);
+                        ui.set_inquiry_ready(panel.has_answer());
+                    }
+                    None => {
+                        ui.set_inquiry_questions(ModelRc::default());
+                        ui.set_inquiry_page(0);
+                        ui.set_inquiry_total(0);
+                        ui.set_inquiry_expanded(false);
+                        ui.set_inquiry_ready(false);
+                    }
+                }
+                last_inquiry = state.inquiry_rev;
+            }
         }
 
         if state.trajectory_rev != last_trajectory {

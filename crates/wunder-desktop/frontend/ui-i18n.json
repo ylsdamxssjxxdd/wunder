@@ -6256,8 +6256,8 @@
  },
  {
   "key": "inquiry_submit_blocked",
-  "zh": "请先完成必选项",
-  "en": "Answer required fields"
+  "zh": "请先回答任一问题",
+  "en": "Answer at least one question"
  },
  {
   "key": "inquiry_use_recommended",

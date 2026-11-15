@@ -541,8 +541,11 @@ impl InquiryView {
             || question.options.iter().any(|option| option.selected)
     }
 
-    pub(crate) fn ready(&self) -> bool {
-        !self.questions.is_empty() && self.questions.iter().all(Self::is_answered)
+    /// 面板只要有一题有答案就已经是一条消息：这是云端版输入区的门禁
+    /// （`InquiryPanel.vue` 的 `hasAnswer`），也是桌面版现在的同一套语义。
+    /// 用户可以只在「输入其他答案」里写自己的说法就提交，其余题记作未作答。
+    pub(crate) fn has_answer(&self) -> bool {
+        self.questions.iter().any(Self::is_answered)
     }
 
     fn toggle_option(&mut self, index: usize, option: usize) {
@@ -629,7 +632,12 @@ impl InquiryView {
                 if !other.is_empty() {
                     parts.push(other.to_string());
                 }
-                parts.join("、")
+                // 面板可以带着没答的题发出去：它们写「未作答」，不是一条空答案。
+                if parts.is_empty() {
+                    "未作答".to_string()
+                } else {
+                    parts.join("、")
+                }
             };
             lines.push(format!("答案：{answer}"));
         }
@@ -2554,10 +2562,10 @@ fn take_inquiry_answer(
     let Some(panel) = state.inquiry.take() else {
         return None;
     };
-    if !panel.ready() {
+    if !panel.has_answer() {
         state.inquiry = Some(panel);
         if explain_unanswered {
-            state.notify("请先回答全部问题");
+            state.notify("请先回答任一问题");
         }
         return None;
     }
