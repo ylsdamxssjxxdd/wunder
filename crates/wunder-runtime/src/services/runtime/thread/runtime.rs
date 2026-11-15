@@ -7,7 +7,9 @@ use crate::orchestrator::{Orchestrator, OrchestratorError};
 use crate::schemas::WunderRequest;
 use crate::services::goal;
 use crate::services::tools::command_sessions::CommandSessionBroker;
-use crate::storage::{AgentTaskRecord, ChatSessionRecord, UpdateAgentTaskStatusParams};
+use crate::storage::{
+    AgentTaskRecord, ChatSessionRecord, SessionLockRecord, UpdateAgentTaskStatusParams,
+};
 use crate::user_store::UserStore;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -39,6 +41,38 @@ const TASK_STATUS_DEAD: &str = "dead";
 /// PostgreSQL replicas need a recovery backstop for another process's queue
 /// writes. Local SQLite dispatchers wait only on events when the queue is empty.
 const CROSS_PROCESS_QUEUE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// 队列领取与执行器接管之间的交接窗口：任务行刚被领取时还没有会话锁，
+/// 这段时间内的 `running` 行仍算在途。超过它既没有本地执行也没有存活锁，
+/// 就只能是没有执行器的孤儿。
+const TASK_EXECUTOR_GRACE_S: f64 = 15.0;
+
+/// 孤儿 running 行的终态说明。写到 `last_error`，便于事后区分「用户停止」
+/// 与「进程半路消失」。
+const ORPHAN_TASK_INTERRUPTED: &str = "executor exited before settlement";
+
+/// 会话锁行是否还代表「有执行器持有这一轮」。
+///
+/// 只看到期时间，不看心跳：执行器每 5s 续期，但一次续期失败（本地 SQLite
+/// 写争用、进程被系统短暂挂起）并不等于执行结束；拿心跳当活性依据会让正在
+/// 跑的线程被判定空闲，归档门禁随即放行并杀掉这一轮。到期时间是执行器自己
+/// 许下的承诺（TTL 120s），到期前一律按在途处理；崩溃残留最多让这一行多显示
+/// 两分钟忙碌，远好过误杀。
+fn session_lock_is_live(lock: &SessionLockRecord, now: f64) -> bool {
+    !lock.session_id.trim().is_empty() && lock.expires_at > now
+}
+
+/// 一条任务行是否还代表队列/执行器真的要完成的工作。
+///
+/// `pending`/`retry` 是等执行的排队项；`running` 只有在刚领取的交接窗口内
+/// 才算数——过了窗口还没有会话锁，就说明领取它的执行器已经不在了。
+fn task_owes_work(task: &AgentTaskRecord, now: f64) -> bool {
+    match task.status.trim() {
+        TASK_STATUS_PENDING | TASK_STATUS_RETRY => true,
+        TASK_STATUS_RUNNING => now - task.updated_at <= TASK_EXECUTOR_GRACE_S,
+        _ => false,
+    }
+}
 
 fn queue_scan_delay(
     cross_process: bool,
@@ -931,7 +965,9 @@ impl ThreadRuntime {
             .contains(cleaned_session);
         if !preserve_root_queue
             && !has_active_executor
-            && !self.holds_session_lock(cleaned_user, cleaned_session).await
+            && !self
+                .has_live_session_lock(cleaned_user, cleaned_session)
+                .await
         {
             self.monitor.mark_cancelled(cleaned_session);
         }
@@ -1371,9 +1407,12 @@ impl ThreadRuntime {
         .await;
     }
 
-    /// Whether a durable session lock already names this session. Read off the
-    /// worker threads: a SQLite read here would stall one of the few runtime
-    /// workers on every submit and every queue tick.
+    /// Whether a durable session lock row names this session — expired or not.
+    /// This is the takeover question ("may I insert a lock?"), not the liveness
+    /// one; use [`Self::has_live_session_lock`] to ask whether someone is
+    /// actually running the session.
+    /// Read off the worker threads: a SQLite read here would stall one of the
+    /// few runtime workers on every submit and every queue tick.
     pub(crate) async fn holds_session_lock(&self, user_id: &str, session_id: &str) -> bool {
         let store = self.user_store.clone();
         let user_id = user_id.to_string();
@@ -1392,61 +1431,183 @@ impl ThreadRuntime {
         .unwrap_or(false)
     }
 
+    /// Whether a *live* session lock — one whose TTL has not run out — names
+    /// this session. [`Self::holds_session_lock`] answers "is there a row",
+    /// which is the right question when deciding whether to take a lock (an
+    /// expired row is replaced on acquire); a row that already expired is a
+    /// crash remnant, so anything deciding "is somebody running this right
+    /// now" has to use this instead.
+    async fn has_live_session_lock(&self, user_id: &str, session_id: &str) -> bool {
+        let store = self.user_store.clone();
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        blocking::run_db("runtime.thread.has_live_session_lock", move || {
+            Ok(store
+                .list_session_locks_by_user(&user_id)
+                .map(|locks| {
+                    let now = now_ts();
+                    locks.iter().any(|lock| {
+                        lock.session_id.trim() == session_id.as_str()
+                            && session_lock_is_live(lock, now)
+                    })
+                })
+                .unwrap_or(false))
+        })
+        .await
+        .unwrap_or(false)
+    }
+
     pub async fn is_session_available_for_submit(&self, user_id: &str, session_id: &str) -> bool {
         self.session_available_for_submit(user_id, session_id, false)
             .await
     }
 
-    /// Whether the engine still owes this session work: an execution is
-    /// registered, the queue holds it, or an unsettled task row remains.
+    /// Whether the engine still owes this session work.
     ///
-    /// Unlike [`Self::is_session_available_for_submit`] the caller's own open
-    /// lease is not part of the verdict, so a thread the UI merely has on
-    /// screen but idle does not read as busy. Terminal user actions (archive,
-    /// delete) use this to refuse a live thread instead of settling it behind
-    /// the user's back.
+    /// Only liveness facts decide: this process's executions, an unexpired
+    /// session lock, a task the queue will still run, or a task claimed so
+    /// recently that its executor may still be taking over.
+    ///
+    /// The durable monitor row is deliberately **not** part of the verdict. A
+    /// process that dies mid-run leaves `running` in the monitor cache and in
+    /// the task ledger; treating that text as work refused archiving forever
+    /// ("线程正在运行，请先停止再归档") on a thread nobody was running, and the
+    /// sidebar could not tell the difference either.
     pub async fn session_has_live_work(&self, user_id: &str, session_id: &str) -> bool {
         let cleaned_user = user_id.trim();
         let cleaned_session = session_id.trim();
         if cleaned_user.is_empty() || cleaned_session.is_empty() {
             return false;
         }
+        if self.has_local_execution(cleaned_session) {
+            return true;
+        }
         if self
-            .active_runtime_sessions
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .contains(cleaned_session)
+            .has_live_session_lock(cleaned_user, cleaned_session)
+            .await
         {
             return true;
         }
-        let locked = self.holds_session_lock(cleaned_user, cleaned_session).await;
-        if let Some(record) = self.monitor.get_record(cleaned_session) {
-            let status = record.get("status").and_then(Value::as_str).unwrap_or("");
-            // queued/waiting 合法地不持有会话锁，仍是在途工作。
-            if status == crate::monitor::MonitorState::STATUS_QUEUED
-                || status == crate::monitor::MonitorState::STATUS_WAITING
-            {
-                return true;
-            }
-            // 崩溃残留的 running/cancelling 只在锁仍存活时作数。
-            if locked
-                && (status == crate::monitor::MonitorState::STATUS_RUNNING
-                    || status == crate::monitor::MonitorState::STATUS_CANCELLING)
-            {
-                return true;
-            }
-        }
         let thread_id = format!("thread_{cleaned_session}");
-        if let Ok(tasks) = self.list_thread_tasks(&thread_id, None, 8).await {
-            if tasks.iter().any(|task| {
-                task.status == TASK_STATUS_PENDING
-                    || task.status == TASK_STATUS_RETRY
-                    || task.status == TASK_STATUS_RUNNING
-            }) {
-                return true;
+        let now = now_ts();
+        match self.list_thread_tasks(&thread_id, None, 16).await {
+            Ok(tasks) => tasks.iter().any(|task| task_owes_work(task, now)),
+            // An unreadable ledger must not authorize an archive: keeping the
+            // refusal is recoverable, stranding a queued task behind a hidden
+            // thread is not.
+            Err(error) => {
+                warn!("archive gate could not read task ledger: {error}");
+                true
             }
         }
-        false
+    }
+
+    /// Bulk twin of [`Self::session_has_live_work`] for a whole catalogue read,
+    /// so a page of threads costs two reads instead of two per row. The two
+    /// must stay one rule: the sidebar's archive affordance and the façade's
+    /// backstop read the same answer.
+    pub async fn live_work_sessions(&self, user_id: &str) -> HashSet<String> {
+        let this = self.clone();
+        let user = user_id.trim().to_string();
+        blocking::run_db("runtime.live_work", move || {
+            Ok(this.live_work_sessions_now(&user))
+        })
+        .await
+        .unwrap_or_default()
+    }
+
+    /// Same verdict as [`Self::live_work_sessions`] without a runtime handle,
+    /// for the synchronous native façades that build a catalogue in place.
+    /// Performs storage reads on the calling thread — they already do.
+    pub fn live_work_sessions_now(&self, user_id: &str) -> HashSet<String> {
+        let cleaned_user = user_id.trim();
+        let mut live = self
+            .active_runtime_sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if cleaned_user.is_empty() {
+            return live;
+        }
+        let now = now_ts();
+        match self.user_store.list_session_locks_by_user(cleaned_user) {
+            Ok(locks) => {
+                for lock in locks {
+                    if session_lock_is_live(&lock, now) {
+                        live.insert(lock.session_id.trim().to_string());
+                    }
+                }
+            }
+            Err(error) => warn!("live work: session locks unreadable: {error}"),
+        }
+        match self.user_store.list_user_agent_tasks_in_statuses(
+            cleaned_user,
+            &[TASK_STATUS_PENDING, TASK_STATUS_RETRY, TASK_STATUS_RUNNING],
+            512,
+        ) {
+            Ok(tasks) => {
+                for task in tasks {
+                    if task_owes_work(&task, now) {
+                        live.insert(task.session_id.trim().to_string());
+                    }
+                }
+            }
+            Err(error) => warn!("live work: task ledger unreadable: {error}"),
+        }
+        live
+    }
+
+    /// 结算「没有执行器」的 running 任务行。
+    ///
+    /// 进程在任务执行中被关闭时，任务行停在 `running`，而队列只领取
+    /// pending/retry（见 `should_attempt_task`），于是这一行会永久留在台账里：
+    /// 队列统计失真，归档门禁也一直把它当成在途工作。这里把同时满足
+    /// 「无本地执行、无存活会话锁、不是刚刚领取」的 running 行落为
+    /// cancelled。多副本共享 PostgreSQL 时，仍持锁的实例的任务会被跳过。
+    pub async fn settle_orphaned_running_tasks(&self, user_id: &str) -> Result<usize> {
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(0);
+        }
+        let now = now_ts();
+        let store = self.user_store.clone();
+        let user = cleaned_user.to_string();
+        let tasks = blocking::run_db("runtime.settle_orphan_tasks.list", move || {
+            Ok(store.list_user_agent_tasks_in_statuses(&user, &[TASK_STATUS_RUNNING], 256)?)
+        })
+        .await?;
+        let mut settled = 0usize;
+        for task in tasks {
+            if self.has_local_execution(task.session_id.trim()) {
+                continue;
+            }
+            if now - task.updated_at <= TASK_EXECUTOR_GRACE_S {
+                continue;
+            }
+            if self
+                .has_live_session_lock(cleaned_user, task.session_id.trim())
+                .await
+            {
+                continue;
+            }
+            let finished_at = now_ts();
+            self.write_task_status(self.task_status_update(
+                &task.task_id,
+                TASK_STATUS_CANCELLED,
+                task.retry_count,
+                task.retry_at,
+                task.started_at,
+                Some(finished_at),
+                Some(ORPHAN_TASK_INTERRUPTED),
+                finished_at,
+            ))
+            .await?;
+            settled = settled.saturating_add(1);
+        }
+        if settled > 0 {
+            warn!("settled {settled} orphaned running task rows for one user");
+        }
+        Ok(settled)
     }
 
     /// `allow_waiting` lets the caller treat a `waiting` monitor row as idle.
@@ -1484,12 +1645,17 @@ impl ThreadRuntime {
             // 仲裁；干净收尾先标 finished 再删锁行，存活执行不会被误判空闲。
             if (status == crate::monitor::MonitorState::STATUS_RUNNING
                 || status == crate::monitor::MonitorState::STATUS_CANCELLING)
-                && self.holds_session_lock(cleaned_user, cleaned_session).await
+                && self
+                    .has_live_session_lock(cleaned_user, cleaned_session)
+                    .await
             {
                 return false;
             }
         }
-        if self.holds_session_lock(cleaned_user, cleaned_session).await {
+        if self
+            .has_live_session_lock(cleaned_user, cleaned_session)
+            .await
+        {
             return false;
         }
         let thread_id = format!("thread_{cleaned_session}");
@@ -1511,7 +1677,9 @@ impl ThreadRuntime {
         if cleaned_user.is_empty() || cleaned_session.is_empty() {
             return false;
         }
-        let locked = self.holds_session_lock(cleaned_user, cleaned_session).await;
+        let locked = self
+            .has_live_session_lock(cleaned_user, cleaned_session)
+            .await;
         if let Some(record) = self.monitor.get_record(cleaned_session) {
             let status = record.get("status").and_then(Value::as_str).unwrap_or("");
             // 崩溃残留的 running/cancelling 记录只在锁存活时作数：执行必持会话锁
@@ -3181,5 +3349,103 @@ mod tests {
                 .await,
             "等待回答的线程没有执行锁，解答必须可以直接开始"
         );
+
+        // 台账里的 running 行同样只是诊断残留：没有执行器、没有存活锁时，
+        // 归档门禁必须放行，否则线程永远停在「正在运行，请先停止再归档」。
+        let stale_at = now_ts() - TASK_EXECUTOR_GRACE_S - 60.0;
+        let mut task = AgentTaskRecord {
+            task_id: "task_orphaned_running".to_string(),
+            thread_id: format!("thread_{session}"),
+            user_id: user.to_string(),
+            agent_id: "fixture-agent".to_string(),
+            session_id: session.to_string(),
+            status: TASK_STATUS_RUNNING.to_string(),
+            request_payload: serde_json::json!({}),
+            request_id: None,
+            retry_count: 0,
+            retry_at: stale_at,
+            created_at: stale_at,
+            updated_at: stale_at,
+            started_at: Some(stale_at),
+            finished_at: None,
+            last_error: None,
+        };
+        state.user_store.insert_agent_task(&task).unwrap();
+        assert!(
+            !runtime.session_has_live_work(user, session).await,
+            "无人接管的 running 任务行不是在途工作"
+        );
+        assert!(!runtime.live_work_sessions_now(user).contains(session));
+        // 启动收敛要把这一行结算掉：队列只领取 pending/retry，留着就永远
+        // 停在 running，归档门禁和队列统计一起失真。
+        assert_eq!(
+            runtime.settle_orphaned_running_tasks(user).await.unwrap(),
+            1
+        );
+        let settled = state
+            .user_store
+            .get_agent_task("task_orphaned_running")
+            .unwrap()
+            .expect("orphan row still present");
+        assert_eq!(settled.status, TASK_STATUS_CANCELLED);
+        assert_eq!(
+            settled.last_error.as_deref(),
+            Some(ORPHAN_TASK_INTERRUPTED)
+        );
+        assert!(!runtime.session_has_live_work(user, session).await);
+
+        // 交接窗口内的 running 行仍算在途：领取与执行器接管之间没有锁，
+        // 这时把任务当孤儿会误杀正在启动的执行。
+        task.task_id = "task_handover".to_string();
+        task.updated_at = now_ts();
+        task.last_error = None;
+        state.user_store.insert_agent_task(&task).unwrap();
+        assert!(runtime.session_has_live_work(user, session).await);
+        assert_eq!(
+            runtime.settle_orphaned_running_tasks(user).await.unwrap(),
+            0
+        );
+
+        // 存活会话锁本身就是在途证据，哪怕台账里没有任何任务行。
+        let locked_session = "fixture-thread-locked";
+        let acquired = state
+            .storage
+            .try_acquire_session_lock(locked_session, user, "fixture-agent", 120.0, 8)
+            .unwrap();
+        assert!(matches!(
+            acquired,
+            crate::storage::SessionLockStatus::Acquired { .. }
+        ));
+        assert!(runtime.session_has_live_work(user, locked_session).await);
+        assert!(runtime
+            .live_work_sessions_now(user)
+            .contains(locked_session));
+        state
+            .storage
+            .force_release_session_lock(locked_session)
+            .unwrap();
+        assert!(!runtime.session_has_live_work(user, locked_session).await);
+
+        // 过期锁行只是崩溃残留。只看「有没有这一行」会让它永久把线程判成
+        // 在途：既提交不进（Busy），也归档不了，而 acquire 前就被拒，连到期
+        // 行都等不到被清掉。
+        let expired_session = "fixture-thread-expired-lock";
+        let acquired = state
+            .storage
+            .try_acquire_session_lock(expired_session, user, "fixture-agent", 1.0, 8)
+            .unwrap();
+        assert!(matches!(
+            acquired,
+            crate::storage::SessionLockStatus::Acquired { .. }
+        ));
+        assert!(runtime.session_has_live_work(user, expired_session).await);
+        assert!(!runtime
+            .is_session_available_for_submit(user, expired_session)
+            .await);
+        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+        assert!(!runtime.session_has_live_work(user, expired_session).await);
+        assert!(runtime
+            .is_session_available_for_submit(user, expired_session)
+            .await);
     }
 }

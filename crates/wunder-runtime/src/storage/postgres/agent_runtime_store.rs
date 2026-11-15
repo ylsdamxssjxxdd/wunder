@@ -20,6 +20,12 @@ pub(super) trait PostgresAgentRuntimeStorage {
         status: Option<&str>,
         limit: i64,
     ) -> Result<Vec<AgentTaskRecord>>;
+    fn list_user_agent_tasks_in_statuses_impl(
+        &self,
+        user_id: &str,
+        statuses: &[&str],
+        limit: i64,
+    ) -> Result<Vec<AgentTaskRecord>>;
     fn update_agent_task_status_impl(&self, params: UpdateAgentTaskStatusParams<'_>) -> Result<()>;
     fn get_max_stream_event_id_impl(&self, session_id: &str) -> Result<i64>;
     fn append_stream_event_impl(
@@ -240,6 +246,54 @@ impl PostgresAgentRuntimeStorage for PostgresStorage {
                 &[&cleaned_thread, &limit.max(1)],
             )?
         };
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                let raw_payload: String = row.get(6);
+                let payload = serde_json::from_str(&raw_payload).unwrap_or(Value::Null);
+                AgentTaskRecord {
+                    task_id: row.get(0),
+                    thread_id: row.get(1),
+                    user_id: row.get(2),
+                    agent_id: row.get(3),
+                    session_id: row.get(4),
+                    status: row.get(5),
+                    request_payload: payload,
+                    request_id: row.get(7),
+                    retry_count: row.get(8),
+                    retry_at: row.get(9),
+                    created_at: row.get(10),
+                    updated_at: row.get(11),
+                    started_at: row.get(12),
+                    finished_at: row.get(13),
+                    last_error: row.get(14),
+                }
+            })
+            .collect())
+    }
+
+    fn list_user_agent_tasks_in_statuses_impl(
+        &self,
+        user_id: &str,
+        statuses: &[&str],
+        limit: i64,
+    ) -> Result<Vec<AgentTaskRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let wanted: Vec<String> = statuses
+            .iter()
+            .map(|status| status.trim().to_ascii_lowercase())
+            .filter(|status| !status.is_empty())
+            .collect();
+        if cleaned_user.is_empty() || wanted.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT task_id, thread_id, user_id, agent_id, session_id, status, request_payload, request_id, retry_count, retry_at, created_at, updated_at, started_at, finished_at, last_error \
+             FROM agent_tasks WHERE user_id = $1 AND status = ANY($2) ORDER BY updated_at DESC LIMIT $3",
+            &[&cleaned_user, &wanted, &limit.clamp(1, 2048)],
+        )?;
         Ok(rows
             .into_iter()
             .map(|row| {

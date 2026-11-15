@@ -645,6 +645,15 @@ pub trait AgentRuntimeStore {
         status: Option<&str>,
         limit: i64,
     ) -> Result<Vec<AgentTaskRecord>>;
+    /// 一个用户的非终态任务行（`pending` / `retry` / `running`），最近更新的
+    /// 在前。目录投影与启动清扫靠它一次读完「还有谁在等队列」，不必按线程逐
+    /// 个查询。
+    fn list_user_agent_tasks_in_statuses(
+        &self,
+        user_id: &str,
+        statuses: &[&str],
+        limit: i64,
+    ) -> Result<Vec<AgentTaskRecord>>;
     fn update_agent_task_status(&self, params: UpdateAgentTaskStatusParams<'_>) -> Result<()>;
     fn get_max_stream_event_id(&self, session_id: &str) -> Result<i64>;
     fn append_stream_event(

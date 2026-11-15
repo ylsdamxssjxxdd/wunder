@@ -361,7 +361,7 @@ fn classify(name: &str) -> Option<ToolPresentation> {
         CANONICAL_WRITE => call(ToolAccess::Mutate, "写入", "Write"),
         CANONICAL_PATCH => call(ToolAccess::Mutate, "编辑", "Edit"),
         // Processes and the machine.
-        CANONICAL_COMMAND => call(ToolAccess::Execute, "运行", "Ran"),
+        CANONICAL_COMMAND => call(ToolAccess::Execute, "执行", "Ran"),
         CANONICAL_COMMAND_SESSION => call(ToolAccess::Execute, "命令会话", "Command session"),
         // Browser: the aggregate entry and its one model-facing `browser` action tool.
         other if is_browser_group_name(other) || is_browser_tool_name(other) => {
@@ -427,7 +427,7 @@ mod tests {
         ("网页抓取", ToolAccess::Explore, "获取网页", "Fetch page"),
         ("写入文件", ToolAccess::Mutate, "写入", "Write"),
         ("文本编辑", ToolAccess::Mutate, "编辑", "Edit"),
-        ("执行命令", ToolAccess::Execute, "运行", "Ran"),
+        ("执行命令", ToolAccess::Execute, "执行", "Ran"),
         (
             "命令会话",
             ToolAccess::Execute,

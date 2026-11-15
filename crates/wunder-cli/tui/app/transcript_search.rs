@@ -15,8 +15,7 @@
 //!
 //! Invalidation is decided by **document identity, never by scroll position**: the render
 //! revision (which every append, trim, manual disclosure and resize bumps), the fold state the
-//! search itself borrowed, the archived-entry boundary, the entry count, the wrap width and the
-//! folded query. Scrolling is not in that set — the reader moving the window does not change
+//! search itself borrowed, the entry count, the wrap width and the folded query. Scrolling is not in that set — the reader moving the window does not change
 //! what the document says, so a finished scan stays finished and a jump is not thrown away by a
 //! wheel notch. The fold state is in it, because opening a card changes how many lines that
 //! card has: a hit collected against the folded numbering points at a different line once the
@@ -104,9 +103,6 @@ struct ScanIdentity {
     /// Carries the search's own ledger exactly; the reader's ledger is folded in through
     /// `revision`, which every manual disclosure bump moves with it.
     expanded: u64,
-    /// Entries already handed to scrollback: they are no longer addressable, so they are not
-    /// part of the document either.
-    archived: usize,
     entries: usize,
     width: u16,
 }
@@ -178,7 +174,7 @@ impl TranscriptSearch {
     /// Forget everything derived: the next frame rescans from the document's first line.
     /// `keep_place` is for the restart a fold of the search's own caused, where the reader's
     /// place in the list has to come back with the hits.
-    fn restart(&mut self, archived: usize, keep_place: bool) {
+    fn restart(&mut self, keep_place: bool) {
         self.resume = if keep_place {
             self.current.and_then(|ordinal| {
                 self.matches.get(ordinal).map(|hit| ResumePlace {
@@ -192,7 +188,7 @@ impl TranscriptSearch {
         self.matches.clear();
         self.current = None;
         self.has_more = false;
-        self.scan_entry = archived;
+        self.scan_entry = 0;
         self.scan_line = 0;
         self.scan_done = false;
     }
@@ -219,14 +215,13 @@ impl TranscriptSearch {
         // other change is a new search, and a new search has no accepted hit.
         let same_document = self.identity.is_some_and(|previous| {
             previous.revision == identity.revision
-                && previous.archived == identity.archived
                 && previous.entries == identity.entries
                 && previous.width == identity.width
         });
         let keep_place = same_document && self.folded == folded;
         self.identity = Some(identity);
         self.folded = folded;
-        self.restart(identity.archived, keep_place);
+        self.restart(keep_place);
     }
 }
 
@@ -331,7 +326,7 @@ impl TuiApp {
         search.query.clear();
         search.folded.clear();
         search.origin_offset = self.transcript_offset_from_bottom;
-        search.restart(self.history_archived_entries.min(self.logs.len()), false);
+        search.restart(false);
         search.identity = None;
         self.request_redraw();
     }
@@ -345,7 +340,7 @@ impl TuiApp {
         search.query.clear();
         search.folded.clear();
         search.identity = None;
-        search.restart(self.history_archived_entries.min(self.logs.len()), false);
+        search.restart(false);
         let viewport = usize::from(self.transcript_viewport_height.max(1));
         let origin = search
             .origin_offset
@@ -520,11 +515,9 @@ impl TuiApp {
             return SearchProgress::Idle;
         }
         let width = self.transcript_viewport_width.max(1);
-        let archived = self.history_archived_entries.min(self.logs.len());
         let identity = ScanIdentity {
             revision: self.transcript_render_revision,
             expanded: self.search_expand_revision,
-            archived,
             entries: self.logs.len(),
             width,
         };
@@ -612,9 +605,8 @@ impl TuiApp {
     /// chosen with, so the hit and the scroll cannot disagree about where a line is.
     fn transcript_row_for_line(&mut self, identity: LineIdentity) -> Option<usize> {
         let width = usize::from(self.transcript_viewport_width.max(1));
-        let archived = self.history_archived_entries.min(self.logs.len());
         let mut row = 0usize;
-        for index in archived..self.logs.len() {
+        for index in 0..self.logs.len() {
             let count = self.entry_visual_line_count(index, width).max(1);
             if self.logs[index].cell_id == identity.cell_id {
                 return Some(row + identity.line_within_cell.min(count.saturating_sub(1)));
@@ -818,11 +810,11 @@ mod tests {
         search.current = Some(0);
         search.has_more = true;
         search.scan_done = true;
-        search.restart(7, false);
+        search.restart(false);
         assert!(search.matches.is_empty());
         assert_eq!(search.current, None);
         assert!(!search.has_more);
-        assert_eq!((search.scan_entry, search.scan_line), (7, 0));
+        assert_eq!((search.scan_entry, search.scan_line), (0, 0));
         assert!(!search.scan_done);
         // A restart the document caused keeps no place: the hit it named may not exist.
         assert_eq!(search.resume, None);
@@ -833,7 +825,6 @@ mod tests {
         let base = ScanIdentity {
             revision: 4,
             expanded: 0,
-            archived: 1,
             entries: 9,
             width: 80,
         };
@@ -863,7 +854,7 @@ mod tests {
             ..base
         };
         search.reconcile(moved, "gat".to_string());
-        assert_eq!(search.scan_entry, moved.archived);
+        assert_eq!(search.scan_entry, 0);
     }
 
     /// The fold state is part of what a scan is valid for, and only the fold state the search
@@ -876,7 +867,6 @@ mod tests {
         let base = ScanIdentity {
             revision: 4,
             expanded: 0,
-            archived: 0,
             entries: 9,
             width: 80,
         };

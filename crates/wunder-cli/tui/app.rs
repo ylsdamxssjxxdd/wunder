@@ -87,6 +87,7 @@ mod text_selection;
 mod thread_ui_state;
 #[path = "trajectory.rs"]
 pub(crate) mod trajectory;
+mod transcript_rows;
 mod transcript_search;
 mod transcript_view;
 use input_selection::MouseSelection;
@@ -201,7 +202,6 @@ struct TranscriptRenderCache {
     revision: u64,
     selected: Option<usize>,
     offset_from_bottom: usize,
-    archived_entries: usize,
     log_entries: usize,
     raw_output: bool,
     /// 欢迎头像升起动画的帧号，静止时为 `None`。相位是画出来的而不是转录内容
@@ -565,8 +565,9 @@ pub struct TuiApp {
     input_click_row: usize,
     input_click_column: usize,
     input_click_count: u8,
-    history_archived_entries: usize,
-    pending_scrollback_lines: Vec<Line<'static>>,
+    /// Rows each card takes at the current width, so choosing the window is a lookup
+    /// rather than a re-wrap of the whole transcript.
+    transcript_rows: transcript_rows::TranscriptRows,
     transcript_view: transcript_view::TranscriptView,
     trajectory_view: Option<trajectory::TrajectoryView>,
     /// Cards the reader opened with Enter, keyed by cell identity so trimming the
@@ -825,8 +826,7 @@ impl TuiApp {
             input_click_row: 0,
             input_click_column: 0,
             input_click_count: 0,
-            history_archived_entries: 0,
-            pending_scrollback_lines: Vec::new(),
+            transcript_rows: transcript_rows::TranscriptRows::default(),
             transcript_view: Default::default(),
             trajectory_view: None,
             expanded_cards: Default::default(),
@@ -2938,10 +2938,6 @@ impl TuiApp {
         self.transcript_rendered_lines = lines;
     }
 
-    pub fn drain_pending_scrollback_lines(&mut self) -> Vec<Line<'static>> {
-        std::mem::take(&mut self.pending_scrollback_lines)
-    }
-
     /// Drop the derived row maps and the render cache so the next frame rebuilds them.
     /// A mark is not part of this: it is booked against a card and the line of it the
     /// reader picked, so an append, a fold or a resize leaves it where it was. A mark is
@@ -2964,11 +2960,6 @@ impl TuiApp {
         self.transcript_rendered_lines = 0;
         self.transcript_hit = TranscriptHitMap::default();
         self.transcript_render_cache = None;
-    }
-
-    fn reset_scrollback_archive(&mut self) {
-        self.history_archived_entries = 0;
-        self.pending_scrollback_lines.clear();
     }
 
     fn clear_markdown_streams(&mut self) {
@@ -3595,12 +3586,9 @@ impl TuiApp {
     }
 
     pub fn transcript_render_window(&mut self, viewport_height: u16) -> TranscriptRenderWindow {
-        self.archive_scrollback_entries(viewport_height);
-
         let width = usize::from(self.transcript_viewport_width.max(1));
-        let archived = self.history_archived_entries.min(self.logs.len());
-        let mut line_counts = Vec::with_capacity(self.logs.len().saturating_sub(archived));
-        for index in archived..self.logs.len() {
+        let mut line_counts = Vec::with_capacity(self.logs.len());
+        for index in 0..self.logs.len() {
             line_counts.push(self.entry_visual_line_count(index, width));
         }
         let window = compute_transcript_window_spec(
@@ -3609,9 +3597,7 @@ impl TuiApp {
             self.transcript_offset_from_bottom,
         );
         let entries = (window.start_entry..window.end_entry_exclusive)
-            .map(|index| TranscriptRenderEntry {
-                global_index: archived + index,
-            })
+            .map(|index| TranscriptRenderEntry { global_index: index })
             .collect::<Vec<_>>();
         let window_line_counts =
             line_counts[window.start_entry..window.end_entry_exclusive].to_vec();
@@ -3642,7 +3628,6 @@ impl TuiApp {
                 && cache.revision == self.transcript_render_revision
                 && cache.selected == selected_transcript
                 && cache.offset_from_bottom == self.transcript_offset_from_bottom
-                && cache.archived_entries == self.history_archived_entries
                 && cache.log_entries == self.logs.len()
                 && cache.raw_output == self.raw_output
                 && cache.reveal_frame == reveal_frame
@@ -3725,7 +3710,6 @@ impl TuiApp {
             revision: self.transcript_render_revision,
             selected: selected_transcript,
             offset_from_bottom: self.transcript_offset_from_bottom,
-            archived_entries: self.history_archived_entries,
             log_entries: self.logs.len(),
             raw_output,
             reveal_frame,
@@ -3761,81 +3745,6 @@ impl TuiApp {
                 },
             ),
         );
-    }
-
-    fn archive_scrollback_entries(&mut self, viewport_height: u16) {
-        if self.transcript_offset_from_bottom > 0 || self.transcript_selection.is_some() {
-            return;
-        }
-
-        let archived = self.history_archived_entries.min(self.logs.len());
-        if archived >= self.logs.len() {
-            return;
-        }
-
-        let width = usize::from(self.transcript_viewport_width.max(1));
-        let mut line_counts = Vec::with_capacity(self.logs.len().saturating_sub(archived));
-        for index in archived..self.logs.len() {
-            line_counts.push(self.entry_visual_line_count(index, width));
-        }
-        let window = compute_transcript_window_spec(line_counts.as_slice(), viewport_height, 0);
-        if window.start_entry == 0 {
-            return;
-        }
-
-        let mutable_start = self
-            .logs
-            .iter()
-            .enumerate()
-            .skip(archived)
-            .find_map(|(index, entry)| {
-                (self.active_assistant == Some(index)
-                    || self.active_reasoning == Some(index)
-                    || self.entry_is_streaming(entry.kind, index)
-                    || entry
-                        .special
-                        .as_ref()
-                        .is_some_and(SpecialLogEntry::is_pending))
-                .then_some(index)
-            })
-            .unwrap_or(self.logs.len());
-        let archive_end = archived
-            .saturating_add(window.start_entry)
-            .min(mutable_start)
-            .min(self.logs.len());
-        // A cut exactly on an entry boundary would leave zero scrollable rows behind
-        // (remaining == viewport), and PgUp would look broken right after the archive.
-        // Keep the previous entry live so one scrollable page always survives.
-        let archive_end = if window.local_scroll == 0 && archive_end > archived {
-            archive_end.saturating_sub(1)
-        } else {
-            archive_end
-        };
-        if archive_end <= archived {
-            return;
-        }
-        let mut lines = Vec::new();
-        let render_width = self.transcript_viewport_width.max(1);
-        for index in archived..archive_end {
-            if self.raw_output {
-                lines.extend(raw_entry_lines(self.logs[index].text.as_str()));
-            } else {
-                lines.extend(self.render_entry_lines(index, false, render_width));
-            }
-        }
-
-        self.pending_scrollback_lines.extend(lines);
-        self.history_archived_entries = archive_end;
-        if let Some(selected) = self.transcript_selected {
-            if selected < self.history_archived_entries {
-                self.transcript_selected = if self.history_archived_entries < self.logs.len() {
-                    Some(self.history_archived_entries)
-                } else {
-                    None
-                };
-            }
-        }
-        self.invalidate_transcript_metrics();
     }
 
     // -------------------------------------------------------------- the composer gap
@@ -4141,9 +4050,8 @@ impl TuiApp {
         }
 
         let width = usize::from(self.transcript_viewport_width.max(1));
-        let archived = self.history_archived_entries.min(self.logs.len());
         let mut total = 0usize;
-        for index in archived..self.logs.len() {
+        for index in 0..self.logs.len() {
             total = total.saturating_add(self.entry_visual_line_count(index, width));
         }
         total
@@ -4172,12 +4080,79 @@ impl TuiApp {
         self.search_expanded_cards.contains(&cell_id)
     }
 
+    /// A cheap identity for what a card's row count depends on: its own text and the
+    /// summary its card writes. Both change whenever the card is rebuilt, so a count
+    /// measured before a tool result settled cannot outlive it.
+    fn entry_row_stamp(&self, index: usize) -> u64 {
+        let Some(entry) = self.logs.get(index) else {
+            return 0;
+        };
+        let mut hash: u64 = entry.text.len() as u64;
+        // Both ends and the length: a rewrite that changes what the card says changes one
+        // of them, and the walk stays O(1) per card however long the card is.
+        let bytes = entry.text.as_bytes();
+        for byte in bytes.iter().take(96).chain(bytes.iter().rev().take(96)) {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        let mut mix = |bytes: &[u8]| {
+            for byte in bytes {
+                hash ^= u64::from(*byte);
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        };
+        if let Some(special) = entry.special.as_ref() {
+            mix(special.summary_text().as_bytes());
+        }
+        hash
+    }
+
+    /// How many rows a card takes. The ledger answers for a card that has settled, and the
+    /// measurement below answers for one that can still move: a card is volatile exactly
+    /// while it is streaming text or waiting on a tool result, and only then is its count
+    /// allowed to change under the same key.
+    fn entry_visual_line_count(&mut self, index: usize, width: usize) -> usize {
+        let Some(kind) = self.logs.get(index).map(|entry| entry.kind) else {
+            return 1;
+        };
+        let volatile = self.entry_is_streaming(kind, index)
+            || self
+                .logs
+                .get(index)
+                .and_then(|entry| entry.special.as_ref())
+                .is_some_and(SpecialLogEntry::is_pending);
+        let width_key = width.min(u16::MAX as usize) as u16;
+        let expanded = self.card_is_expanded(index);
+        let stamp = self.entry_row_stamp(index);
+        self.transcript_rows.sync(self.logs.len());
+        if !volatile {
+            if let Some(rows) =
+                self.transcript_rows
+                    .get(index, width_key, self.raw_output, expanded, stamp)
+            {
+                return rows;
+            }
+        }
+        let rows = self.measure_entry_rows(index, width);
+        if !volatile {
+            self.transcript_rows.put(
+                index,
+                width_key,
+                self.raw_output,
+                expanded,
+                stamp,
+                rows,
+            );
+        }
+        rows
+    }
+
     /// How many lines an entry takes in the window, measured the way the frame renders it.
     /// Raw scrollback (`Alt+R`) drops the card styling and the blank separator row, so it
     /// counts the entry text alone: metrics, the row map and the selection identity all
     /// key on this number, and a second line budget here would mis-point every card after
     /// the first.
-    fn entry_visual_line_count(&mut self, index: usize, width: usize) -> usize {
+    fn measure_entry_rows(&mut self, index: usize, width: usize) -> usize {
         let Some(kind) = self.logs.get(index).map(|entry| entry.kind) else {
             return 1;
         };
@@ -6276,7 +6251,7 @@ impl TuiApp {
         self.command_log_indices.clear();
         self.tool_log_indices.clear();
         self.pending_temp_tool_cells.clear();
-        self.reset_scrollback_archive();
+        self.transcript_rows.clear();
         self.invalidate_transcript_metrics();
         self.active_assistant = None;
         self.active_reasoning = None;
@@ -6452,7 +6427,7 @@ impl TuiApp {
         self.command_log_indices.clear();
         self.tool_log_indices.clear();
         self.pending_temp_tool_cells.clear();
-        self.reset_scrollback_archive();
+        self.transcript_rows.clear();
         self.invalidate_transcript_metrics();
 
         let restored = if let Some((_, state)) = target_state {
@@ -7145,10 +7120,7 @@ impl TuiApp {
     /// is the feedback, and a log line here would rebuild the window and erase it. The
     /// gap row above the draft carries the count instead, for a moment.
     fn copy_transcript_selection(&mut self) {
-        let text = {
-            let lines = self.transcript_window_lines();
-            self.transcript_selection_text(lines)
-        };
+        let text = self.transcript_document_selection_text();
         self.publish_clipboard_text(text.as_str());
     }
 
@@ -8847,11 +8819,9 @@ impl TuiApp {
             return;
         }
         let dropped = self.logs.remove(index);
+        self.transcript_rows.remove(index);
         // A mark that named this card has no text to name any more.
         self.forget_transcript_selection_of(dropped.cell_id);
-        if index < self.history_archived_entries {
-            self.history_archived_entries = self.history_archived_entries.saturating_sub(1);
-        }
         if let Some(active) = self.active_assistant {
             self.active_assistant = if active == index {
                 None
@@ -8875,7 +8845,7 @@ impl TuiApp {
         self.adjust_tool_log_indices_after_remove(index);
         self.adjust_temp_tool_cells_after_remove(index);
         if self.logs.is_empty() {
-            self.reset_scrollback_archive();
+            self.transcript_rows.clear();
         }
         self.invalidate_transcript_metrics();
     }
@@ -8885,6 +8855,7 @@ impl TuiApp {
             return;
         }
         let dropped = self.logs.remove(0);
+        self.transcript_rows.remove(0);
         self.expanded_cards.remove(&dropped.cell_id);
         // The card is gone, so is any mark on it: it must not be re-pointed at whatever
         // now sits in the slot it left behind.
@@ -8893,9 +8864,6 @@ impl TuiApp {
         // ledger holding a card that no longer exists, and the numbering of every card
         // behind it has moved with the rows it took away.
         self.retract_search_expansion(dropped.cell_id);
-        if self.history_archived_entries > 0 {
-            self.history_archived_entries = self.history_archived_entries.saturating_sub(1);
-        }
         if let Some(index) = self.active_assistant.as_mut() {
             *index = index.saturating_sub(1);
         }
@@ -8910,7 +8878,7 @@ impl TuiApp {
         self.adjust_tool_log_indices_after_remove(0);
         self.adjust_temp_tool_cells_after_remove(0);
         if self.logs.is_empty() {
-            self.reset_scrollback_archive();
+            self.transcript_rows.clear();
         }
         self.invalidate_transcript_metrics();
     }

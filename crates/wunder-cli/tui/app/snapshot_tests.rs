@@ -262,7 +262,7 @@ async fn live_acceptance_incomplete_reasoning_and_answer_deltas_are_visible_with
     let root = TempRoot::new("stream_pending_preview");
     let mut app = fixture_app(root.path()).await;
     app.logs.clear();
-    app.reset_scrollback_archive();
+    app.transcript_rows.clear();
     app.set_transcript_viewport(80, 20);
     feed_stream_event(&mut app, "llm_request", json!({}), 10070);
     app.active_stream_sessions.insert(app.session_id.clone());
@@ -322,7 +322,7 @@ async fn complete_reasoning_frames_do_not_duplicate_the_streamed_block() {
     let root = TempRoot::new("reasoning_full_frame");
     let mut app = fixture_app(root.path()).await;
     app.logs.clear();
-    app.reset_scrollback_archive();
+    app.transcript_rows.clear();
     app.set_transcript_viewport(80, 20);
 
     app.merge_reasoning_delta("First step\n");
@@ -356,7 +356,7 @@ async fn malformed_patch_arguments_use_one_tool_card_without_a_duplicate_marker(
     let root = TempRoot::new("tool_fallback_card");
     let mut app = fixture_app(root.path()).await;
     app.logs.clear();
-    app.reset_scrollback_archive();
+    app.transcript_rows.clear();
     feed_stream_event(
         &mut app,
         "tool_call",
@@ -537,7 +537,7 @@ async fn live_reasoning_streams_inline_and_stays_available_in_the_transcript() {
     let root = TempRoot::new("reasoning_projection");
     let mut app = fixture_app(root.path()).await;
     app.logs.clear();
-    app.reset_scrollback_archive();
+    app.transcript_rows.clear();
     feed_stream_event(&mut app, "llm_request", json!({}), 10101);
     for index in 0..60 {
         feed_stream_event(
@@ -606,7 +606,7 @@ async fn tool_progress_never_becomes_an_assistant_message() {
     let root = TempRoot::new("tool_progress_projection");
     let mut app = fixture_app(root.path()).await;
     app.logs.clear();
-    app.reset_scrollback_archive();
+    app.transcript_rows.clear();
     feed_stream_event(&mut app, "llm_request", json!({}), 11001);
     feed_stream_event(
         &mut app,
@@ -666,7 +666,7 @@ async fn a_reported_stream_error_does_not_add_an_empty_output_error_on_done() {
     let root = TempRoot::new("reported_error_done");
     let mut app = fixture_app(root.path()).await;
     app.logs.clear();
-    app.reset_scrollback_archive();
+    app.transcript_rows.clear();
     feed_stream_event(&mut app, "llm_request", json!({}), 12001);
     feed_stream_event(
         &mut app,
@@ -697,34 +697,41 @@ async fn a_reported_stream_error_does_not_add_an_empty_output_error_on_done() {
 }
 
 #[tokio::test]
-async fn a_live_cell_cannot_be_committed_to_terminal_history() {
-    let root = TempRoot::new("active_history");
+async fn the_first_screen_of_a_long_transcript_stays_reachable() {
+    let root = TempRoot::new("history_reach");
     let mut app = fixture_app(root.path()).await;
     app.logs.clear();
-    app.reset_scrollback_archive();
-    app.set_transcript_viewport(50, 8);
-    app.merge_assistant_delta("stream-head\nstream-tail\n");
-    for index in 0..20 {
-        app.push_log(LogKind::Info, format!("later-tool-{index}"));
+    app.transcript_rows.clear();
+    app.set_transcript_viewport(60, 10);
+    app.push_log(LogKind::User, "first-screen-marker".to_string());
+    for index in 0..40 {
+        app.push_log(LogKind::Info, format!("filler-{index}"));
     }
-    app.transcript_rendered_view(50, 8, false);
-    assert!(
-        app.drain_pending_scrollback_lines().is_empty(),
-        "live text is not immutable history"
-    );
-    app.merge_assistant_delta("stream-final\n");
-    app.finalize_all_markdown_streams();
-    app.active_assistant = None;
-    app.transcript_rendered_view(50, 8, false);
-    let history = app
-        .drain_pending_scrollback_lines()
+    let tail = app
+        .transcript_rendered_view(60, 10, false)
+        .lines
         .iter()
         .map(|line| line.to_string())
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        history.contains("stream-final"),
-        "lost final delta: {history}"
+        !tail.contains("first-screen-marker"),
+        "the tail starts far below it: {tail}"
+    );
+    // Nothing is handed to the terminal any more: the oldest card is still in the
+    // document, so the window can be walked all the way back to it.
+    app.scroll_transcript_to_top();
+    app.invalidate_transcript_metrics();
+    let top = app
+        .transcript_rendered_view(60, 10, false)
+        .lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        top.contains("first-screen-marker"),
+        "the whole history is the document: {top}"
     );
 }
 
@@ -733,7 +740,7 @@ async fn resizing_a_stream_reprojects_all_text_without_losing_or_reordering_line
     let root = TempRoot::new("stream_resize");
     let mut app = fixture_app(root.path()).await;
     app.logs.clear();
-    app.reset_scrollback_archive();
+    app.transcript_rows.clear();
     app.set_transcript_viewport(80, 12);
     app.merge_assistant_delta("first-marker\n\nsecond-marker\n\n");
     app.set_transcript_viewport(24, 12);
@@ -6093,7 +6100,7 @@ fn drag_over_run(app: &mut TuiApp, needle: &str, width: u16, height: u16) -> Str
 fn folded_thinking_card(app: &mut TuiApp) {
     app.logs.clear();
     app.raw_output = false;
-    app.reset_scrollback_archive();
+    app.transcript_rows.clear();
     let body = (1..=12)
         .map(|index| format!("reasoning line {index}"))
         .collect::<Vec<_>>()
@@ -6968,3 +6975,53 @@ async fn the_painted_frame_repaints_the_running_dot() {
         "an unchanged transcript still repaints its running dot"
     );
 }
+
+/// A mark that runs past the top of the window still copies everything it covers. The
+/// gesture is the real one: press on a row, drag to the top edge, and let the drag
+/// autoscroll walk the window back through the history while the anchor stays put.
+#[tokio::test]
+async fn a_drag_off_the_top_edge_copies_rows_from_screens_above() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("drag_off_top");
+    let mut app = fixture_app(root.path()).await;
+    app.logs.clear();
+    app.transcript_rows.clear();
+    app.raw_output = true;
+    for index in 0..40 {
+        app.push_log(LogKind::User, format!("row-marker-{index:02}"));
+    }
+    let (width, height) = (60u16, 12u16);
+    let rows = draw_rows(&mut app, width, height);
+    let region = app.transcript_mouse_region;
+    let top = usize::from(region.y);
+    let start = top + 2;
+    assert!(
+        rows[start].contains("row-marker-"),
+        "the drag starts on a card row: {}",
+        rows[start]
+    );
+
+    let _clipboard_turn = ClipboardSeam::arm();
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), start, 0);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), top, 0);
+    // Each tick is one more row the window slides away from the anchor.
+    for _ in 0..10 {
+        app.tick_transcript_selection_autoscroll();
+        // The event loop paints between ticks, so the row map the next tick reads is the
+        // window the reader is looking at.
+        draw_rows(&mut app, width, height);
+    }
+    draw_rows(&mut app, width, height);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), top, 0);
+    let copied = ClipboardSeam::copied().pop().unwrap_or_default();
+    let marked = copied
+        .lines()
+        .filter(|line| line.contains("row-marker-"))
+        .count();
+    assert!(
+        marked > usize::from(region.height),
+        "the copy reaches past one screen, got {marked}: {copied}"
+    );
+}
+

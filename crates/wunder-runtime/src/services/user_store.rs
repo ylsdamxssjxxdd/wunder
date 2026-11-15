@@ -1119,6 +1119,17 @@ impl UserStore {
             .list_agent_tasks_by_thread(thread_id, status, limit)
     }
 
+    /// 一个用户的非终态任务行（最近更新的在前）。目录投影与启动清扫共用。
+    pub fn list_user_agent_tasks_in_statuses(
+        &self,
+        user_id: &str,
+        statuses: &[&str],
+        limit: i64,
+    ) -> Result<Vec<AgentTaskRecord>> {
+        self.storage
+            .list_user_agent_tasks_in_statuses(user_id, statuses, limit)
+    }
+
     pub fn update_agent_task_status(&self, params: UpdateAgentTaskStatusParams<'_>) -> Result<()> {
         self.storage.update_agent_task_status(params)
     }

@@ -12,11 +12,11 @@ import android.app.Notification;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.content.res.Resources;
-import android.content.res.TypedValue;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.SystemClock;
+import android.util.TypedValue;
 import android.service.notification.StatusBarNotification;
 
 import androidx.lifecycle.Lifecycle;

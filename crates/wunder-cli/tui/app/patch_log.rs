@@ -503,7 +503,14 @@ impl CommandLogEntry {
             )
         };
         let command = self.command.lines().next().unwrap_or_default().to_string();
-        let mut spans = vec![icon, Span::styled(command, command_style())];
+        // The head names the tool and then what it ran, the way every other card does:
+        // a bare command line read as stray output rather than as a card.
+        let verb = crate::tool_presentation::present("执行命令").verb(self.is_zh);
+        let mut spans = vec![
+            icon,
+            Span::styled(format!("{verb} "), command_style()),
+            Span::styled(command, command_style()),
+        ];
         // A multi-line command keeps its head in the header; the rest is a fold, exactly as
         // the reference marks it, whether or not this card is open.
         if self.command.lines().nth(1).is_some() {
@@ -2563,7 +2570,8 @@ mod tests {
         };
         assert_eq!(entry.status, CommandLogStatus::Pending);
         assert_eq!(entry.command, "git status --short");
-        // The head is the command and a breathing bullet; nothing spells "running" out.
+        // The head names the tool, then the command; the breathing bullet is the only
+        // thing that says "running".
         let head: String = entry
             .header_line()
             .spans
@@ -2573,7 +2581,7 @@ mod tests {
         assert_eq!(
             head,
             format!(
-                "{} git status --short",
+                "{} Ran git status --short",
                 super::activity_indicator::RUNNING_INDICATOR
             )
         );
@@ -3365,7 +3373,7 @@ mod tests {
         let rendered = flat_command_lines(&entry, 80, false);
         // The head is the command with its state on the bullet: a failed process is a red
         // bullet and the exit code in the tail, not the word "failed" in front.
-        assert_eq!(rendered[0], "• echo first … (exit 1)");
+        assert_eq!(rendered[0], "• Ran echo first … (exit 1)");
         assert!(
             !rendered[0].contains("28ms"),
             "the elapsed time is not a header detail: {rendered:?}"

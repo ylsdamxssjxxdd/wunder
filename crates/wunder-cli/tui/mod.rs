@@ -8,7 +8,6 @@ mod markdown;
 mod markdown_render;
 mod markdown_stream;
 mod pointer;
-mod scrollback;
 mod text_tabs;
 mod theme;
 mod thread_registry;
@@ -221,11 +220,6 @@ fn render_frame<B: ratatui::backend::Backend + io::Write>(
     }
     let result = (|| {
         terminal.draw(|frame| ui::draw(frame, app))?;
-        let lines = app.drain_pending_scrollback_lines();
-        if !lines.is_empty() {
-            scrollback::insert_history_lines(terminal, lines)?;
-            terminal.draw(|frame| ui::draw(frame, app))?;
-        }
         Ok(())
     })();
     let finish = if synchronized {

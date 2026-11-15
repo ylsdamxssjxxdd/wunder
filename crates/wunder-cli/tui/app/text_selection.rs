@@ -662,33 +662,71 @@ impl TuiApp {
     /// The lines here are the cache's logical text (tabs intact) while the bounds are
     /// display columns, so each bound maps back through the same tab projection the frame
     /// used and the copy keeps its tabs. Soft-wrapped rows cut at their own columns without
-    /// introducing a newline into the copied logical line.
-    pub(super) fn transcript_selection_text(&self, lines: &[Line<'static>]) -> String {
-        let Some(range) = self.resolve_selection() else {
+    /// The marked range read straight from the document, not from the frame.
+    ///
+    /// A drag can run past the top of the window: the window slides under the pointer while
+    /// the anchor stays on the card the reader pressed. Reading the copy from the visible
+    /// rows answered with a range only as long as the screen, so a drag across a screen
+    /// boundary lost everything above it. The cards are the document; the copy asks them.
+    pub(super) fn transcript_document_selection_text(&mut self) -> String {
+        let Some(selection) = self.transcript_selection else {
             return String::new();
         };
-        let mut out = Vec::new();
-        for (index, line) in lines.iter().enumerate() {
-            if index < range.start_line || index > range.end_line {
+        let (low, high) = if selection.anchor.order_key() <= selection.head.order_key() {
+            (selection.anchor, selection.head)
+        } else {
+            (selection.head, selection.anchor)
+        };
+        let width = self.transcript_viewport_width.max(1);
+        let raw = self.raw_output;
+        let mut out: Vec<String> = Vec::new();
+        for index in 0..self.logs.len() {
+            let cell_id = self.logs[index].cell_id;
+            if cell_id < low.cell_id {
                 continue;
             }
-            let from = if index == range.start_line {
-                range.start_column.unwrap_or(0)
+            if cell_id > high.cell_id {
+                break;
+            }
+            let lines = if raw {
+                super::raw_entry_lines(self.logs[index].text.as_str())
+            } else {
+                self.render_entry_lines(index, false, width)
+            };
+            let last_index = lines.len().saturating_sub(1);
+            let first = if cell_id == low.cell_id {
+                low.line_within_cell.min(last_index)
             } else {
                 0
             };
-            let to = if index == range.end_line {
-                range.end_column.unwrap_or(LINE_END)
+            let last = if cell_id == high.cell_id {
+                high.line_within_cell.min(last_index)
             } else {
-                LINE_END
+                last_index
             };
-            out.push(slice_line_text(line, from, to).trim_end().to_string());
+            for line_index in first..=last {
+                let Some(line) = lines.get(line_index) else {
+                    continue;
+                };
+                let from = if cell_id == low.cell_id && line_index == first {
+                    low.column.unwrap_or(0)
+                } else {
+                    0
+                };
+                let to = if cell_id == high.cell_id && line_index == last {
+                    high.column.unwrap_or(LINE_END)
+                } else {
+                    LINE_END
+                };
+                out.push(slice_line_text(line, from, to).trim_end().to_string());
+            }
         }
         while out.last().is_some_and(|line| line.is_empty()) {
             out.pop();
         }
         out.join("\n")
     }
+
 
     /// The URL under a pointer column, including a URL that soft-wrapped onto another row.
     pub(super) fn url_at_point(

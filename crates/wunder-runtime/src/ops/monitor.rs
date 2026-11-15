@@ -922,6 +922,18 @@ pub struct MonitorState {
     app_start_ts: Mutex<f64>,
 }
 
+/// 持久缓存里的「在途」状态词。
+///
+/// 它只描述*某个进程当时*在做什么，不等于现在还有执行器：进程被杀之后
+/// running/queued/waiting 会一直留在缓存里。目录与侧栏拿它当「是否还在跑」
+/// 之前，必须先用会话锁/执行器核对，否则崩溃过的线程会永久显示为运行中。
+pub fn status_is_live_text(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "running" | "cancelling" | "queued" | "waiting"
+    )
+}
+
 impl MonitorState {
     pub const STATUS_RUNNING: &'static str = "running";
     pub const STATUS_WAITING: &'static str = "waiting";
@@ -1931,7 +1943,12 @@ impl MonitorState {
                 };
                 if !matches!(
                     record.status.as_str(),
-                    Self::STATUS_RUNNING | Self::STATUS_CANCELLING | Self::STATUS_QUEUED
+                    Self::STATUS_RUNNING
+                        | Self::STATUS_CANCELLING
+                        | Self::STATUS_QUEUED
+                        // 上一个进程停在问询/审批上的线程同样没有执行器：
+                        // 不收敛就会一直显示「等待回答」并挡住归档。
+                        | Self::STATUS_WAITING
                 ) {
                     return false;
                 }

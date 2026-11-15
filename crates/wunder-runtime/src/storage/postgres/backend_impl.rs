@@ -634,6 +634,14 @@ impl AgentRuntimeStore for PostgresStorage {
     ) -> Result<Vec<AgentTaskRecord>> {
         self.list_agent_tasks_by_thread_impl(thread_id, status, limit)
     }
+    fn list_user_agent_tasks_in_statuses(
+        &self,
+        user_id: &str,
+        statuses: &[&str],
+        limit: i64,
+    ) -> Result<Vec<AgentTaskRecord>> {
+        self.list_user_agent_tasks_in_statuses_impl(user_id, statuses, limit)
+    }
     fn update_agent_task_status(&self, params: UpdateAgentTaskStatusParams<'_>) -> Result<()> {
         self.update_agent_task_status_impl(params)
     }

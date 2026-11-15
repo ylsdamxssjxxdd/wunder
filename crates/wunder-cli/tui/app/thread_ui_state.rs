@@ -126,8 +126,8 @@ impl ThreadUiState {
         app.pending_attachment_paths = self.pending_attachment_paths;
         app.pending_large_pastes = self.pending_large_pastes;
         app.large_paste_counters = self.large_paste_counters;
-        // Terminal scrollback belongs to the terminal, not to this thread.
-        app.reset_scrollback_archive();
+        // Row budgets were measured for the cards of the thread that just left.
+        app.transcript_rows.clear();
         app.invalidate_transcript_metrics();
     }
 }

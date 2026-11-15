@@ -140,7 +140,7 @@ impl NativeDesktop {
         let workspaces = self.workspace_lookup();
         Ok((
             rows.into_iter()
-                .map(|row| self.session_with_stats(row, &workspaces))
+                .map(|row| self.session_with_stats(row, &workspaces, &self.live_work()))
                 .collect(),
             total,
         ))

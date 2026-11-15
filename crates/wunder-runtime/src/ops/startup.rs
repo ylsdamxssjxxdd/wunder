@@ -27,7 +27,8 @@ pub async fn settle_restarted_activity(state: Arc<AppState>) -> Result<usize> {
     let mut by_user: HashMap<String, Vec<(String, String)>> = HashMap::new();
     for payload in records {
         let status = payload.get("status").and_then(|v| v.as_str()).unwrap_or("");
-        if !matches!(status, "running" | "cancelling" | "queued") {
+        // `waiting` 是停在问询/审批上的运行态：进程都没了，它同样没有执行器。
+        if !matches!(status, "running" | "cancelling" | "queued" | "waiting") {
             continue;
         }
         let Some(session) = payload.get("session_id").and_then(|v| v.as_str()) else {
@@ -69,10 +70,22 @@ pub async fn settle_restarted_activity(state: Arc<AppState>) -> Result<usize> {
                 continue;
             }
         };
+        // 任务台账里的 running 行不属于监控缓存的清理范围：队列只领取
+        // pending/retry，被中途杀掉的执行留下的 running 行会永久留存，
+        // 让线程一直显得「在运行」。这里先按存活锁把孤儿行落成终态。
+        match state
+            .kernel
+            .thread_runtime
+            .settle_orphaned_running_tasks(&user)
+            .await
+        {
+            Ok(0) => {}
+            Ok(count) => info!(user = %user, count, "settled orphaned running tasks"),
+            Err(error) => warn!(user = %user, %error, "settle orphaned running tasks failed"),
+        }
         for (session, status) in sessions {
             if live.contains(&session) {
-                continue;
-            }
+                continue;            }
             // 队列刚领取的任务处于锁交接窗口，留给执行器接管。
             if fresh_running_task(&state, &session).await {
                 continue;

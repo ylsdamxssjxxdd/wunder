@@ -35,6 +35,13 @@ thread_local! {
     /// selection mode; every projection re-derives each row's `checked` from
     /// it so status refreshes and reorders never drop a tick.
     static THREAD_SELECTION: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    /// Threads whose archive the user just asked for. The row leaves the tree
+    /// at once (the transaction still runs on a worker) and stays hidden until
+    /// the catalogue stops listing the thread, so the click has a visible
+    /// effect on a slow disk and a second click cannot start a second archive.
+    /// The entry retires itself when the thread disappears from the catalogue,
+    /// or when the archive reports an error.
+    static ARCHIVING: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
     /// Settled marks the user has already looked at: session id -> the settle
     /// time that was on screen when the thread was opened. A row is "seen"
     /// while its settle time is not newer than the recorded one, so a fresh
@@ -310,25 +317,87 @@ fn thread_archivable(status: &str, locked: bool) -> bool {
 fn finish_archive(app: &MainWindow, archived: &[String]) {
     let active = app.get_active_session_id().to_string();
     let left_active = !active.is_empty() && archived.iter().any(|id| id == &active);
+    // Resolved by id, never by a position: the catalogue is re-read in the
+    // background right after an archive, and a position captured before that
+    // read lands on a different thread — which then focuses and expands its own
+    // workspace, the "click archived one thread and another group opened"
+    // symptom.
     let next = if left_active {
-        // Resolved before the view is cleared: the same catalogue model is read
-        // by `select-conversation`, and the archived rows are still in it.
-        let next = app
-            .get_conversations()
+        app.get_conversations()
             .iter()
-            .position(|row| !row.locked && !archived.iter().any(|id| row.id == id.as_str()));
-        crate::native_chat::close_visible_thread(app, &active);
-        next
+            .find(|row| !row.locked && !archived.iter().any(|id| row.id == id.as_str()))
+            .map(|row| row.id.to_string())
     } else {
         None
     };
+    if left_active {
+        crate::native_chat::close_visible_thread(app, &active);
+    }
     // Refresh before selecting: the next thread's open marks `session-loading`,
     // which makes an ordinary catalogue refresh a no-op.
     app.invoke_refresh_chat();
     crate::navigation_ui::project_sidebar(app, None);
-    if let Some(index) = next {
-        app.invoke_select_conversation(index as i32);
+    if let Some(id) = next {
+        select_thread(app, id.as_str());
     }
+}
+
+/// Resolve a thread id against the catalogue *now* and open it.
+///
+/// Rows carry ids, but every jump used to carry the index captured when the
+/// tree was projected. A catalogue read landing in between moved that index
+/// onto the next thread, so an action aimed at one thread opened another one —
+/// and opening a thread focuses (and therefore expands) its workspace.
+pub(crate) fn select_thread(app: &MainWindow, session_id: &str) -> bool {
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return false;
+    }
+    let Some(index) = app
+        .get_conversations()
+        .iter()
+        .position(|row| row.id == session_id)
+    else {
+        return false;
+    };
+    app.invoke_select_conversation(index as i32);
+    true
+}
+
+/// Position of a workspace card in the current catalogue model. Rows carry the
+/// stable workspace id; the numeric payload they also carry is an index into
+/// the card model at projection time and must not be trusted for actions.
+pub(crate) fn workspace_index_of(app: &MainWindow, workspace_id: &str) -> Option<usize> {
+    app.get_workspaces()
+        .iter()
+        .position(|card| card.workspace_id.as_str() == workspace_id)
+}
+
+/// Drop the row the user just asked to archive. The archive itself is a
+/// background transaction, so without this the tree keeps showing a thread
+/// that is already gone and the click reads as "nothing happened".
+fn hide_archiving(app: &MainWindow, ids: &[String]) {
+    ARCHIVING.with(|slot| {
+        let mut archiving = slot.borrow_mut();
+        for id in ids {
+            if !id.trim().is_empty() {
+                archiving.insert(id.trim().to_string());
+            }
+        }
+    });
+    project_sidebar(app, None);
+}
+
+/// The archive transaction failed: the thread is still there, so put its row
+/// back instead of leaving the tree one entry short.
+fn restore_archiving(app: &MainWindow, ids: &[String]) {
+    ARCHIVING.with(|slot| {
+        let mut archiving = slot.borrow_mut();
+        for id in ids {
+            archiving.remove(id.trim());
+        }
+    });
+    project_sidebar(app, None);
 }
 
 /// Rebuild the sidebar from the workspace facade plus the bounded conversation
@@ -436,6 +505,14 @@ fn rebuild_rows(app: &MainWindow) {
     THREAD_SELECTION.with(|slot| {
         slot.borrow_mut().retain(|id| existing.contains(id));
     });
+    // An archive request hides its row before the transaction returns. The
+    // entry lives exactly as long as the catalogue still lists the thread, so
+    // a successful archive (or a failed one, which drops it explicitly) needs
+    // no extra bookkeeping.
+    ARCHIVING.with(|slot| {
+        slot.borrow_mut().retain(|id| existing.contains(id));
+    });
+    let archiving = ARCHIVING.with(|slot| slot.borrow().clone());
     let selection_mode = app.get_sidebar_selection_mode();
     let mut rows: Vec<SidebarRow> = Vec::with_capacity(cards_model.row_count() * 4 + 1);
     let cloud_threads = app.get_cloud_thread_rows();
@@ -572,6 +649,12 @@ fn rebuild_rows(app: &MainWindow) {
                     continue;
                 };
                 let id = conv.id.to_string();
+                if archiving.contains(&id) {
+                    // The archive is in flight; the row is already gone for the
+                    // reader. Its `thread_count` above still counts it, which is
+                    // why the empty-tree hint below uses the emitted rows.
+                    continue;
+                }
                 let archivable = thread_archivable(conv.runtime_status.as_str(), conv.locked);
                 let checked = selection_mode
                     && THREAD_SELECTION.with(|slot| slot.borrow().contains(id.as_str()));
@@ -1116,8 +1199,10 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             // group and folds it again on the next click, leaving the other
             // open workspaces untouched. Do not open its first thread: on
             // Win7/HDD that would start a lease and history read while the
-            // user is only trying to reveal the tree.
-            if let Ok(workspace) = usize::try_from(row.payload) {
+            // user is only trying to reveal the tree. Resolve by id: the
+            // numeric payload is a card-model position from projection time,
+            // and a catalogue read in between can move it onto another group.
+            if let Some(workspace) = workspace_index_of(&app, row.workspace_id.as_str()) {
                 toggle_local_workspace(&app, api.clone(), workspace);
             }
         } else if row.kind == 3 {
@@ -1129,7 +1214,10 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             crate::navigation_ui::project_sidebar(&app, None);
             app.invoke_cloud_select_thread(row.payload + 1);
         } else {
-            app.invoke_select_conversation(row.payload);
+            // Same rule for threads: the row names the thread, the click
+            // resolves it. Opening whatever sits at the old position is how a
+            // click used to land on another workspace's thread.
+            select_thread(&app, row.thread_id.as_str());
         }
     });
     let weak = app.as_weak();
@@ -1287,20 +1375,28 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     let api = desktop.clone();
     app.on_archive_thread(move |index| {
-        if weak.upgrade().is_none() {
+        let Some(app) = weak.upgrade() else {
             return;
-        }
+        };
         let id = index.trim().to_string();
         if id.is_empty() {
             return;
         }
+        // The row leaves the tree immediately; the transaction runs on a
+        // worker. Waiting for the background write and the catalogue re-read
+        // before redrawing made the click look ignored on a slow disk.
+        hide_archiving(&app, std::slice::from_ref(&id));
         let api = api.clone();
         let weak = weak.clone();
         std::thread::spawn(move || {
             let result = api.archive_session(&id);
             let _ = weak.upgrade_in_event_loop(move |app| {
                 if let Err(error) = result {
-                    app.set_status(format!("无法归档会话：{error}").into());
+                    // Archiving was refused (still running, owned elsewhere):
+                    // the thread is still there, so its row comes back and the
+                    // toast says why instead of the row vanishing silently.
+                    restore_archiving(&app, std::slice::from_ref(&id));
+                    crate::feedback::failure(&app, format!("无法归档会话：{error}"));
                     return;
                 }
                 // A tick on the archived thread must not survive into the
@@ -1386,18 +1482,22 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     let api = desktop.clone();
     app.on_sidebar_archive_selected(move || {
-        if weak.upgrade().is_none() {
+        let Some(app) = weak.upgrade() else {
             return;
-        }
+        };
         let ids: Vec<String> =
             THREAD_SELECTION.with(|slot| slot.borrow().iter().cloned().collect());
         if ids.is_empty() {
             return;
         }
+        // Same immediate effect as the single-row action: the checked rows
+        // leave the tree while the transactions run.
+        hide_archiving(&app, &ids);
         let api = api.clone();
         let weak = weak.clone();
         std::thread::spawn(move || {
             let mut archived = 0usize;
+            let mut failed_ids: Vec<String> = Vec::new();
             let mut archived_ids = HashSet::new();
             let mut first_error: Option<String> = None;
             for id in &ids {
@@ -1407,6 +1507,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                         archived_ids.insert(id.clone());
                     }
                     Err(error) => {
+                        failed_ids.push(id.clone());
                         if first_error.is_none() {
                             first_error = Some(format!("{error}"));
                         }
@@ -1417,6 +1518,9 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 THREAD_SELECTION.with(|slot| slot.borrow_mut().clear());
                 app.set_sidebar_selection_mode(false);
                 app.set_sidebar_selected_count(0);
+                if !failed_ids.is_empty() {
+                    restore_archiving(&app, &failed_ids);
+                }
                 if let Some(error) = first_error {
                     crate::feedback::failure(
                         &app,

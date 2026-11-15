@@ -2286,7 +2286,7 @@ impl TuiApp {
         self.tool_log_indices.clear();
         self.pending_temp_tool_cells.clear();
         self.expanded_cards.clear();
-        self.reset_scrollback_archive();
+        self.transcript_rows.clear();
         self.invalidate_transcript_metrics();
         self.session_stats = crate::SessionStatsSnapshot::default();
         self.reload_session_stats().await;

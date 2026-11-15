@@ -488,6 +488,21 @@ struct ActiveThreadLease {
     holders: usize,
 }
 
+/// 一个用户当前仍在途的线程集合，与归档门禁共用同一规则
+/// （`ThreadRuntime::live_work_sessions`）。目录投影用它把持久缓存里残留的
+/// running/queued/waiting 收敛成「已中断」，否则侧栏会把崩溃过的线程永久画成
+/// 运行中，归档按钮一直灰着。
+#[derive(Default)]
+struct LiveWork {
+    sessions: HashSet<String>,
+}
+
+impl LiveWork {
+    fn contains(&self, session_id: &str) -> bool {
+        self.sessions.contains(session_id.trim())
+    }
+}
+
 #[derive(Default)]
 struct LeaseHeartbeatState {
     active: HashMap<String, ActiveThreadLease>,
@@ -534,7 +549,9 @@ fn recover_restarted_threads(desktop: &DesktopRuntime, instance_id: &str) -> usi
     let storage = &desktop.state.storage;
     let records = desktop.state.monitor.load_records_by_user(
         user,
-        Some(&["running", "cancelling", "queued"]),
+        // `waiting` 是停在问询/审批上的运行态：上一进程消失后它同样没有
+        // 执行器，不收敛就会一直显示「等待回答」并挡住归档。
+        Some(&["running", "cancelling", "queued", "waiting"]),
         None,
         128,
     );
@@ -699,6 +716,20 @@ impl NativeDesktop {
             let recovered = recover_restarted_threads(&desktop, &instance_id);
             if recovered > 0 {
                 tracing::info!(recovered, "settled restarted thread status");
+            }
+            // 任务台账同样会留下上一进程的 running 行：队列只领取
+            // pending/retry，没有人会再收尾它们，归档门禁却会一直把它当成
+            // 在途工作。趁启动没有本地执行器时一次结清。
+            let thread_runtime = desktop.state.kernel.thread_runtime.clone();
+            let user_id = desktop.user_id.clone();
+            match runtime.block_on(async move {
+                thread_runtime.settle_orphaned_running_tasks(&user_id).await
+            }) {
+                Ok(settled) if settled > 0 => {
+                    tracing::info!(settled, "settled orphaned running task rows");
+                }
+                Ok(_) => {}
+                Err(error) => tracing::warn!(%error, "settle orphaned running task rows failed"),
             }
         }
         let open_threads: Arc<Mutex<HashMap<String, u64>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -1284,13 +1315,16 @@ impl NativeDesktop {
             .storage
             .thread_turn_tails(self.user_id(), &session_ids)
             .ok();
+        // One bulk read for the whole page: the archive gate and the projected
+        // status must be the same verdict for every row.
+        let live = self.live_work();
         Ok(records
             .into_iter()
             .map(|record| {
                 let goal = goals
                     .iter()
                     .find(|goal| goal.session_id == record.session_id);
-                let mut session = self.session_with_stats(record, &workspaces);
+                let mut session = self.session_with_stats(record, &workspaces, &live);
                 // Durable and authoritative: the thread log records admitted
                 // user turns. A row with no tail has never run a turn and is the
                 // reusable draft. Timestamps are deliberately NOT consulted —
@@ -1340,10 +1374,11 @@ impl NativeDesktop {
             limit.clamp(1, 200),
         )?;
         let workspaces = self.workspace_lookup();
+        let live = self.live_work();
         Ok((
             records
                 .into_iter()
-                .map(|record| self.session_with_stats(record, &workspaces))
+                .map(|record| self.session_with_stats(record, &workspaces, &live))
                 .collect(),
             total,
         ))
@@ -1362,10 +1397,24 @@ impl NativeDesktop {
             .collect()
     }
 
+    /// 一个用户当前仍在途的线程集合，一次读取覆盖一页目录。规则来自运行时，
+    /// 与归档门禁完全一致（存活会话锁、在途任务、本进程执行）。
+    fn live_work(&self) -> LiveWork {
+        LiveWork {
+            sessions: self
+                .desktop
+                .state
+                .kernel
+                .thread_runtime
+                .live_work_sessions_now(&self.desktop.user_id),
+        }
+    }
+
     fn session_with_stats(
         &self,
         record: wunder_server::storage::ChatSessionRecord,
         workspaces: &std::collections::HashMap<String, wunder_server::storage::WorkspaceRecord>,
+        live: &LiveWork,
     ) -> NativeSession {
         let session_id = record.session_id.clone();
         // Draft heuristic: `create_session` stamps `created_at` and
@@ -1378,6 +1427,20 @@ impl NativeDesktop {
             .state
             .monitor
             .get_session_stats(&record.session_id);
+        // 缓存里声称在途、但已经没有执行器/存活锁/在途任务时，这一行属于上个
+        // 进程的残留。按空闲呈现而不是「已中断」：没有哪一轮是刚刚结束的，
+        // 落成终态会在这行上闪一个「刚停止」的记号，等于用另一种假状态替换
+        // 原来的假状态。中断本身已经记在线程轮次里，打开线程就能看到。
+        let (runtime_status, runtime_ended_at) = match overview.as_ref() {
+            Some(stats)
+                if wunder_server::monitor::status_is_live_text(&stats.status)
+                    && !live.contains(&record.session_id) =>
+            {
+                ("idle".to_string(), 0.0)
+            }
+            Some(stats) => (stats.status.clone(), stats.ended_at.unwrap_or(0.0)),
+            None => ("idle".to_string(), 0.0),
+        };
         let reasoning_effort = self
             .desktop
             .state
@@ -1422,16 +1485,15 @@ impl NativeDesktop {
             // A thread this process holds no statistics for carries no status:
             // calling it "done" made every row look finished on start-up and
             // every desktop pet celebrate a run nobody had watched.
-            runtime_status: overview
-                .as_ref()
-                .map(|stats| stats.status.clone())
-                .unwrap_or_else(|| "idle".into()),
+            //
+            // A durable row may still claim running/queued/waiting from a
+            // process that died mid-run. Such a claim is honoured only while
+            // the thread really has work in flight; otherwise the row reads
+            // idle, which is what lets the sidebar offer archiving again.
+            runtime_status: runtime_status,
             // When the last turn settled. A reader uses it to tell a
             // completion it just watched from one that ended long ago.
-            runtime_ended_at: overview
-                .as_ref()
-                .and_then(|stats| stats.ended_at)
-                .unwrap_or(0.0),
+            runtime_ended_at: runtime_ended_at,
             origin: record
                 .spawned_by
                 .as_deref()
@@ -1540,8 +1602,9 @@ impl NativeDesktop {
         anyhow::ensure!(record.status.eq_ignore_ascii_case("archived"), "线程未归档");
         let turns = self.load_chat_turns(session_id)?;
         let workspaces = self.workspace_lookup();
+        let live = self.live_work();
         Ok((
-            self.session_with_stats(record, &workspaces),
+            self.session_with_stats(record, &workspaces, &live),
             turns
                 .into_iter()
                 .flat_map(|turn| [turn.user, turn.assistant])
@@ -1557,7 +1620,8 @@ impl NativeDesktop {
             .ok_or_else(|| anyhow!("chat session not found"))?;
         self.ensure_thread_open(session_id)?;
         let workspaces = self.workspace_lookup();
-        Ok(self.session_with_stats(record, &workspaces))
+        let live = self.live_work();
+        Ok(self.session_with_stats(record, &workspaces, &live))
     }
 
     pub fn get_session_turns(
@@ -1574,7 +1638,8 @@ impl NativeDesktop {
             .ok_or_else(|| anyhow!("chat session not found"))?;
         let turns = self.load_chat_turns(cleaned)?;
         let workspaces = self.workspace_lookup();
-        Ok((self.session_with_stats(record, &workspaces), turns))
+        let live = self.live_work();
+        Ok((self.session_with_stats(record, &workspaces, &live), turns))
     }
 
     /// Bounded, detail-free history for thread selection. Full rounds and
@@ -1600,7 +1665,8 @@ impl NativeDesktop {
             .get_chat_session(self.user_id(), session_id)?
             .ok_or_else(|| anyhow!("chat session not found"))?;
         let workspaces = self.workspace_lookup();
-        let session = self.session_with_stats(record, &workspaces);
+        let live = self.live_work();
+        let session = self.session_with_stats(record, &workspaces, &live);
         let (turns, history_before, history_has_more, change_cursor) =
             chat_turns::load_turn_header_snapshot(self.state(), self.user_id(), session_id, None)?;
         let snapshot = NativeChatSnapshot {
@@ -1688,7 +1754,8 @@ impl NativeDesktop {
         };
         self.desktop.state.user_store.upsert_chat_session(&record)?;
         let workspaces = self.workspace_lookup();
-        Ok(self.session_with_stats(record, &workspaces))
+        let live = self.live_work();
+        Ok(self.session_with_stats(record, &workspaces, &live))
     }
 
     pub fn fork_session(&self, session_id: &str, user_round: i64) -> Result<NativeSession> {
@@ -1751,7 +1818,8 @@ impl NativeDesktop {
         let tokens = workspace.load_session_context_tokens(self.user_id(), session_id.trim());
         workspace.save_session_context_tokens(self.user_id(), &id, tokens);
         let workspaces = self.workspace_lookup();
-        Ok(self.session_with_stats(record, &workspaces))
+        let live = self.live_work();
+        Ok(self.session_with_stats(record, &workspaces, &live))
     }
 
     pub fn rename_session(&self, session_id: &str, title: &str) -> Result<()> {
