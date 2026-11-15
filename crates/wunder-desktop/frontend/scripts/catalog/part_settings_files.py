@@ -211,7 +211,7 @@ ENTRIES = [
     ("st_param_image_default_size", "默认尺寸", "Default size"),
     ("st_param_image_default_size_hint", "文生图默认，留空 1024x1024", "Text-to-image default; empty uses 1024x1024"),
     ("st_param_image_max_size", "最大尺寸", "Max size"),
-    ("st_param_image_max_size_hint", "宽或高超出则退回默认尺寸", "Wider or taller requests use the default size"),
+    ("st_param_image_max_size_hint", "超出则按最大边等比缩小（修图同样受限）", "Oversized requests scale down proportionally (edits too)"),
     ("st_param_image_format", "输出格式", "Output format"),
     ("st_param_image_steps", "采样步数", "Sampling steps"),
     ("st_param_image_guidance", "引导系数", "Guidance scale"),
@@ -368,7 +368,7 @@ ENTRIES = [
     ("inquiry_expand", "展开全部", "Expand all"),
     ("inquiry_collapse", "收起", "Collapse"),
     ("inquiry_submit", "提交", "Submit"),
-    ("inquiry_submit_blocked", "请先完成必选项", "Answer required fields"),
+    ("inquiry_submit_blocked", "请先回答任一问题", "Answer at least one question"),
     ("inquiry_use_recommended", "使用推荐", "Use the recommended"),
     ("inquiry_question_progress", "第 {} 题", "Question {}", ["position"]),
 ]

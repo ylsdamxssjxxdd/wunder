@@ -32,10 +32,6 @@ export global I18n {
     out property <string> ag_delete_confirm_title: zh ? "确认删除智能体" : "Delete this agent";
     out property <string> ag_delete_prefix: zh ? "将删除“" : "This permanently deletes “";
     out property <string> ag_delete_suffix: zh ? "”及其本地配置。已有会话不会被改写。" : "” and its local configuration. Existing conversations are not rewritten.";
-    // 模型配置的删除确认：文案要说「模型」，别借用智能体的措辞。
-    out property <string> st_model_delete_title: zh ? "确认删除模型" : "Delete this model";
-    out property <string> st_model_delete_prefix: zh ? "将删除“" : "This permanently deletes “";
-    out property <string> st_model_delete_suffix: zh ? "”，使用它的会话会回落到默认模型。" : "”. Conversations using it fall back to the default model.";
     out property <string> ag_import_title: zh ? "导入工蜂卡" : "Import worker card";
     out property <string> ag_import_hint: zh ? "卡片目录：工作区 agent-cards 目录下的导出文件" : "Card directory: exported files under the workspace agent-cards directory";
     out property <string> ag_overwrite_label: zh ? "覆盖同名专家（导入前需确认）" : "Overwrite agents with the same name (confirm before import)";
@@ -115,7 +111,6 @@ export global I18n {
     out property <string> tl_state_approval: zh ? "等待审批" : "Waiting for approval";
     out property <string> tl_state_error: zh ? "错误" : "Error";
     out property <string> common_save: zh ? "保存" : "Save";
-    out property <string> common_default: zh ? "默认" : "Default";
     out property <string> common_saving: zh ? "保存中" : "Saving…";
     out property <string> common_cancel: zh ? "取消" : "Cancel";
     out property <string> common_discard: zh ? "放弃修改" : "Discard";
@@ -146,6 +141,7 @@ export global I18n {
     out property <string> common_previous_page: zh ? "上一页" : "Previous";
     out property <string> common_next_page: zh ? "下一页" : "Next";
     out property <string> common_default_agent: zh ? "默认智能体" : "Default agent";
+    out property <string> common_default: zh ? "默认" : "Default";
     out property <string> common_default_model: zh ? "默认模型" : "Default model";
     out property <string> common_ai: zh ? "智能体" : "Agents";
     out property <string> common_tools: zh ? "工具" : "Tools";
@@ -256,6 +252,9 @@ export global I18n {
     out property <string> model_token_placeholder: zh ? "仅保存到本机设置" : "Saved to local settings only";
     out property <string> model_probe_context: zh ? "探测上下文" : "Probe context";
     out property <string> model_probe_voices: zh ? "探测语音" : "Probe voices";
+    out property <string> st_model_delete_title: zh ? "确认删除模型" : "Delete this model";
+    out property <string> st_model_delete_prefix: zh ? "将删除“" : "This permanently deletes “";
+    out property <string> st_model_delete_suffix: zh ? "”，使用它的会话会回落到默认模型。" : "”. Conversations using it fall back to the default model.";
     out property <string> preview_edit_toggle: zh ? "取消编辑" : "Cancel editing";
     out property <string> preview_copy: zh ? "复制" : "Copy";
     out property <string> preview_close: zh ? "关闭预览" : "Close preview";
@@ -315,11 +314,9 @@ export global I18n {
     out property <string> cp_model_empty: zh ? "还没有可用模型。请到「设置 → 模型设置」添加。" : "No models yet. Add one in Settings → Models.";
     out property <string> cp_model_no_match: zh ? "没有匹配的模型" : "No matching model";
     out property <string> cp_model_default_tag: zh ? "默认" : "Default";
-    // 模型行副标题里的上下文量单位：`128K 上下文` / `128K context`。
-    // 云端模型条目的 provider 字段是内部键名 `cloud`，展示成可读文案。
-    out property <string> cp_model_cloud: zh ? "云端模型" : "Cloud model";
     out property <string> cp_model_settings: zh ? "打开模型设置" : "Open model settings";
     out property <string> cp_model_none: zh ? "未选择模型" : "No model selected";
+    out property <string> cp_model_cloud: zh ? "云端模型" : "Cloud model";
     out property <string> cp_model_setup_hint: zh ? "还没有配置模型，先添加一个模型再开始对话。" : "No model configured yet. Add one to start chatting.";
     out property <string> cp_model_setup_action: zh ? "配置模型" : "Set up model";
     out property <string> cp_error_prefix: zh ? "无法" : "Unable to ";
@@ -481,6 +478,9 @@ export global I18n {
     out property <string> ed_view_archive: zh ? "查看归档内容" : "View archived content";
     out property <string> ed_tag: zh ? "标签" : "Tags";
     out property <string> ed_delete_confirm: zh ? "确定删除此记忆碎片？" : "Delete this memory?";
+    out property <string> ed_delete_memory: zh ? "删除记忆碎片" : "Delete memory";
+    out property <string> ed_clear_memory: zh ? "清空记忆碎片" : "Clear memories";
+    out property <string> ed_clear_confirm: zh ? "将删除当前智能体的全部记忆碎片，且无法恢复。" : "This deletes every memory of the current agent and cannot be undone.";
     out property <string> ed_confirm_overwrite: zh ? "确认覆盖" : "Confirm overwrite";
     out property <string> ed_index_title: zh ? "索引标题" : "Index title";
     out property <string> ed_total_usage: zh ? "累计消耗" : "Total usage";
@@ -876,7 +876,6 @@ export global I18n {
     out property <string> st_workdir_switched: zh ? "工作目录已切换" : "Working directory switched";
     out property <string> st_thread_archived: zh ? "工作线程已归档" : "Thread archived";
     out property <string> st_thread_renamed: zh ? "工作线程已重命名" : "Thread renamed";
-    out property <string> st_tools_synced: zh ? "工具目录已同步" : "Tool catalog synced";
     out property <string> st_tools_importing: zh ? "正在导入技能包…" : "Importing skill archive…";
     out property <string> st_queued_run_now: zh ? "已加入立即执行队列" : "Queued for immediate run";
     out property <string> st_card_exported_path: zh ? "工蜂卡已导出：{0}" : "Worker card exported: {0}";
@@ -894,12 +893,10 @@ export global I18n {
     out property <string> st_agent_saved: zh ? "智能体配置已保存" : "Agent settings saved";
     out property <string> st_local_settings_synced: zh ? "本地设置已同步" : "Local settings synced";
     out property <string> st_model_saved: zh ? "模型配置已保存到本地运行时" : "Model settings saved to the local runtime";
-    out property <string> st_model_default_updated: zh ? "已设为默认模型" : "Default model updated";
+    out property <string> st_model_added: zh ? "已添加模型配置" : "Model config added";
     out property <string> st_model_unchanged: zh ? "模型配置已是最新" : "Model settings are up to date";
     out property <string> st_model_unsaved: zh ? "当前有未保存的修改，请先保存" : "Unsaved changes; save first";
-    // 安卓版的新建模型编辑器仍以「未保存」表单开场，桌面版新增即落库不再使用。
-    out property <string> st_model_new_hint: zh ? "填写基础设置后保存即可生效。" : "Fill in the basic settings and save to apply.";
-    out property <string> st_model_added: zh ? "已添加模型配置" : "Model config added";
+    out property <string> st_model_default_updated: zh ? "已设为默认模型" : "Default model updated";
     out property <string> st_model_saved_default: zh ? "模型配置已保存，并已设为默认模型" : "Model settings saved and set as the default";
     out property <string> st_default_model_updated: zh ? "默认模型已更新" : "Default model updated";
     out property <string> st_channel_saved: zh ? "渠道账号已保存" : "Channel account saved";
@@ -1089,6 +1086,7 @@ export global I18n {
     out property <string> st_models_no_info: zh ? "暂无信息" : "No info";
     out property <string> st_models_default_badge: zh ? "默认" : "Default";
     out property <string> st_pick_model: zh ? "选择左侧模型查看配置" : "Pick a model on the left to view its settings";
+    out property <string> st_model_new_hint: zh ? "填写基础设置后保存即可生效。" : "Fill in the basic settings and save to apply.";
     out property <string> st_model_colon: zh ? "模型：" : "Model: ";
     out property <string> st_is_default: zh ? "当前默认" : "Current default";
     out property <string> st_set_default: zh ? "设为默认" : "Set as default";
@@ -1294,8 +1292,7 @@ export global I18n {
     out property <string> tl_md_image_loading: zh ? "图片加载中…" : "Loading image…";
     out property <string> tl_md_image_error: zh ? "图片加载失败 · " : "Image failed to load · ";
     out property <string> tl_stat_round: zh ? "用户轮次" : "User round";
-    // 轮次只是定位用的坐标，越短越好：`U3` 一眼扫到，不需要整句说明。
-    public pure function tl_user_round(round: string) -> string { return "U" + round; }
+    public pure function tl_user_round(round: string) -> string { return zh ? "第 " + round + " 个用户轮次" : "User round " + round + ""; }
     out property <string> tl_stat_credits: zh ? "额度" : "Quota";
     out property <string> tl_stat_speed_hint: zh ? "有效模型输出 token / 生成流式时间；不含等待和工具执行，优先使用本轮已测量的汇总速度。无法可靠测量时显示 -。" : "Measured output tokens per streaming second, excluding wait and tool execution. Uses the turn aggregate when available; - means unavailable.";
     out property <string> tl_stat_context_hint: zh ? "最近一次模型请求观测的上下文占用，不是累计消耗；压缩后重新观测，可能下降。" : "Context occupancy observed for the latest model request, rather than cumulative consumption. It may decrease after compaction.";

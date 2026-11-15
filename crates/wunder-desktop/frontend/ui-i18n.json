@@ -698,6 +698,11 @@
   "en": "Default agent"
  },
  {
+  "key": "common_default",
+  "zh": "默认",
+  "en": "Default"
+ },
+ {
   "key": "common_default_model",
   "zh": "默认模型",
   "en": "Default model"
@@ -1248,6 +1253,21 @@
   "en": "Probe voices"
  },
  {
+  "key": "st_model_delete_title",
+  "zh": "确认删除模型",
+  "en": "Delete this model"
+ },
+ {
+  "key": "st_model_delete_prefix",
+  "zh": "将删除“",
+  "en": "This permanently deletes “"
+ },
+ {
+  "key": "st_model_delete_suffix",
+  "zh": "”，使用它的会话会回落到默认模型。",
+  "en": "”. Conversations using it fall back to the default model."
+ },
+ {
   "key": "preview_edit_toggle",
   "zh": "取消编辑",
   "en": "Cancel editing"
@@ -1557,6 +1577,11 @@
   "key": "cp_model_none",
   "zh": "未选择模型",
   "en": "No model selected"
+ },
+ {
+  "key": "cp_model_cloud",
+  "zh": "云端模型",
+  "en": "Cloud model"
  },
  {
   "key": "cp_model_setup_hint",
@@ -2380,6 +2405,21 @@
   "key": "ed_delete_confirm",
   "zh": "确定删除此记忆碎片？",
   "en": "Delete this memory?"
+ },
+ {
+  "key": "ed_delete_memory",
+  "zh": "删除记忆碎片",
+  "en": "Delete memory"
+ },
+ {
+  "key": "ed_clear_memory",
+  "zh": "清空记忆碎片",
+  "en": "Clear memories"
+ },
+ {
+  "key": "ed_clear_confirm",
+  "zh": "将删除当前智能体的全部记忆碎片，且无法恢复。",
+  "en": "This deletes every memory of the current agent and cannot be undone."
  },
  {
   "key": "ed_confirm_overwrite",
@@ -4369,11 +4409,6 @@
   "en": "Thread renamed"
  },
  {
-  "key": "st_tools_synced",
-  "zh": "工具目录已同步",
-  "en": "Tool catalog synced"
- },
- {
   "key": "st_tools_importing",
   "zh": "正在导入技能包…",
   "en": "Importing skill archive…"
@@ -4457,6 +4492,26 @@
   "key": "st_model_saved",
   "zh": "模型配置已保存到本地运行时",
   "en": "Model settings saved to the local runtime"
+ },
+ {
+  "key": "st_model_added",
+  "zh": "已添加模型配置",
+  "en": "Model config added"
+ },
+ {
+  "key": "st_model_unchanged",
+  "zh": "模型配置已是最新",
+  "en": "Model settings are up to date"
+ },
+ {
+  "key": "st_model_unsaved",
+  "zh": "当前有未保存的修改，请先保存",
+  "en": "Unsaved changes; save first"
+ },
+ {
+  "key": "st_model_default_updated",
+  "zh": "已设为默认模型",
+  "en": "Default model updated"
  },
  {
   "key": "st_model_saved_default",

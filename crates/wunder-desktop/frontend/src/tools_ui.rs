@@ -173,7 +173,9 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                             });
                         app.set_tools_selected(index);
                         app.invoke_select_tool_resource(app.get_tools_tab(), index);
-                        app.set_status("工具目录已同步".into());
+                        // 刷新成功不写 `status`：启动预热、以及每次增删改后的自动
+                        // 重整都会走到这里，弹一条「工具目录已同步」只是噪音。工具页
+                        // 自己的加载态已经说明这次刷新结束，失败仍走 `error()`。
                     }
                     Err(e) => error(&app, e),
                 }

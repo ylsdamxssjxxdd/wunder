@@ -50,6 +50,7 @@ ENTRIES = [
     ("common_previous_page", "上一页", "Previous"),
     ("common_next_page", "下一页", "Next"),
     ("common_default_agent", "默认智能体", "Default agent"),
+    ("common_default", "默认", "Default"),
     ("common_default_model", "默认模型", "Default model"),
     ("common_ai", "智能体", "Agents"),
     ("common_tools", "工具", "Tools"),

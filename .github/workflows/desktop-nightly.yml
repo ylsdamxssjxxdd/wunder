@@ -661,7 +661,7 @@ jobs:
           if [ "$ANDROID_SIGNING" = "true" ]; then
             android_note="APK 使用正式签名，可直接覆盖安装同签名旧版。"
           else
-            android_note="APK 使用固定兼容签名（沿用旧版调试签名），可直接覆盖安装旧版。"
+            android_note="APK 使用固定兼容签名，可直接覆盖安装旧版。"
           fi
           gh release create nightly \
             --repo "${GITHUB_REPOSITORY}" \
