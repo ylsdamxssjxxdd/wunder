@@ -205,6 +205,7 @@ async fn run(
     let mut stopped = false;
     let mut display_args: std::collections::VecDeque<(String, Value)> =
         std::collections::VecDeque::new();
+    let mut ledger = TailLedger::default();
     loop {
         tokio::select! {
             biased;
@@ -221,8 +222,17 @@ async fn run(
                 // majority of its frames, spending the per-frame UI budget on
                 // nothing. Filtering here keeps the bounded channel free for
                 // content the pump actually reduces.
-                if is_transport_duplicate(&event.event) {
+                if event.event == "thread_item_tail" {
+                    // Second copy of a chunk the delta lane normally delivered
+                    // (see `TailLedger`): dropped while it stays inside what
+                    // that lane covered, forwarded once when it does not.
+                    if ledger.tail_is_redundant(&event.data) {
+                        continue;
+                    }
+                } else if is_transport_duplicate(&event.event) {
                     continue;
+                } else {
+                    ledger.observe_delta(&event.event, &event.data);
                 }
                 // Awaiting capacity yields the Tokio worker. Closing the receiver
                 // only disables delivery; the stream is still drained to settlement.
@@ -376,15 +386,111 @@ async fn replay_queue(
     .await
 }
 
+/// Watermarks of the two lanes that carry streamed text.
+///
+/// The runtime publishes each chunk twice: once as a semantic delta (which the
+/// reducer consumes) and once as an offset-addressed `thread_item_tail`. The
+/// tail is a second copy, which is why this window used to drop it outright —
+/// but "second copy" and "useless" are not the same thing. A chunk the delta
+/// lane never delivered leaves a hole nothing can name; the tail can name it
+/// (`offset` is UTF-16 units, measured by the sender), so the tail is kept as
+/// the repair lane while the common case still costs zero frames:
+///
+/// * a tail the delta lane already covered is dropped, exactly as before;
+/// * a tail that reaches past it is forwarded once, and the reducer applies it
+///   by offset, which is idempotent by construction.
+///
+/// Counting the delta lane here (rather than in the reducer) keeps the frame
+/// budget untouched: the ledger only ever asks a JSON object for two lengths.
+#[derive(Default)]
+struct TailLedger {
+    /// UTF-16 units already delivered, per `(item_id, field)`.
+    covered: std::collections::HashMap<(String, String), usize>,
+}
+
+impl TailLedger {
+    /// Count the text one forwarded delta added.
+    ///
+    /// The runtime collapses every semantic delta into `thread_item_delta` and
+    /// keeps the type in `source_event`; the item identity is
+    /// `turn_id}:text-model_round}`, the same key its tails use.
+    fn observe_delta(&mut self, event: &str, data: &Value) {
+        if event != "thread_item_delta" {
+            return;
+        }
+        let payload = data.get("data").unwrap_or(data);
+        if payload["source_event"].as_str() != Some("llm_output_delta") {
+            return;
+        }
+        let (Some(turn), Some(round)) = (
+            payload["turn_id"].as_str().filter(|id| !id.is_empty()),
+            payload["model_round"].as_i64(),
+        ) else {
+            return;
+        };
+        let item = format!("{turn}:text-{round}");
+        // Only reasoning needs a repair lane: the answer has a complete copy
+        // waiting at the round's end (`llm_output` / `final` content), a
+        // thought does not.
+        for (source, field) in [("reasoning_delta", "reasoning")] {
+            let Some(text) = payload[source].as_str().filter(|text| !text.is_empty()) else {
+                continue;
+            };
+            let entry = self
+                .covered
+                .entry((item.clone(), field.to_string()))
+                .or_insert(0);
+            *entry = entry.saturating_add(text.encode_utf16().count());
+        }
+    }
+
+    /// Whether a tail adds nothing the delta lane did not already deliver.
+    fn tail_is_redundant(&mut self, data: &Value) -> bool {
+        let payload = data.get("data").unwrap_or(data);
+        let (Some(item), Some(field), Some(text)) = (
+            payload["item_id"].as_str().filter(|id| !id.is_empty()),
+            payload["field"].as_str().filter(|field| !field.is_empty()),
+            payload["text"].as_str().filter(|text| !text.is_empty()),
+        ) else {
+            // A tail this window cannot address is not worth a frame; the
+            // round's finished text still closes anything it would have said.
+            return true;
+        };
+        let offset = payload["offset"].as_u64().unwrap_or(0) as usize;
+        if field != "reasoning" {
+            // Nothing downstream would apply it: the answer's own end-of-round
+            // text is authoritative, so its tail stays a duplicate.
+            return true;
+        }
+        let end = offset.saturating_add(text.encode_utf16().count());
+        let entry = self
+            .covered
+            .entry((item.to_string(), field.to_string()))
+            .or_insert(0);
+        if *entry >= end {
+            return true;
+        }
+        *entry = end;
+        false
+    }
+}
+
+///
+/// `thread_item_tail` is the one exception the caller handles itself: a tail the
+/// delta lane did not cover is a repair, not a duplicate, so it goes through
+/// [`TailLedger::tail_is_redundant`] first.
 /// Frames the desktop never reduces.
 ///
 /// The runtime publishes each live change three ways: `thread_item_tail` and
 /// `thread_process_item` (durable projections for other clients) and
-/// `thread_change` (a cursor notification). The desktop reducer only reads the
+/// `thread_change` (a cursor notification). The desktop reducer reads the
 /// semantic frame (`thread_item_delta` and the non-delta events), so handing it
 /// the duplicates spent most of every UI frame decoding JSON it discarded — the
 /// direct cause of a backed-up live stream. Dropping them here is also where the
 /// bounded channel keeps its capacity for real content.
+///
+/// The tail is the one exception, and the loop below decides it by watermark
+/// rather than by name: it is what the repair lane travels on.
 fn is_transport_duplicate(event: &str) -> bool {
     matches!(
         event,
@@ -394,7 +500,58 @@ fn is_transport_duplicate(event: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_transport_duplicate;
+    use super::{is_transport_duplicate, TailLedger};
+    use serde_json::json;
+
+    /// tail 是第二条通道：delta 已覆盖的那一段照旧丢掉（不占帧），跨过水位的
+    /// 那一段才放行一次，好让 reducer 按 offset 幂等补上。
+    #[test]
+    fn a_tail_only_costs_a_frame_when_it_goes_past_the_delta_lane() {
+        let mut ledger = TailLedger::default();
+        ledger.observe_delta(
+            "thread_item_delta",
+            &json!({"data": {
+                "source_event": "llm_output_delta",
+                "turn_id": "t1",
+                "model_round": 1,
+                "reasoning_delta": "想了"
+            }}),
+        );
+        let same = json!({"data": {
+            "item_id": "t1:text-1", "field": "reasoning", "offset": 0, "text": "想了"
+        }});
+        assert!(ledger.tail_is_redundant(&same), "delta 已覆盖的 tail 不该占一帧");
+        let ahead = json!({"data": {
+            "item_id": "t1:text-1", "field": "reasoning", "offset": 2, "text": "再动手"
+        }});
+        assert!(!ledger.tail_is_redundant(&ahead), "跨过水位的 tail 要放行");
+        assert!(ledger.tail_is_redundant(&ahead), "放行过的同一段再到达就该丢掉");
+    }
+
+    /// 正文与思考两条通道的水位互不干扰；没有 turn_id 的增量不参与记账。
+    #[test]
+    fn content_and_reasoning_watermarks_are_independent() {
+        let mut ledger = TailLedger::default();
+        ledger.observe_delta(
+            "thread_item_delta",
+            &json!({"data": {
+                "source_event": "llm_output_delta", "turn_id": "t1", "model_round": 2, "delta": "答案"
+            }}),
+        );
+        assert!(ledger.tail_is_redundant(&json!({"data": {
+            "item_id": "t1:text-2", "field": "content", "offset": 0, "text": "答案"
+        }})));
+        assert!(!ledger.tail_is_redundant(&json!({"data": {
+            "item_id": "t1:text-2", "field": "reasoning", "offset": 0, "text": "思考"
+        }})));
+        ledger.observe_delta(
+            "thread_item_delta",
+            &json!({"data": {"source_event": "llm_output_delta", "reasoning_delta": "x"}}),
+        );
+        assert!(!ledger.tail_is_redundant(&json!({"data": {
+            "item_id": "t1:text-9", "field": "reasoning", "offset": 0, "text": "x"
+        }})));
+    }
 
     #[test]
     fn transport_duplicates_never_reach_the_ui_channel() {

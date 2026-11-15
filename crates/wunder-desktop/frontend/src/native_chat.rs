@@ -5292,6 +5292,25 @@ fn apply_event(
             }
             return Ok(true);
         }
+        "thread_item_tail" => {
+            // The repair lane: the same chunk the delta lane carried, addressed
+            // by its own offset. The backend only forwards a tail that reaches
+            // past what the delta lane delivered, and applying it by position
+            // makes it idempotent — a repeated chunk cannot double the thought,
+            // and a chunk that would leave a hole is refused here so the round's
+            // finished text is what fills it.
+            let field = data["field"].as_str().unwrap_or_default();
+            let item_id = data["item_id"].as_str().unwrap_or_default();
+            let offset = data["offset"].as_u64().unwrap_or(0) as usize;
+            let text = data["text"].as_str().unwrap_or_default();
+            if field == "reasoning"
+                && timeline.apply_reasoning_tail(item_id, offset, text)?
+            {
+                active.set_state("正在思考…", Phase::Running);
+                return Ok(true);
+            }
+            return Ok(false);
+        }
         "reasoning" | "reasoning_delta" => {
             if let Some(delta) = data["delta"]
                 .as_str()
@@ -5391,6 +5410,18 @@ fn apply_event(
             let (round_tokens, round_duration) =
                 wunder_desktop::NativeWorkflowEntry::model_round_metrics(data);
             timeline.set_reason_metrics(&round_tokens, &round_duration);
+            // The round's own reasoning text is the authority over its chunks.
+            // Chunks are dropped under backpressure on purpose (an answer can
+            // be rebuilt from `content`, a thought cannot), so a live thought
+            // could stop mid-sentence or never open at all. Every round ends
+            // with this field, so adopting it heals the row here instead of
+            // leaving the hole until the thread is reopened.
+            if let Some(reasoning) = data["reasoning"]
+                .as_str()
+                .filter(|text| !text.is_empty())
+            {
+                timeline.reconcile_reasoning(&reasoning_item, reasoning)?;
+            }
             // A tool-only round still emits llm_output with empty content.
             // Materializing it opened a body block that stayed empty, and the
             // work process rendered that placeholder as a blank entry under
@@ -6375,6 +6406,144 @@ mod turn_tests {
             );
             assert_eq!(live.answer_count(), 0);
         }
+    }
+
+    /// 思考增量是尽力而为的：客户端队列满时运行时会丢掉 delta 帧，桌面的有界
+    /// 通道也可能少一帧。轮末的 llm_output 带着这一轮完整的思考文本，取它为准
+    /// 才不会出现「这一轮没有思考」。
+    #[test]
+    fn a_round_that_lost_its_reasoning_chunks_still_renders_the_thought() {
+        let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
+        let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
+        let mut live = timeline.borrow_mut();
+        live.begin_turn("fixture-root", "Fixture input");
+        // 只收到正文增量：这一段思考的每个增量都丢了。
+        apply_event(
+            &mut output,
+            &mut live,
+            &serde_json::json!({
+                "event":"thread_item_delta", "data":{"session_id":"fixture-session", "data":{
+                    "source_event":"llm_output_delta", "turn_id":"fixture-exec", "model_round":1, "delta":"答案"
+                }}
+            }),
+        )
+        .unwrap();
+        apply_event(
+            &mut output,
+            &mut live,
+            &serde_json::json!({
+                "event":"llm_output", "data":{
+                    "turn_id":"fixture-exec", "model_round":1, "content":"答案", "reasoning":"整段思考"
+                }
+            }),
+        )
+        .unwrap();
+        live.flush();
+        let reason = live
+            .model()
+            .iter()
+            .find(|row| row.kind == crate::timeline::KIND_REASON)
+            .expect("思考行必须存在");
+        assert_eq!(reason.detail, "整段思考");
+    }
+
+    /// 排队消息被提到新执行之后，两个执行各自的思考都必须留在时间线上：
+    /// 这是「排队/插话之后思考没了」的复现形态，也是轮末对齐必须覆盖的边界。
+    #[test]
+    fn an_interjected_execution_keeps_both_thoughts() {
+        let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
+        let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
+        let mut live = timeline.borrow_mut();
+        live.begin_turn("fixture-root", "Fixture input");
+        for (execution, thought) in [("fixture-exec-1", "第一段思考"), ("fixture-exec-2", "第二段思考")] {
+            apply_event(
+                &mut output,
+                &mut live,
+                &serde_json::json!({
+                    "event":"native_execution_started", "data":{
+                        "turn_id":execution, "root_turn_id":"fixture-root"
+                    }
+                }),
+            )
+            .unwrap();
+            apply_event(
+                &mut output,
+                &mut live,
+                &serde_json::json!({
+                    "event":"thread_item_delta", "data":{"session_id":"fixture-session", "data":{
+                        "source_event":"llm_output_delta", "turn_id":execution, "model_round":1,
+                        "reasoning_delta":thought
+                    }}
+                }),
+            )
+            .unwrap();
+            apply_event(
+                &mut output,
+                &mut live,
+                &serde_json::json!({
+                    "event":"llm_output", "data":{
+                        "turn_id":execution, "model_round":1, "content":"答案", "reasoning":thought
+                    }
+                }),
+            )
+            .unwrap();
+        }
+        live.flush();
+        let thoughts: Vec<String> = live
+            .model()
+            .iter()
+            .filter(|row| row.kind == crate::timeline::KIND_REASON)
+            .map(|row| row.detail.to_string())
+            .collect();
+        assert_eq!(thoughts, vec!["第一段思考", "第二段思考"]);
+    }
+
+    /// 修复通道从后端进来时按 offset 落地：缺的一段补上，重复的一段不翻倍。
+    #[test]
+    fn a_reasoning_tail_frame_repairs_the_thought_by_offset() {
+        let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
+        let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
+        let mut live = timeline.borrow_mut();
+        live.begin_turn("fixture-root", "Fixture input");
+        apply_event(
+            &mut output,
+            &mut live,
+            &serde_json::json!({
+                "event":"thread_item_delta", "data":{"session_id":"fixture-session", "data":{
+                    "source_event":"llm_output_delta", "turn_id":"fixture-exec", "model_round":1, "reasoning_delta":"想了"
+                }}
+            }),
+        )
+        .unwrap();
+        // 后一段在 delta 通道丢了，tail 带回它自己的位置。
+        apply_event(
+            &mut output,
+            &mut live,
+            &serde_json::json!({
+                "event":"thread_item_tail", "data":{"session_id":"fixture-session", "data":{
+                    "item_id":"fixture-exec:text-1", "field":"reasoning", "offset":2, "text":"再动手"
+                }}
+            }),
+        )
+        .unwrap();
+        // 同一条 tail 再来一次（重放）：不改变任何东西。
+        apply_event(
+            &mut output,
+            &mut live,
+            &serde_json::json!({
+                "event":"thread_item_tail", "data":{"session_id":"fixture-session", "data":{
+                    "item_id":"fixture-exec:text-1", "field":"reasoning", "offset":2, "text":"再动手"
+                }}
+            }),
+        )
+        .unwrap();
+        live.flush();
+        let row = live
+            .model()
+            .iter()
+            .find(|row| row.kind == crate::timeline::KIND_REASON)
+            .expect("思考行");
+        assert_eq!(row.detail, "想了再动手");
     }
 
     #[test]

@@ -693,6 +693,9 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
     // processes may share one, not even across turns.
     let mut batch = 0i32;
     let mut process = 0i32;
+    // 用户气泡上的轮次标注不能因为数据行没带编号就空着：本页按顺序补齐，
+    // 遇到带真实编号的行就以它为准继续往后数。
+    let mut round = 0i32;
     for turn in turns {
         // A message the engine has not started yet — parked behind a running
         // turn or admitted and waiting — is not part of the transcript. The
@@ -706,6 +709,12 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
         // The bubble carries the turn identity: it is the anchor the reducer's
         // live rows are matched against when the durable snapshot takes over.
         user.id = format!("user-turn-{}", turn.root_id).into();
+        round = if user.user_round > 0 {
+            user.user_round
+        } else {
+            round + 1
+        };
+        user.user_round = round;
         rows.push(user);
         process += 1;
         let process_bar_at = rows.len();
@@ -962,7 +971,12 @@ pub(crate) fn project_cloud_history(
         );
         user.text = chat.user.content.as_str().into();
         user.time = crate::timeline_text::clock_hhmm(chat.created_time).into();
-        user.user_round = chat.user_round.clamp(0, i32::MAX as i64) as i32;
+        user.user_round = if chat.user_round > 0 {
+            chat.user_round.clamp(0, i32::MAX as i64) as i32
+        } else {
+            // 服务端行没带轮次时按页内顺序补齐，气泡的坐标不能空着。
+            (index + 1).min(i32::MAX as usize) as i32
+        };
         user.blocks = previous
             .iter()
             .find(|row| row.id == user.id && row.text == user.text)
@@ -1070,9 +1084,16 @@ pub(crate) fn project_cloud_history(
         footer.text = answer.text.clone();
         footer.user_round = chat.user_round.min(i32::MAX as i64) as i32;
         footer.status_kind = crate::timeline::footer_status_kind(chat.status.as_str());
+        // The cloud footer carries the same turn identity as the user bubble
+        // above it: the round badge survives the status chip.
         footer.stats = ModelRc::new(VecModel::from(crate::timeline::stat_metrics(
             &crate::turn_stats::with_status(
-                crate::turn_stats::metrics(&chat.assistant.stats.clone().unwrap_or(Value::Null)),
+                crate::turn_stats::with_user_round(
+                    crate::turn_stats::metrics(
+                        &chat.assistant.stats.clone().unwrap_or(Value::Null),
+                    ),
+                    chat.user_round,
+                ),
                 cloud_status_label(chat.status.as_str()),
             ),
         )));
@@ -1645,6 +1666,36 @@ mod tests {
             .find(|row| row.kind == crate::timeline::KIND_PROCESS)
             .expect("a process bar");
         assert_eq!(bar.duration, "1m 5s");
+    }
+
+    #[test]
+    fn user_bubble_keeps_its_round_when_the_row_has_none() {
+        // 气泡下面的轮次标注是定位用的坐标：数据行没带编号时要按页内顺序补齐，
+        // 否则用户气泡下面永远空着（智能体那条 footer 却能显示）。
+        let mut first = fixture("fixture-round-missing-1", "第一答", "completed");
+        first.user.user_round = 0;
+        let mut second = fixture("fixture-round-missing-2", "第二答", "completed");
+        second.user.user_round = 0;
+        let rows = project_history(&[first, second]);
+        let users: Vec<i32> = rows
+            .iter()
+            .filter(|row| row.kind == crate::timeline::KIND_USER)
+            .map(|row| row.user_round)
+            .collect();
+        assert_eq!(users, vec![1, 2]);
+
+        // 带真实编号的行以它为准，后续补齐的行接着往后数。
+        let mut known = fixture("fixture-round-known", "已知答", "completed");
+        known.user.user_round = 9;
+        let mut missing = fixture("fixture-round-after-known", "后续答", "completed");
+        missing.user.user_round = 0;
+        let rows = project_history(&[known, missing]);
+        let users: Vec<i32> = rows
+            .iter()
+            .filter(|row| row.kind == crate::timeline::KIND_USER)
+            .map(|row| row.user_round)
+            .collect();
+        assert_eq!(users, vec![9, 10]);
     }
 
     #[test]

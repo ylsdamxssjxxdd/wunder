@@ -281,3 +281,24 @@ async fn missing_subcommand_text_param_names_the_accepted_aliases() {
     let error = missing["error"].as_str().unwrap_or_default();
     assert!(error.contains("command=insert"), "{error}");
 }
+
+/// 预览标记必须落在 `data` 里：模型和观测投影都靠它区分「没写盘」与
+/// 「写盘但内容没变」，只写在 carrier 的 `state` 上会两边都读到。
+#[tokio::test]
+async fn preview_flags_dry_run_inside_data_for_every_write_subcommand() {
+    let fixture = Fixture::new();
+    fixture.write("sample.txt", "alpha\n");
+    for args in [
+        json!({"command":"create", "file_path":"new.txt", "file_text":"body\n"}),
+        json!({"command":"insert", "file_path":"sample.txt", "insert_line":1, "new_string":"middle\n"}),
+    ] {
+        let mut preview = args;
+        preview["dry_run"] = json!(true);
+        let result = fixture.call(preview).await;
+        assert_ok(&result);
+        assert_eq!(result["state"], "dry_run");
+        assert_eq!(result["data"]["dry_run"], json!(true), "{result}");
+    }
+    assert_eq!(fixture.read("sample.txt"), "alpha\n");
+    assert!(!fixture.path("new.txt").exists());
+}

@@ -106,6 +106,8 @@
         class="messenger-message-extra"
       >
         <span v-if="userTimeLabel" class="messenger-message-time">{{ userTimeLabel }}</span>
+        <!-- 轮次边界就标在时间右侧：用户定位「第几轮」比读时间快得多。 -->
+        <span v-if="userRoundLabel" class="messenger-message-round">{{ userRoundLabel }}</span>
         <button
           v-if="hasMessageContent(item.message.content)"
           class="messenger-message-footer-copy"
@@ -148,6 +150,19 @@ const props = defineProps<{
 }>();
 
 const isUser = computed(() => String(props.item.message?.role || '') === 'user');
+// 轮次来自线程行（`user_round`）或本窗口的实时投影（`display.user_round`）：
+// 两处都存在时以线程行为准，缺一个也不该让标签消失。
+const userRoundLabel = computed(() => {
+  if (!isUser.value) return '';
+  const raw =
+    props.item.message?.user_round ??
+    props.item.message?.display?.user_round ??
+    props.item.message?.userRound ??
+    props.item.message?.__runtime_user_round ??
+    props.item.message?.stream_round;
+  const round = Math.trunc(Number(raw));
+  return Number.isFinite(round) && round > 0 ? `U${round}` : '';
+});
 const userTimeLabel = computed(() =>
   isUser.value
     ? formatClockHourMinute(

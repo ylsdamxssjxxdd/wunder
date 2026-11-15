@@ -3189,8 +3189,17 @@ impl TuiApp {
             && mouse.row < max_y
     }
 
-    fn mouse_in_transcript_region(&self, mouse: &MouseEvent) -> bool {
-        self.mouse_in_region(mouse, self.transcript_mouse_region)
+    /// Whether the pointer is on the transcript's rows, whatever the column. The margin
+    /// either side of the text is the same reading surface, so a drag that starts there
+    /// selects the line it is level with instead of falling through to nothing; the
+    /// column is clamped into the text area where a point is taken.
+    fn mouse_on_transcript_band(&self, mouse: &MouseEvent) -> bool {
+        let area = self.transcript_mouse_region;
+        if area.width == 0 || area.height == 0 {
+            return false;
+        }
+        let bottom = area.y.saturating_add(area.height);
+        mouse.row >= area.y && mouse.row < bottom
     }
 
     fn set_mouse_mode(&mut self, mode: MouseMode) {
@@ -6833,7 +6842,7 @@ impl TuiApp {
                 self.copy_input_selection();
                 return;
             }
-            if self.transcript_selection.is_some() && self.mouse_in_transcript_region(&mouse) {
+            if self.transcript_selection.is_some() && self.mouse_on_transcript_band(&mouse) {
                 self.copy_transcript_selection();
                 return;
             }
@@ -6975,7 +6984,7 @@ impl TuiApp {
             self.request_redraw();
             return;
         }
-        if !self.mouse_in_transcript_region(mouse) {
+        if !self.mouse_on_transcript_band(mouse) {
             return;
         }
         let Some(point) = self.transcript_point(mouse) else {
@@ -7024,10 +7033,11 @@ impl TuiApp {
         if row >= self.transcript_hit.rows.len() {
             return None;
         }
-        Some(WindowPoint {
-            row,
-            column: usize::from(mouse.column.saturating_sub(self.transcript_mouse_region.x)),
-        })
+        // A pointer on the margin still names the row's first or last cell, so a drag
+        // that starts or ends beside the text selects whole lines instead of nothing.
+        let column = usize::from(mouse.column.saturating_sub(self.transcript_mouse_region.x))
+            .min(usize::from(self.transcript_mouse_region.width.saturating_sub(1)));
+        Some(WindowPoint { row, column })
     }
 
     fn reset_pointer_clicks(&mut self) {

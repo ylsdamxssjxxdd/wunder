@@ -110,8 +110,10 @@ pub fn with_user_round(mut metrics: Vec<Metric>, round: i64) -> Vec<Metric> {
     metrics
 }
 
-/// Web shows the current execution state in place of the settled user-round
-/// status. Numeric usage already observed is retained alongside it.
+/// The live execution state leads the footer, but the turn identity is not a
+/// transient status: the reader must be able to tell which user round this
+/// answer belongs to while it is still running, so the round is kept. Numeric
+/// usage already observed is retained alongside them.
 pub fn with_status(metrics: Vec<Metric>, state: &str) -> Vec<Metric> {
     // Runtime states can carry an informative suffix (for example, queue
     // position).  The footer should retain that useful detail while selecting
@@ -157,11 +159,15 @@ pub fn with_status(metrics: Vec<Metric>, state: &str) -> Vec<Metric> {
         _ if state.starts_with("目标继续执行") => ("status-requesting", "请求中"),
         _ => ("status-running", "处理中"),
     };
-    let mut result = vec![Metric {
+    let mut result = Vec::with_capacity(metrics.len() + 1);
+    result.push(Metric {
         key: "status",
         icon: key,
         value: label.into(),
-    }];
+    });
+    // The round badge sits right next to the state so it stays put while the
+    // status chip changes during a long turn.
+    result.extend(metrics.iter().filter(|metric| metric.key == "round").cloned());
     result.extend(metrics.into_iter().filter(|metric| metric.key != "round"));
     result
 }
@@ -351,5 +357,16 @@ mod tests {
         let subagent = with_status(Vec::new(), "subagent_running");
         assert_eq!(subagent[0].icon, "status-subagent");
         assert_eq!(subagent[0].value, "子智能体执行中");
+    }
+
+    #[test]
+    fn live_status_keeps_the_turn_round_badge() {
+        // The reader must see which user round a running answer belongs to;
+        // a status frame may reorder the footer but must never drop the round.
+        let live = with_status(with_user_round(Vec::new(), 57), "tool_running");
+        assert_eq!(values(&live), vec![("status", "使用工具中"), ("round", "57")]);
+
+        let settled = with_status(with_user_round(Vec::new(), 57), "任务完成");
+        assert_eq!(values(&settled), vec![("round", "57")]);
     }
 }

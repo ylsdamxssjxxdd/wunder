@@ -1987,6 +1987,19 @@
   white-space: nowrap;
 }
 
+/* 用户轮次：与时间同一行同一档灰，只作为坐标，不再补任何说明文字。 */
+.messenger-message-round {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: 24px;
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: 11px;
+  line-height: 24px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 .messenger-message-extra .messenger-message-stats {
   flex: 1;
   margin-top: 0;

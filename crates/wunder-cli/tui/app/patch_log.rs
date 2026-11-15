@@ -1685,24 +1685,19 @@ pub(super) fn build_completed_tool_log(
 
 pub(super) fn build_pending_patch_log(args: &Value, is_zh: bool) -> Option<SpecialLogEntry> {
     let patch = extract_patch_input(args)?;
-    let summary = summarize_patch_input(patch);
+    let summary = summarize_patch_input(patch, is_zh);
     let diff_preview = {
         let preview = build_patch_diff_preview(patch, 12, PATCH_DIFF_WINDOW_LINES, is_zh);
         (!preview.is_empty()).then_some(preview)
     };
     let mut files = collect_patch_preview_rows(patch, 12, is_zh);
     let mut header = if files.len() > 1 {
-        // codex uses one header for pending and applied patches alike; the card's
-        // status icon carries the progress, not the verb.
-        if is_zh {
-            format!("已修改 {} 个文件", files.len())
-        } else {
-            format!("Edited {} files", files.len())
-        }
-    } else if is_zh {
-        "\u{5e94}\u{7528}\u{8865}\u{4e01}".to_string()
+        // The head leads with the tool's own name. Whether the change has landed is
+        // the card's icon colour, so the words never say "already modified" while
+        // the patch is still waiting for approval.
+        patch_files_header(files.len(), is_zh)
     } else {
-        "Applying patch".to_string()
+        patch_tool_name(is_zh).to_string()
     };
     let mut summary = (!summary.is_empty()).then_some(summary);
     let mut header_names_file = false;
@@ -1752,15 +1747,9 @@ pub(super) fn build_completed_patch_log(payload: &Value, is_zh: bool) -> Special
         .max(0) as usize;
 
     let mut header = if ok {
-        if is_zh {
-            format!("已修改 {} 个文件", changed_files.max(0))
-        } else if changed_files == 1 {
-            "Edited 1 file".to_string()
-        } else {
-            format!("Edited {changed_files} files")
-        }
+        patch_files_header(changed_files.max(0) as usize, is_zh)
     } else if is_zh {
-        "补丁应用失败".to_string()
+        "文本编辑 应用失败".to_string()
     } else {
         "Failed to apply patch".to_string()
     };
@@ -1878,36 +1867,66 @@ pub(super) fn build_completed_patch_log(payload: &Value, is_zh: bool) -> Special
     })
 }
 
+/// The name every edit card leads with: the tool the model called, in the reader's
+/// own words. codex prints the past tense ("Edited src/main.rs"); the Chinese head
+/// names the tool, because "已修改" is a finished-state claim on a card that may still
+/// be waiting for approval. State lives in the icon colour, never in these words.
+fn patch_tool_name(is_zh: bool) -> &'static str {
+    if is_zh {
+        "文本编辑"
+    } else {
+        "Edit"
+    }
+}
+
+fn patch_files_header(count: usize, is_zh: bool) -> String {
+    if is_zh {
+        return join_head("文本编辑", &(count.to_string() + " 个文件"));
+    }
+    if count == 1 {
+        "Edited 1 file".to_string()
+    } else {
+        join_head("Edited", &(count.to_string() + " files"))
+    }
+}
+
+/// One prefix, one path: the shape every edit head wears, so a tool name and a file
+/// name always read as one line with a single space between them.
+fn join_head(prefix: &str, path: &str) -> String {
+    let mut text = String::with_capacity(prefix.len() + path.len() + 1);
+    text.push_str(prefix);
+    text.push(' ');
+    text.push_str(path);
+    text
+}
+
 fn single_file_patch_header(file: &PatchFileRow, is_zh: bool) -> String {
     match file.marker {
-        'A' => {
+        'A' => join_head(
             if is_zh {
-                format!("已新增 {}", file.text)
+                "文本编辑 新增"
             } else {
-                format!("Added {}", file.text)
-            }
-        }
-        'D' => {
+                "Added"
+            },
+            &file.text,
+        ),
+        'D' => join_head(
             if is_zh {
-                format!("已删除 {}", file.text)
+                "文本编辑 删除"
             } else {
-                format!("Deleted {}", file.text)
-            }
-        }
-        'R' => {
+                "Deleted"
+            },
+            &file.text,
+        ),
+        'R' => join_head(
             if is_zh {
-                format!("已重命名 {}", file.text)
+                "文本编辑 重命名"
             } else {
-                format!("Renamed {}", file.text)
-            }
-        }
-        _ => {
-            if is_zh {
-                format!("已修改 {}", file.text)
-            } else {
-                format!("Edited {}", file.text)
-            }
-        }
+                "Renamed"
+            },
+            &file.text,
+        ),
+        _ => join_head(if is_zh { "文本编辑" } else { "Edited" }, &file.text),
     }
 }
 
@@ -2085,25 +2104,18 @@ fn window_truncated_note(is_zh: bool) -> String {
     }
 }
 
-fn summarize_patch_input(patch: &str) -> String {
-    let line_count = patch.lines().count();
+/// What the head cannot say: the line delta and, when the patch states them, the
+/// hunks. The file count is already in the head, so the old "files=2, +2, -1" tail
+/// is gone.
+fn summarize_patch_input(patch: &str, is_zh: bool) -> String {
     let metrics = count_patch_input_metrics(patch);
-    let file_count = metrics.file_count;
-
-    if file_count > 0 {
-        let mut parts = vec![format!("files={file_count}")];
-        if metrics.added_lines > 0 || metrics.removed_lines > 0 {
-            parts.push(format!("+{}", metrics.added_lines));
-            parts.push(format!("-{}", metrics.removed_lines));
-        } else if line_count > 0 {
-            parts.push(format!("lines={line_count}"));
-        }
-        parts.join(", ")
-    } else if line_count > 0 {
-        format!("lines={line_count}")
-    } else {
-        String::new()
-    }
+    format_patch_delta_meta(
+        metrics.added_lines,
+        metrics.removed_lines,
+        metrics.hunks,
+        is_zh,
+    )
+    .unwrap_or_default()
 }
 
 fn collect_patch_preview_rows(patch: &str, max_entries: usize, is_zh: bool) -> Vec<PatchFileRow> {
@@ -2245,6 +2257,7 @@ struct PatchInputMetrics {
     file_count: usize,
     added_lines: usize,
     removed_lines: usize,
+    hunks: usize,
 }
 
 fn count_patch_input_metrics(patch: &str) -> PatchInputMetrics {
@@ -2267,7 +2280,9 @@ fn count_patch_input_metrics(patch: &str) -> PatchInputMetrics {
         if !in_file {
             continue;
         }
-        if raw_line.starts_with('+') {
+        if line.starts_with("@@") {
+            metrics.hunks += 1;
+        } else if raw_line.starts_with('+') {
             metrics.added_lines += 1;
         } else if raw_line.starts_with('-') {
             metrics.removed_lines += 1;
@@ -2387,7 +2402,10 @@ mod tests {
             panic!("expected patch log");
         };
         assert_eq!(entry.status, PatchLogStatus::Pending);
-        assert_eq!(entry.summary.as_deref(), Some("files=2, lines=5"));
+        // A patch with no line delta has nothing to add to the head, so the summary
+        // stays empty instead of printing a "files=2, lines=5" tally.
+        assert_eq!(entry.summary.as_deref(), None);
+        assert_eq!(entry.header, "Edited 2 files");
         assert_eq!(entry.files.len(), 2);
         assert_eq!(entry.files[0].marker, 'R');
         assert!(entry.files[0]
@@ -3064,7 +3082,8 @@ mod tests {
         };
         let rows = flat_patch_lines(&entry, 80, false);
         assert!(
-            rows.iter().any(|row| row.contains("已新增 notes/new.md")),
+            rows.iter()
+                .any(|row| row.contains("文本编辑 新增 notes/new.md")),
             "{rows:?}"
         );
         assert!(rows.iter().any(|row| row.contains("# 第一段")), "{rows:?}");

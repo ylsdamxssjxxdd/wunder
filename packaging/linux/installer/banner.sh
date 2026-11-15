@@ -1,4 +1,4 @@
-# Wunder Linux 安装器开场画面：先把命令行版的心舰像素 logo 在终端里点亮。
+# Wunder Linux 安装器开场画面：先把命令行版的心舰像素 logo 从块底升起来。
 #
 # 像素数据、灰度梯与尺寸由 build_linux_installer.py 从
 # crates/wunder-cli/welcome_logo_art.rs 注入，命令行版换 logo 后安装包自动
@@ -103,9 +103,12 @@ wunder_banner_columns() {
   printf '%s' "$columns"
 }
 
-# 画一帧：frame 1..rows 是自上而下的扫描点亮，rows+1 整体闪白，rows+2 终态。
+# 画一帧：`visible` 是已经升进画面的行数，1 行时只露头尖。
+#
+# 和命令行版同一套观感：整块高度固定，新行出现在最下面、已有的行被顶上去，
+# 头尖先露头再逐渐看全；没有逐行点亮，也没有整图闪白。
 wunder_banner_frame() {
-  awk -v frame="$1" -v step="$2" -v mode="$3" \
+  awk -v visible="$1" -v step="$2" -v mode="$3" \
     -v rows="$WUNDER_LOGO_ROWS" -v greys="$WUNDER_LOGO_GREYS" '
   # 灰度值只走 256 色的 232-255 灰阶：白灰层次，不带任何彩色。
   # 同色相邻格不重复发 SGR，慢终端（ssh、串口）也能流畅刷帧。
@@ -129,11 +132,16 @@ wunder_banner_frame() {
     if (slot < 0 || slot >= levels) return -1
     return ladder[slot + 1] + 0
   }
-  # 一个输出格覆盖 step 列 × 2*step 像素行，取非透明像素的平均亮度。
+  # 一个格子的上半或下半：step 列 × step 像素行取平均。
+  #
+  # 上下两半各取 step 行、起始相差 step 行，合起来正好 2*step 行。早先这里
+  # 每半取 2*step 行，相邻两半重叠一半，等于把上下两行糊成一片——头像的
+  # 五官全被抹平，看上去就是一个扁三角。命令行版是一像素一格，没有这道
+  # 平均，所以同一个 logo 在那边是立体的。
   function block(x0, y0,   sum, count, dy, dx, value) {
     sum = 0
     count = 0
-    for (dy = 0; dy < 2 * step; dy++) {
+    for (dy = 0; dy < step; dy++) {
       for (dx = 0; dx < step; dx++) {
         value = shade(x0 + dx, y0 + dy)
         if (value >= 0) {
@@ -177,16 +185,6 @@ wunder_banner_frame() {
     if (top == bottom) return paint_fg(top) "█"
     return paint_fg(top) paint_bg(bottom) "▀"
   }
-  # 未点亮的行保留三成亮度：足够看出轮廓，又不抢已点亮的部分。
-  function dim(value) {
-    if (value < 0) return -1
-    return int(value * 0.3)
-  }
-  # 扫描线只提亮、不抹平：暗部抬起来，亮部顶到 255，仍然看得出五官层次。
-  function brighten(value) {
-    if (value < 0) return -1
-    return (value + 110 > 255) ? 255 : value + 110
-  }
   BEGIN {
     ESC = sprintf("%c", 27)
     HEX = "0123456789abcdef"
@@ -197,24 +195,23 @@ wunder_banner_frame() {
     width = int(length(source[1]) / 2)
     out_rows = int((source_count + step - 1) / step)
     if (width < 4 || out_rows < 2 || levels < 2) exit 0
-    settled = frame >= out_rows + 2
-    flashing = frame == out_rows + 1
+    if (visible < 0) visible = 0
+    if (visible > out_rows) visible = out_rows
+    blank = out_rows - visible
     for (row = 0; row < out_rows; row++) {
+      # 还没升上来的行留空：块高固定，下面的进度条和摘要不会跟着跳。
+      if (row < blank) {
+        if (ansi_now) printf "%s%s\n", ESC "[0m", ESC "[K"
+        else printf "\n"
+        continue
+      }
       line = ""
       last_fg = -1
       last_bg = -1
+      art = row - blank
       for (column = 0; column < width; column += step) {
-        top = block(column, row * 2 * step)
-        bottom = block(column, row * 2 * step + step)
-        if (!settled) {
-          if (flashing || row == frame - 1) {
-            top = brighten(top)
-            bottom = brighten(bottom)
-          } else if (row > frame - 1) {
-            top = dim(top)
-            bottom = dim(bottom)
-          }
-        }
+        top = block(column, art * 2 * step)
+        bottom = block(column, art * 2 * step + step)
         line = line cell(top, bottom)
       }
       if (ansi_now) printf "%s%s%s\n", line, ESC "[0m", ESC "[K"
@@ -269,19 +266,20 @@ wunder_banner() {
 
   printf '\n'
   if [ "$live" -eq 1 ]; then
-    frame=1
-    total=$((out_rows + 2))
-    while [ "$frame" -le "$total" ]; do
+    # 一行一行升上来：整块 0.65s 左右升到位，每帧先回到块顶再重画。
+    delay=$(awk -v rows="$out_rows" 'BEGIN { printf "%.3f", 0.65 / rows }')
+    visible=1
+    while [ "$visible" -le "$out_rows" ]; do
       # 画图失败也不能挡住安装：开场画面只是仪式感。
-      wunder_banner_frame "$frame" "$step" "$mode" || true
-      if [ "$frame" -lt "$total" ]; then
+      wunder_banner_frame "$visible" "$step" "$mode" || true
+      if [ "$visible" -lt "$out_rows" ]; then
         printf '\033[%dA' "$out_rows"
-        sleep 0.03 2>/dev/null || :
+        sleep "$delay" 2>/dev/null || :
       fi
-      frame=$((frame + 1))
+      visible=$((visible + 1))
     done
   else
-    wunder_banner_frame "$((out_rows + 2))" "$step" "$mode" || true
+    wunder_banner_frame "$out_rows" "$step" "$mode" || true
   fi
   printf '\n'
   wunder_banner_title

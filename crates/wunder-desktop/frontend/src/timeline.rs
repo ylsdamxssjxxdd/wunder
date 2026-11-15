@@ -862,6 +862,16 @@ impl Timeline {
         user.text = text.into();
         user.blocks = crate::message_blocks::from_text(text);
         user.time = crate::timeline_text::clock_hhmm_now().into();
+        // 新气泡立刻带上坐标：本线程已有最大编号 +1。事件里的权威轮次到达时
+        // `set_user_round` 会用同值覆盖，用户不必等落库才看到「第几轮」。
+        user.user_round = self
+            .model
+            .iter()
+            .filter(|row| row.kind == KIND_USER)
+            .map(|row| row.user_round)
+            .max()
+            .unwrap_or(0)
+            + 1;
         let index = self.push(user);
         self.active_user_row = index;
         self.open_process(root);
@@ -1336,7 +1346,153 @@ impl Timeline {
         self.patch(index, |row| {
             row.detail = text.as_str().into();
             row.summary = summary;
+            // The parsed blocks are one settle behind and the view prefers them
+            // over the raw text, so keeping them would publish the late chunk
+            // into a field nothing renders. Dropping them makes the streaming
+            // text visible again; the round's finished text re-parses it.
+            row.reasoning_blocks = ModelRc::default();
         });
+        Ok(())
+    }
+
+    /// Apply one offset-addressed reasoning chunk, idempotently.
+    ///
+    /// The repair lane sends the same text the delta lane streamed, addressed by
+    /// the sender's own UTF-16 offset. Position, not arrival order, decides what
+    /// to do: a range already on screen contributes nothing (so a repeated chunk
+    /// can never double the thought), an overlapping one contributes only its
+    /// uncovered suffix, and a chunk that would leave a hole is refused instead
+    /// of being appended in the wrong place — [`Timeline::reconcile_reasoning`]
+    /// closes holes from the round's finished text, the only source that knows
+    /// what is missing.
+    ///
+    /// Returns whether the row moved.
+    pub fn apply_reasoning_tail(
+        &mut self,
+        item_id: &str,
+        offset: usize,
+        text: &str,
+    ) -> Result<bool, String> {
+        if item_id.is_empty() || text.is_empty() {
+            return Ok(false);
+        }
+        let identity = ["reason-", item_id].concat();
+        let current = self.thinking.as_ref().map(|thinking| thinking.index);
+        let existing = (0..self.model.row_count()).find(|index| {
+            self.model
+                .row_data(*index)
+                .is_some_and(|row| row.kind == KIND_REASON && row.id == identity.as_str())
+        });
+        let open = existing.is_some() && existing == current;
+        // How much of this row is already on screen, in the sender's unit.
+        let have = match (open, existing) {
+            (true, _) => match self.thinking.as_ref() {
+                Some(thinking) => thinking.text.encode_utf16().count(),
+                None => return Ok(false),
+            },
+            (false, Some(index)) => self
+                .model
+                .row_data(index)
+                .map(|row| row.detail.encode_utf16().count())
+                .unwrap_or(0),
+            (false, None) => 0,
+        };
+        let width = text.encode_utf16().count();
+        if offset > have || offset.saturating_add(width) <= have {
+            return Ok(false);
+        }
+        let skip = have - offset;
+        let mut units = 0usize;
+        let mut delta = "";
+        for (index, ch) in text.char_indices() {
+            if units >= skip {
+                delta = &text[index..];
+                break;
+            }
+            units += ch.len_utf16();
+        }
+        if delta.is_empty() {
+            return Ok(false);
+        }
+        match (open, existing) {
+            (true, _) => {
+                if let Some(thinking) = self.thinking.as_mut() {
+                    thinking.text.push_str(delta);
+                    thinking.pending = true;
+                }
+            }
+            (false, Some(index)) => self.append_settled_reasoning(index, delta)?,
+            (false, None) => {
+                self.append_reasoning_item(item_id, delta)?;
+            }
+        }
+        Ok(true)
+    }
+
+    /// Take the round's finished reasoning text as the authority.
+    ///
+    /// Streamed chunks are best effort, never a guarantee: the reducer refuses a
+    /// frame from an older model round, a subscriber that joins mid-turn never
+    /// sees the chunks before it, and a provider may stop emitting reasoning
+    /// half way. For the answer that is harmless — the round ends with the whole
+    /// text — but a thought has no such end, so one missing chunk used to mean a
+    /// hole in the thinking row, or no thinking row at all. Every round does end
+    /// with `llm_output` carrying its finished `reasoning`, so adopting that text
+    /// closes the hole: the open thought is replaced, a settled row is repaired
+    /// (and re-parsed, so the late text is not hidden behind older blocks), and
+    /// a round whose chunks all vanished still gets its row.
+    pub fn reconcile_reasoning(&mut self, item_id: &str, text: &str) -> Result<(), String> {
+        if item_id.is_empty() || text.is_empty() {
+            return Ok(());
+        }
+        // The display is bounded; a runaway thought keeps what it streamed
+        // rather than paying a full parse for text nobody can read.
+        if text.len() > crate::message_blocks::MAX_TEXT_BYTES {
+            return Ok(());
+        }
+        let identity = format!("reason-{item_id}");
+        let current = self.thinking.as_ref().map(|thinking| thinking.index);
+        let existing = (0..self.model.row_count()).find(|index| {
+            self.model
+                .row_data(*index)
+                .is_some_and(|row| row.kind == KIND_REASON && row.id == identity.as_str())
+        });
+        match existing {
+            Some(index) if Some(index) == current => {
+                let Some(thinking) = self.thinking.as_mut() else {
+                    return Ok(());
+                };
+                if thinking.text == text {
+                    return Ok(());
+                }
+                // Still open: the frame flush publishes it, and the block is
+                // parsed once when the thought settles.
+                thinking.text = text.to_owned();
+                thinking.pending = true;
+            }
+            Some(index) => {
+                let settled_with_blocks = self.model.row_data(index).is_some_and(|row| {
+                    row.detail.as_str() == text && row.reasoning_blocks.row_count() > 0
+                });
+                if settled_with_blocks {
+                    return Ok(());
+                }
+                let summary = crate::message_blocks::reasoning_preview(text);
+                let blocks = crate::message_blocks::from_text(text);
+                self.patch(index, |row| {
+                    row.detail = text.into();
+                    row.summary = summary;
+                    row.reasoning_blocks = blocks;
+                });
+            }
+            None => {
+                // Not a single chunk survived: without this the round would be
+                // remembered as one that thought nothing at all.
+                self.append_reasoning_item(item_id, text)?;
+                self.close_thinking(false);
+            }
+        }
+        self.refresh_process_bar();
         Ok(())
     }
 
@@ -2197,6 +2353,8 @@ impl Timeline {
         if seconds > shown {
             self.elapsed_base.set(seconds);
             self.elapsed.set(Some(std::time::Instant::now()));
+            // 前移校准要当场落地：下一拍定时器到来之前，过程条不能是空白。
+            self.set_process_duration(label);
         }
     }
 
@@ -2331,13 +2489,42 @@ impl Timeline {
         true
     }
 
+    /// 把轮次写进用户气泡。轮次是这条消息自身的边界而不是运行状态，
+    /// 所以状态帧与终端帧都要落到气泡上，刷新前后读到的值一致。
+    fn stamp_user_round(&self, round: i64) {
+        if round <= 0 || self.active_user_row == usize::MAX {
+            return;
+        }
+        let round = round.min(i32::MAX as i64) as i32;
+        let index = self.active_user_row;
+        if self
+            .model
+            .row_data(index)
+            .is_some_and(|row| row.kind == KIND_USER && row.user_round != round)
+        {
+            self.patch(index, |row| {
+                row.user_round = round;
+            });
+        }
+    }
+
     pub fn set_turn_status(&mut self, state: &str, round: i64) {
+        // A running answer still belongs to a user round; stamp the bubble
+        // before the footer so both carry the same boundary.
+        self.stamp_user_round(round);
         let Some(index) = self.ensure_footer() else {
             return;
         };
         let Some(row) = self.model.row_data(index) else {
             return;
         };
+        // 状态帧可能比轮次更早到：没有新轮次时沿用 footer 上已有的轮次标记，
+        // 否则每来一帧状态就会把用户轮次擦掉。
+        let carried_round: Vec<_> = row
+            .stats
+            .iter()
+            .filter(|metric| metric.key == "hashtag")
+            .collect();
         let mut stats: Vec<_> = row
             .stats
             .iter()
@@ -2357,6 +2544,9 @@ impl Timeline {
             state,
         );
         let mut prefix = stat_metrics(&metric);
+        if round <= 0 {
+            prefix.extend(carried_round);
+        }
         prefix.append(&mut stats);
         if row.stats.iter().collect::<Vec<_>>() != prefix {
             self.set_turn_stats(prefix);
@@ -2377,22 +2567,11 @@ impl Timeline {
         if round <= 0 {
             return;
         }
-        let round = round.min(i32::MAX as i64) as i32;
         // The submitting bubble shows the boundary too, so a live turn gains
         // its round as soon as the server assigns one — the durable history
         // projection later replaces the row with the same value.
-        if self.active_user_row != usize::MAX {
-            let index = self.active_user_row;
-            if self
-                .model
-                .row_data(index)
-                .is_some_and(|row| row.kind == KIND_USER && row.user_round != round)
-            {
-                self.patch(index, |row| {
-                    row.user_round = round;
-                });
-            }
-        }
+        self.stamp_user_round(round);
+        let round = round.min(i32::MAX as i64) as i32;
         if let Some(index) = self.ensure_footer() {
             let Some(row) = self.model.row_data(index) else {
                 return;
@@ -2945,7 +3124,7 @@ mod tests {
         timeline.set_turn_stats(stat_metrics(&crate::turn_stats::metrics(
             &serde_json::json!({"interaction_duration_s": 40.0}),
         )));
-        assert!(timeline.tick_elapsed());
+        // 前移校准当场落地，不等下一拍定时器，过程条不会出现空窗。
         let bar = timeline
             .model
             .row_data(timeline.process_bar)
@@ -3096,6 +3275,136 @@ mod tests {
         timeline.flush();
         let bar = timeline.model.row_data(timeline.process_bar).unwrap();
         assert_eq!(bar.process_entries.row_data(0).unwrap().duration, "4.2s");
+    }
+
+    /// 思考增量是尽力而为：客户端队列满时运行时会丢弃 delta 帧，减帧之后思考
+    /// 行会留下空洞。轮末的 llm_output 带着整段思考，取它为准即补回。
+    #[test]
+    fn a_dropped_reasoning_chunk_is_healed_by_the_round_text() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-root", "Fixture input");
+        timeline
+            .append_reasoning_item("fixture-exec:text-1", "想")
+            .unwrap();
+        timeline.flush();
+        timeline.close_thinking(false);
+        timeline
+            .reconcile_reasoning("fixture-exec:text-1", "想了想，先看清单")
+            .unwrap();
+        timeline.flush();
+        let row = timeline
+            .model
+            .row_data(timeline.last_reason.expect("thought row"))
+            .unwrap();
+        assert_eq!(row.detail, "想了想，先看清单");
+        assert_eq!(row.status_kind, STATUS_DONE);
+        assert!(
+            row.reasoning_blocks.row_count() > 0,
+            "the round text is parsed once, so a settled thought keeps its Markdown"
+        );
+    }
+
+    /// 一个增量都没活下来的回合也要留下思考行：否则这一轮在记录里等于没思考过。
+    /// 修复通道按 offset 幂等：同一段重复到达不能让思考翻倍。
+    #[test]
+    fn a_repeated_reasoning_tail_cannot_double_the_thought() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-root", "Fixture input");
+        timeline
+            .append_reasoning_item("fixture-exec:text-1", "想了")
+            .unwrap();
+        timeline.flush();
+        assert!(
+            !timeline
+                .apply_reasoning_tail("fixture-exec:text-1", 0, "想了")
+                .unwrap(),
+            "已覆盖的一段不产生任何变化"
+        );
+        timeline.flush();
+        let index = timeline.thinking.as_ref().unwrap().index;
+        let row = timeline.model.row_data(index).unwrap();
+        assert_eq!(row.detail, "想了");
+    }
+
+    /// delta 通道少了一段时，tail 用自己带的 offset 把缺的那段接上。
+    #[test]
+    fn a_reasoning_tail_fills_the_range_the_delta_lane_missed() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-root", "Fixture input");
+        timeline
+            .append_reasoning_item("fixture-exec:text-1", "想了")
+            .unwrap();
+        // 第二段在 delta 通道丢了，第三段带着自己的 offset 到达。
+        assert!(timeline
+            .apply_reasoning_tail("fixture-exec:text-1", 2, "再动手")
+            .unwrap());
+        timeline.flush();
+        let index = timeline.thinking.as_ref().unwrap().index;
+        let row = timeline.model.row_data(index).unwrap();
+        assert_eq!(row.detail, "想了再动手");
+    }
+
+    /// 会留洞的那一段不落地：位置错了比晚一点更难接受，轮末的完整文本补它。
+    #[test]
+    fn a_tail_that_would_leave_a_hole_is_refused() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-root", "Fixture input");
+        timeline
+            .append_reasoning_item("fixture-exec:text-1", "想了")
+            .unwrap();
+        assert!(!timeline
+            .apply_reasoning_tail("fixture-exec:text-1", 9, "再动手")
+            .unwrap());
+        timeline
+            .reconcile_reasoning("fixture-exec:text-1", "想了想，再动手")
+            .unwrap();
+        timeline.flush();
+        let index = timeline.thinking.as_ref().unwrap().index;
+        let row = timeline.model.row_data(index).unwrap();
+        assert_eq!(row.detail, "想了想，再动手");
+    }
+
+    #[test]
+    fn a_round_whose_chunks_all_vanished_still_shows_its_thought() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-root", "Fixture input");
+        timeline
+            .reconcile_reasoning("fixture-exec:text-1", "整段思考")
+            .unwrap();
+        timeline.flush();
+        let rows: Vec<_> = timeline
+            .model
+            .iter()
+            .filter(|row| row.kind == KIND_REASON)
+            .collect();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].detail, "整段思考");
+        assert_eq!(rows[0].status_kind, STATUS_DONE);
+    }
+
+    /// 已结算的思考行再收到迟到增量时，文字必须落在视图真正渲染的字段上：解析后
+    /// 的块优先于原始文本，留着旧块等于把新字写进了一个没人看的地方。
+    #[test]
+    fn a_late_chunk_into_a_settled_thought_stays_visible() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-root", "Fixture input");
+        timeline
+            .append_reasoning_item("fixture-exec:text-1", "想")
+            .unwrap();
+        timeline.close_thinking(false);
+        timeline
+            .append_reasoning_item("fixture-exec:text-1", "了想")
+            .unwrap();
+        let row = timeline
+            .model
+            .row_data(timeline.last_reason.expect("thought row"))
+            .unwrap();
+        assert_eq!(row.detail, "想了想");
+        assert_eq!(
+            row.reasoning_blocks.row_count(),
+            0,
+            "raw text has to be what the view renders while the row keeps growing"
+        );
     }
 
     #[test]
@@ -3412,6 +3721,30 @@ mod tests {
                 .value,
             "0"
         );
+    }
+
+    #[test]
+    fn live_status_frames_keep_the_turn_round_on_both_bubbles() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-live-status", "Fixture input");
+        timeline.start_body(1);
+        timeline.set_turn_status("正在执行工具…", 57);
+        // 用户气泡与智能体气泡同时带轮次，运行中也不会被状态帧抹掉。
+        let user = timeline.model.row_data(timeline.active_user_row).unwrap();
+        assert_eq!(user.kind, KIND_USER);
+        assert_eq!(user.user_round, 57);
+        let footer = timeline.model.row_data(timeline.footer.get()).unwrap();
+        assert_eq!(footer.user_round, 57);
+        assert_eq!(footer.stats.row_data(0).unwrap().key, "status-tool");
+        assert_eq!(footer.stats.row_data(1).unwrap().key, "hashtag");
+        assert_eq!(footer.stats.row_data(1).unwrap().value, "57");
+        // 没有轮次的状态帧沿用已有标记，不会把用户轮次擦掉。
+        timeline.set_turn_status("正在生成…", 0);
+        let footer = timeline.model.row_data(timeline.footer.get()).unwrap();
+        assert_eq!(footer.user_round, 57);
+        assert_eq!(footer.stats.row_data(0).unwrap().key, "status-outputting");
+        assert_eq!(footer.stats.row_data(1).unwrap().key, "hashtag");
+        assert_eq!(footer.stats.row_data(1).unwrap().value, "57");
     }
 
     #[test]

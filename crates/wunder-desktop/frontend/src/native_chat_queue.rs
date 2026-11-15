@@ -350,26 +350,38 @@ pub fn recall_step(
     anchor: i32,
     draft: &str,
 ) -> Option<DraftRecall> {
-    let up = direction > 0;
-    let selection = cursor != anchor;
-    let at_start = cursor == 0 && anchor == 0;
-    let at_end = !selection && cursor as usize == draft.len();
-    if history.is_empty()
-        || selection
-        || (!draft.is_empty() && !(if up { at_start } else { at_end }))
-    {
+    if history.is_empty() || cursor != anchor {
         return None;
     }
-    // A draft that is not the row this walk just recalled means the user typed:
-    // restart from the newest and keep the current text as the return target.
-    let current = state.index.checked_sub(1).and_then(|i| history.get(i));
-    if current != Some(&draft.to_string()) {
+    let up = direction > 0;
+    // The row this walk is currently showing. While the draft is still exactly
+    // that row, the caret may sit anywhere — a recall parks it at the end — and
+    // the next arrow must keep stepping through history instead of being spent
+    // on dragging the caret back to the top of the text. Requiring the caret
+    // edge here made every second ArrowUp feel dead.
+    let walking = state.index > 0
+        && history
+            .get(state.index - 1)
+            .is_some_and(|row| row.as_str() == draft);
+    if !walking {
+        // A fresh draft keeps the arrow for the editor until the caret reaches
+        // the end it has to leave from.
+        if !draft.is_empty() {
+            let at_edge = if up { cursor == 0 } else { cursor as usize == draft.len() };
+            if !at_edge {
+                return None;
+            }
+        }
+        // Typed text means the walk restarts from the newest row, keeping the
+        // current text as the return target.
         state.index = 0;
         state.stash = (!draft.is_empty()).then(|| draft.to_string());
     }
     if up {
         if state.index >= history.len() {
-            return None;
+            // Oldest row already shown: eat the key so the editor does not
+            // wander off, but leave text and caret exactly as they are.
+            return Some(held_row(draft, cursor));
         }
         state.index += 1;
         return history.get(state.index - 1).map(|text| recalled_row(text));
@@ -390,6 +402,16 @@ fn recalled_row(text: &str) -> DraftRecall {
         handled: true,
         text: SharedString::from(text),
         caret: text.len() as i32,
+    }
+}
+
+/// The walk has nowhere left to go but the arrow still belongs to it: consuming
+/// the key keeps the editor's own caret movement from making the draft jump.
+fn held_row(draft: &str, caret: i32) -> DraftRecall {
+    DraftRecall {
+        handled: true,
+        text: SharedString::from(draft),
+        caret,
     }
 }
 
@@ -549,7 +571,12 @@ mod tests {
         assert_eq!(first.caret, "最新".len() as i32);
         let second = recall_step(&mut state, &history, 1, 0, 0, "最新").expect("older");
         assert_eq!(second.text.as_str(), "更早");
-        assert!(recall_step(&mut state, &history, 1, 0, 0, "更早").is_none());
+        // The oldest row is the end of the walk: the key is still consumed, but
+        // the draft and the caret stay put.
+        let oldest = recall_step(&mut state, &history, 1, 0, 0, "更早").expect("held");
+        assert!(oldest.handled);
+        assert_eq!(oldest.text.as_str(), "更早");
+        assert_eq!(oldest.caret, 0);
         let back = recall_step(&mut state, &history, -1, second.caret, second.caret, "更早")
             .expect("forward");
         assert_eq!(back.text.as_str(), "最新");
@@ -557,6 +584,36 @@ mod tests {
             .expect("back to empty");
         assert_eq!(bottom.text.as_str(), "");
         assert!(recall_step(&mut state, &history, -1, 0, 0, "").is_none());
+    }
+
+    #[test]
+    fn holding_arrow_up_keeps_walking_while_the_caret_sits_at_the_end() {
+        let history = vec![
+            "最新".to_string(),
+            "更早".to_string(),
+            "最早".to_string(),
+        ];
+        let mut state = Recall::default();
+        // Every step leaves the caret at the end of the recalled row; the next
+        // ArrowUp must still step instead of waiting for the caret to be moved
+        // back to the top by hand.
+        let first = recall_step(&mut state, &history, 1, 0, 0, "").expect("newest");
+        let second = recall_step(&mut state, &history, 1, first.caret, first.caret, "最新")
+            .expect("older");
+        assert_eq!(second.text.as_str(), "更早");
+        let third =
+            recall_step(&mut state, &history, 1, second.caret, second.caret, "更早").expect("oldest");
+        assert_eq!(third.text.as_str(), "最早");
+        // Down the same way: the caret stays at the end, the walk still steps.
+        let back = recall_step(&mut state, &history, -1, third.caret, third.caret, "最早")
+            .expect("newer");
+        assert_eq!(back.text.as_str(), "更早");
+        // An edited draft ends the walk, and with the caret inside the text the
+        // arrow belongs to the editor again.
+        assert!(recall_step(&mut state, &history, 1, 2, 2, "更早补充").is_none());
+        let restarted = recall_step(&mut state, &history, 1, 0, 0, "更早补充").expect("restart");
+        assert_eq!(restarted.text.as_str(), "最新");
+        assert_eq!(state.stash.as_deref(), Some("更早补充"));
     }
 
     #[test]

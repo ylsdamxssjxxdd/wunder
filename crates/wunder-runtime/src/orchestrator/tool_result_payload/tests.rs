@@ -2539,3 +2539,25 @@ fn search_focused_context_survives_the_generic_array_sampler() {
         "上下文数组里不该出现省略占位对象"
     );
 }
+
+/// 写类子命令曾经只在 carrier 的 `state` 上标预览、`data` 里漏 `dry_run`。
+/// `ToolResultPayload` 会把 carrier 压平成内层 `data`（`state` 随之丢弃），
+/// 所以这里直接对未压平的 carrier 验证投影的兜底识别。
+#[test]
+fn dry_run_state_marks_preview_even_without_the_data_flag() {
+    let projected = project_file_write_success(&json!({
+        "action": "insert",
+        "state": "dry_run",
+        "data": {
+            "path": "temp/a.txt",
+            "added_lines": 1,
+            "deleted_lines": 0,
+            "changed_files": 1,
+            "hunks_applied": 1
+        }
+    }))
+    .expect("projection");
+    assert_eq!(projected["changed"], json!(false));
+    assert_eq!(projected["would_change"], json!(true));
+    assert!(projected.get("changed_files").is_none());
+}

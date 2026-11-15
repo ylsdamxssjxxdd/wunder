@@ -434,6 +434,9 @@ fn write_outcome(
     dry_run: bool,
     changed: bool,
 ) -> EditorOutcome {
+    // 预览标记必须落进 `data`：模型与投影层都靠它区分「没写盘」和「写盘但
+    // 内容没变」，缺了就只能被读成后者（changed: true）。
+    data["dry_run"] = json!(dry_run);
     if !changed {
         data["changed_files"] = json!(0);
         data["updated"] = json!(0);
@@ -962,6 +965,7 @@ mod tests {
             "deleted",
             "deleted_lines",
             "diff_lines_omitted",
+            "dry_run",
             "files",
             "hunks_applied",
             "moved",

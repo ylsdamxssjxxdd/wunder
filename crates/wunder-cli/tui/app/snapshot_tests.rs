@@ -3068,6 +3068,67 @@ fn banded_card_rows(rows: &[String], region: Rect) -> Vec<(usize, String)> {
 
 /// A mark is booked against the card and the line of it the reader pressed, so the window
 /// can scroll away and back and the same text is still marked and still copies the same.
+/// The columns of margin either side of the transcript are the same reading surface as
+/// the text between them: a drag that starts on the margin selects the line it is level
+/// with. Before this, the pointer region was the text column only, so a press on the
+/// margin fell through to nothing and the drag never opened a mark.
+#[tokio::test]
+async fn a_drag_that_starts_on_the_margin_still_selects_the_line() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("gutter_drag");
+    let mut app = fixture_app(root.path()).await;
+    raw_single_line_cards(&mut app, &["item-margin"]);
+    let width = 60u16;
+    let height = 16u16;
+    let rows = draw_rows(&mut app, width, height);
+    let band = banded_card_rows(&rows, app.transcript_mouse_region);
+    let row = band
+        .iter()
+        .find(|(_, text)| text.contains("item-margin"))
+        .expect("the card is on screen")
+        .0;
+
+    let _clipboard_turn = ClipboardSeam::arm();
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, 0);
+    assert!(
+        app.transcript_selection.is_some(),
+        "a press on the margin opens a mark"
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        row,
+        width - 1,
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        row,
+        width - 1,
+    );
+    let copied = ClipboardSeam::copied().pop().unwrap_or_default();
+    assert_eq!(copied, "item-margin", "the drag copied the whole line");
+
+    // The same holds at the other end: a drag released on the right margin stops at the
+    // line's last cell instead of dropping the tail of the line.
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, 4);
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        row,
+        width - 1,
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        row,
+        width - 1,
+    );
+    let tail = ClipboardSeam::copied().pop().unwrap_or_default();
+    assert_eq!(tail, "em-margin", "the drag ran to the end of the row");
+}
+
 #[tokio::test]
 async fn a_mark_survives_scrolling_away_and_back_to_the_same_text() {
     use crossterm::event::{MouseButton, MouseEventKind};
@@ -4881,7 +4942,9 @@ async fn esc_returns_to_the_tail_before_it_touches_the_draft() {
     assert!(!app.is_at_transcript_tail(), "the reader left the tail");
 
     app.input = "half a thought".to_string();
-    app.on_key(key(KeyCode::Esc)).await.expect("esc away from the tail");
+    app.on_key(key(KeyCode::Esc))
+        .await
+        .expect("esc away from the tail");
     assert!(
         app.is_at_transcript_tail(),
         "esc returned to the latest row first"
@@ -4891,7 +4954,9 @@ async fn esc_returns_to_the_tail_before_it_touches_the_draft() {
         "and it did not throw the draft away on the way"
     );
 
-    app.on_key(key(KeyCode::Esc)).await.expect("esc at the tail");
+    app.on_key(key(KeyCode::Esc))
+        .await
+        .expect("esc at the tail");
     assert!(app.input.is_empty(), "the second press clears the draft");
 }
 

@@ -2648,10 +2648,18 @@ pub(super) fn file_write_would_change(data: &Value) -> Option<FileWriteChange> {
     file_write_change_impl(data, true)
 }
 
+/// 预览判定：`data.dry_run` 是首选，carrier 的 `state == "dry_run"` 是兜底。
+/// 写类子命令一度只在 `state` 上标预览、`data` 里漏字段，只看 `data.dry_run`
+/// 会把预览读成真实写入。
+fn is_dry_run_preview(data: &Value, map: &Map<String, Value>) -> bool {
+    map.get("dry_run").and_then(Value::as_bool) == Some(true)
+        || data.get("state").and_then(Value::as_str) == Some("dry_run")
+}
+
 fn file_write_change_impl(data: &Value, preview: bool) -> Option<FileWriteChange> {
     let map = model_tool_result_data_map(data)?;
     let path = map.get("path").and_then(Value::as_str)?.to_string();
-    if !preview && map.get("dry_run").and_then(Value::as_bool) == Some(true) {
+    if !preview && is_dry_run_preview(data, map) {
         return None;
     }
     let existed = map.get("existed").and_then(Value::as_bool);
@@ -2713,7 +2721,7 @@ fn project_file_write_success(data: &Value) -> Option<Value> {
             "hunks_applied",
         ],
     );
-    let dry_run = map.get("dry_run").and_then(Value::as_bool) == Some(true);
+    let dry_run = is_dry_run_preview(data, map);
     if dry_run {
         // 预览从未写盘：`changed` 只能表示「磁盘已变」，因此恒为 false。
         // 「若执行会不会改动」单独用 `would_change` 表达，并把 `changed_files`

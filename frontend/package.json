@@ -15,6 +15,7 @@
     "test:chat-interactive-runtime-recovery": "node scripts/run-regression-tests.mjs chat-interactive-runtime-recovery-regression.test.ts",
     "test:chat-watch-lifecycle": "node scripts/run-regression-tests.mjs chat-watch-lifecycle-regression.test.ts",
     "test:chat-timing": "node scripts/run-regression-tests.mjs chat-timing-regression.test.ts",
+    "test:turn-duration": "node scripts/run-regression-tests.mjs turn-duration-label-regression.test.ts",
     "test:composer-approval": "node scripts/run-regression-tests.mjs composer-approval-regression.test.ts",
     "test:composer-model": "node scripts/run-regression-tests.mjs composer-model-and-references-regression.test.ts",
     "test:chat-context": "node scripts/run-regression-tests.mjs chat-context-estimate-regression.test.ts composer-context-usage-regression.test.ts",
