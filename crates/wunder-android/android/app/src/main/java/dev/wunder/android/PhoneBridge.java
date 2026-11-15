@@ -83,14 +83,16 @@ final class PhoneBridge {
             WunderAccessibilityService service = WunderAccessibilityService.getInstance();
             boolean connected = service != null;
             int[] size = lastDeviceSize != null ? lastDeviceSize : screenSize(context);
-            int[] frame = lastFrameSize != null ? lastFrameSize : frameSize(size[0], size[1]);
+            // `grid` not `frame`: `execute` also declares the captured `Frame`
+            // further down, and a same-named local is a compile error.
+            int[] grid = lastFrameSize != null ? lastFrameSize : frameSize(size[0], size[1]);
             result.put("accessibility_connected", connected);
             result.put("screen_width", size[0]);
             result.put("screen_height", size[1]);
             // The coordinate space of the frame the model receives; the runtime
             // validates touch arguments against it and reports it to the model.
-            result.put("normalized_width", frame[0]);
-            result.put("normalized_height", frame[1]);
+            result.put("normalized_width", grid[0]);
+            result.put("normalized_height", grid[1]);
             result.put("settled", true);
 
             boolean ok = true;
