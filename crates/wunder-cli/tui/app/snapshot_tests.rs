@@ -8,6 +8,7 @@
 use super::*;
 use crate::args::Cli;
 use crate::runtime::CliWorkspace;
+use crate::tui::app::text_selection::SelectionUnit;
 use crate::tui::frame_scheduler::spawn_frame_scheduler;
 use crate::tui::ui::layout::CONTENT_GUTTER_COLS;
 use clap::Parser;
@@ -774,7 +775,10 @@ async fn the_frame_composes_every_card_at_forty_eighty_and_one_hundred_twenty_co
         );
         // The tail is what a narrow frame can always show: the newest cards and the
         // composer. Older entries scroll out, which is the transcript's job.
-        assert!(frame.contains("cargo test -p demo"), "command head: {frame}");
+        assert!(
+            frame.contains("cargo test -p demo"),
+            "command head: {frame}"
+        );
         assert!(
             frame.contains("running 3 tests"),
             "command output head: {frame}"
@@ -2703,6 +2707,26 @@ impl ClipboardSeam {
     }
 }
 
+/// Finish a mark and copy it: the release only ends the drag, and the right click on the
+/// mark is what puts it on the clipboard — the gesture a terminal reader already knows.
+fn right_click(app: &mut TuiApp, row: usize, column: u16) {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    app.on_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Right),
+        column,
+        row: u16::try_from(row).expect("row fits"),
+        modifiers: KeyModifiers::NONE,
+    });
+}
+
+/// Finish a mark and copy it: the release only ends the drag, and the right click on the
+/// mark is what puts it on the clipboard -- the gesture a terminal reader already knows.
+fn copy_mark(app: &mut TuiApp, row: usize, column: u16) {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    mouse(app, MouseEventKind::Up(MouseButton::Left), row, column);
+    right_click(app, row, column);
+}
+
 fn mouse(app: &mut TuiApp, kind: crossterm::event::MouseEventKind, row: usize, column: u16) {
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     let _ = (MouseButton::Left, MouseEventKind::Up(MouseButton::Left));
@@ -2752,12 +2776,7 @@ async fn a_drag_across_the_transcript_marks_rows_and_the_release_copies_them() {
         "the drag left a visible mark"
     );
 
-    mouse(
-        &mut app,
-        MouseEventKind::Up(MouseButton::Left),
-        start + 1,
-        20,
-    );
+    copy_mark(&mut app, start + 1, 20);
     let copied = ClipboardSeam::copied();
     assert_eq!(copied.len(), 1, "one release copies once: {copied:?}");
     let lines = copied[0].lines().count();
@@ -2792,12 +2811,7 @@ async fn a_drag_on_a_soft_wrapped_row_selects_only_its_own_text() {
         row,
         column + 5,
     );
-    mouse(
-        &mut app,
-        MouseEventKind::Up(MouseButton::Left),
-        row,
-        column + 5,
-    );
+    copy_mark(&mut app, row, column + 5);
 
     assert_eq!(
         ClipboardSeam::copied().as_slice(),
@@ -2838,7 +2852,7 @@ async fn double_and_triple_clicks_take_the_word_and_the_line() {
             row,
             column,
         );
-        mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, column);
+        copy_mark(&mut app, row, column);
     }
     let copied = ClipboardSeam::copied();
     assert_eq!(
@@ -2853,7 +2867,7 @@ async fn double_and_triple_clicks_take_the_word_and_the_line() {
         row,
         column,
     );
-    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, column);
+    copy_mark(&mut app, row, column);
     let copied = ClipboardSeam::copied();
     assert!(
         copied
@@ -2972,8 +2986,13 @@ async fn a_double_click_past_a_tab_hits_the_projected_columns() {
     // Column base+6 is tab padding (gate covers base..base+4, the tab covers base+4..base+8).
     // Counting the tab as one column would place it inside "value" instead.
     for _ in 0..2 {
-        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, base + 7);
-        mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, base + 7);
+        mouse(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Left),
+            row,
+            base + 7,
+        );
+        copy_mark(&mut app, row, base + 7);
     }
     let copied = ClipboardSeam::copied();
     assert_eq!(
@@ -2983,8 +3002,13 @@ async fn a_double_click_past_a_tab_hits_the_projected_columns() {
     );
 
     // A third click on the same spot takes the whole line, and that copy keeps the tab.
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, base + 7);
-    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, base + 7);
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        row,
+        base + 7,
+    );
+    copy_mark(&mut app, row, base + 7);
     let copied = ClipboardSeam::copied();
     assert_eq!(
         copied.last().map(String::as_str),
@@ -3108,12 +3132,7 @@ async fn a_drag_that_starts_on_the_margin_still_selects_the_line() {
         row,
         width - 1,
     );
-    mouse(
-        &mut app,
-        MouseEventKind::Up(MouseButton::Left),
-        row,
-        width - 1,
-    );
+    copy_mark(&mut app, row, width - 1);
     let copied = ClipboardSeam::copied().pop().unwrap_or_default();
     assert_eq!(copied, "item-margin", "the drag copied the whole line");
 
@@ -3126,12 +3145,7 @@ async fn a_drag_that_starts_on_the_margin_still_selects_the_line() {
         row,
         width - 1,
     );
-    mouse(
-        &mut app,
-        MouseEventKind::Up(MouseButton::Left),
-        row,
-        width - 1,
-    );
+    copy_mark(&mut app, row, width - 1);
     let tail = ClipboardSeam::copied().pop().unwrap_or_default();
     assert_eq!(tail, "em-margin", "the drag ran to the end of the row");
 }
@@ -3182,12 +3196,7 @@ async fn a_mark_survives_scrolling_away_and_back_to_the_same_text() {
         a30.0,
         CONTENT_GUTTER_COLS + 6,
     );
-    mouse(
-        &mut app,
-        MouseEventKind::Up(MouseButton::Left),
-        a30.0,
-        CONTENT_GUTTER_COLS + 6,
-    );
+    copy_mark(&mut app, a30.0, CONTENT_GUTTER_COLS + 6);
     let expected = format!("{}\n{}\n{}", &a28.1[2..], &a29.1, &a30.1[..6]);
     let first_copy = ClipboardSeam::copied()
         .pop()
@@ -3347,12 +3356,7 @@ async fn the_mark_still_names_its_own_text_while_the_transcript_grows() {
         row,
         CONTENT_GUTTER_COLS + 4,
     );
-    mouse(
-        &mut app,
-        MouseEventKind::Up(MouseButton::Left),
-        row,
-        CONTENT_GUTTER_COLS + 4,
-    );
+    copy_mark(&mut app, row, CONTENT_GUTTER_COLS + 4);
     let first_copy = ClipboardSeam::copied().pop().expect("the release copied");
     let anchor_before = app.transcript_selection.expect("a mark is open").anchor;
     let texts_before: Vec<String> = marked_cards(&mut app, 60, 24)
@@ -3427,12 +3431,7 @@ async fn trimming_the_selected_card_clears_the_mark_and_a_neighbour_keeps_its_ow
         first + 1,
         CONTENT_GUTTER_COLS + 7,
     );
-    mouse(
-        &mut app,
-        MouseEventKind::Up(MouseButton::Left),
-        first + 1,
-        CONTENT_GUTTER_COLS + 7,
-    );
+    copy_mark(&mut app, first + 1, CONTENT_GUTTER_COLS + 7);
     assert_eq!(
         app.transcript_selection
             .expect("a mark is open")
@@ -3467,12 +3466,7 @@ async fn trimming_the_selected_card_clears_the_mark_and_a_neighbour_keeps_its_ow
         second,
         CONTENT_GUTTER_COLS + 7,
     );
-    mouse(
-        &mut app,
-        MouseEventKind::Up(MouseButton::Left),
-        second,
-        CONTENT_GUTTER_COLS + 7,
-    );
+    copy_mark(&mut app, second, CONTENT_GUTTER_COLS + 7);
     let picked = ClipboardSeam::copied()
         .pop()
         .expect("the drag copied its own card");
@@ -3535,8 +3529,13 @@ async fn a_shift_click_moves_the_free_end_and_leaves_the_anchor_put_down() {
     let _clipboard_turn = ClipboardSeam::arm();
     // Press and drag a short way, so a range is open to extend.
     mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, base);
-    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), row, base + 3);
-    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, base + 3);
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        row,
+        base + 3,
+    );
+    copy_mark(&mut app, row, base + 3);
     let short = ClipboardSeam::copied().pop().expect("the drag copied");
     let anchor_before = app.transcript_selection.expect("a mark is open").anchor;
     assert_eq!(short, "ite", "three columns of one line: {short:?}");
@@ -3559,6 +3558,7 @@ async fn a_shift_click_moves_the_free_end_and_leaves_the_anchor_put_down() {
         base + 5,
         KeyModifiers::SHIFT,
     );
+    right_click(&mut app, row + 2, base + 5);
 
     let selection = app.transcript_selection.expect("still the same range");
     assert_eq!(selection.anchor, anchor_before, "the anchor stayed put");
@@ -3605,6 +3605,7 @@ async fn a_shift_click_moves_the_free_end_and_leaves_the_anchor_put_down() {
         base + 4,
         KeyModifiers::SHIFT,
     );
+    right_click(&mut app, row - 1, base + 4);
     let copied = ClipboardSeam::copied().pop().expect("the copy arrived");
     let backwards: String = before[row - 1]
         .chars()
@@ -3643,8 +3644,13 @@ async fn shift_and_double_clicks_on_a_tab_row_answer_at_the_eight_column_stops()
     let _clipboard_turn = ClipboardSeam::arm();
     // gate covers 0..4, the tab its padding 4..8, value sits at 8..13.
     mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, base);
-    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), row, base + 3);
-    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, base + 3);
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        row,
+        base + 3,
+    );
+    copy_mark(&mut app, row, base + 3);
     ClipboardSeam::drain();
 
     for (head, expect) in [
@@ -3667,6 +3673,7 @@ async fn shift_and_double_clicks_on_a_tab_row_answer_at_the_eight_column_stops()
             head,
             KeyModifiers::SHIFT,
         );
+        right_click(&mut app, row, head);
         assert_eq!(
             ClipboardSeam::copied().last().map(String::as_str),
             Some(expect),
@@ -3678,9 +3685,19 @@ async fn shift_and_double_clicks_on_a_tab_row_answer_at_the_eight_column_stops()
 
     // A range that starts inside the padding drops the tab: the tab's own column is
     // before the anchor, so it never travels to the clipboard.
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, base + 6);
-    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), row, base + 7);
-    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, base + 7);
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        row,
+        base + 6,
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        row,
+        base + 7,
+    );
+    copy_mark(&mut app, row, base + 7);
     mouse_held(
         &mut app,
         MouseEventKind::Down(MouseButton::Left),
@@ -3695,6 +3712,7 @@ async fn shift_and_double_clicks_on_a_tab_row_answer_at_the_eight_column_stops()
         base + 13,
         KeyModifiers::SHIFT,
     );
+    right_click(&mut app, row, base + 13);
     assert_eq!(
         ClipboardSeam::copied().last().map(String::as_str),
         Some("value"),
@@ -3706,8 +3724,13 @@ async fn shift_and_double_clicks_on_a_tab_row_answer_at_the_eight_column_stops()
     // Two clicks on that padding take the word to their left, and the word anchor keeps
     // its own bound when a shift+click walks the free end into the next word.
     for _ in 0..2 {
-        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, base + 6);
-        mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, base + 6);
+        mouse(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Left),
+            row,
+            base + 6,
+        );
+        copy_mark(&mut app, row, base + 6);
     }
     assert_eq!(
         ClipboardSeam::copied().last().map(String::as_str),
@@ -3729,6 +3752,7 @@ async fn shift_and_double_clicks_on_a_tab_row_answer_at_the_eight_column_stops()
         base + 12,
         KeyModifiers::SHIFT,
     );
+    right_click(&mut app, row, base + 12);
     assert_eq!(
         ClipboardSeam::copied().last().map(String::as_str),
         Some("gate\tvalue"),
@@ -4092,12 +4116,7 @@ async fn a_drag_across_the_draft_marks_the_run_and_the_next_keystroke_replaces_i
     assert!(marks[0].1.contains("summarise"), "{marks:?}");
 
     // The release ends the gesture and copies what it picked, the way the transcript does.
-    mouse(
-        &mut app,
-        MouseEventKind::Up(MouseButton::Left),
-        row,
-        area.x + 16,
-    );
+    copy_mark(&mut app, row, area.x + 16);
     assert_eq!(
         ClipboardSeam::copied(),
         vec!["the fl".to_string()],
@@ -4248,6 +4267,7 @@ async fn a_double_click_in_the_draft_takes_the_word_and_a_triple_the_logical_lin
 
     // The fullwidth character, hit on one of its own columns.
     clicks(&mut app, 2, 9);
+    right_click(&mut app, row, area.x + 9);
     assert_eq!(
         app.input_selection_range(),
         Some((5, 8)),
@@ -4301,12 +4321,7 @@ async fn a_double_click_in_the_draft_takes_the_word_and_a_triple_the_logical_lin
             second,
             area.x + 2,
         );
-        mouse(
-            &mut app,
-            MouseEventKind::Up(MouseButton::Left),
-            second,
-            area.x + 2,
-        );
+        copy_mark(&mut app, second, area.x + 2);
     }
     assert_eq!(
         app.input_selection_range(),
@@ -4512,12 +4527,7 @@ async fn a_drag_past_the_draft_band_edge_extends_the_mark_one_row_at_a_time() {
         !marks.is_empty(),
         "a run that spans the band is visible on the frame"
     );
-    mouse(
-        &mut app,
-        MouseEventKind::Up(MouseButton::Left),
-        usize::from(area.y) - 1,
-        area.x + 2,
-    );
+    copy_mark(&mut app, usize::from(area.y), area.x + 2);
     let copied = ClipboardSeam::copied()
         .last()
         .cloned()
@@ -4850,9 +4860,46 @@ async fn the_gap_counts_the_rows_the_tail_gained_while_the_reader_was_away() {
     assert_eq!(app.unseen_tail_lines, 0, "the count is spent at the tail");
 }
 
-/// A mark, the Ctrl+T view or a modal owns the reader's attention, so the control yields.
+/// The reading control paints in a row the frame always reserves: it comes and goes
+/// without the composer growing and without the transcript losing a row to it.
 #[tokio::test]
-async fn a_mark_in_either_region_retires_the_gap_control() {
+async fn the_gap_control_never_changes_the_frame_geometry() {
+    let root = TempRoot::new("gap_geometry");
+    let mut app = fixture_app(root.path()).await;
+    let _ = draw_rows(&mut app, 80, 24);
+    let at_tail = (
+        app.transcript_mouse_region.height,
+        app.composer_height(80, 24),
+    );
+    assert_eq!(
+        gap_text(&mut app, 80, 24),
+        None,
+        "nothing to say at the tail"
+    );
+    assert!(
+        app.gap_hit_area().is_empty(),
+        "a control that is not painted owns no rectangle"
+    );
+
+    detach_from_tail(&mut app, 3);
+    let text = gap_text(&mut app, 80, 24).expect("the control is up away from the tail");
+    assert!(text.contains("new"), "{text:?}");
+    assert_eq!(
+        (
+            app.transcript_mouse_region.height,
+            app.composer_height(80, 24)
+        ),
+        at_tail,
+        "the row was already reserved, so nothing moved"
+    );
+}
+
+/// A mark does not hide the reading control, in either region: a mark outlives the gesture
+/// that made it, so tying the control to "nothing is marked" left the reader without a way
+/// back to the tail after any click on a card. Only the Ctrl+T view, a modal or a search
+/// editor owns the row.
+#[tokio::test]
+async fn a_mark_leaves_the_gap_control_alone() {
     use crossterm::event::{MouseButton, MouseEventKind};
 
     let root = TempRoot::new("gap_hidden");
@@ -4880,14 +4927,13 @@ async fn a_mark_in_either_region_retires_the_gap_control() {
         app.transcript_selection.is_some(),
         "the transcript carries a mark"
     );
-    assert_eq!(
-        gap_text(&mut app, 80, 24),
-        None,
-        "a marked transcript retires the control"
+    assert!(
+        gap_text(&mut app, 80, 24).is_some(),
+        "the control still offers the way back"
     );
 
-    // The composer's own mark does the same, and it is a different region's mark.
-    app.transcript_selection = None;
+    // The composer's own mark is a different region's mark, and the row is still the
+    // reader's to press.
     app.input = "summarise the flaky gate".to_string();
     app.input_cursor = 0;
     let _ = draw_rows(&mut app, 80, 24);
@@ -4905,10 +4951,9 @@ async fn a_mark_in_either_region_retires_the_gap_control() {
         area.x + 8,
     );
     assert!(app.has_input_selection(), "the draft carries a mark");
-    assert_eq!(
-        gap_text(&mut app, 80, 24),
-        None,
-        "a marked draft retires the control too"
+    assert!(
+        gap_text(&mut app, 80, 24).is_some(),
+        "a marked draft leaves the control up as well"
     );
 
     // Ctrl+T and any modal surface own the screen, so the control is decided away even
@@ -5148,12 +5193,7 @@ async fn a_copy_shows_its_count_in_the_band_then_yields_the_row() {
         start + 1,
         40,
     );
-    mouse(
-        &mut app,
-        MouseEventKind::Up(MouseButton::Left),
-        start + 1,
-        40,
-    );
+    copy_mark(&mut app, start + 1, 40);
     let copied = ClipboardSeam::copied();
     assert_eq!(copied.len(), 1, "one release writes once: {copied:?}");
     let characters = copied[0].chars().count();
@@ -5222,12 +5262,7 @@ async fn a_failed_copy_reports_in_the_band_not_the_transcript() {
         start + 1,
         40,
     );
-    mouse(
-        &mut app,
-        MouseEventKind::Up(MouseButton::Left),
-        start + 1,
-        40,
-    );
+    copy_mark(&mut app, start + 1, 40);
 
     let text = gap_text(&mut app, 80, 24).expect("the failure answers in the band");
     assert!(
@@ -6078,18 +6113,9 @@ fn drag_over_run(app: &mut TuiApp, needle: &str, width: u16, height: u16) -> Str
         row,
         start as u16,
     );
-    mouse(
-        app,
-        MouseEventKind::Drag(MouseButton::Left),
-        row,
-        end,
-    );
-    mouse(
-        app,
-        MouseEventKind::Up(MouseButton::Left),
-        row,
-        end,
-    );
+    mouse(app, MouseEventKind::Drag(MouseButton::Left), row, end);
+    mouse(app, MouseEventKind::Up(MouseButton::Left), row, end);
+    right_click(app, row, end);
     ClipboardSeam::copied()
         .pop()
         .unwrap_or_else(|| panic!("the release copied the drag"))
@@ -7013,7 +7039,7 @@ async fn a_drag_off_the_top_edge_copies_rows_from_screens_above() {
         draw_rows(&mut app, width, height);
     }
     draw_rows(&mut app, width, height);
-    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), top, 0);
+    copy_mark(&mut app, top, 0);
     let copied = ClipboardSeam::copied().pop().unwrap_or_default();
     let marked = copied
         .lines()
@@ -7024,4 +7050,3 @@ async fn a_drag_off_the_top_edge_copies_rows_from_screens_above() {
         "the copy reaches past one screen, got {marked}: {copied}"
     );
 }
-

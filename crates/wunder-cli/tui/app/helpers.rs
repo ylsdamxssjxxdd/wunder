@@ -707,6 +707,9 @@ pub(super) fn read_system_clipboard_text() -> Result<Option<String>> {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
+        // The same rule as the write side: a reader that cannot reach its display server
+        // yields to the next one instead of ending the read.
+        let mut last_error: Option<anyhow::Error> = None;
         for (program, args) in clipboard_read_commands(wunder_server::http_client::is_termux()) {
             match Command::new(program).args(args).output() {
                 Ok(output) if output.status.success() => {
@@ -717,12 +720,15 @@ pub(super) fn read_system_clipboard_text() -> Result<Option<String>> {
                 Ok(output) => {
                     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
                     if !stderr.is_empty() {
-                        return Err(anyhow!("{program} failed: {stderr}"));
+                        last_error = Some(anyhow!("{program} failed: {stderr}"));
                     }
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(anyhow!("{program} failed: {error}")),
+                Err(error) => last_error = Some(anyhow!("{program} failed: {error}")),
             }
+        }
+        if let Some(error) = last_error {
+            return Err(error);
         }
 
         return Err(anyhow!(
@@ -762,6 +768,10 @@ pub(super) fn write_system_clipboard_text(text: &str) -> Result<()> {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
+        // Every writer is tried before the copy is called failed. A Wayland writer can sit
+        // installed on an X11 session, and stopping at its first failure used to fail the
+        // whole copy while a working `xclip` was next in the list.
+        let mut last_error: Option<anyhow::Error> = None;
         for (program, args) in clipboard_write_commands(wunder_server::http_client::is_termux()) {
             match write_clipboard_via_stdin(program, args, text) {
                 Ok(()) => return Ok(()),
@@ -769,9 +779,12 @@ pub(super) fn write_system_clipboard_text(text: &str) -> Result<()> {
                     if error.to_string().contains("not found") {
                         continue;
                     }
-                    return Err(error);
+                    last_error = Some(error);
                 }
             }
+        }
+        if let Some(error) = last_error {
+            return Err(error);
         }
         return Err(anyhow!(
             "no supported clipboard command found (tried wl-copy, xclip, xsel{})",
@@ -976,32 +989,87 @@ mod win32_clipboard {
 fn write_clipboard_via_stdin(program: &str, args: &[&str], text: &str) -> Result<()> {
     use std::io::Write;
 
-    let mut child = Command::new(program)
+    // The child's stderr goes to a temp file, never to a pipe. `xclip` forks a daemon that
+    // owns the selection and keeps every inherited descriptor open for as long as it owns
+    // it, so reading a piped stderr to EOF waits for the *next* clipboard owner: the copy
+    // had already happened, yet this task stayed alive holding the one in-flight slot, and
+    // every later copy was dropped behind it. That is what left the clipboard on the first
+    // text the reader ever copied.
+    let stderr_path = clipboard_stderr_path();
+    let stderr_file = std::fs::File::create(&stderr_path)
+        .map_err(|error| anyhow!("create stderr temp file for {program} failed: {error}"))?;
+    let mut child = match Command::new(program)
         .args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::from(stderr_file))
         .spawn()
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                anyhow!("{program} not found")
-            } else {
-                anyhow!("failed to invoke {program}: {error}")
-            }
-        })?;
-    if let Some(stdin) = child.stdin.as_mut() {
-        stdin
+    {
+        Ok(child) => child,
+        Err(error) => {
+            let _ = std::fs::remove_file(&stderr_path);
+            return Err(match error.kind() {
+                std::io::ErrorKind::NotFound => anyhow!("{program} not found"),
+                _ => anyhow!("failed to invoke {program}: {error}"),
+            });
+        }
+    };
+    // Handing over the text and closing stdin is what lets the writer publish it; a writer
+    // that already gave up shows as a failed write rather than a silent one.
+    let written = match child.stdin.take() {
+        Some(mut stdin) => stdin
             .write_all(text.as_bytes())
-            .map_err(|error| anyhow!("write to {program} failed: {error}"))?;
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|error| anyhow!("{program} failed: {error}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(anyhow!("{program} failed: {stderr}"));
+            .map_err(|error| anyhow!("write to {program} failed: {error}")),
+        None => Ok(()),
+    };
+    // `wait` answers for the process this app started, not for a daemon it leaves behind,
+    // so it returns as soon as the text has been handed over.
+    let status = child
+        .wait()
+        .map_err(|error| anyhow!("{program} failed: {error}"));
+    let stderr = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+    let _ = std::fs::remove_file(&stderr_path);
+    written?;
+    if !status?.success() {
+        return Err(anyhow!("{program} failed: {}", stderr.trim()));
     }
     Ok(())
+}
+
+/// A per-call temp path for a writer's stderr. Unique per process and per call, so two
+/// copies in flight can never share one file.
+#[cfg(not(target_os = "windows"))]
+fn clipboard_stderr_path() -> std::path::PathBuf {
+    use std::sync::atomic::Ordering;
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    std::env::temp_dir().join(format!(
+        "wunder-clipboard-{}-{}.err",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+#[cfg(all(test, unix, not(target_os = "macos")))]
+mod clipboard_writer_tests {
+    use super::write_clipboard_via_stdin;
+    use std::time::{Duration, Instant};
+
+    /// A writer that forks a daemon holding its stderr open, the way `xclip` owns the
+    /// selection. Reading that stderr to EOF used to wait for the daemon, so the write never
+    /// finished: the clipboard stayed on the first text ever copied and every later copy was
+    /// dropped behind the unfinished one. The call must answer as soon as the writer exits.
+    #[test]
+    fn a_writer_that_leaves_a_daemon_behind_still_returns() {
+        let started = Instant::now();
+        let outcome =
+            write_clipboard_via_stdin("sh", &["-c", "cat >/dev/null; sleep 30 & exit 0"], "text");
+        let elapsed = started.elapsed();
+        assert!(outcome.is_ok(), "the write failed: {outcome:?}");
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "the write waited for the daemon it left behind: {elapsed:?}"
+        );
+    }
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]

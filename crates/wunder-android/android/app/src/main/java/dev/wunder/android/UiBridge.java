@@ -498,6 +498,24 @@ public final class UiBridge {
                 DocumentsContract.Document.MIME_TYPE_DIR, true);
     }
 
+    /** Open one http(s) link from a transcript in the system browser. */
+    public static boolean openExternalUrl(String url) {
+        Activity current = activity.get();
+        if (current == null || url == null) {
+            return false;
+        }
+        String target = url.trim();
+        if (!target.startsWith("https://") && !target.startsWith("http://")) {
+            return false;
+        }
+        try {
+            current.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(target)));
+            return true;
+        } catch (Exception error) {
+            return false;
+        }
+    }
+
     private static boolean launchWorkspaceDocument(Activity activity, String workspaceId,
             String relative, String mime, boolean directory) {
         String authority = activity.getPackageName() + WunderDocumentsProvider.AUTHORITY_SUFFIX;

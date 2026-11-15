@@ -3641,6 +3641,8 @@ component HelpTopicView inherits Rectangle {
                 block: block;
                 column-width: scroll.visible-width - 32px;
                 mobile: true;
+                // 图册是随包内置的插画，没有可交给系统打开的文件。
+                image-clickable: false;
                 link-clicked(url) => { root.link(url); }
             }
         }

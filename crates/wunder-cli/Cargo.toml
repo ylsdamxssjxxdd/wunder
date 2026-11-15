@@ -6,7 +6,7 @@ rust-version.workspace = true
 build = "build.rs"
 
 [features]
-default = ["sqlite-storage", "web-fetch"]
+default = ["sqlite-storage", "desktop-control", "web-fetch"]
 desktop-control = ["wunder-runtime/desktop-control"]
 doc2md = ["wunder-runtime/doc2md"]
 host-metrics = ["wunder-runtime/host-metrics"]

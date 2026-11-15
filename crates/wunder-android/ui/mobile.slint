@@ -702,6 +702,7 @@ export component MobileWindow inherits Window {
     in property <string> settings-usage-quota: "";
     in property <int> settings-chat-target: 0;
     in property <string> settings-current-device: "本机";
+    in property <string> settings-current-device-kind: "phone";
     in property <[MobileDevice]> settings-devices: [];
     in property <[MobileSession]> settings-cloud-sessions: [];
     in property <bool> settings-cloud-loading: false;
@@ -744,6 +745,8 @@ export component MobileWindow inherits Window {
     callback open-workspace(string);
     callback refresh-workspace();
     callback upload-workspace(string);
+    // 聊天页「上传文件」：文件上传后还挂在输入框上，随下一条消息告知模型。
+    callback attach-files();
     callback download-workspace(string);
     callback load-more-workspace(string, int);
     callback workspace-rename(string, string);
@@ -782,6 +785,8 @@ export component MobileWindow inherits Window {
     callback edit-waiting(string);
     callback interject-waiting(string);
     callback copy-text(string);
+    // 转录区的图片、文档卡与链接共用同一个出口：安卓版交给系统应用打开。
+    callback open-resource(string);
     callback fork-thread(int);
     callback toggle-row(int);
     callback draft-changed(string);
@@ -1206,7 +1211,7 @@ export component MobileWindow inherits Window {
             load-older() => { }
             process-page(index, direction) => { }
             copy-original(id) => { }
-            open-resource(path) => { }
+            open-resource(path) => { root.open-resource(path); }
             show-context-menu(x, y, selected) => { }
         }
 
@@ -1395,7 +1400,7 @@ export component MobileWindow inherits Window {
                         label: "上传文件";
                         clicked => {
                             root.close-plus();
-                            root.upload-workspace("");
+                            root.attach-files();
                         }
                     }
                     PlusTile {
@@ -1636,7 +1641,13 @@ export component MobileWindow inherits Window {
                     cross-axis-alignment: center;
                     Image {
                         width: 16px; height: 16px;
-                        source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-display.svg");
+                        source: root.settings-current-device-kind == "cloud"
+                            ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-globe.svg")
+                            : root.settings-current-device-kind == "desktop"
+                                ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-display.svg")
+                                : root.settings-current-device-kind == "cli"
+                                    ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-bot.svg")
+                                    : @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-smartphone.svg");
                         colorize: Theme.accent-ink;
                     }
                     Text {
@@ -2343,7 +2354,9 @@ export component MobileWindow inherits Window {
                                         ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-globe.svg")
                                         : device.kind == "desktop"
                                             ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-display.svg")
-                                            : @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-bot.svg");
+                                            : device.kind == "cli"
+                                                ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-bot.svg")
+                                                : @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-smartphone.svg");
                                     colorize: Theme.accent-ink;
                                 }
                             }

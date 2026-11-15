@@ -347,6 +347,7 @@ impl ThreadRuntime {
             overrides.remove("__thread_log_user_round");
             overrides.remove("__inquiry_turn_id");
             overrides.remove("__root_user_round");
+            overrides.remove("__interactive_chat");
         }
         request.enforce_runtime_queue = true;
         let agent_id = normalize_agent_id(request.agent_id.as_deref());
@@ -420,6 +421,16 @@ impl ThreadRuntime {
         // not a busy thread: no session lock is held, and queueing the answer
         // would delay the very turn the user just supplied.
         let inquiry_answer = inquiry_turn_id.is_some();
+        // 本地交互形态（桌面版 / 安卓版）在输入框里敲出的下一句，语义上永远是
+        // 「现在就说」：线程停在问询面板上时它不该被排进队列——那个面板正是
+        // 这句话要回答的东西，排队只会让它一直等到面板被点掉才发出去。
+        // 后台投递、定时任务与云端请求不带这个标记，排队语义不变。
+        let interactive_reply = request
+            .config_overrides
+            .as_ref()
+            .and_then(|value| value.get("__interactive_chat"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let input = json!({
             "role": "user", "content": request.question,
             "client_message_id": request.client_message_id, "attachments": request.attachments,
@@ -482,7 +493,11 @@ impl ThreadRuntime {
                 // may start, and can never be attached to the active turn.
                 if force_runtime_queue
                     || self
-                        .should_queue(&user_id, Some(session_id), inquiry_answer)
+                        .should_queue(
+                            &user_id,
+                            Some(session_id),
+                            inquiry_answer || interactive_reply,
+                        )
                         .await
                     || self.count_all_pending_tasks().await > 0
                     || self.orchestrator.scheduling.suspended_count() > 0

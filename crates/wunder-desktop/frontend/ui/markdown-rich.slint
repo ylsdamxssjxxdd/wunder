@@ -304,6 +304,10 @@ component ImageBlock inherits Rectangle {
     in property <float> font-scale: 1.0;
     in property <MdBlock> block;
     in property <length> content-width;
+    // The transcript opens a picture with the system viewer on click, the way
+    // the workspace panel opens any other file. Bundled manual art has no host
+    // file behind it, so the help window turns the gesture off.
+    in property <bool> clickable: true;
     callback open-resource(string);
 
     // Fit-content sizing: tall images shrink by height first instead of
@@ -336,7 +340,7 @@ component ImageBlock inherits Rectangle {
     height: block.image-error ? 32px : paint.preferred-height;
     border-radius: Theme.radius-block;
     border-width: 1px;
-    border-color: Theme.border;
+    border-color: root.clickable && shot.has-hover ? Theme.accent : Theme.border;
     background: block.image-error ? Theme.hover : Theme.surface;
     clip: true;
 
@@ -384,6 +388,12 @@ component ImageBlock inherits Rectangle {
                 }
             }
         }
+    }
+    // Declared last so the hit area covers the picture and the placeholder.
+    shot := TouchArea {
+        enabled: root.clickable;
+        mouse-cursor: root.clickable ? pointer : default;
+        clicked => { root.open-resource(block.image-source); }
     }
 }
 
@@ -465,6 +475,10 @@ export component BlockView inherits Rectangle {
     in property <float> font-scale: 1.0;
     /// Touch layout: wide tables pan horizontally instead of being clipped.
     in property <bool> mobile: false;
+    /// Whether a picture opens in the system viewer on click. Chat surfaces
+    /// keep this on; the manual's bundled art has no host file, so its window
+    /// turns it off.
+    in property <bool> image-clickable: true;
     callback link-clicked(string);
     callback copy-text(string);
     callback open-resource(string);
@@ -538,6 +552,7 @@ export component BlockView inherits Rectangle {
             block: block;
             content-width: inner;
             font-scale: root.font-scale;
+            clickable: root.image-clickable;
             open-resource(source) => { root.open-resource(source); }
         }
         if block.kind == BlockKind.document : DocumentBlock {

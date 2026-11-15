@@ -781,6 +781,15 @@ fn wire_callbacks(
         #[cfg(not(target_os = "android"))]
         let _ = dir;
     });
+    // 聊天页「上传文件」：同一套上传，但文件会挂在输入框上随消息告知模型。
+    ui.on_attach_files(move || {
+        #[cfg(target_os = "android")]
+        crate::android_host::pick_attachment_files("");
+    });
+    let sender = commands.clone();
+    ui.on_remove_attachment(move |index| {
+        let _ = sender.send(Command::RemoveUpload(index.max(0) as usize));
+    });
     let sender = commands.clone();
     ui.on_download_workspace(move |path| {
         let _ = sender.send(Command::DownloadWorkspace {
@@ -932,7 +941,8 @@ fn wire_callbacks(
         let Some(ui) = weak.upgrade() else { return };
         let draft = ui.get_draft().to_string();
         let draft = draft.trim().to_string();
-        if draft.is_empty() {
+        // 只挂了附件、正文空着也能发：文件提示块本身就是这条消息的内容。
+        if draft.is_empty() && ui.get_attachments().row_count() == 0 {
             return;
         }
         if ui.get_settings_chat_target() == 1 {
@@ -1498,6 +1508,7 @@ fn wire_callbacks(
         let _ = sender.send(Command::CaptureScreenshot);
     });
     ui.on_remove_attachment(|_index| {});
+    ui.on_attach_files(|| {});
 
     // 撤下一条还在等待发送的消息：文本由引擎退回草稿，这一帧只发命令。
     let sender = commands.clone();
@@ -1678,6 +1689,16 @@ fn wire_callbacks(
             state.notify("已复制");
             state.touch();
         }
+    });
+
+    // Transcript pictures, document cards and file chips open the same file the
+    // workspace menu opens; Markdown links go to the system browser. Resolution
+    // stays on the engine side because it owns the workspace catalogue.
+    let sender = commands.clone();
+    ui.on_open_resource(move |path| {
+        let _ = sender.send(Command::OpenResource {
+            path: path.to_string(),
+        });
     });
 
     // Dragging one of the floating knobs moves that end of the selection; the
@@ -2117,6 +2138,9 @@ fn start_tick(
     // 没有新消息也要重投影，否则会把上一个线程（或本机会话）的等待行留在
     // 这一屏的输入框上沿。
     let mut last_waiting: (u64, String, i32) = (0, String::new(), 0);
+    // 输入框附件卡的键：(上传修订号, 本机/云端)。切到云端时也要重投影一次，
+    // 否则本机线程的附件卡会跟着挂到云端会话的输入框上。
+    let mut last_uploads: (u64, i32) = (0, -1);
     let mut last_rows = 0u64;
     let mut last_live = 0u64;
     let mut last_live_active = false;
@@ -2271,8 +2295,8 @@ fn start_tick(
         if ui.get_workspace_open() || ui.get_settings_page() == 7 || host_ticks % 30 == 0 {
             if let Some(picked) = crate::android_host::take_picked() {
                 match picked {
-                    crate::android_host::PickedFiles::Workspace { dir, files } => {
-                        let _ = commands.send(Command::UploadWorkspace { dir, files });
+                    crate::android_host::PickedFiles::Workspace { dir, files, attach } => {
+                        let _ = commands.send(Command::UploadWorkspace { dir, files, attach });
                     }
                     crate::android_host::PickedFiles::ToolFiles(files) => {
                         let _ = commands.send(Command::UploadToolFiles { files });
@@ -2451,6 +2475,25 @@ fn start_tick(
             ui.set_queue_turns(ModelRc::from(Rc::new(VecModel::from(rows))));
         }
 
+        let uploads_key = (state.uploads_rev, state.target);
+        if uploads_key != last_uploads {
+            last_uploads = uploads_key;
+            let cards: Vec<crate::ChatAttachment> = if state.target == 0 {
+                state
+                    .pending_uploads
+                    .iter()
+                    .map(|file| crate::ChatAttachment {
+                        name: file.name.as_str().into(),
+                        mime_type: slint::SharedString::new(),
+                        data_url: slint::SharedString::new(),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            ui.set_attachments(ModelRc::from(Rc::new(VecModel::from(cards))));
+        }
+
         if state.rev != last_rev {
             ui.set_send_key(state.send_key.as_str().into());
             if state.target == 0 {
@@ -2623,13 +2666,15 @@ fn start_tick(
                     })
                     .collect::<Vec<_>>(),
             ))));
-            let current = state
-                .devices
-                .iter()
-                .find(|device| device.current)
+            let current = state.devices.iter().find(|device| device.current);
+            let current_label = current
                 .map(|device| device.label.clone())
                 .unwrap_or_else(|| "本机".to_string());
-            ui.set_settings_current_device(current.into());
+            let current_kind = current
+                .map(|device| device.kind.clone())
+                .unwrap_or_else(|| "phone".to_string());
+            ui.set_settings_current_device(current_label.into());
+            ui.set_settings_current_device_kind(current_kind.into());
             last_devices = state.devices_rev;
         }
 

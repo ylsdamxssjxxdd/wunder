@@ -4439,11 +4439,6 @@
   "en": "New agent created"
  },
  {
-  "key": "st_agents_synced",
-  "zh": "智能体列表已同步",
-  "en": "Agent list synced"
- },
- {
   "key": "st_agent_deleted",
   "zh": "智能体已删除",
   "en": "Agent deleted"

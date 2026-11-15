@@ -348,6 +348,16 @@ pub(super) struct TranscriptSelection {
     pub moved_vertically: bool,
 }
 
+impl TranscriptSelection {
+    /// Whether this mark names text a copy would carry. A word or line pick always does --
+    /// that is what the gesture asked for -- and a character pick does once the drag moved
+    /// the free end. A press that never moved leaves an empty mark, and an empty mark must
+    /// never answer a right click: the reader asked to paste.
+    pub(super) fn carries_text(&self) -> bool {
+        self.unit != SelectionUnit::Character || self.anchor != self.head
+    }
+}
+
 /// A resolved selection: a run of window lines with optional column bounds at each end.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SelectionCells {
@@ -726,7 +736,6 @@ impl TuiApp {
         }
         out.join("\n")
     }
-
 
     /// The URL under a pointer column, including a URL that soft-wrapped onto another row.
     pub(super) fn url_at_point(

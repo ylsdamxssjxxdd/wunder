@@ -29,7 +29,7 @@ use cron::Schedule;
 use serde::{de::Error as _, Deserialize, Deserializer};
 use serde_json::{json, Value};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{oneshot, Notify, RwLock};
@@ -2393,6 +2393,7 @@ pub struct CronScheduler {
     user_store: Arc<UserStore>,
     user_tool_manager: Arc<UserToolManager>,
     skills: Arc<RwLock<SkillRegistry>>,
+    started: Arc<AtomicBool>,
 }
 
 impl CronScheduler {
@@ -2414,6 +2415,7 @@ impl CronScheduler {
             user_store,
             user_tool_manager,
             skills,
+            started: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -2425,7 +2427,13 @@ impl CronScheduler {
         self.wake_signal.notify();
     }
 
+    /// Starts the polling loop once per process. Every resident local form warms
+    /// the same scheduler, so a second call must not create a second loop that
+    /// would poll (and wake) the same storage twice.
     pub fn start(self: &Arc<Self>) {
+        if self.started.swap(true, Ordering::SeqCst) {
+            return;
+        }
         let scheduler = Arc::clone(self);
         long_task::spawn("cron.scheduler.loop", async move {
             scheduler.run_loop().await;

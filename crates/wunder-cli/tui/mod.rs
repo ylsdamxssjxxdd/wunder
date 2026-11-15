@@ -61,6 +61,15 @@ pub async fn run_main(
     };
     crate::runtime::cli_ui_startup_point("tui_app_ready");
 
+    // The TUI is the only resident 命令行 form. Scheduled deliveries, the thread
+    // queue and the durable change feeder all need a live consumer inside the
+    // process that owns the open session, otherwise a job claimed by the
+    // scheduler is admitted but never executed. One-shot subcommands stay out
+    // of this path, so `tool run` never steals a job it cannot finish.
+    runtime.state.control.cron.start();
+    runtime.state.kernel.thread_runtime.clone().start();
+    app.ensure_durable_follow().await;
+
     // Interlink tunnel (互通方案 I9): the TUI is the only resident 命令行 form, so
     // it is the only place a node may open its outbound link. One-shot
     // subcommands never reach here, and the same exit path always closes it.
@@ -109,12 +118,21 @@ async fn run_loop(
     // borrow the app the key branch is about to use.
     let mut startup_rx = app.take_startup_receiver();
     let mut first_frame_pending = true;
+    // A delivery nobody typed (timer, queue promotion, another client of the
+    // same local store) only becomes visible through the durable feed, so the
+    // idle loop wakes on feed depth instead of waiting for a keystroke.
+    let mut feed_tick = tokio::time::interval(std::time::Duration::from_millis(400));
+    feed_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
         sync_mouse_mode(terminal, app, &mut mouse_capture_enabled)?;
 
         let mut should_draw = false;
         tokio::select! {
+            _ = feed_tick.tick() => {
+                app.ensure_durable_follow().await;
+                should_draw = app.durable_feed_pending();
+            }
             fill = recv_startup_fill(&mut startup_rx) => {
                 if let Some(fill) = fill {
                     app.apply_startup_fill(fill).await;

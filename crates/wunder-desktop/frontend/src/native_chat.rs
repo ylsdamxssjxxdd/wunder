@@ -1147,18 +1147,25 @@ fn bind_timeline(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             app.set_status("链接已复制到剪贴板".into());
             return;
         }
+        // `open_chat_resource` resolves a click exactly like the picture loader
+        // that painted the row: chat attachments, a local absolute path on the
+        // single-root forms, then the workspace. The plain workspace resolver
+        // left every absolute card path unopenable while its pixels rendered.
         let root = markdown_root(&app);
-        if root.trim().is_empty() {
-            app.set_status("当前会话没有可用的本地工作区".into());
-            return;
-        }
+        let name = resource
+            .split(['?', '#'])
+            .next()
+            .and_then(|path| path.rsplit(['/', '\\']).next())
+            .filter(|name| !name.is_empty())
+            .unwrap_or(&resource)
+            .to_string();
         let desktop = open_desktop.clone();
         let weak = app.as_weak();
         std::thread::spawn(move || {
-            let result = desktop.open_workspace_resource(&root, &resource);
+            let result = desktop.open_chat_resource(&root, &resource);
             let _ = weak.upgrade_in_event_loop(move |app| match result {
-                Ok(()) => app.set_status("已打开工作区文件".into()),
-                Err(error) => app.set_status(format!("无法打开工作区文件：{error}").into()),
+                Ok(()) => app.set_status(format!("已打开 {name}").into()),
+                Err(error) => app.set_status(format!("无法打开 {error}").into()),
             });
         });
     });

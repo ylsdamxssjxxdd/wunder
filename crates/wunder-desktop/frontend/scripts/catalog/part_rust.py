@@ -109,7 +109,6 @@ ENTRIES = [
     ("st_file_created", "文件已创建", "File created"),
     ("st_file_ops_done", "文件操作已完成", "File action completed"),
     ("st_agent_created", "新智能体已创建", "New agent created"),
-    ("st_agents_synced", "智能体列表已同步", "Agent list synced"),
     ("st_agent_deleted", "智能体已删除", "Agent deleted"),
     ("st_agent_saved", "智能体配置已保存", "Agent settings saved"),
     ("st_local_settings_synced", "本地设置已同步", "Local settings synced"),

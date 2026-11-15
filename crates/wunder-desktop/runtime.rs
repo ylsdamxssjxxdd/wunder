@@ -33,8 +33,6 @@ const DESKTOP_ORPHAN_WORKSPACE_MIGRATION_VERSION: &str = "orphan_binding_v1";
 /// Name of the workspace created on first run; migrated legacy threads land
 /// here. Mirrored by the workspace façade's docs, never user-configurable.
 const DEFAULT_WORKSPACE_NAME: &str = "默认工作区";
-const DESKTOP_CONTROL_MIN_NORM_WIDTH: i32 = 1000;
-const DESKTOP_CONTROL_MIN_NORM_HEIGHT: i32 = 1000;
 
 #[derive(Clone)]
 pub struct DesktopRuntime {
@@ -1740,33 +1738,9 @@ fn apply_desktop_defaults(
             config.skills.enabled.push(required.to_string());
         }
     }
-    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "计划面板");
-    if cfg!(target_os = "android") {
-        // 安卓版 shares the local engine but has no window manager, mouse or
-        // keyboard. The Android shell installs the phone-control host; a
-        // persisted desktop switch from an older build must not revive the
-        // desktop tool on the phone.
-        config.tools.desktop_control.enabled = false;
-        config
-            .tools
-            .builtin
-            .enabled
-            .retain(|name| wunder_server::tools::resolve_tool_name(name.trim()) != "桌面控制");
-    } else {
-        config.tools.desktop_control.enabled = true;
-        config.tools.desktop_control.norm_width = config
-            .tools
-            .desktop_control
-            .norm_width
-            .max(DESKTOP_CONTROL_MIN_NORM_WIDTH);
-        config.tools.desktop_control.norm_height = config
-            .tools
-            .desktop_control
-            .norm_height
-            .max(DESKTOP_CONTROL_MIN_NORM_HEIGHT);
-        ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "桌面控制");
-    }
-    config.tools.browser.enabled = true;
+    // 本地形态的工具开关由引擎统一下发，命令行与桌面版调用同一个函数，
+    // 避免两端默认值漂移。
+    wunder_server::local_tool_defaults::apply_local_tool_defaults(config);
     // 安卓版 runs the phone's system WebView instead of a packaged Chromium; the
     // Android shell swaps the provider before the first thread is created.
     #[cfg(target_os = "android")]
@@ -1947,19 +1921,6 @@ fn read_skill_name_from_file(path: &Path) -> Option<String> {
         }
     }
     None
-}
-
-fn ensure_desktop_builtin_tool(enabled: &mut Vec<String>, required: &str) {
-    let required = required.trim();
-    if required.is_empty() {
-        return;
-    }
-    let has_required = enabled
-        .iter()
-        .any(|name| wunder_server::tools::resolve_tool_name(name.trim()) == required);
-    if !has_required {
-        enabled.push(required.to_string());
-    }
 }
 
 fn normalize_user_id(raw: Option<&str>) -> String {

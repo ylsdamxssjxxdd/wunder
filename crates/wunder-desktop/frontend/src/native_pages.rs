@@ -710,7 +710,9 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
                         if app.get_agents().row_count() > 0 && app.get_selected_agent() < 0 {
                             app.invoke_select_agent(0);
                         }
-                        app.set_status("智能体列表已同步".into());
+                        // 智能体只是被重新投影：模型的新增/保存/删除、默认模型
+                        // 切换都会顺带刷新一次，这里写状态会盖掉用户刚触发的
+                        // 那条结果提示（toast 由 status 桥接），所以保持安静。
                     }
                     Err(error) => show_error(&app, format!("无法同步智能体：{error}")),
                 }

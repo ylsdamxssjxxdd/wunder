@@ -92,7 +92,6 @@ mod transcript_search;
 mod transcript_view;
 use input_selection::MouseSelection;
 use text_selection::build_transcript_hit_map;
-use text_selection::SelectionUnit;
 use text_selection::TranscriptHitMap;
 use text_selection::TranscriptSelection;
 use text_selection::WindowPoint;
@@ -753,6 +752,9 @@ pub struct TuiApp {
     /// In-flight system clipboard reads and writes; completion is polled on a later frame.
     clipboard_paste_rx: Option<tokio::sync::oneshot::Receiver<Result<ClipboardSnapshot>>>,
     clipboard_write_rx: Option<tokio::sync::oneshot::Receiver<ClipboardWriteOutcome>>,
+    /// The newest copy that arrived while a write was still in flight. One slot is enough:
+    /// a burst of copies ends on the last one, which is the text the reader meant.
+    pending_clipboard_write: Option<(String, ClipboardWriteKind)>,
     /// `!cmd` runs detached; each finished command lands here for the drain.
     pending_shell_results: Vec<tokio::sync::oneshot::Receiver<Result<Value>>>,
 }
@@ -948,6 +950,7 @@ impl TuiApp {
             lease_validation_rx: None,
             clipboard_paste_rx: None,
             clipboard_write_rx: None,
+            pending_clipboard_write: None,
             pending_shell_results: Vec::new(),
         };
         app.acquire_thread_lease(&session_id).await?;
@@ -3576,12 +3579,12 @@ impl TuiApp {
         let rows = build_wrapped_input_lines(&self.input, text_width)
             .len()
             .max(1);
+        // The reading control, a copy result and the search query paint in the layout's
+        // own gap row, never inside this band: the band keeps one height whether the row
+        // above it says something or nothing, so the transcript below the reader never
+        // shifts by a row when a hint appears.
         let notices = usize::from(self.warning_notice(self.is_zh_language(), width).is_some())
-            + usize::from(self.cloud_error_notice().is_some())
-            + usize::from(
-                self.composer_gap_line(width, self.is_zh_language())
-                    .is_some(),
-            );
+            + usize::from(self.cloud_error_notice().is_some());
         (rows.min(8) + notices + 3).min(usize::from(height.saturating_sub(2).max(1))) as u16
     }
 
@@ -3783,13 +3786,17 @@ impl TuiApp {
         self.transcript_search.editing && self.focus_area == FocusArea::Transcript
     }
 
-    /// Everything that retires the control for one frame: the tail is already visible, a
-    /// mark in either region owns the reader's attention, the Ctrl+T view or a modal owns
-    /// the screen, or a search editor owns the keyboard.
+    /// Everything that retires the control for one frame: the tail is already visible, the
+    /// Ctrl+T view or a modal owns the screen, or a search editor owns the keyboard.
+    ///
+    /// A mark in either region is deliberately not on this list. A mark outlives the
+    /// gesture that made it — it stays until the next click — so retiring the control
+    /// behind it meant that after any click in the transcript the reader could scroll away
+    /// from the tail and find no way back but `End`. The control's own row is a fixed row
+    /// (see the layout's gap slot), so showing it beside a mark costs the transcript
+    /// nothing and moves nothing.
     fn gap_control_hidden(&mut self) -> bool {
         self.is_at_transcript_tail()
-            || self.transcript_selection.is_some()
-            || self.has_input_selection()
             || self.transcript_view_open()
             || self.modal_surface_open()
             || self.gap_search_editing()
@@ -6120,8 +6127,13 @@ impl TuiApp {
         self.start_clipboard_write(text, ClipboardWriteKind::LastReply);
     }
 
+    /// Begin a clipboard write. One write runs at a time, and a copy that arrives while
+    /// one is still running waits in a single slot instead of being dropped: a dropped copy
+    /// left the clipboard on the text copied before it, which read as a copy that did
+    /// nothing.
     fn start_clipboard_write(&mut self, text: String, kind: ClipboardWriteKind) {
         if self.clipboard_write_rx.is_some() {
+            self.pending_clipboard_write = Some((text, kind));
             return;
         }
         let characters = text.chars().count();
@@ -6202,6 +6214,11 @@ impl TuiApp {
             },
         }
         self.request_redraw();
+        // The slot behind the finished write, if any, goes next: the reader's last copy is
+        // the one they meant, so it lands after the one that was already running.
+        if let Some((text, kind)) = self.pending_clipboard_write.take() {
+            self.start_clipboard_write(text, kind);
+        }
     }
 
     /// Ctrl+G: the same external-editor round trip `/edit` performs.
@@ -6466,11 +6483,11 @@ impl TuiApp {
             .detach_durable_feed(previous_session_id.as_str());
         self.thread_registry
             .mark_durable_applied(session_id, durable_baseline);
-        if self.thread_has_live_work(session_id) {
-            let from = self.thread_registry.durable_cursor(session_id);
-            let target = session_id.to_string();
-            self.follow_durable_thread(target.as_str(), from).await;
-        }
+        // The visible thread always keeps its durable feed, live work or not: a
+        // timer delivery must be able to surface in an idle terminal.
+        let from = self.thread_registry.durable_cursor(session_id);
+        let target = session_id.to_string();
+        self.follow_durable_thread(target.as_str(), from).await;
         if let Some(reason) = self.watch_only_reason.as_deref() {
             self.push_log(
                 LogKind::Info,
@@ -6511,6 +6528,29 @@ impl TuiApp {
         if let Ok(receiver) = feed {
             self.thread_registry.insert_durable_feed(target, receiver);
         }
+    }
+
+    /// Re-attach the visible thread's durable feed after it was dropped (idle
+    /// catch-up, overflow or a slow fold). A replay in flight already owns the
+    /// cursor, so it must not be duplicated by a fresh feeder.
+    pub async fn ensure_durable_follow(&mut self) {
+        let session = self.session_id.clone();
+        if self.thread_registry.durable_feed_attached(&session)
+            || self.thread_registry.needs_replay(&session)
+        {
+            return;
+        }
+        let from = self.thread_registry.durable_cursor(&session);
+        self.follow_durable_thread(session.as_str(), from).await;
+    }
+
+    /// Whether the visible thread's feed has frames waiting. Used by the idle
+    /// tick to wake the render loop for deliveries the user did not type.
+    pub fn durable_feed_pending(&self) -> bool {
+        self.thread_registry
+            .durable_feed_session_ids()
+            .iter()
+            .any(|id| self.thread_registry.durable_feed_depth(id) > 0)
     }
 
     /// Fold the durable feed of the thread on screen. Token deltas stay the fast
@@ -6576,14 +6616,10 @@ impl TuiApp {
                     .demand_durable_replay(session_id.as_str());
                 return;
             }
-            if frames.is_empty()
-                && !self.thread_registry.has_stream(session_id.as_str())
-                && !self.thread_is_running(session_id.as_str())
-            {
-                // Caught up with nothing running: keep no idle feeder polling.
-                self.thread_registry
-                    .detach_durable_feed(session_id.as_str());
-            }
+            // An idle thread keeps its feeder attached on purpose. A timer
+            // delivery can land while nobody is typing, and the only way the TUI
+            // learns about it is this feed; the feeder waits on the change hub
+            // instead of polling, so an attached idle feed costs no frames.
         }
     }
 
@@ -6810,14 +6846,25 @@ impl TuiApp {
             return;
         }
         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
-            // The right button copies what is marked, the way codex does it, and only
-            // reaches for the clipboard when nothing is selected. Either region's mark goes
-            // through the same clipboard channel as the other.
-            if self.has_input_selection() && self.mouse_in_composer_region(&mouse) {
+            // The right button copies what is marked, the way a terminal does it, and only
+            // reaches for the clipboard when nothing is. Either region's mark goes through
+            // the same clipboard channel as the other.
+            //
+            // Which mark a click copies follows the pointer when both regions carry one. A
+            // lone mark answers wherever the click lands: the reader marked it, so a right
+            // click anywhere in the app means "copy that", and a mark that a drag carried
+            // outside its own band is still copyable.
+            let input_mark = self.has_input_selection();
+            let transcript_mark = self
+                .transcript_selection
+                .is_some_and(|selection| selection.carries_text());
+            let on_composer = self.mouse_in_composer_region(&mouse);
+            let on_transcript = self.mouse_on_transcript_band(&mouse);
+            if input_mark && (on_composer || !transcript_mark) {
                 self.copy_input_selection();
                 return;
             }
-            if self.transcript_selection.is_some() && self.mouse_on_transcript_band(&mouse) {
+            if transcript_mark && (on_transcript || !input_mark) {
                 self.copy_transcript_selection();
                 return;
             }
@@ -7010,8 +7057,9 @@ impl TuiApp {
         }
         // A pointer on the margin still names the row's first or last cell, so a drag
         // that starts or ends beside the text selects whole lines instead of nothing.
-        let column = usize::from(mouse.column.saturating_sub(self.transcript_mouse_region.x))
-            .min(usize::from(self.transcript_mouse_region.width.saturating_sub(1)));
+        let column = usize::from(mouse.column.saturating_sub(self.transcript_mouse_region.x)).min(
+            usize::from(self.transcript_mouse_region.width.saturating_sub(1)),
+        );
         Some(WindowPoint { row, column })
     }
 
@@ -7074,19 +7122,16 @@ impl TuiApp {
         }
     }
 
-    /// A release ends the drag. Whatever the drag picked up goes to the clipboard; a
-    /// press that never moved stays a plain click. A word or line pick is a range even
-    /// when both ends name the same line, so its release copies.
+    /// A release only ends the drag: the mark stays where the reader put it and the
+    /// clipboard is left alone. Marking text is a reading gesture — the reader says when
+    /// it becomes a copy, with a right click on the mark (the right button's own path in
+    /// `on_mouse`). A release that never moved is a plain click and gives the composer
+    /// its gesture back.
     fn handle_pointer_release(&mut self) {
         if let Some(selection) = self.transcript_selection.as_mut() {
             if selection.dragging {
                 selection.dragging = false;
                 selection.pointer = None;
-                let stationary_character_click = selection.unit == SelectionUnit::Character
-                    && selection.anchor == selection.head;
-                if !stationary_character_click {
-                    self.copy_transcript_selection();
-                }
                 return;
             }
         }
@@ -7337,15 +7382,10 @@ impl TuiApp {
                 json!(inquiry_turn_id);
         }
         request.approval_tx = Some(approval_tx);
-        let orchestrator = self.runtime.state.kernel.orchestrator.clone();
-        let frame_requester = self.frame_requester.clone();
-        let stream_session_id = self.session_id.clone();
-        // A bounded queue makes the producer apply backpressure instead of
-        // allowing a fast model/tool stream to grow memory without limit.
-        const STREAM_CHANNEL_CAPACITY: usize = 1024;
-        let (tx, rx) = mpsc::channel::<StreamMessage>(STREAM_CHANNEL_CAPACITY);
-        self.thread_registry
-            .insert_stream(stream_session_id.clone(), rx);
+        // 命令行 is a resident local form, so the composer message means "say it
+        // now": it must not be queued behind an inquiry panel it is answering.
+        request.config_overrides.get_or_insert_with(|| json!({}))["__interactive_chat"] =
+            json!(true);
 
         // §3.2 start 基线：接受轮次之前记录 durable 游标，随后的折叠只会看到这次提交
         // 之后的不可变行，历史文本不会被二次写入转录。每次发送都重挂 feeder，让它从
@@ -7359,7 +7399,37 @@ impl TuiApp {
         self.follow_durable_thread(follow_target.as_str(), resume_from_seq)
             .await;
 
+        // Admit through the shared thread runtime instead of streaming straight
+        // from the orchestrator. The runtime is the single place that decides who
+        // owns a session, so the composer, queued work and timer deliveries
+        // contend for the same fence; a direct stream bypassed it and let a
+        // scheduled delivery collide with the turn the user could see.
+        let thread_runtime = self.runtime.state.kernel.thread_runtime.clone();
+        let (request, lease) = match thread_runtime.submit_user_request(request).await {
+            Ok(wunder_server::ThreadSubmitOutcome::Run(request, lease)) => (*request, lease),
+            Ok(wunder_server::ThreadSubmitOutcome::Queued(info)) => {
+                self.finish_queued_turn(info.queue_ahead);
+                return Ok(());
+            }
+            Err(err) => {
+                self.abandon_started_turn(format!("提交失败: {err}"));
+                return Ok(());
+            }
+        };
+        let orchestrator = self.runtime.state.kernel.orchestrator.clone();
+        let frame_requester = self.frame_requester.clone();
+        let stream_session_id = self.session_id.clone();
+        // A bounded queue makes the producer apply backpressure instead of
+        // allowing a fast model/tool stream to grow memory without limit.
+        const STREAM_CHANNEL_CAPACITY: usize = 1024;
+        let (tx, rx) = mpsc::channel::<StreamMessage>(STREAM_CHANNEL_CAPACITY);
+        self.thread_registry
+            .insert_stream(stream_session_id.clone(), rx);
+
         tokio::spawn(async move {
+            // The admission lease must outlive the stream pump: dropping it early
+            // would let a scheduled delivery preempt a turn that is still writing.
+            let _lease = lease;
             match orchestrator.stream(request).await {
                 Ok(mut stream) => {
                     while let Some(item) = stream.next().await {
@@ -7398,6 +7468,52 @@ impl TuiApp {
 
         Ok(())
     }
+
+    /// The turn was accepted as a queue item instead of running now. The text
+    /// stays in the transcript and the runtime will execute it; the composer
+    /// must stop claiming a live stream it does not own.
+    fn finish_queued_turn(&mut self, ahead: usize) {
+        self.finalize_turn_metrics();
+        self.busy = false;
+        self.active_stream_sessions.remove(self.session_id.as_str());
+        self.active_assistant = None;
+        self.active_reasoning = None;
+        self.turn_final_answer.clear();
+        self.turn_final_stop_reason = None;
+        self.thread_registry.set_status(
+            self.session_id.as_str(),
+            crate::tui::thread_registry::ThreadRunState::Finished,
+        );
+        let notice = if self.is_zh_language() {
+            format!("已排队（前方 {ahead} 条），线程空闲后自动发送")
+        } else {
+            format!("queued behind {ahead} item(s); it will send when the thread is idle")
+        };
+        self.push_log(LogKind::Info, notice);
+        self.session_stats_dirty = true;
+        self.request_redraw();
+    }
+
+    /// Admission failed before a stream existed: the transcript echo is already
+    /// printed, so only the live-turn state has to be unwound.
+    fn abandon_started_turn(&mut self, message: String) {
+        self.finalize_all_markdown_streams();
+        self.finalize_turn_metrics();
+        self.busy = false;
+        self.active_stream_sessions.remove(self.session_id.as_str());
+        self.active_assistant = None;
+        self.active_reasoning = None;
+        self.turn_final_answer.clear();
+        self.turn_final_stop_reason = None;
+        self.thread_registry.set_status(
+            self.session_id.as_str(),
+            crate::tui::thread_registry::ThreadRunState::Failed,
+        );
+        self.push_log(LogKind::Error, message);
+        self.session_stats_dirty = true;
+        self.request_redraw();
+    }
+
     fn apply_first_suggestion(&mut self) {
         // Completion rewrites the token under the caret (or the whole draft for a slash
         // command), so a mark picked against the current bytes is retired first.

@@ -48,6 +48,8 @@ export component HelpDocument inherits Rectangle {
                 block: block;
                 column-width: scroll.visible-width - 44px;
                 font-scale: HelpDocs.font-scale;
+                // 图册是随包内置的插画，没有可交给系统打开的文件。
+                image-clickable: false;
                 link-clicked(url) => { HelpDocs.link-opened(url); }
                 open-resource(url) => { HelpDocs.link-opened(url); }
                 copy-text(value) => {

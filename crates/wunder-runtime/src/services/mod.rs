@@ -33,6 +33,7 @@ pub mod inner_visible;
 pub mod interlink;
 pub mod knowledge;
 pub mod llm;
+pub mod local_tool_defaults;
 pub mod mcp;
 #[cfg(feature = "mcp")]
 mod mcp_impl;

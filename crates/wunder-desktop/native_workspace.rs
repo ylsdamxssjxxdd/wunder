@@ -502,6 +502,46 @@ impl NativeDesktop {
         open_in_os(&self.workspace_open_target(root_path, relative)?)
     }
 
+    /// Open one reference the transcript shows as a card (a Markdown picture,
+    /// a document card, or a process row's file chip) with the OS default
+    /// application.
+    ///
+    /// A click must act on the file the reader sees, so the source resolves in
+    /// the same order the transcript's picture loader uses — persisted chat
+    /// attachments remap to the private store, a single-root local install may
+    /// reference any local card file by absolute path, and everything else
+    /// stays inside the workspace. The absolute-path shortcut is limited to the
+    /// extensions the renderer can turn into a card, so a click can never
+    /// launch an arbitrary executable the message merely names.
+    pub fn open_chat_resource(&self, root_path: &str, source: &str) -> Result<()> {
+        open_in_os(&self.chat_resource_target(root_path, source)?)
+    }
+
+    /// Resolve one transcript reference to the workspace document a platform
+    /// provider can serve: `(workspace id, workspace-relative path)`.
+    ///
+    /// The Android shell cannot hand a bare host path to another app — its
+    /// viewer receives a content URI minted from a registered workspace id and
+    /// a relative path. The click therefore resolves exactly like
+    /// [`Self::open_chat_resource`] and then maps the host file back onto the
+    /// workspace that contains it, so a card and the menu entry beside it open
+    /// the same file. References outside every workspace (for example a chat
+    /// attachment in the private container) have no provider route and keep the
+    /// explicit error instead of opening something else.
+    pub fn chat_resource_document(
+        &self,
+        root_path: &str,
+        source: &str,
+    ) -> Result<(String, String)> {
+        let target = self.chat_resource_target(root_path, source)?;
+        for workspace in self.list_workspaces()? {
+            if let Some(relative) = workspace_relative_target(&workspace.root_path, &target) {
+                return Ok((workspace.workspace_id, relative));
+            }
+        }
+        bail!("文件不在工作区内，无法用系统应用打开")
+    }
+
     /// Show one workspace entry where it lives on disk. Windows selects the
     /// entry inside its parent folder; Linux and macOS open the parent folder
     /// because there is no portable "select this item" request. Same path
@@ -529,6 +569,31 @@ impl NativeDesktop {
             bail!("文件不存在");
         }
         Ok(target)
+    }
+
+    /// Resolve one transcript reference to its host file. Same order as
+    /// [`Self::resolve_image_target`], because a click has to reach whatever
+    /// the row rendered; the workspace containment check stays in force for
+    /// relative sources and for every extension that is not a transcript card.
+    /// Public so the contract tests and smoke checks can assert the resolution
+    /// without launching a system application.
+    pub fn chat_resource_target(&self, root_path: &str, source: &str) -> Result<PathBuf> {
+        if let Some(target) = self.chat_attachment_target(source)? {
+            return require_existing(target);
+        }
+        if is_transcript_card(source) {
+            if let Some(target) = self.local_absolute_target(source)? {
+                return require_existing(target);
+            }
+        }
+        if root_path.trim().is_empty() {
+            bail!("当前会话没有可用的本地工作区");
+        }
+        let root = normalize_root(root_path)?;
+        if !root.is_dir() {
+            bail!(WORKSPACE_ROOT_MISSING);
+        }
+        require_existing(workspace_resource_target(&root, source)?)
     }
 
     /// Resolve one workspace-relative path to its absolute host file for the
@@ -951,7 +1016,7 @@ impl NativeDesktop {
         if let Some(target) = self.chat_attachment_target(relative)? {
             return Ok(target);
         }
-        if let Some(target) = self.local_image_target(relative)? {
+        if let Some(target) = self.local_absolute_target(relative)? {
             return Ok(target);
         }
         if !root.is_dir() {
@@ -1024,13 +1089,13 @@ impl NativeDesktop {
         Ok(bytes)
     }
 
-    /// 本地单根形态放行本机绝对图片路径；其它形态返回 `None`，交回工作区
-    /// 边界检查。
-    fn local_image_target(&self, source: &str) -> Result<Option<PathBuf>> {
+    /// 本地单根形态放行本机绝对路径（图片与转录区卡片共用同一条规则）；
+    /// 其它形态返回 `None`，交回工作区边界检查。
+    fn local_absolute_target(&self, source: &str) -> Result<Option<PathBuf>> {
         if !self.state().workspace.is_single_root() {
             return Ok(None);
         }
-        local_absolute_image_path(source)
+        local_absolute_path(source)
     }
 
     /// Resolve a persisted chat attachment from its public workspace path to
@@ -1151,6 +1216,25 @@ fn workspace_canonical(path: &Path) -> PathBuf {
 /// must not reimplement the comparison with `starts_with`.
 fn workspace_contains(root: &Path, target: &Path) -> bool {
     wunder_server::path_utils::is_within_root(root, target)
+}
+
+/// Workspace-relative spelling of one host file, or `None` when it lives
+/// outside `root_path`. Both sides go through the same canonical form the
+/// containment check uses, so a hit here is a path the provider can serve.
+fn workspace_relative_target(root_path: &str, target: &Path) -> Option<String> {
+    let root = normalize_root(root_path).ok()?;
+    let root = workspace_canonical(&root);
+    let target = workspace_canonical(target);
+    if !workspace_contains(&root, &target) {
+        return None;
+    }
+    let relative = target.strip_prefix(&root).ok()?;
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    if relative.is_empty() {
+        None
+    } else {
+        Some(relative)
+    }
 }
 
 #[cfg(windows)]
@@ -1356,10 +1440,54 @@ fn percent_decode_path(source: &str) -> Result<String> {
     Ok(String::from_utf8(bytes)?)
 }
 
-/// One local absolute image path, or `None` when the source is relative, a
-/// remote URL, or does not exist. Kept free of state so the boundary rule
-/// stays unit-testable: 相对路径永远按工作区解释，只有本机绝对路径走这条放行。
-fn local_absolute_image_path(source: &str) -> Result<Option<PathBuf>> {
+/// One host file a transcript reference may resolve to, or a plain "文件不存在".
+/// The attachment store and the absolute-path shortcut reach the filesystem
+/// without the workspace's own canonicalize, so existence is checked here once
+/// for every branch.
+fn require_existing(target: PathBuf) -> Result<PathBuf> {
+    if !target.exists() {
+        bail!("文件不存在");
+    }
+    Ok(target)
+}
+
+/// Extensions the transcript turns into a picture or a document card. The list
+/// mirrors the renderer's own classifier: only these sources may use the local
+/// absolute-path shortcut when they are opened, so a click can never launch a
+/// program the message merely names.
+fn is_transcript_card(source: &str) -> bool {
+    const CARD_EXTENSIONS: &[&str] = &[
+        "png", "jpg", "jpeg", "gif", "webp", "pdf", "doc", "docx", "xls", "xlsx", "csv", "ppt",
+        "pptx", "odt", "ods", "txt", "md", "markdown", "rtf", "json", "yaml", "yml", "xml",
+        "drawio",
+    ];
+    let path = source
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_end_matches('/');
+    // Remote targets never become cards, so they never earn the shortcut
+    // either; `file:` stays a local source like it is for the renderer.
+    if path.is_empty()
+        || path.starts_with('#')
+        || path.starts_with("//")
+        || (path.contains("://") && !path.starts_with("file://"))
+    {
+        return false;
+    }
+    let extension = path
+        .rsplit('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    CARD_EXTENSIONS.contains(&extension.as_str())
+}
+
+/// One local absolute path, or `None` when the source is relative, a remote
+/// URL, or does not exist. Kept free of state so the boundary rule stays
+/// unit-testable: 相对路径永远按工作区解释，只有本机绝对路径走这条放行。
+fn local_absolute_path(source: &str) -> Result<Option<PathBuf>> {
     let decoded = percent_decode_path(source)?.replace('\\', "/");
     if decoded.starts_with("//") {
         return Ok(None);
@@ -1552,12 +1680,12 @@ mod tests {
         std::fs::write(&file, b"png").unwrap();
         let canonical = file.canonicalize().unwrap();
         assert_eq!(
-            super::local_absolute_image_path(file.to_str().unwrap()).unwrap(),
+            super::local_absolute_path(file.to_str().unwrap()).unwrap(),
             Some(canonical.clone())
         );
         let url = url::Url::from_file_path(&file).unwrap();
         assert_eq!(
-            super::local_absolute_image_path(url.as_str()).unwrap(),
+            super::local_absolute_path(url.as_str()).unwrap(),
             Some(canonical)
         );
         for rejected in [
@@ -1568,7 +1696,7 @@ mod tests {
             "/definitely/missing/shot.png",
         ] {
             assert_eq!(
-                super::local_absolute_image_path(rejected).unwrap(),
+                super::local_absolute_path(rejected).unwrap(),
                 None,
                 "{rejected}"
             );
@@ -1601,6 +1729,25 @@ mod tests {
             &root,
             &outside.path().canonicalize().unwrap()
         ));
+    }
+
+    #[test]
+    fn transcript_cards_are_the_only_absolute_open_sources() {
+        // Card extensions resolve outside the workspace on a local install.
+        for accepted in ["/tmp/shots/a.PNG", "notes/report.docx", "./plan.md?x=1"] {
+            assert!(super::is_transcript_card(accepted), "{accepted}");
+        }
+        // Everything the renderer keeps as plain text or a bare link stays
+        // inside the workspace, so a click cannot launch a program.
+        for rejected in [
+            "/tmp/run.sh",
+            "src/main.rs",
+            "notes/",
+            "https://example.invalid/a.pdf",
+            "README",
+        ] {
+            assert!(!super::is_transcript_card(rejected), "{rejected}");
+        }
     }
 
     #[test]

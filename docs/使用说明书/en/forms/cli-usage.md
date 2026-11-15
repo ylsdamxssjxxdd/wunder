@@ -57,4 +57,4 @@ There are **no** `cloud`, `cron`, `channel`, `memory` or `knowledge` slash comma
 ## CLI-only and missing
 
 - **Only the CLI**: the `exec --json` script contract, the full `cloud` subcommand set, `doctor`, `stress-thread`, `completion`, and running `tool` / `mcp` / `skills` outside the agent loop.
-- **Not in the CLI**: scheduled tasks are switched off (old tasks stay visible, new ones are never queued); channels, knowledge base, long-term memory and companions have no management UI; no voice input, no screenshot capture, no tray or global hotkey; the host is already a terminal, so there is no interactive terminal panel.
+- **Not in the CLI**: scheduled tasks are switched off (old tasks stay visible, new ones are never queued); channels, knowledge base, long-term memory and companions have no management UI; no voice input, no UI screenshot attachments (desktop control still returns its own captures to the model), no tray or global hotkey; the host is already a terminal, so there is no interactive terminal panel.

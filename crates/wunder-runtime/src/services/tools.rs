@@ -18,7 +18,7 @@ pub mod command_sessions;
 mod command_tool;
 mod context;
 mod desktop_control;
-#[cfg(feature = "desktop-control")]
+#[cfg(all(feature = "desktop-control", any(windows, target_os = "linux")))]
 mod desktop_control_impl;
 mod dispatch;
 mod edit_args;

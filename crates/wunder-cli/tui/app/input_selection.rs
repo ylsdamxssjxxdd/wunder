@@ -289,6 +289,9 @@ impl TuiApp {
     /// A release ends the drag and keeps the mark: what the reader picked stays visible until
     /// an edit or a click retires it. A press that never moved is a caret placement, not a
     /// pick worth copying; a word or line is a range even when both ends name one place.
+    /// A release only ends the drag. The mark stays for the reader to copy with a right
+    /// click, exactly as the transcript's mark does: a drag says "this text", not "copy
+    /// this text".
     pub(super) fn release_input_gesture(&mut self) {
         let Some(selection) = self.input_selection.as_mut() else {
             return;
@@ -297,12 +300,6 @@ impl TuiApp {
             return;
         }
         selection.dragging = false;
-        let stationary_character_click =
-            selection.unit == SelectionUnit::Character && !selection.moved;
-        if stationary_character_click {
-            return;
-        }
-        self.copy_input_selection();
     }
 
     /// The marked bytes, ordered, clamped to the draft and snapped to character boundaries.

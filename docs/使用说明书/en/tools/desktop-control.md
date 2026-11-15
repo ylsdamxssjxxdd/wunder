@@ -1,7 +1,7 @@
 ---
 title: Desktop Control
 summary: Enablement conditions for Desktop Control, coordinates and the 17 actions (including the wait observation), type_text focus/newline semantics, how screenshots are appended to the model, failure diagnosis, and rollback boundaries.
-updated_at: 2026-11-10
+updated_at: 2026-11-15
 ---
 
 `桌面控制` exists for targets whose only entry point is a graphical interface: if commands, files, or browser tools can solve it, do not go through desktop control, because it is slower, more error-prone, and it directly drives the user's real screen. It both **drives** and **observes**: it injects mouse/keyboard actions and then screenshots; to just see the desktop's current state, or to confirm whether the previous action took effect, use the `wait` action — it waits and then screenshots without injecting any input.
@@ -14,11 +14,11 @@ updated_at: 2026-11-10
 
 All three must hold:
 
-1. The installed build was compiled with desktop control enabled (it is off by default).
-2. You are in desktop mode and have explicitly turned the desktop control switch on (it is off by default).
+1. The installed build was compiled with desktop control (the Desktop and CLI distributions both are; a Server-only or Cloud build is not).
+2. You are in a local form: Desktop and CLI both count, and the engine turns the switch on at startup for either.
 3. The current model supports vision; otherwise desktop control and the image-reading tool are both filtered out.
 
-Across the forms: the Desktop (desktop mode) lists this tool in its extra-enabled set by default; under the Server, Cloud, and CLI forms desktop control is unavailable.
+Across the forms: Desktop and CLI are both local forms, so they expose the same tools with the same defaults; the Server and Cloud forms run on someone else's machine and have no screen here, so desktop control is never available. Backends exist only for Windows and Linux/X11 — a pure Wayland session cannot be captured.
 
 ## Arguments
 
@@ -44,7 +44,7 @@ The `wait` action reads desktop windows and screen state. Give a wait duration (
 ## Errors
 
 - Desktop control not compiled in: the call fails outright and says the capability is not enabled.
-- Not in desktop mode, or the switch is off: it returns "desktop control is disabled".
+- Not a local form (Server, Cloud), or the switch was turned off: it returns "desktop control is disabled".
 - Missing arguments: action is required; pointer actions must include a position, while `type_text` may omit it. A malformed position reports an illegal coordinate.
 - Screenshot failure: capture times out after 5000 ms by default (100 ms minimum), and failure reports an error upward.
 

@@ -1384,6 +1384,40 @@ component PresetFlyout inherits Rectangle {
     }
 }
 
+// 输入框上的一张附件卡。桌面版与手机版共用同一张卡片，只有排布方式不同。
+component AttachmentChip inherits Rectangle {
+    in property <string> label;
+    // 手机屏窄：桌面的 220px 卡片两张就顶出屏幕，手机上用更窄的宽度让两张
+    // 常常能并排放下，再多就靠条带横向滑动。
+    in property <length> chip-width: 220px;
+    callback remove();
+    width: root.chip-width;
+    height: 28px;
+    border-radius: Theme.radius-sm;
+    background: Theme.accent-soft;
+    border-width: 1px;
+    border-color: Theme.border;
+    Text {
+        x: 8px;
+        width: parent.width - 34px;
+        height: parent.height;
+        text: root.label;
+        color: Theme.text;
+        font-size: Theme.font-xs;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    Action {
+        x: parent.width - 27px;
+        y: 2px;
+        width: 24px;
+        height: 24px;
+        icon: @image-url("../assets/icons/xmark.svg");
+        label: I18n.cp_remove_attachment;
+        clicked => { root.remove(); }
+    }
+}
+
 export component Composer inherits Rectangle {
     in-out property <string> draft <=> editor.text;
     in property <bool> busy: false;
@@ -1635,15 +1669,34 @@ export component Composer inherits Rectangle {
             remove(queue-id) => { root.queue-remove(queue-id); }
             move-by(queue-id, delta) => { root.queue-move-by(queue-id, delta); }
         }
-        if root.attachments.length > 0 : HorizontalLayout {
-            height: 30px; spacing: 6px;
-            for attachment[index] in root.attachments : Rectangle {
-                width: 220px; height: 28px;
-                border-radius: Theme.radius-sm; background: Theme.accent-soft; border-width: 1px; border-color: Theme.border;
-                Text { x: 8px; width: parent.width - 34px; height: parent.height; text: attachment.name; color: Theme.text; font-size: Theme.font-xs; vertical-alignment: center; overflow: elide; }
-                Action { x: parent.width - 27px; y: 2px; width: 24px; height: 24px; icon: @image-url("../assets/icons/xmark.svg"); label: I18n.cp_remove_attachment; clicked => { root.remove-attachment(index); } }
+        // 附件卡：桌面版一字排开、留出右侧空白；手机屏窄，横排几张就会
+        // 顶出屏幕，所以手机改用可横向滑动的条带，卡片固定宽度不会被压成
+        // 一条线，也不会盖住发送键。
+        if root.attachments.length > 0 : Rectangle {
+            height: 30px;
+            background: transparent;
+            if root.mobile : ScrollView {
+                width: parent.width;
+                height: 30px;
+                horizontal-scrollbar-policy: always-off;
+                vertical-scrollbar-policy: always-off;
+                HorizontalLayout {
+                    spacing: 6px;
+                    for attachment[index] in root.attachments : AttachmentChip {
+                        label: attachment.name;
+                        chip-width: 172px;
+                        remove() => { root.remove-attachment(index); }
+                    }
+                }
             }
-            Rectangle { horizontal-stretch: 1; }
+            if !root.mobile : HorizontalLayout {
+                spacing: 6px;
+                for attachment[index] in root.attachments : AttachmentChip {
+                    label: attachment.name;
+                    remove() => { root.remove-attachment(index); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
         }
         // Desktop shares one card surface with the action row below the editor;
         // phones keep their own editor card and put plus/send on the same row.

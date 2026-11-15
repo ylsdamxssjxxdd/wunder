@@ -674,6 +674,13 @@ pub(crate) fn tool_icon_key(tool: &str) -> &'static str {
     if text.contains("compact") || tool.contains("压缩") {
         return "compress";
     }
+    if text.contains("phone_control")
+        || text.contains("phone control")
+        || text.contains("mobile_control")
+        || tool.contains("手机控制")
+    {
+        return "smartphone";
+    }
     if text.contains("browser") || tool.contains("浏览器") {
         return "window-maximize";
     }
@@ -1700,6 +1707,12 @@ mod tests {
         assert_eq!(tool_icon_key("文件名匹配"), "folder-tree");
         assert_eq!(tool_icon_key("glob"), "folder-tree");
         assert_eq!(tool_icon_key("glob_files"), "folder-tree");
+    }
+
+    #[test]
+    fn phone_control_rows_use_the_smartphone_icon() {
+        assert_eq!(tool_icon_key("手机控制"), "smartphone");
+        assert_eq!(tool_icon_key("phone_control"), "smartphone");
     }
 
     #[test]

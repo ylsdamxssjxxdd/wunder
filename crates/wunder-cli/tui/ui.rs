@@ -49,6 +49,11 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
         composer::draw_activity(frame, layout.activity, app);
     }
 
+    // The reading control's row sits between the transcript and the band, in a slot the
+    // layout reserved before either was drawn: the row is always there, its content is
+    // what comes and goes.
+    composer::draw_gap(frame, layout.gap, app, is_zh);
+
     app.set_mouse_regions(layout.transcript, layout.input);
     composer::draw_input(frame, layout.input, app, is_zh);
 

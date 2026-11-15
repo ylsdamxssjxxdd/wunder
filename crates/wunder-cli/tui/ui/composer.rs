@@ -63,9 +63,6 @@ pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh:
 
     let warning = app.warning_notice(is_zh, area.width);
     let cloud = app.cloud_error_notice().map(str::to_string);
-    // The gap row between the transcript and the draft exists only while it has something
-    // to say, so an idle composer keeps its full text band (codex composer_gap).
-    let gap = app.composer_gap_line(area.width, is_zh);
     // Bands stack: a cloud failure (plan §6.2) gets its own row above the
     // warning counter so neither signal can erase the other.
     let mut constraints: Vec<Constraint> = Vec::new();
@@ -73,11 +70,6 @@ pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh:
         constraints.push(Constraint::Length(1));
     }
     if warning.is_some() {
-        constraints.push(Constraint::Length(1));
-    }
-    // The gap never wraps: its label ladder already shed words to fit the width, so the
-    // band asks for the one row it can fill. Anything else would eat the draft's rows.
-    if gap.is_some() {
         constraints.push(Constraint::Length(1));
     }
     constraints.push(Constraint::Min(1));
@@ -101,14 +93,6 @@ pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh:
             Span::styled(hint.clone(), theme::secondary_text()),
         ]);
         frame.render_widget(Paragraph::new(notice_line), warning_area);
-    }
-    if let Some(gap_line) = gap {
-        let gap_area = padded_columns(sections[next]);
-        next += 1;
-        render_gap(frame, app, gap_area, gap_line);
-    } else {
-        // A hidden control owns nothing: an empty rectangle answers every pointer.
-        app.set_gap_hit_area(Rect::default());
     }
     let (band, footer_area) = (sections[next], padded_columns(sections[next + 1]));
     frame.render_widget(Block::default().style(theme::composer_surface()), band);
@@ -199,6 +183,22 @@ fn idle_placeholder(is_zh: bool) -> &'static str {
         "请输入文本"
     } else {
         "Type a message"
+    }
+}
+
+/// The row between the transcript and the band: a live copy result, else the search query,
+/// else the return-to-latest control. It paints into the layout's own gap slot, which the
+/// frame reserves whether or not this row has anything to say, so a hint appearing never
+/// costs the transcript a row and never shifts what the reader is reading.
+pub(crate) fn draw_gap(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh: bool) {
+    if area.height == 0 || area.width == 0 {
+        // A hidden control owns nothing: an empty rectangle answers every pointer.
+        app.set_gap_hit_area(Rect::default());
+        return;
+    }
+    match app.composer_gap_line(area.width, is_zh) {
+        Some(line) => render_gap(frame, app, area, line),
+        None => app.set_gap_hit_area(Rect::default()),
     }
 }
 

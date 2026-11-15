@@ -383,7 +383,7 @@ There are **no** `cloud`, `cron`, `channel`, `memory` or `knowledge` slash comma
 ## CLI-only and missing
 
 - **Only the CLI**: the `exec --json` script contract, the full `cloud` subcommand set, `doctor`, `stress-thread`, `completion`, and running `tool` / `mcp` / `skills` outside the agent loop.
-- **Not in the CLI**: scheduled tasks are switched off (old tasks stay visible, new ones are never queued); channels, knowledge base, long-term memory and companions have no management UI; no voice input, no screenshot capture, no tray or global hotkey; the host is already a terminal, so there is no interactive terminal panel.
+- **Not in the CLI**: scheduled tasks are switched off (old tasks stay visible, new ones are never queued); channels, knowledge base, long-term memory and companions have no management UI; no voice input, no UI screenshot attachments (desktop control still returns its own captures to the model), no tray or global hotkey; the host is already a terminal, so there is no interactive terminal panel.
 
 <!-- topic id="forms-android-ui" block="forms" title="Interface" group="Android" keywords="Android Interface" -->
 
@@ -1058,11 +1058,11 @@ All four tools use the shared envelope on success, with artifact paths, byte cou
 
 All three must hold:
 
-1. The installed build was compiled with desktop control enabled (it is off by default).
-2. You are in desktop mode and have explicitly turned the desktop control switch on (it is off by default).
+1. The installed build was compiled with desktop control (the Desktop and CLI distributions both are; a Server-only or Cloud build is not).
+2. You are in a local form: Desktop and CLI both count, and the engine turns the switch on at startup for either.
 3. The current model supports vision; otherwise desktop control and the image-reading tool are both filtered out.
 
-Across the forms: the Desktop (desktop mode) lists this tool in its extra-enabled set by default; under the Server, Cloud, and CLI forms desktop control is unavailable.
+Across the forms: Desktop and CLI are both local forms, so they expose the same tools with the same defaults; the Server and Cloud forms run on someone else's machine and have no screen here, so desktop control is never available. Backends exist only for Windows and Linux/X11 — a pure Wayland session cannot be captured.
 
 ## Arguments
 
@@ -1088,7 +1088,7 @@ The `wait` action reads desktop windows and screen state. Give a wait duration (
 ## Errors
 
 - Desktop control not compiled in: the call fails outright and says the capability is not enabled.
-- Not in desktop mode, or the switch is off: it returns "desktop control is disabled".
+- Not a local form (Server, Cloud), or the switch was turned off: it returns "desktop control is disabled".
 - Missing arguments: action is required; pointer actions must include a position, while `type_text` may omit it. A malformed position reports an illegal coordinate.
 - Screenshot failure: capture times out after 5000 ms by default (100 ms minimum), and failure reports an error upward.
 
@@ -2056,7 +2056,7 @@ Default tool sets, the desktop hidden set, and the desktop extra set all have a 
 | Default built-ins (12) | `定时任务`, `记忆管理`, `执行命令`, `命令会话`, `列出文件`, `文件名匹配`, `搜索内容`, `读取文件`, `网页抓取`, `技能调用`, `写入文件`, `文本编辑` |
 | Default skills | `技能创建器`, `公文写作`, `文稿校对`, `3D网页`, `知识短片` |
 | Desktop hidden (neither selectable nor on by default) | `goal` (`action=get|edit|pause|resume|complete|blocked`, injected automatically by the runtime per session; the model cannot create goals), `会话线程控制` |
-| Desktop extras, on by default | `读图工具`, `桌面控制`, `子智能体控制` |
+| Local-form extras (Desktop / CLI), on by default | `读图工具`, `桌面控制`, `子智能体控制` |
 
 `网页搜索` is **temporarily withdrawn, not deleted**: the code is kept and dispatch still recognizes it, but the availability check returns unavailable, so neither the model nor the user can see it. `ptc` has been removed entirely.
 

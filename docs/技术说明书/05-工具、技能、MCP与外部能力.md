@@ -93,7 +93,7 @@ services/tools/dispatch.rs:27  真正分发到实现
 | --- | --- | --- | --- |
 | `DEFAULT_BUILTIN_TOOL_NAMES` | `:4-18` | `定时任务`、`记忆管理`、`执行命令`、`命令会话`、`列出文件`、`glob`、`搜索内容`、`读取文件`、`网页抓取`、`技能调用`、`写入文件`、`文本编辑` | 新建智能体的初始勾选集合；另带默认技能 `技能创建器`、`公文写作`、`文稿校对`、`3D网页` |
 | `DESKTOP_HIDDEN_TOOL_NAMES` | `:23-29` | `goal`、`会话线程控制` | 桌面端不可选也不默认启用；goal 工具由运行时按会话自动注入 |
-| `DESKTOP_EXTRA_TOOL_NAMES` | `:32-34` | `读图工具`、`桌面控制`、`子智能体控制` | 桌面端额外默认启用 |
+| （无独立常量） | `catalog.rs::desktop_builtin_tool_names` | `读图工具`、`桌面控制`、`子智能体控制` 等 | 本地形态（桌面版 / 命令行）由内置工具全集减去 `DESKTOP_HIDDEN_TOOL_NAMES` 推导，不单独维护名单 |
 | `TEMPORARILY_HIDDEN_TOOL_NAMES` | `:75` 附近 | `网页搜索` | **临时下架，不是已移除** |
 
 ### 3.1 临时下架要说清楚
@@ -106,10 +106,11 @@ services/tools/dispatch.rs:27  真正分发到实现
 
 | 门槛 | 影响工具 | 出处 |
 | --- | --- | --- |
-| 模型具备 vision | `读图工具`、`桌面控制`；不可用时整类过滤 | `catalog.rs:1401` 附近、`capabilities.rs` |
+| 模型具备 vision | `读图工具`、`桌面控制`；不可用时整类过滤 | `catalog.rs::filter_tool_names_by_model_capability`、`capabilities.rs` |
 | 对应多模态模型可用 | `语音生成`、`声转文`、`图像生成`、`视频生成` | `catalog.rs:1362-1381`、`services/multimodal_models.rs` |
 | 启用网页抓取配置 | `网页抓取`（provider 与开关） | `services/tools/web_fetch_provider.rs`、`wunder-core/src/config.rs` |
-| desktop 运行模式 + 显式开关 | 桌面类工具 | `crates/wunder-desktop/`、`capabilities.rs` |
+| 本地形态（desktop / cli）+ 显式开关 | 桌面类工具 | `services/local_tool_defaults.rs`、`tools/desktop_control.rs::desktop_tools_enabled` |
+| 编译 `desktop-control` feature 且平台有后端（Windows / Linux X11） | `桌面控制` | `services/tools/desktop_control.rs` |
 | 浏览器能力启用 | `browser(action=...)` | `services/browser/providers/playwright.rs` |
 
 ## 4. 工具协议按 provider 解析

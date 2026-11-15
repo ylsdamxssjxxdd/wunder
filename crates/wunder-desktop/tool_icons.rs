@@ -21,6 +21,10 @@ const TOOL_RULES: &[(&[&str], &str)] = &[
         "computer-mouse",
     ),
     (
+        &["手机控制", "phone_control", "phone control", "mobile_control"],
+        "smartphone",
+    ),
+    (
         &["计划面板", "计划看板", "update_plan", "plan board"],
         "table-columns",
     ),
@@ -210,6 +214,11 @@ const ABILITY_RULES: &[(&[&str], &str, &str)] = &[
         "general",
     ),
     (&["桌面控制"], "computer-mouse", "general"),
+    (
+        &["手机控制", "phone_control", "phone control", "mobile_control"],
+        "smartphone",
+        "general",
+    ),
     (
         &[
             "渠道工具",
@@ -658,6 +667,8 @@ mod tests {
         assert_eq!(workflow_icon("glob"), "folder-tree");
         assert_eq!(workflow_icon("glob_files"), "folder-tree");
         assert_eq!(workflow_icon("wunder@excute"), "dragon");
+        assert_eq!(workflow_icon("手机控制"), "smartphone");
+        assert_eq!(workflow_icon("phone_control"), "smartphone");
         assert_eq!(workflow_icon("mcp_server.query"), "plug");
         assert_eq!(workflow_icon("未知工具"), "toolbox");
     }
@@ -680,5 +691,7 @@ mod tests {
         assert_eq!((a2a.icon, a2a.tone), ("clock", "automation"));
         let user = tool_card_visual("我的工具", "", "用户工具");
         assert_eq!((user.icon, user.tone), ("wrench", "general"));
+        let phone = tool_card_visual("手机控制", "手机控制、界面读取与屏幕截图", "内置工具");
+        assert_eq!((phone.icon, phone.tone), ("smartphone", "general"));
     }
 }

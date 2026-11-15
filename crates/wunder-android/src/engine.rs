@@ -27,7 +27,8 @@ use wunder_desktop::native::{
 use wunder_desktop::{
     AgentSettingsEdit, ModelEdit, NativeChatEvent, NativeChatInput, NativeChatTurn,
     NativeCronJobEdit, NativeDesktop, NativeThreadUpdate, NativeThreadWatchCancel,
-    NativeWorkflowEntry, ToolRecord, WorkspaceEdit, CURRENT_VERSION, DEFAULT_AGENT_ID,
+    NativeWorkflowEntry, NativeStream, ToolRecord, WorkspaceEdit, CURRENT_VERSION,
+    DEFAULT_AGENT_ID,
 };
 
 pub enum Command {
@@ -114,6 +115,12 @@ pub enum Command {
     OpenWorkspaceFile {
         path: String,
     },
+    /// One transcript reference (picture, document card, file chip or link)
+    /// the user tapped. The path is whatever the row rendered, so it may be
+    /// workspace-relative, an absolute local path, or an external URL.
+    OpenResource {
+        path: String,
+    },
     OpenWorkspaceLocation {
         path: String,
         dir: bool,
@@ -121,7 +128,12 @@ pub enum Command {
     UploadWorkspace {
         dir: String,
         files: Vec<String>,
+        /// 从聊天页「上传文件」进来时为真：上传成功后文件挂进输入框，
+        /// 随下一条消息一并告知模型；工作目录页的上传只落盘、不挂提示。
+        attach: bool,
     },
+    /// 撤回一条还没随消息发出的待上传文件（输入框上的附件卡）。
+    RemoveUpload(usize),
     /// A system share / VIEW payload drained from `IntentBridge`.
     SharedIntent {
         text: String,
@@ -950,6 +962,11 @@ pub struct Shared {
     /// Text produced off the UI thread (voice transcription) and appended to
     /// the draft by the UI tick, so a late result never overwrites typing.
     pub pending_draft: Option<String>,
+    /// 已上传进当前工作区、还没随消息发出的文件。它们显示成输入框上的
+    /// 附件卡，并在下一条消息里拼成给模型看的文件提示块：模型据此知道
+    /// 用户刚放进来什么文件，而不是只能靠猜。
+    pub pending_uploads: Vec<UploadedFile>,
+    pub uploads_rev: u64,
     pub models: Vec<ModelCard>,
     pub tools_rev: u64,
     pub tools: ToolsView,
@@ -1064,6 +1081,16 @@ pub struct Shared {
     pub waiting_seq: u64,
     pub toast: String,
     pub stream_revision: i32,
+}
+
+/// 上传进工作区、还没随消息发出的一个文件。
+///
+/// `path` 是相对工作区根目录的路径（如 `screenshots/a.png`），也就是模型在
+/// 工具里能直接用的那个路径；`name` 只用于输入框上的附件卡。
+#[derive(Clone, PartialEq)]
+pub struct UploadedFile {
+    pub name: String,
+    pub path: String,
 }
 
 /// 运行中键入的消息：先在本地持有，等这一轮结束再交给引擎。
@@ -1409,6 +1436,9 @@ fn run(
             Command::OpenWorkspaceFile { path } => {
                 open_workspace_entry(&desktop, &shared, &path);
             }
+            Command::OpenResource { path } => {
+                open_transcript_resource(&desktop, &shared, &path);
+            }
             Command::OpenWorkspaceLocation { path, dir } => {
                 open_workspace_location(&desktop, &shared, &path, dir);
             }
@@ -1499,9 +1529,10 @@ fn run(
             Command::DeleteWorkspace(id) => {
                 delete_workspace(&desktop, &shared, &id, &generation, &mut watch_cancel);
             }
-            Command::UploadWorkspace { dir, files } => {
-                upload_workspace(&desktop, &shared, &dir, &files);
+            Command::UploadWorkspace { dir, files, attach } => {
+                upload_workspace(&desktop, &shared, &dir, &files, attach);
             }
+            Command::RemoveUpload(index) => forget_upload(&shared, index),
             Command::SharedIntent { text, url, files } => {
                 let has_text = !text.trim().is_empty();
                 let has_url = !url.trim().is_empty();
@@ -1531,7 +1562,7 @@ fn run(
                         &shared,
                         format!("收到 {} 个分享文件，正在加入当前工作区…", files.len()),
                     );
-                    upload_workspace(&desktop, &shared, "", &files);
+                    upload_workspace(&desktop, &shared, "", &files, true);
                 }
             }
             Command::DownloadWorkspace { path } => download_workspace(&desktop, &shared, &path),
@@ -1617,10 +1648,20 @@ fn run(
                     notify(&shared, "会话尚未就绪");
                     continue;
                 }
-                // A free-form reply while the panel waits is still an answer to
-                // the waiting turn; settle it with the same inquiry identity.
-                let inquiry_turn_id = take_inquiry_answer(&shared, &session, false)
-                    .and_then(|(_text, turn_id)| turn_id);
+                // 刚上传进工作区的文件随这条消息一并告知模型：云端版把工作区
+                // 文件引用拼成提示块随正文发出，安卓版走同一条约定，否则模型
+                // 只看到一句「看看这张图」，根本不知道用户放了什么。
+                let draft = append_upload_notice(&shared, text);
+                // 输入框发送与问询面板的关系，与桌面版一致：面板答完了它就是
+                // 这条消息的主体（草稿作为「用户补充」跟在后面）；面板还没答完
+                // 就原样留在屏幕上，只发用户自己打的字。用户直接打字就说明他
+                // 不想逐条点选，这条消息既不能被一张没答的面板拦下，也不能替
+                // 他把面板悄悄消掉。
+                let (reply, inquiry_turn_id) = match take_inquiry_answer(&shared, &session, false) {
+                    Some((reply, turn_id)) => (reply, turn_id),
+                    None => (String::new(), None),
+                };
+                let text = composer_content(&reply, &draft);
                 submit_or_hold(
                     desktop.clone(),
                     shared.clone(),
@@ -2193,6 +2234,16 @@ fn run(
             // ---- cloud account / device switch / cloud chat -----------
             Command::SwitchChatTarget(target) => {
                 crate::cloud::switch_target(&desktop, &shared, target);
+                // 云端线程有它自己的远端工作区，本机文件不该跟过去。
+                if target == 1 {
+                    if let Ok(mut state) = shared.lock() {
+                        if !state.pending_uploads.is_empty() {
+                            state.pending_uploads.clear();
+                            state.uploads_rev = state.uploads_rev.wrapping_add(1);
+                            state.touch();
+                        }
+                    }
+                }
             }
             Command::RefreshCloudAccount => crate::cloud::refresh_account(&desktop, &shared),
             Command::RefreshUsage => refresh_usage(&desktop, &shared),
@@ -2480,12 +2531,17 @@ fn remember_consumed_inquiry(state: &mut Shared, key: String) {
 }
 
 /// Remove the panel from the window and return the reply plus the waiting
-/// execution identity. `require_ready` keeps the panel open when the user has
-/// not answered every question; a free-form send instead settles it as-is.
+/// execution identity.
+///
+/// 只有答完的面板才会被取走。`explain_unanswered` 只决定「没答完时要不要出声」：
+/// 面板自带的提交键按它报一句「请先回答全部问题」，输入框发送只是把面板留在
+/// 原处（用户直接打字就是他的回答，不必先点选）。两种情况都不会把一张没答完
+/// 的面板当成已回答取走——那会把等待回合的身份一起带进提交，运行时按「问询
+/// 已不再等待」拒掉整条消息。
 fn take_inquiry_answer(
     shared: &Arc<Mutex<Shared>>,
     session: &str,
-    require_ready: bool,
+    explain_unanswered: bool,
 ) -> Option<(String, Option<String>)> {
     let Ok(mut state) = shared.lock() else {
         return None;
@@ -2496,10 +2552,11 @@ fn take_inquiry_answer(
     let Some(panel) = state.inquiry.take() else {
         return None;
     };
-    if require_ready && !panel.ready() {
+    if !panel.ready() {
         state.inquiry = Some(panel);
-        state.notify("请先回答全部问题");
-        state.touch();
+        if explain_unanswered {
+            state.notify("请先回答全部问题");
+        }
         return None;
     }
     let key = panel.consumption_key(session);
@@ -3290,6 +3347,10 @@ fn select_session(
     {
         let mut state = shared.lock().unwrap();
         state.session_id = snapshot.session.id.clone();
+        // 待上传文件属于某一条消息、某一个线程：换线程就不该再挂在新对话的
+        // 输入框上，否则模型会被带去读上一个线程的文件。
+        state.pending_uploads.clear();
+        state.uploads_rev = state.uploads_rev.wrapping_add(1);
         state.title = if snapshot.session.title.trim().is_empty() {
             "新会话".into()
         } else {
@@ -6006,6 +6067,71 @@ fn open_workspace_entry(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, pa
     }
 }
 
+/// One transcript reference the reader tapped: a Markdown picture, a document
+/// card, a process row's file chip or a plain link.
+///
+/// Cards resolve through the same rules the renderer used to paint them and
+/// then map back onto the workspace catalogue, so the read-only document
+/// provider can mint a content URI — the exact route a tap in the workspace
+/// drawer takes. That keeps a card and its menu entry opening the same file.
+/// Links leave the app for the system browser instead of being mistaken for
+/// workspace paths.
+fn open_transcript_resource(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, source: &str) {
+    let source = source.trim();
+    if source.is_empty() {
+        return;
+    }
+    if is_external_transcript_link(source) {
+        #[cfg(target_os = "android")]
+        {
+            if !crate::android_host::open_external_url(source) {
+                notify(shared, "没有可打开此链接的应用");
+            }
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = desktop;
+            notify(shared, "仅安卓版支持在系统应用里打开链接");
+        }
+        return;
+    }
+    let mut last_error = None;
+    for root in markdown_image_roots(desktop, shared) {
+        match desktop.chat_resource_document(&root, source) {
+            Ok((workspace_id, relative)) => {
+                #[cfg(target_os = "android")]
+                {
+                    if crate::android_host::open_workspace_file(&workspace_id, &relative) {
+                        return;
+                    }
+                    notify(shared, "没有可打开此文件的应用");
+                }
+                #[cfg(not(target_os = "android"))]
+                {
+                    let _ = (workspace_id, relative);
+                    notify(shared, "仅安卓版支持用系统应用打开文件");
+                }
+                return;
+            }
+            Err(error) => last_error = Some(error.to_string()),
+        }
+    }
+    notify(
+        shared,
+        match last_error {
+            Some(error) => "无法打开：".to_string() + error.as_str(),
+            None => "无法打开：没有可用的工作区".to_string(),
+        },
+    );
+}
+
+/// Only http(s) targets leave the app; everything else goes through the
+/// workspace/document-provider route above.
+fn is_external_transcript_link(source: &str) -> bool {
+    let lower = source.to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://")
+}
+
 fn open_workspace_location(
     desktop: &NativeDesktop,
     shared: &Arc<Mutex<Shared>>,
@@ -6043,6 +6169,7 @@ fn upload_workspace(
     shared: &Arc<Mutex<Shared>>,
     dir: &str,
     files: &[String],
+    attach: bool,
 ) {
     if files.is_empty() {
         return;
@@ -6091,9 +6218,14 @@ fn upload_workspace(
             }
         }
         match desktop.workspace_local_upload_to(&root, dir, &staged) {
-            Ok(_) => {
+            Ok(relative) => {
                 uploaded += 1;
                 existing.insert(unique);
+                // `attach` 只来自聊天页与系统分享：这些文件接下来会被用户
+                // 当作「这条消息的材料」，所以要挂进输入框等发送时告知模型。
+                if attach {
+                    remember_upload(shared, &relative);
+                }
             }
             Err(error) => {
                 failed += 1;
@@ -6107,11 +6239,80 @@ fn upload_workspace(
     }
     load_workspace(desktop, shared, dir);
     if failed == 0 {
-        notify(shared, format!("已上传 {uploaded} 个文件"));
+        if attach && uploaded > 0 {
+            notify(shared, format!("已上传 {uploaded} 个文件，发送消息时会一并告知模型"));
+        } else {
+            notify(shared, format!("已上传 {uploaded} 个文件"));
+        }
     } else if uploaded == 0 {
         notify(shared, format!("上传失败（{failed} 个文件）"));
     } else {
         notify(shared, format!("已上传 {uploaded} 个，{failed} 个失败"));
+    }
+}
+
+/// 输入框上一排附件卡的上限。它们只是一句提示的素材，超过就丢最早的，
+/// 免得一次批量上传把提示块和输入区都撑爆。
+const PENDING_UPLOAD_LIMIT: usize = 20;
+
+/// 把刚上传的文件挂进输入框，等发送时随消息一起告知模型。
+fn remember_upload(shared: &Arc<Mutex<Shared>>, path: &str) {
+    let path = path.trim().trim_start_matches('/').to_string();
+    if path.is_empty() {
+        return;
+    }
+    let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+    let Ok(mut state) = shared.lock() else { return };
+    if state.pending_uploads.iter().any(|file| file.path == path) {
+        return;
+    }
+    if state.pending_uploads.len() >= PENDING_UPLOAD_LIMIT {
+        state.pending_uploads.remove(0);
+    }
+    state.pending_uploads.push(UploadedFile { name, path });
+    state.uploads_rev = state.uploads_rev.wrapping_add(1);
+    state.touch();
+}
+
+/// 撤回一张附件卡（`index` 是 UI 侧的行号）。
+fn forget_upload(shared: &Arc<Mutex<Shared>>, index: usize) {
+    let Ok(mut state) = shared.lock() else { return };
+    if index >= state.pending_uploads.len() {
+        return;
+    }
+    state.pending_uploads.remove(index);
+    state.uploads_rev = state.uploads_rev.wrapping_add(1);
+    state.touch();
+}
+
+/// 把待告知的文件拼成提示块并清空它们。
+///
+/// 措辞与云端版一致：只说明「新文件在哪里」，读不读由模型按任务自行判断，
+/// 避免模型把一句「新文件已放入」误当成必须逐个打开的命令。
+fn append_upload_notice(shared: &Arc<Mutex<Shared>>, text: String) -> String {
+    let files = {
+        let Ok(mut state) = shared.lock() else {
+            return text;
+        };
+        if state.pending_uploads.is_empty() {
+            return text;
+        }
+        let files = std::mem::take(&mut state.pending_uploads);
+        state.uploads_rev = state.uploads_rev.wrapping_add(1);
+        state.touch();
+        files
+    };
+    let mut lines = vec![format!("有 {} 个新文件已放入当前工作目录：", files.len())];
+    for (index, file) in files.iter().enumerate() {
+        lines.push(format!("{}. {}", index + 1, file.path));
+    }
+    lines.push("这些只是新文件信息，请根据任务需要自行决定是否读取或处理。".to_string());
+    let notice = lines.join("\n");
+    let text = text.trim_end();
+    if text.is_empty() {
+        notice
+    } else {
+        format!("{text}\n\n{notice}")
     }
 }
 
@@ -6294,7 +6495,15 @@ fn apply_screenshot(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, status
     })();
     let _ = std::fs::remove_file(source);
     match saved {
-        Ok(relative) => notify(shared, format!("截图已保存到工作目录：{relative}")),
+        Ok(relative) => {
+            // 截图同样是「用户刚给的材料」：挂进输入框，下一条消息带上文件
+            // 提示；否则用户截了屏再让模型看图，模型并不知道图在哪。
+            remember_upload(shared, &relative);
+            notify(
+                shared,
+                format!("截图已保存到工作目录：{relative}，发送消息时会一并告知模型"),
+            );
+        }
         Err(error) => notify(shared, format!("截图保存失败：{error}")),
     }
 }
@@ -7213,6 +7422,23 @@ fn thread_busy(shared: &Arc<Mutex<Shared>>, session: &str) -> bool {
     state.session_id == session && (state.generating || state.goal.active())
 }
 
+/// 组合一条从输入框发出的正文：面板答案在前，用户自己打的字作为补充。
+/// 与桌面版 `native_chat.rs` 拼接「面板回复 + 用户补充」的形态一致。
+fn composer_content(reply: &str, draft: &str) -> String {
+    let reply = reply.trim();
+    let draft = draft.trim();
+    match (reply.is_empty(), draft.is_empty()) {
+        (true, _) => draft.to_string(),
+        (false, true) => reply.to_string(),
+        (false, false) => {
+            let mut content = reply.to_string();
+            content.push_str("\n\n用户补充：");
+            content.push_str(draft);
+            content
+        }
+    }
+}
+
 /// 把一条消息交给引擎；线程正在运行时改为本地持有。
 ///
 /// 这是安卓版对桌面版 `hold_locally` 那段的等价实现：运行中提交会被引擎排
@@ -7352,6 +7578,35 @@ fn start_stream(
     start_stream_with_id(desktop, shared, session, text, inquiry_turn_id, None, false);
 }
 
+/// 打开一次聊天流；带问询身份时失败就退回普通发送。
+///
+/// 用户一边在输入框里打字，一边让问询面板开着是很常见的：他把话直接说出来，
+/// 而不是逐条点选。此时面板携带的等待回合身份可能已经被结算（另一处答过、
+/// 目标回合续跑过），运行时会把整条消息判为「问询已不再等待」打回来。用户
+/// 打的字不能因为一个过期的身份丢掉，所以去掉身份再提交一次。
+fn open_chat_stream(
+    desktop: &NativeDesktop,
+    input: NativeChatInput,
+) -> Result<NativeStream, String> {
+    let fallback = input.inquiry_turn_id.is_some().then(|| NativeChatInput {
+        inquiry_turn_id: None,
+        ..input.clone()
+    });
+    match desktop.send_chat(input) {
+        Ok(stream) => Ok(stream),
+        Err(first) => match fallback {
+            Some(fallback) => {
+                // 等待回合的身份已经过期（别处答过、回合被结算）：字还是要送出去的。
+                log::warn!("inquiry identity rejected by the runtime, resending as a plain turn");
+                desktop
+                    .send_chat(fallback)
+                    .map_err(|second| format!("{first}；{second}"))
+            }
+            None => Err(first.to_string()),
+        },
+    }
+}
+
 /// 带提交 id 与插话标记的发送。
 ///
 /// 插话需要两件事同时成立：这次提交带着自己的 `client_message_id`（引擎用它
@@ -7402,7 +7657,7 @@ fn start_stream_with_id(
         state.touch();
         stream_id
     };
-    let stream = match desktop.send_chat(input) {
+    let stream = match open_chat_stream(&desktop, input) {
         Ok(stream) => stream,
         Err(error) => {
             if let Ok(mut state) = shared.lock() {
@@ -7502,6 +7757,11 @@ fn start_stream_with_id(
                                     "interject queue turn failed session={session}: {error}"
                                 );
                             }
+                        } else {
+                            // 普通发送被排进运行时队列时，这一轮要等线程空下来才
+                            // 真正开始。手机上不给回执的话，用户只会看到消息消失，
+                            // 以为没发出去。
+                            notify(&shared, "消息已排队，等当前回合结束后自动发出");
                         }
                     }
                     Some(NativeChatEvent::Finished) => {
@@ -8314,6 +8574,148 @@ fn command_tail(output: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn transcript_links_leave_the_workspace_route() {
+        assert!(is_external_transcript_link("https://example.com/a.pdf"));
+        assert!(is_external_transcript_link("HTTP://example.com"));
+        for source in [
+            "notes/plan.md",
+            "/sdcard/Download/报告.docx",
+            "file:///sdcard/Download/a.png",
+            "mailto:someone@example.com",
+            "./图片/截图.png",
+        ] {
+            assert!(!is_external_transcript_link(source), "{source}");
+        }
+    }
+
+    #[test]
+    fn uploaded_files_are_announced_once_with_the_next_message() {
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        remember_upload(&shared, "screenshots/a.png");
+        remember_upload(&shared, "/图片/b.jpg");
+        remember_upload(&shared, "screenshots/a.png");
+        {
+            let state = shared.lock().unwrap();
+            assert_eq!(state.pending_uploads.len(), 2);
+            assert_eq!(state.pending_uploads[1].path, "图片/b.jpg");
+        }
+        let text = append_upload_notice(&shared, "看看这张图".to_string());
+        assert!(text.starts_with("看看这张图"));
+        assert!(text.contains("有 2 个新文件已放入当前工作目录："));
+        assert!(text.contains("1. screenshots/a.png"));
+        assert!(text.contains("2. 图片/b.jpg"));
+        assert!(text.contains("请根据任务需要自行决定是否读取或处理"));
+        // 提示只跟一条消息走：发出去以后输入框就该空了。
+        assert!(shared.lock().unwrap().pending_uploads.is_empty());
+        assert_eq!(append_upload_notice(&shared, "下一条".to_string()), "下一条");
+    }
+
+    #[test]
+    fn an_empty_draft_can_still_carry_uploaded_files() {
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        remember_upload(&shared, "截图.png");
+        let text = append_upload_notice(&shared, String::new());
+        assert!(text.starts_with("有 1 个新文件已放入当前工作目录："));
+        assert!(text.contains("截图.png"));
+    }
+
+    fn inquiry_panel(answered: bool) -> InquiryView {
+        InquiryView {
+            turn_id: "turn-waiting".into(),
+            page: 0,
+            expanded: false,
+            questions: vec![InquiryQuestionView {
+                question: "用哪种格式？".into(),
+                multiple: false,
+                no_preference: false,
+                other: String::new(),
+                options: vec![InquiryOptionView {
+                    label: "表格".into(),
+                    description: String::new(),
+                    recommended: false,
+                    selected: answered,
+                }],
+            }],
+        }
+    }
+
+    /// 用户不点选项、直接在输入框里打字，是手机上最常见的回答方式。这条消息
+    /// 不能把没答完的面板当成已回答取走——那样会带上一个等待回合的身份，运行
+    /// 时按「问询已不再等待」拒掉整条消息，用户看到的就是「发不出去」。
+    #[test]
+    fn an_unanswered_panel_never_hijacks_the_composer_send() {
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        {
+            let mut state = shared.lock().unwrap();
+            state.session_id = "s".into();
+            state.inquiry = Some(inquiry_panel(false));
+        }
+        assert!(take_inquiry_answer(&shared, "s", false).is_none());
+        let state = shared.lock().unwrap();
+        let panel = state.inquiry.as_ref().expect("未回答的面板必须留在屏幕上");
+        assert_eq!(panel.turn_id, "turn-waiting");
+        assert!(panel.questions[0].options[0].selected == false);
+        assert!(state.consumed_inquiries.is_empty());
+        drop(state);
+        // 这条消息就是用户自己打的字，不带任何问询身份。
+        assert_eq!(
+            composer_content("", "别问了，就用 Excel"),
+            "别问了，就用 Excel"
+        );
+    }
+
+    /// 面板答完了，它就是这条消息的主体；用户顺手打的补充跟在后面。
+    #[test]
+    fn an_answered_panel_becomes_the_message_body() {
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        {
+            let mut state = shared.lock().unwrap();
+            state.session_id = "s".into();
+            state.inquiry = Some(inquiry_panel(true));
+        }
+        let (reply, turn_id) =
+            take_inquiry_answer(&shared, "s", false).expect("答完的面板必须随消息发出");
+        assert_eq!(turn_id.as_deref(), Some("turn-waiting"));
+        assert!(reply.contains("【问询面板选择】"));
+        assert!(reply.contains("答案：表格"));
+        let mut expected = reply.clone();
+        expected.push_str("\n\n用户补充：顺便说一句");
+        assert_eq!(composer_content(&reply, "顺便说一句"), expected);
+        assert_eq!(composer_content(&reply, "  "), reply);
+        let state = shared.lock().unwrap();
+        assert!(state.inquiry.is_none());
+        assert!(!state.consumed_inquiries.is_empty());
+        // 交出去的面板不会被历史投影捡回来。
+        assert!(pending_inquiry(&state.durable_turns, "s", &state.consumed_inquiries).is_none());
+    }
+
+    /// 面板自带的提交键仍然要求每题都答：它出声提醒，但同样不改动面板。
+    #[test]
+    fn the_panel_submit_key_still_asks_for_every_answer() {
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        {
+            let mut state = shared.lock().unwrap();
+            state.session_id = "s".into();
+            state.inquiry = Some(inquiry_panel(false));
+        }
+        assert!(take_inquiry_answer(&shared, "s", true).is_none());
+        let state = shared.lock().unwrap();
+        assert!(state.inquiry.is_some());
+        assert_eq!(state.toast, "请先回答全部问题");
+    }
+
+    #[test]
+    fn withdrawing_one_upload_keeps_the_rest() {
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        remember_upload(&shared, "a.txt");
+        remember_upload(&shared, "b.txt");
+        forget_upload(&shared, 0);
+        let state = shared.lock().unwrap();
+        assert_eq!(state.pending_uploads.len(), 1);
+        assert_eq!(state.pending_uploads[0].path, "b.txt");
+    }
 
     #[test]
     fn a_running_thread_counts_as_busy_only_for_its_own_session() {

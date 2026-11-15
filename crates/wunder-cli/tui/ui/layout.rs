@@ -11,6 +11,10 @@ pub(crate) const COMPOSER_TOP_GAP_ROWS: u16 = 1;
 
 pub(crate) struct MainLayout {
     pub(crate) transcript: Rect,
+    /// The one row between the transcript and the composer band. It is reserved whether or
+    /// not the reading control has something to say, so the control appearing never moves
+    /// the transcript: an empty rectangle here means the frame is too short to spare it.
+    pub(crate) gap: Rect,
     pub(crate) popup: Option<Rect>,
     pub(crate) activity: Rect,
     pub(crate) input: Rect,
@@ -57,6 +61,7 @@ pub(crate) fn build_layout(
         .split(area);
     MainLayout {
         transcript: padded_columns(sections[0]),
+        gap: padded_columns(sections[1]),
         popup: (popup_len > 0).then(|| padded_columns(sections[2])),
         activity: padded_columns(sections[3]),
         // The band itself stays full-bleed: it is the composer's own surface and reads as
@@ -96,6 +101,20 @@ mod tests {
         let layout = build_layout(Rect::new(0, 0, 40, 12), 20, true, 4);
         assert!(layout.input.height >= 3);
         assert!(layout.popup.is_some());
+    }
+
+    #[test]
+    fn the_gap_row_belongs_to_neither_neighbour() {
+        let layout = build_layout(Rect::new(0, 0, 80, 24), 0, false, 4);
+        assert_eq!(layout.gap.height, COMPOSER_TOP_GAP_ROWS);
+        assert_eq!(layout.gap.y, layout.transcript.bottom());
+        assert_eq!(layout.gap.bottom(), layout.input.y);
+    }
+
+    #[test]
+    fn a_short_frame_has_no_gap_row_to_paint_into() {
+        let layout = build_layout(Rect::new(0, 0, 40, 8), 0, true, 4);
+        assert!(layout.gap.is_empty());
     }
 
     #[test]

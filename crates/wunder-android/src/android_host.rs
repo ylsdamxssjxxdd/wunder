@@ -28,8 +28,10 @@ static HOST: OnceLock<Host> = OnceLock::new();
 /// re-read after the user returns.
 #[derive(Clone, Debug)]
 enum PickTarget {
-    /// Upload files into this workspace-relative directory.
-    Workspace(String),
+    /// Upload files into this workspace-relative directory. `attach` marks a
+    /// pick started from the chat composer or a share: those files also land
+    /// in the input row so the next message tells the model what arrived.
+    Workspace { dir: String, attach: bool },
     /// Upload text files into the tool resource the phone is browsing.
     ToolFiles,
     /// Import one skill archive (first selected file).
@@ -40,7 +42,11 @@ static PENDING_PICK: Mutex<Option<PickTarget>> = Mutex::new(None);
 
 /// One result of the system document picker, routed by the requester.
 pub enum PickedFiles {
-    Workspace { dir: String, files: Vec<String> },
+    Workspace {
+        dir: String,
+        files: Vec<String>,
+        attach: bool,
+    },
     ToolFiles(Vec<String>),
     SkillArchive(String),
 }
@@ -158,7 +164,19 @@ fn open_picker(target: PickTarget) {
 
 /// Open the system document picker for the workspace at `dir`.
 pub fn pick_files(dir: &str) {
-    open_picker(PickTarget::Workspace(dir.to_string()));
+    open_picker(PickTarget::Workspace {
+        dir: dir.to_string(),
+        attach: false,
+    });
+}
+
+/// Same picker, but the upload also becomes composer material: the chat's
+/// 「上传文件」 tile and system shares go through here.
+pub fn pick_attachment_files(dir: &str) {
+    open_picker(PickTarget::Workspace {
+        dir: dir.to_string(),
+        attach: true,
+    });
 }
 
 /// Open the picker for text files of the tool resource being browsed.
@@ -279,7 +297,11 @@ pub fn take_picked() -> Option<PickedFiles> {
         return None;
     }
     match target {
-        PickTarget::Workspace(dir) => Some(PickedFiles::Workspace { dir, files }),
+        PickTarget::Workspace { dir, attach } => Some(PickedFiles::Workspace {
+            dir,
+            files,
+            attach,
+        }),
         PickTarget::ToolFiles => Some(PickedFiles::ToolFiles(files)),
         PickTarget::SkillArchive => Some(PickedFiles::SkillArchive(files.remove(0))),
     }
@@ -387,6 +409,33 @@ pub fn open_workspace_file(workspace_id: &str, relative: &str) -> bool {
 /// Open the containing folder (or a directory itself) in a file manager.
 pub fn open_workspace_location(workspace_id: &str, relative_dir: &str) -> bool {
     call_workspace_bool("openWorkspaceLocation", workspace_id, relative_dir)
+}
+
+/// Open one http(s) link from the transcript in the system browser. Returns
+/// false when the URL is not a web link or no viewer accepts the intent.
+pub fn open_external_url(url: &str) -> bool {
+    let Some(host) = HOST.get() else {
+        return false;
+    };
+    let Ok(mut env) = host.vm.attach_current_thread() else {
+        return false;
+    };
+    let Ok(url) = env.new_string(url) else {
+        return false;
+    };
+    match env.call_static_method(
+        &host.ui_bridge,
+        "openExternalUrl",
+        "(Ljava/lang/String;)Z",
+        &[JValue::Object(&url)],
+    ) {
+        Ok(value) => value.z().unwrap_or(false),
+        Err(error) => {
+            clear_java_exception(&mut env);
+            log::warn!("openExternalUrl failed: {}", error);
+            false
+        }
+    }
 }
 
 fn call_workspace_bool(method: &str, workspace_id: &str, relative: &str) -> bool {

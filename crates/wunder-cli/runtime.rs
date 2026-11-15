@@ -796,6 +796,10 @@ fn apply_cli_defaults(
     config.agent_queue.enabled = true;
     config.cron.enabled = true;
 
+    // 本地形态的工具开关与桌面版共用同一个引擎函数：桌面控制、浏览器等
+    // 能力在两种形态下一致，谁启动都不改变另一方的工具集。
+    wunder_server::local_tool_defaults::apply_local_tool_defaults(config);
+
     // 命令行 is a local form like 桌面版: the workspace folder is the boundary, so
     // commands are not filtered by a per-call whitelist and the approval gate
     // starts open. An explicit user choice lives in the approval sidecar
@@ -1580,6 +1584,47 @@ mod workspace_tests {
             ],
             "only the local form's own roots are writable"
         );
+    }
+
+    #[test]
+    fn cli_defaults_enable_the_same_local_tools_as_desktop() {
+        let scratch = TempRoot::new("local-tools");
+        let launch_dir = scratch.path().join("work");
+        let temp_root = scratch.path().join("temp");
+        let repo_root = scratch.path().join("repo");
+        let wunder_home = scratch.path().join("home");
+        fs::create_dir_all(&launch_dir).expect("create launch dir");
+
+        let mut config = Config::default();
+        config.tools.browser.enabled = false;
+        config.tools.desktop_control.enabled = false;
+
+        apply_cli_defaults(
+            &mut config,
+            &launch_dir,
+            &temp_root,
+            &repo_root,
+            &wunder_home,
+        );
+
+        assert!(config.tools.browser.enabled, "browser tools stay on");
+        assert_eq!(
+            config.tools.desktop_control.enabled,
+            !cfg!(target_os = "android"),
+            "命令行与桌面版共用同一套本地形态工具开关"
+        );
+        if cfg!(feature = "desktop-control") {
+            assert!(
+                wunder_server::tools::desktop_tools_available(&config),
+                "编译了桌控能力且开关打开时，命令行必须和桌面版一样可用"
+            );
+            let names = wunder_server::tools::collect_available_tool_names(
+                &config,
+                &wunder_server::skills::SkillRegistry::default(),
+                None,
+            );
+            assert!(names.contains("桌面控制"), "工具清单里要有桌面控制");
+        }
     }
 
     #[test]

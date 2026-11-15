@@ -165,6 +165,10 @@ async fn run(
     )
     .await?;
     request.config_overrides.get_or_insert_with(|| json!({}))["__local_open_lease"] = lease_proof;
+    // 本地形态的输入框消息是「现在就说」：线程停在问询面板上时，运行时不得
+    // 把它排进队列（面板正是这句话要回答的东西）。
+    request.config_overrides.get_or_insert_with(|| json!({}))["__interactive_chat"] =
+        json!(true);
     if cancel.is_cancelled() {
         let _ = output
             .send(NativeChatEvent::Event(

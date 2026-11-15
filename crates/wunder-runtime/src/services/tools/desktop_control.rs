@@ -1,12 +1,14 @@
-#[cfg(feature = "desktop-control")]
+// 桌面控制的实现只有 Windows 与 Linux/X11 两条真实后端。没编译 feature、
+// 或平台没有后端时，都收敛到同一个桩：工具仍可识别但运行时隐藏。
+#[cfg(all(feature = "desktop-control", any(windows, target_os = "linux")))]
 mod enabled {
     pub use super::super::desktop_control_impl::*;
 }
 
-#[cfg(feature = "desktop-control")]
+#[cfg(all(feature = "desktop-control", any(windows, target_os = "linux")))]
 pub use enabled::*;
 
-#[cfg(not(feature = "desktop-control"))]
+#[cfg(not(all(feature = "desktop-control", any(windows, target_os = "linux"))))]
 mod disabled {
     use super::super::context::ToolContext;
     use super::super::tool_error::{build_failed_tool_result, ToolErrorMeta};
@@ -104,33 +106,40 @@ mod disabled {
     }
 
     fn disabled_result(tool: &str, request: Option<&str>) -> Value {
+        // feature 已编译但平台没有后端（例如 macOS）时，提示要指向平台，
+        // 而不是让人反复重编译。
+        let (code, summary, hint) = if cfg!(feature = "desktop-control") {
+            (
+                "TOOL_DESKTOP_CONTROL_UNSUPPORTED_PLATFORM",
+                "desktop control needs a Windows or Linux/X11 host; this platform has no backend",
+                "Run the desktop or CLI form on Windows or a Linux X11 session.",
+            )
+        } else {
+            (
+                "TOOL_DESKTOP_CONTROL_FEATURE_DISABLED",
+                "desktop-control feature is disabled; rebuild with --features desktop-control",
+                "Enable the desktop-control Cargo feature for local desktop screenshots and input control.",
+            )
+        };
         build_failed_tool_result(
-            "desktop-control feature is disabled; rebuild with --features desktop-control",
+            summary,
             json!({
                 "tool": tool,
                 "request": request.unwrap_or_default(),
                 "phase": "feature_gate",
-                "failure_summary": "desktop-control feature is disabled; rebuild with --features desktop-control",
-                "next_step_hint": "Enable the desktop-control Cargo feature for local desktop screenshots and input control."
+                "failure_summary": summary,
+                "next_step_hint": hint
             }),
-            ToolErrorMeta::new(
-                "TOOL_DESKTOP_CONTROL_FEATURE_DISABLED",
-                Some(
-                    "Enable the desktop-control Cargo feature for local desktop control."
-                        .to_string(),
-                ),
-                false,
-                None,
-            ),
+            ToolErrorMeta::new(code, Some(hint.to_string()), false, None),
             false,
         )
     }
 }
 
-#[cfg(not(feature = "desktop-control"))]
+#[cfg(not(all(feature = "desktop-control", any(windows, target_os = "linux"))))]
 pub use disabled::*;
 
-#[cfg(all(test, not(feature = "desktop-control")))]
+#[cfg(all(test, not(all(feature = "desktop-control", any(windows, target_os = "linux")))))]
 mod tests {
     use super::*;
     use crate::config::Config;

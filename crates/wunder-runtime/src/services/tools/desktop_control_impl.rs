@@ -451,8 +451,11 @@ pub fn is_desktop_control_tool_name(name: &str) -> bool {
     )
 }
 
+/// 桌面控制属于本地形态（桌面版 / 命令行）的能力：它操作的是用户这台机器
+/// 的真实屏幕，服务端与云端版永远没有这个前提。这里与 `is_local_mode` 用同
+/// 一套判定，避免 CLI 的 `cli` 模式被误判成"非本地"而拿不到工具。
 pub fn desktop_tools_enabled(config: &Config) -> bool {
-    config.server.mode.trim().eq_ignore_ascii_case("desktop")
+    crate::services::prompting::is_local_runtime_mode(&config.server.mode)
         && config.tools.desktop_control.enabled
 }
 
