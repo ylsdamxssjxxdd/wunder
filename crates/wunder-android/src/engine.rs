@@ -165,10 +165,6 @@ pub enum Command {
     VoiceFailed {
         message: String,
     },
-    CaptureScreenshot,
-    ScreenshotResult {
-        status: String,
-    },
     SavePreferences {
         theme: String,
         send_key: String,
@@ -976,6 +972,10 @@ pub struct Shared {
     pub tool_file: Option<ToolFileView>,
     pub agent_rev: u64,
     pub agent: AgentView,
+    /// 转录区顶部的欢迎语。桌面版取内置智能体的问候语（`description`），
+    /// 手机沿用同一句话；空串时界面回落到 I18n.chat_greeting。
+    pub greeting: String,
+    pub greeting_rev: u64,
     /// Catalog behind `agent.groups`; kept so the search box filters locally
     /// instead of re-reading the runtime on every keystroke.
     pub agent_catalog: Vec<ToolRecord>,
@@ -997,6 +997,9 @@ pub struct Shared {
     pub target_rev: u64,
     pub cloud_rev: u64,
     pub cloud: crate::cloud::CloudView,
+    /// 云端线程的欢迎语：与桌面版同源，取该线程所用云智能体的描述。
+    pub cloud_greeting: String,
+    pub cloud_greeting_rev: u64,
     pub cloud_threads_rev: u64,
     pub cloud_threads: Vec<MobileSession>,
     pub cloud_active_rev: u64,
@@ -1234,6 +1237,7 @@ fn run(
     refresh_sessions(&desktop, &shared, None);
     refresh_archived(&desktop, &shared);
     refresh_preset_questions(&desktop, &shared);
+    refresh_greeting(&desktop, &shared);
     refresh_ubuntu(&desktop, &shared);
     refresh_permissions(&shared);
     refresh_companion(&desktop, &shared);
@@ -1603,8 +1607,6 @@ fn run(
                 set_voice_phase(&shared, 0);
                 notify(&shared, message);
             }
-            Command::CaptureScreenshot => start_screenshot(&shared),
-            Command::ScreenshotResult { status } => apply_screenshot(&desktop, &shared, &status),
             Command::Send(text) => {
                 // Slash commands are local UI/engine commands, not model
                 // messages. NativeDesktop::send_chat rejects them on purpose,
@@ -4634,6 +4636,29 @@ fn refresh_agent(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
         state.agent_rev = state.agent_rev.wrapping_add(1);
         state.touch();
     }
+    set_greeting(shared, &agent.description);
+}
+
+/// 首屏欢迎语与桌面版同源：内置智能体的问候语。只读一条配置，启动时就能
+/// 拿到，不必等用户打开设置页把它读进来。
+fn refresh_greeting(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
+    let Ok(agent) = desktop.default_agent() else {
+        return;
+    };
+    set_greeting(shared, &agent.description);
+}
+
+/// 欢迎语只在真正变了的时候推进修订号，避免每帧把同一句话推回界面。
+fn set_greeting(shared: &Arc<Mutex<Shared>>, description: &str) {
+    let greeting = description.trim().to_string();
+    if let Ok(mut state) = shared.lock() {
+        if state.greeting == greeting {
+            return;
+        }
+        state.greeting = greeting;
+        state.greeting_rev = state.greeting_rev.wrapping_add(1);
+        state.touch();
+    }
 }
 
 fn search_agent_tools(shared: &Arc<Mutex<Shared>>, query: &str) {
@@ -4715,6 +4740,8 @@ fn persist_agent(
                 state.notify(note);
                 state.touch();
             }
+            // 问候语就是这段描述：编辑保存后，首屏那句话要跟着变。
+            set_greeting(shared, &updated.description);
         }
         Err(error) => notify(shared, format!("保存智能体设置失败：{error}")),
     }
@@ -6070,12 +6097,12 @@ fn open_workspace_entry(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, pa
 /// One transcript reference the reader tapped: a Markdown picture, a document
 /// card, a process row's file chip or a plain link.
 ///
-/// Cards resolve through the same rules the renderer used to paint them and
-/// then map back onto the workspace catalogue, so the read-only document
-/// provider can mint a content URI — the exact route a tap in the workspace
-/// drawer takes. That keeps a card and its menu entry opening the same file.
-/// Links leave the app for the system browser instead of being mistaken for
-/// workspace paths.
+/// Cards resolve through the same rules the renderer used to paint them. A file
+/// inside a workspace uses the read-only workspace provider, exactly like a tap
+/// in the workspace drawer; an attachment, temp artifact or any other local
+/// file the row displayed falls back to a one-shot read grant, so the click
+/// opens the file the reader sees instead of refusing it. Links leave the app
+/// for the system browser instead of being mistaken for workspace paths.
 fn open_transcript_resource(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, source: &str) {
     let source = source.trim();
     if source.is_empty() {
@@ -6097,24 +6124,34 @@ fn open_transcript_resource(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>
     }
     let mut last_error = None;
     for root in markdown_image_roots(desktop, shared) {
-        match desktop.chat_resource_document(&root, source) {
-            Ok((workspace_id, relative)) => {
-                #[cfg(target_os = "android")]
-                {
-                    if crate::android_host::open_workspace_file(&workspace_id, &relative) {
-                        return;
-                    }
-                    notify(shared, "没有可打开此文件的应用");
+        let target = match desktop.chat_resource_target(&root, source) {
+            Ok(target) => target,
+            Err(error) => {
+                last_error = Some(error.to_string());
+                continue;
+            }
+        };
+        #[cfg(target_os = "android")]
+        {
+            if let Some((workspace_id, relative)) = desktop.workspace_document_for(&target) {
+                if crate::android_host::open_workspace_file(&workspace_id, &relative) {
+                    return;
                 }
-                #[cfg(not(target_os = "android"))]
-                {
-                    let _ = (workspace_id, relative);
-                    notify(shared, "仅安卓版支持用系统应用打开文件");
-                }
+            }
+            // Workspace files keep the provider route above; everything the
+            // provider cannot address gets a temporary read grant for exactly
+            // this file.
+            if crate::android_host::open_local_file(&target.to_string_lossy()) {
                 return;
             }
-            Err(error) => last_error = Some(error.to_string()),
+            notify(shared, "没有可打开此文件的应用");
         }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = &target;
+            notify(shared, "仅安卓版支持用系统应用打开文件");
+        }
+        return;
     }
     notify(
         shared,
@@ -6364,16 +6401,6 @@ fn host_stop_voice() -> String {
     "failed:unsupported".into()
 }
 
-#[cfg(target_os = "android")]
-fn host_capture_screenshot() -> String {
-    crate::android_host::capture_screenshot()
-}
-
-#[cfg(not(target_os = "android"))]
-fn host_capture_screenshot() -> String {
-    "failed:unsupported".into()
-}
-
 fn set_voice_phase(shared: &Arc<Mutex<Shared>>, phase: i32) {
     if let Ok(mut state) = shared.lock() {
         if state.voice_phase == phase {
@@ -6453,58 +6480,6 @@ fn finish_voice(desktop: &Arc<NativeDesktop>, shared: &Arc<Mutex<Shared>>, path:
         log::warn!("start the asr worker: {error}");
         set_voice_phase(shared, 0);
         notify(shared, "无法启动语音识别");
-    }
-}
-
-fn start_screenshot(shared: &Arc<Mutex<Shared>>) {
-    match host_capture_screenshot() {
-        status if status == "pending" => notify(shared, "正在截取屏幕…"),
-        status => notify(shared, format!("截图失败：{status}")),
-    }
-}
-
-fn apply_screenshot(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, status: &str) {
-    if status == "no_service" {
-        notify(shared, "请先在系统设置中开启 wunder 无障碍服务，再使用截图");
-        return;
-    }
-    let Some(source) = status.strip_prefix("ok|") else {
-        notify(
-            shared,
-            format!(
-                "截图失败：{}",
-                status.strip_prefix("error|").unwrap_or(status)
-            ),
-        );
-        return;
-    };
-    let saved = (|| -> Result<String, String> {
-        let root = active_workspace_root(desktop, shared)?;
-        let directory = std::path::Path::new(&root).join("screenshots");
-        std::fs::create_dir_all(&directory)
-            .map_err(|error| format!("无法创建截图目录：{error}"))?;
-        let now = chrono::Local::now();
-        let name = format!(
-            "screenshot-{}-{:03}.png",
-            now.format("%Y%m%d-%H%M%S"),
-            now.timestamp_subsec_millis()
-        );
-        std::fs::copy(source, directory.join(&name))
-            .map_err(|error| format!("无法写入截图：{error}"))?;
-        Ok(format!("screenshots/{name}"))
-    })();
-    let _ = std::fs::remove_file(source);
-    match saved {
-        Ok(relative) => {
-            // 截图同样是「用户刚给的材料」：挂进输入框，下一条消息带上文件
-            // 提示；否则用户截了屏再让模型看图，模型并不知道图在哪。
-            remember_upload(shared, &relative);
-            notify(
-                shared,
-                format!("截图已保存到工作目录：{relative}，发送消息时会一并告知模型"),
-            );
-        }
-        Err(error) => notify(shared, format!("截图保存失败：{error}")),
     }
 }
 
@@ -8574,6 +8549,21 @@ fn command_tail(output: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_greeting_follows_the_agent_description() {
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        set_greeting(&shared, "  你好，我是 wunder。  ");
+        assert_eq!(shared.lock().unwrap().greeting, "你好，我是 wunder。");
+        let rev = shared.lock().unwrap().greeting_rev;
+        // 同一句话不推进修订号，界面不会被重复刷新。
+        set_greeting(&shared, "你好，我是 wunder。");
+        assert_eq!(shared.lock().unwrap().greeting_rev, rev);
+        set_greeting(&shared, "换一句问候");
+        let state = shared.lock().unwrap();
+        assert_eq!(state.greeting, "换一句问候");
+        assert_eq!(state.greeting_rev, rev + 1);
+    }
 
     #[test]
     fn transcript_links_leave_the_workspace_route() {

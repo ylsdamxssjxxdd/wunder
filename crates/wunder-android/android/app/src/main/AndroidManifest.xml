@@ -112,6 +112,14 @@
             </intent-filter>
         </provider>
 
+        <!-- One-shot read grant for transcript files outside every workspace.
+             Not exported: only the URI handed to the viewer is readable. -->
+        <provider
+            android:name=".WunderOpenProvider"
+            android:authorities="${applicationId}.open.file"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <!-- Final status of an online-update install session. Explicitly
              addressed by the PendingIntent; never exported. -->
         <receiver

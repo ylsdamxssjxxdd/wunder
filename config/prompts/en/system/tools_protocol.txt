@@ -56,7 +56,7 @@ For an A2UI response, call only the a2ui tool (not the final reply tool), wrappe
 
 [[HAS_PHONE_CONTROL_TOOL]]
 [Phone Control]
-- Coordinates live in a fixed 1000x1000 normalized space (reported as normalized_width/normalized_height); bbox is [x1,y1,x2,y2] or [cx,cy].
+- Coordinates are pixels of the returned screenshot; take the extent from normalized_width/normalized_height (aspect-preserving, e.g. 720x1600); bbox is [x1,y1,x2,y2] or [cx,cy]. Out-of-range values are rejected, so never assume the size.
 - Recommended loop: confirm with screenshot or ui_tree, perform one action, inspect the returned frame, then decide. After open_app/open_url/open_settings, first confirm the target screen is ready.
 - type_text may include the input bbox to tap first; press_key supports back/home/recents/notifications/quick_settings only.
 - Taps, swipes, typing, the UI tree and screenshots require the accessibility service. When accessibility_connected=false, explain it to the user and open settings with open_settings (page=accessibility); wait for the user to enable it.

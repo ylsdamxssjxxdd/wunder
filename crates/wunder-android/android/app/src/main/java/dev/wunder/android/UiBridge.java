@@ -83,7 +83,6 @@ public final class UiBridge {
     private static String pickedDirectory;
     private static String saveResult; // null or "1|name" / "0|name"
     private static final ArrayList<String> voiceEvents = new ArrayList<>();
-    private static final ArrayList<String> screenshotEvents = new ArrayList<>();
     private static final Object voiceLock = new Object();
     // Back presses are counted here for the Rust render tick. The activity
     // consumes the key so the framework never finishes it directly; Rust
@@ -498,6 +497,34 @@ public final class UiBridge {
                 DocumentsContract.Document.MIME_TYPE_DIR, true);
     }
 
+    /**
+     * Open one local file that has no workspace route (a chat attachment, a
+     * temp artifact, or a card elsewhere on the device) through a one-shot
+     * read grant. Only that file becomes readable; no folder is exposed.
+     */
+    public static boolean openLocalFile(String path) {
+        Activity current = activity.get();
+        if (current == null || path == null || path.trim().isEmpty()) {
+            return false;
+        }
+        String token = WunderOpenProvider.register(path);
+        if (token == null) {
+            return false;
+        }
+        String authority = current.getPackageName() + WunderOpenProvider.AUTHORITY_SUFFIX;
+        Uri uri = Uri.parse("content://" + authority + "/" + token);
+        String mime = WunderDocumentsProvider.mimeTypeOfName(new File(path.trim()).getName());
+        Intent intent = new Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, mime)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            current.startActivity(intent);
+            return true;
+        } catch (Exception error) {
+            return false;
+        }
+    }
+
     /** Open one http(s) link from a transcript in the system browser. */
     public static boolean openExternalUrl(String url) {
         Activity current = activity.get();
@@ -698,42 +725,6 @@ public final class UiBridge {
         }
     }
 
-    /**
-     * Capture the current screen through the accessibility service. The caller
-     * closes the function panel first, so the frame is what the user was
-     * looking at.
-     *
-     * @return {@code pending} or {@code failed:<reason>}
-     */
-    public static String captureScreenshot() {
-        Activity current = activity.get();
-        if (current == null) {
-            return "failed:no activity";
-        }
-        if (WunderAccessibilityService.getInstance() == null) {
-            publishScreenshot("no_service");
-            return "pending";
-        }
-        Context context = current.getApplicationContext();
-        new Thread(() -> {
-            String path = PhoneBridge.captureScreenForUi(context);
-            publishScreenshot(path == null ? "error:无法截取屏幕" : "ok|" + path);
-        }, "wunder-shot").start();
-        return "pending";
-    }
-
-    /** Drain screenshot results: ok|path / no_service / error|message. */
-    public static String[] takeScreenshotEvents() {
-        synchronized (queueLock) {
-            if (screenshotEvents.isEmpty()) {
-                return null;
-            }
-            String[] events = screenshotEvents.toArray(new String[0]);
-            screenshotEvents.clear();
-            return events;
-        }
-    }
-
     static void handlePermissionResult(int requestCode, int[] grantResults) {
         if (requestCode != REQUEST_RECORD_AUDIO || !pendingVoicePermission) {
             return;
@@ -866,12 +857,6 @@ public final class UiBridge {
     private static void publishVoice(String event) {
         synchronized (queueLock) {
             voiceEvents.add(event);
-        }
-    }
-
-    private static void publishScreenshot(String event) {
-        synchronized (queueLock) {
-            screenshotEvents.add(event);
         }
     }
 

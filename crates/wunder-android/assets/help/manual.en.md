@@ -452,7 +452,7 @@ Development builds may omit the browser pack; the WebView path still works, but 
 ## Usage
 
 - **Chat**: type in the composer; the timeline shows thinking, tool batches and the final reply; switch models and sessions from the top.
-- **Phone entries**: working directory, thread trajectory, voice input and screenshots each have a phone entry.
+- **Phone entries**: working directory, thread trajectory and voice input each have a phone entry.
 - **Online update**: pick a cloud account or GitHub as the source in Help and About; it shows download progress and hands the verified package to the system installer.
 - **Permissions**: grant microphone, screen capture and overlay access when the system asks; the state stays visible in settings.
 

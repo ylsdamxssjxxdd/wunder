@@ -42,7 +42,7 @@ const ITEMS: &[Meta] = &[
     Meta {
         id: "accessibility",
         title: "无障碍服务",
-        description: "手机控制、界面读取与屏幕截图",
+        description: "wunder 手机控制：界面读取、点击滑动输入与截图",
     },
     Meta {
         id: "battery",

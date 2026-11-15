@@ -269,6 +269,25 @@ pub fn new_thread(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
     }
 }
 
+/// 云端线程的欢迎语与桌面版同源：它所用云智能体的描述。查不到就留空，界面
+/// 回落到通用问候语；同一句话不重复推进修订号。
+fn sync_greeting(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, agent_id: &str) {
+    let agents = desktop.cloud_agents().unwrap_or_default();
+    let greeting = agents
+        .iter()
+        .find(|agent| agent.id == agent_id || (agent_id.is_empty() && agent.id == "__default__"))
+        .map(|agent| agent.description.trim().to_string())
+        .unwrap_or_default();
+    if let Ok(mut state) = shared.lock() {
+        if state.cloud_greeting == greeting {
+            return;
+        }
+        state.cloud_greeting = greeting;
+        state.cloud_greeting_rev = state.cloud_greeting_rev.wrapping_add(1);
+        state.touch();
+    }
+}
+
 pub fn select_thread(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, id: &str) {
     if let Ok(mut state) = shared.lock() {
         state.cloud_active = CloudActive {
@@ -299,7 +318,7 @@ pub fn select_thread(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, id: &
                     title,
                     status: view.status,
                     model: view.model_key,
-                    agent: view.agent_id,
+                    agent: view.agent_id.clone(),
                     rows,
                     loading: false,
                     error: String::new(),
@@ -307,6 +326,7 @@ pub fn select_thread(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, id: &
                 state.cloud_active_rev = state.cloud_active_rev.wrapping_add(1);
                 state.touch();
             }
+            sync_greeting(desktop, shared, &view.agent_id);
         }
         Err(error) => set_active_error(shared, format!("无法打开云端会话：{error}")),
     }
@@ -323,18 +343,24 @@ pub fn poll(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
     match desktop.cloud_thread_snapshot(&id) {
         Ok(view) => {
             let rows = rows_from_snapshot(&view);
+            let mut agent_changed = false;
             if let Ok(mut state) = shared.lock() {
                 if state.cloud_active.id != id {
                     return;
                 }
+                agent_changed = state.cloud_active.agent != view.agent_id;
                 state.cloud_active.rows = rows;
                 state.cloud_active.status = view.status;
                 state.cloud_active.model = view.model_key;
-                state.cloud_active.agent = view.agent_id;
+                state.cloud_active.agent = view.agent_id.clone();
                 state.cloud_active.loading = false;
                 state.cloud_active.error.clear();
                 state.cloud_active_rev = state.cloud_active_rev.wrapping_add(1);
                 state.touch();
+            }
+            // 智能体只在换线程时变，所以欢迎语也只在真正变了的时候读一次目录。
+            if agent_changed {
+                sync_greeting(desktop, shared, &view.agent_id);
             }
         }
         Err(error) => set_active_error(shared, format!("云端会话刷新失败：{error}")),

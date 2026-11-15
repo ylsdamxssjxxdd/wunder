@@ -20,7 +20,19 @@ pub const TOOL_PHONE_CONTROL: &str = "手机控制";
 pub const TOOL_PHONE_CONTROL_ALIAS: &str = "phone_control";
 pub const TOOL_PHONE_CONTROL_ALIAS_SHORT: &str = "phone";
 
-const MAX_NORMALIZED_COORD: i32 = 1000;
+/// Coordinate space of the returned frame: the display fitted into this box
+/// without upscaling and without changing its aspect. One coordinate unit is
+/// one pixel of the screenshot the model is looking at — the same rule 桌面控制
+/// uses — so both axes keep the same pixel size and no mental scaling is
+/// needed. The shell does the fitting (`PhoneBridge.frameSize`); this value only
+/// bounds the schema and supplies the fallback for replies that omit the size.
+///
+/// 1600 is the largest square the model view still accepts without rescaling
+/// (50x50 patches of 32px, the `chat_media` budget), so a returned frame is
+/// always exactly the grid the model reads coordinates from. Anything larger
+/// would be silently downscaled on the way to the model and every tap would
+/// drift.
+const FRAME_BOX: i32 = 1600;
 const MAX_TEXT_CHARS: usize = 16 * 1024;
 const MAX_APP_CHARS: usize = 256;
 const MAX_URL_CHARS: usize = 2048;
@@ -49,13 +61,62 @@ const SETTINGS_PAGES: &[&str] = &[
 /// blocking worker; implementations may block while the accessibility service
 /// captures a frame or dispatches a gesture.
 pub trait PhoneControlHost: Send + Sync {
-    /// `args` uses pixel-independent normalized coordinates (0..1000) for
-    /// touch actions and plain strings elsewhere. The returned object follows
-    /// the contract parsed by [`execute_with_host`].
+    /// `args` carries touch points in the pixel space of the frame the model
+    /// saw (`x`/`y`/`x1`…), which is the display fitted into [`FRAME_BOX`]; the
+    /// shell scales them back to display pixels. Everything else is plain
+    /// strings. The returned object follows the contract parsed by
+    /// [`execute_with_host`] and must report `screen_width`/`screen_height`
+    /// plus, once a frame exists, `normalized_width`/`normalized_height`.
     fn execute(&self, action: &str, args: &Value) -> Result<Value>;
 }
 
 static HOST: std::sync::RwLock<Option<Arc<dyn PhoneControlHost>>> = std::sync::RwLock::new(None);
+
+/// The frame coordinate space reported by the latest device reply. Touch
+/// arguments are checked against it, so a wrong guess is rejected together
+/// with the real extent instead of being silently clamped to a screen edge.
+static LAST_FRAME_NORM: std::sync::RwLock<Option<(i32, i32)>> = std::sync::RwLock::new(None);
+
+fn last_frame_norm() -> Option<(i32, i32)> {
+    *LAST_FRAME_NORM
+        .read()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
+fn remember_frame_norm(width: i32, height: i32) {
+    if width > 0 && height > 0 {
+        *LAST_FRAME_NORM
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = Some((width, height));
+    }
+}
+
+/// A point outside the frame space the model was shown. Rejected rather than
+/// clamped: a clamped guess becomes a tap on the screen border.
+fn out_of_frame(point: (i32, i32), norm: (i32, i32)) -> bool {
+    point.0 > norm.0 || point.1 > norm.1
+}
+
+/// Fit the display into [`FRAME_BOX`], keeping the aspect and never
+/// upscaling. The shell reports the real value; this mirrors
+/// `PhoneBridge.frameSize` only for replies that omit it.
+fn frame_norm_size(screen_width: i32, screen_height: i32) -> (i32, i32) {
+    if screen_width <= 0 || screen_height <= 0 {
+        return (FRAME_BOX, FRAME_BOX);
+    }
+    if screen_width <= FRAME_BOX && screen_height <= FRAME_BOX {
+        return (screen_width, screen_height);
+    }
+    if screen_width >= screen_height {
+        let height = (i64::from(FRAME_BOX) * i64::from(screen_height) / i64::from(screen_width))
+            .max(1) as i32;
+        (FRAME_BOX, height)
+    } else {
+        let width = (i64::from(FRAME_BOX) * i64::from(screen_width) / i64::from(screen_height))
+            .max(1) as i32;
+        (width, FRAME_BOX)
+    }
+}
 
 /// The shell installs the host at startup, after the Android activity exists
 /// but before the engine can run a turn. A later install replaces the earlier
@@ -97,10 +158,10 @@ pub fn phone_control_tool_spec(language: &str) -> ToolSpec {
     let t = |key: &str| crate::i18n::t_in_language(key, language);
     let bbox = json!({
         "type": "array",
-        "items": {"type": "integer", "minimum": 0, "maximum": MAX_NORMALIZED_COORD},
+        "items": {"type": "integer", "minimum": 0, "maximum": FRAME_BOX},
         "anyOf": [
-            {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": MAX_NORMALIZED_COORD}, "minItems": 2, "maxItems": 2},
-            {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": MAX_NORMALIZED_COORD}, "minItems": 4, "maxItems": 4}
+            {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": FRAME_BOX}, "minItems": 2, "maxItems": 2},
+            {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": FRAME_BOX}, "minItems": 4, "maxItems": 4}
         ],
         "description": t("tool.spec.phone_control.args.bbox")
     });
@@ -122,7 +183,7 @@ pub fn phone_control_tool_spec(language: &str) -> ToolSpec {
         "to_bbox".to_string(),
         json!({
             "type": "array",
-            "items": {"type": "integer", "minimum": 0, "maximum": MAX_NORMALIZED_COORD},
+            "items": {"type": "integer", "minimum": 0, "maximum": FRAME_BOX},
             "description": t("tool.spec.phone_control.args.to_bbox")
         }),
     );
@@ -488,10 +549,7 @@ fn parse_bbox_field(value: Option<&Value>) -> Result<Option<(i32, i32)>> {
         [x1, y1, x2, y2] => ((x1 + x2) / 2, (y1 + y2) / 2),
         _ => return Err(anyhow!(crate::i18n::t("tool.phone_control.invalid_bbox"))),
     };
-    if numbers
-        .iter()
-        .any(|value| *value < 0 || *value > MAX_NORMALIZED_COORD)
-    {
+    if numbers.iter().any(|value| *value < 0 || *value > FRAME_BOX) {
         return Err(anyhow!(crate::i18n::t(
             "tool.phone_control.bbox_out_of_range"
         )));
@@ -507,6 +565,22 @@ pub async fn tool_phone_control(_context: &ToolContext<'_>, args: &Value) -> Res
 
 async fn execute_with_host(host: Arc<dyn PhoneControlHost>, args: &Value) -> Result<Value> {
     let payload = parse_phone_args(args)?;
+    // A coordinate outside the frame the model actually saw would be clamped
+    // to the screen edge by the device; reject it with the real extent so the
+    // model re-reads the screenshot instead of tapping the border.
+    if let Some((norm_width, norm_height)) = last_frame_norm() {
+        let norm = (norm_width, norm_height);
+        if payload.bbox.is_some_and(|point| out_of_frame(point, norm))
+            || payload
+                .to_bbox
+                .is_some_and(|point| out_of_frame(point, norm))
+        {
+            return Err(anyhow!(format!(
+                "{} (frame {norm_width}x{norm_height})",
+                crate::i18n::t("tool.phone_control.bbox_out_of_range")
+            )));
+        }
+    }
     let action = payload.action;
     let host_args = payload.host_args();
     let started_at = Instant::now();
@@ -548,6 +622,24 @@ async fn execute_with_host(host: Arc<dyn PhoneControlHost>, args: &Value) -> Res
         .get("screen_height")
         .and_then(Value::as_i64)
         .unwrap_or(0) as i32;
+    // The shell reports the coordinate space of the frame it just returned;
+    // the fallback only covers a reply from an older shell.
+    let (fallback_width, fallback_height) = frame_norm_size(screen_width, screen_height);
+    let reply_norm = |key: &str| {
+        reply
+            .get(key)
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+            .clamp(0, i64::from(FRAME_BOX)) as i32
+    };
+    let (norm_width, norm_height) = match (
+        reply_norm("normalized_width"),
+        reply_norm("normalized_height"),
+    ) {
+        (width, height) if width > 0 && height > 0 => (width, height),
+        _ => (fallback_width, fallback_height),
+    };
+    remember_frame_norm(norm_width, norm_height);
     let ui_tree = reply
         .get("ui_tree")
         .and_then(Value::as_str)
@@ -584,7 +676,12 @@ async fn execute_with_host(host: Arc<dyn PhoneControlHost>, args: &Value) -> Res
         } else {
             "tool.phone_control.followup_prompt_unsettled"
         };
-        Some(crate::i18n::t(key))
+        // Every followup names the frame size so the model keeps using the
+        // pixel grid of the screenshot it is looking at, not a fixed square.
+        Some(format!(
+            "{} (frame {norm_width}x{norm_height} px)",
+            crate::i18n::t(key)
+        ))
     } else {
         None
     };
@@ -598,8 +695,8 @@ async fn execute_with_host(host: Arc<dyn PhoneControlHost>, args: &Value) -> Res
         "foreground_app": foreground_app,
         "screen_width": screen_width,
         "screen_height": screen_height,
-        "normalized_width": MAX_NORMALIZED_COORD,
-        "normalized_height": MAX_NORMALIZED_COORD,
+        "normalized_width": norm_width,
+        "normalized_height": norm_height,
         "elapsed_ms": started_at.elapsed().as_millis() as u64,
     });
     if let Some((x, y)) = payload.bbox {
@@ -745,6 +842,8 @@ mod tests {
             "accessibility_connected": true,
             "screen_width": 1080,
             "screen_height": 2400,
+            "normalized_width": 720,
+            "normalized_height": 1600,
             "foreground_app": "com.example.settings",
             "ui_tree": "#0 Button [bounds=0,0,100,100]",
             "screenshot_path": screenshot,
@@ -788,7 +887,9 @@ mod tests {
         assert_eq!(result["ok"], json!(true));
         assert_eq!(result["data"]["action"], json!("tap"));
         assert_eq!(result["data"]["center_norm"], json!([200, 300]));
-        assert_eq!(result["data"]["normalized_width"], json!(1000));
+        // The frame space the shell reported, not a fixed square.
+        assert_eq!(result["data"]["normalized_width"], json!(720));
+        assert_eq!(result["data"]["normalized_height"], json!(1600));
         assert_eq!(result["data"]["screen_width"], json!(1080));
         let seen = host.seen.lock().unwrap();
         assert_eq!(seen[0].0, "tap");
@@ -813,9 +914,77 @@ mod tests {
 
     #[test]
     fn out_of_range_bbox_is_rejected() {
-        let error = parse_phone_args(&json!({"action": "tap", "bbox": [0, 1001]}))
+        let error = parse_phone_args(&json!({"action": "tap", "bbox": [0, 2049]}))
             .expect_err("out of range");
-        assert!(error.to_string().contains("1000"));
+        // The message is localized, so assert it is text rather than the key.
+        let message = error.to_string();
+        assert!(!message.is_empty());
+        assert_ne!(message, "tool.phone_control.bbox_out_of_range");
+    }
+
+    #[test]
+    fn frame_norm_size_keeps_the_screen_aspect() {
+        // A 1080x2400 phone becomes a 720x1600 frame: same pixels per unit on
+        // both axes, so a coordinate read off the screenshot is a pixel.
+        assert_eq!(frame_norm_size(1080, 2400), (720, 1600));
+        assert_eq!(frame_norm_size(2400, 1080), (1600, 720));
+        // Frames already inside the box are reported 1:1 and never upscaled.
+        assert_eq!(frame_norm_size(1080, 1920), (900, 1600));
+        assert_eq!(frame_norm_size(1080, 1080), (1080, 1080));
+        assert_eq!(frame_norm_size(0, 0), (FRAME_BOX, FRAME_BOX));
+    }
+
+    #[tokio::test]
+    async fn reply_without_frame_size_falls_back_to_the_aspect_fit() {
+        let host = Arc::new(FakeHost {
+            seen: Default::default(),
+            // A shell that predates `normalized_*`: only the display size.
+            reply: json!({"ok": true, "screen_width": 1080, "screen_height": 2400}),
+        });
+        let result = execute_with_host(host, &json!({"action": "screenshot"}))
+            .await
+            .unwrap();
+        assert_eq!(result["data"]["normalized_width"], json!(720));
+        assert_eq!(result["data"]["normalized_height"], json!(1600));
+    }
+
+    #[test]
+    fn coordinates_outside_the_frame_are_rejected() {
+        let norm = (720, 1600);
+        assert!(!out_of_frame((0, 0), norm));
+        assert!(!out_of_frame((720, 1600), norm));
+        assert!(out_of_frame((1000, 500), norm));
+        assert!(out_of_frame((500, 1700), norm));
+    }
+
+    #[test]
+    fn frames_stay_inside_the_model_view_budget() {
+        // A frame the model view would rescale breaks the one-pixel-per-unit
+        // promise, so every resolution must land inside both limits.
+        for (width, height) in [
+            (1080, 2400),
+            (2400, 1080),
+            (1440, 3200),
+            (2560, 1600),
+            (1600, 1600),
+            (3840, 2160),
+            (720, 1280),
+        ] {
+            let (frame_width, frame_height) = frame_norm_size(width, height);
+            assert!(frame_width <= FRAME_BOX && frame_height <= FRAME_BOX);
+            assert!(
+                crate::services::chat_media::model_view_size(
+                    frame_width as u32,
+                    frame_height as u32
+                )
+                .is_none(),
+                "{}x{} becomes {}x{}, which the model view rescales",
+                width,
+                height,
+                frame_width,
+                frame_height
+            );
+        }
     }
 
     #[test]

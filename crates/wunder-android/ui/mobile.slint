@@ -37,7 +37,7 @@ import { ListView, ScrollView } from "std-widgets.slint";
 // a flat, bounded card so a long thread list stays cheap to scroll.
 
 // One square in the phone's function panel: a single soft icon capsule with a
-// caption. No outer card or border — the capsule is the whole shape, so five
+// caption. No outer card or border — the capsule is the whole shape, so the
 // thumbs in one row read as one even strip instead of nested boxes.
 component PlusTile inherits Rectangle {
     in property <image> icon;
@@ -376,6 +376,8 @@ export component MobileWindow inherits Window {
     // Right-edge turn ruler; one tick per user turn, same shape as the desktop.
     in property <[TurnMark]> turn-marks: [];
     in property <string> greeting: "";
+    // 云端线程用它自己的云智能体问候语，和桌面版同一条规则。
+    in property <string> cloud-greeting: "";
     // ---- 目标横幅 / 计划面板（本机线程） ------------------------------
     in property <bool> goal-visible: false;
     in property <bool> goal-active: false;
@@ -766,7 +768,6 @@ export component MobileWindow inherits Window {
     callback plus-panel-opened();
     callback keyboard-dismiss();
     callback record-voice();
-    callback capture-screenshot();
     callback send();
     callback stop();
     callback select-model(int, string);
@@ -1193,7 +1194,7 @@ export component MobileWindow inherits Window {
             rows: root.rows;
             turn-marks: root.turn-marks;
             mobile: true;
-            greeting: root.greeting;
+            greeting: root.settings-chat-target == 0 ? root.greeting : root.cloud-greeting;
             loading: root.loading;
             follow-output <=> root.follow-output;
             spinning: root.spinning;
@@ -1416,15 +1417,6 @@ export component MobileWindow inherits Window {
                         clicked => {
                             root.close-plus();
                             root.record-voice();
-                        }
-                    }
-                    PlusTile {
-                        visible: root.settings-chat-target == 0;
-                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-camera.svg");
-                        label: I18n.cp_screenshot;
-                        clicked => {
-                            root.close-plus();
-                            root.capture-screenshot();
                         }
                     }
                     PlusTile {

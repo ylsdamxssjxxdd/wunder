@@ -1496,8 +1496,8 @@
     "zh-CN": "bbox 必须是 [x1,y1,x2,y2] 或 [cx,cy] 形式的 JSON 数组，不要加引号。"
   },
   "tool.phone_control.bbox_out_of_range": {
-    "en-US": "Coordinates are outside the fixed 1000x1000 normalized space; both axes must stay within 0..1000. Re-read the latest screenshot and retry.",
-    "zh-CN": "坐标超出归一化范围：固定 1000x1000，两轴都必须在 0..1000 内；请按最近一次截图重新给出坐标。"
+    "en-US": "Coordinates are outside the current screenshot's pixel grid: both axes must stay within the normalized_width / normalized_height reported by the last result; coordinates are pixels of the returned screenshot. Re-read it and retry.",
+    "zh-CN": "坐标超出当前截图的像素范围：两轴必须落在最近一次结果报告的 normalized_width / normalized_height 之内（坐标即返回截图的像素）。请按最近一次截图重新给出坐标。"
   },
   "tool.phone_control.text_required": {
     "en-US": "A non-empty text is required.",
@@ -1572,8 +1572,8 @@
     "zh-CN": "剪贴板当前不可读：请保持目标应用在前台后重试。"
   },
   "tool.phone_control.followup_prompt": {
-    "en-US": "The phone action has been applied. This is the latest screenshot. Verify it before deciding the next step; repeat the same action only when the state is confirmed unchanged.",
-    "zh-CN": "手机动作已执行。下面是动作后的最新截图。请先核对截图，再决定下一步；确认状态未变化时才重试同一动作。"
+    "en-US": "The phone action has been applied. This is the latest screenshot and its pixels are the touch coordinates. Verify it before deciding the next step; repeat the same action only when the state is confirmed unchanged.",
+    "zh-CN": "手机动作已执行。下面是动作后的最新截图，触摸坐标就是它的像素坐标。请先核对截图，再决定下一步；确认状态未变化时才重试同一动作。"
   },
   "tool.phone_control.followup_prompt_unsettled": {
     "en-US": "The action was applied but the screen may still be settling. Call wait to observe it again before repeating input.",
@@ -2340,20 +2340,20 @@
     "zh-CN": "清洗后返回内容的最大字符数，可选。"
   },
   "tool.spec.phone_control.description": {
-    "en-US": "Drive and observe this Android phone. action selects the operation: screenshot, ui_tree, tap/long_press/swipe, type_text, press_key (back/home/recents/notifications/quick_settings), open_app/open_url/open_settings, list_apps/device_info, clipboard, or wait. Touch coordinates use a fixed 1000x1000 normalized space; bbox is [x1,y1,x2,y2] or [cx,cy]. Actions that change the screen return a post-action screenshot: verify it before the next step. Touch, text, screenshots and the UI tree require the user-enabled accessibility service.",
-    "zh-CN": "操作并观察这台 Android 手机。用 action 指定动作：screenshot 截图、ui_tree 读取界面结构、tap/long_press/swipe 触摸、type_text 输入文本、press_key 系统返回/主页/最近任务/通知栏、open_app/open_url/open_settings 打开应用/链接/系统设置、list_apps/device_info 查询环境、clipboard 读写剪贴板、wait 等待后截图。触摸坐标使用固定 1000x1000 归一化空间，bbox 为 [x1,y1,x2,y2] 或 [cx,cy]。除查询类动作外都会返回动作后的截图；请先核对截图再决定下一步。触摸、输入、截图和界面树需要用户开启无障碍服务。"
+    "en-US": "Drive and observe this Android phone. action selects the operation: screenshot, ui_tree, tap/long_press/swipe, type_text, press_key (back/home/recents/notifications/quick_settings), open_app/open_url/open_settings, list_apps/device_info, clipboard, or wait. Touch coordinates are pixels of the returned screenshot (its size is reported as normalized_width/normalized_height and keeps the screen aspect); bbox is [x1,y1,x2,y2] or [cx,cy]. Actions that change the screen return a post-action screenshot: verify it before the next step. Touch, text, screenshots and the UI tree require the user-enabled accessibility service.",
+    "zh-CN": "操作并观察这台 Android 手机。用 action 指定动作：screenshot 截图、ui_tree 读取界面结构、tap/long_press/swipe 触摸、type_text 输入文本、press_key 系统返回/主页/最近任务/通知栏、open_app/open_url/open_settings 打开应用/链接/系统设置、list_apps/device_info 查询环境、clipboard 读写剪贴板、wait 等待后截图。触摸坐标就是返回截图的像素坐标（尺寸见结果中的 normalized_width/normalized_height，与屏幕同比例），bbox 为 [x1,y1,x2,y2] 或 [cx,cy]。除查询类动作外都会返回动作后的截图；请先核对截图再决定下一步。触摸、输入、截图和界面树需要用户开启无障碍服务。"
   },
   "tool.spec.phone_control.args.action": {
     "en-US": "Action: screenshot, ui_tree, tap, long_press, swipe, type_text, press_key, open_app, open_url, open_settings, list_apps, device_info, clipboard, wait.",
     "zh-CN": "动作：screenshot、ui_tree、tap、long_press、swipe、type_text、press_key、open_app、open_url、open_settings、list_apps、device_info、clipboard、wait。"
   },
   "tool.spec.phone_control.args.bbox": {
-    "en-US": "Target touch position as [x1,y1,x2,y2] or [cx,cy] in the fixed 1000x1000 normalized space (0..1000 on both axes); out-of-range values are rejected.",
-    "zh-CN": "目标触摸位置，格式 [x1,y1,x2,y2] 或 [cx,cy]，归一化空间固定 1000x1000，两轴有效范围 0..1000；越界会被拒绝。"
+    "en-US": "Target touch position as [x1,y1,x2,y2] or [cx,cy] in pixels of the latest returned screenshot; take the extent from normalized_width/normalized_height (aspect-preserving, e.g. a 1080x2400 screen is 720x1600) instead of assuming it. Out-of-range values are rejected.",
+    "zh-CN": "目标触摸位置，格式 [x1,y1,x2,y2] 或 [cx,cy]，坐标即最近一次返回截图的像素坐标；空间尺寸以结果中的 normalized_width/normalized_height 为准（保持屏幕长宽比，如 1080x2400 屏幕为 720x1600），不要自行假定尺寸；越界会被拒绝。"
   },
   "tool.spec.phone_control.args.to_bbox": {
-    "en-US": "Swipe end point in the same 1000x1000 normalized space as bbox.",
-    "zh-CN": "swipe 终点，归一化空间与 bbox 相同（1000x1000）。"
+    "en-US": "Swipe end point in the same screenshot-pixel space as bbox.",
+    "zh-CN": "swipe 终点，坐标系与 bbox 相同（返回截图的像素）。"
   },
   "tool.spec.phone_control.args.text": {
     "en-US": "Text for type_text or clipboard set.",

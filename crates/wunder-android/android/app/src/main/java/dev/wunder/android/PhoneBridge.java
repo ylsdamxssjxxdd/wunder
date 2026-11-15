@@ -57,9 +57,18 @@ final class PhoneBridge {
     private static final int MAX_TREE_NODES = 400;
     private static final int MAX_TREE_CHARS = 8000;
     private static final int KEEP_SCREENSHOTS = 4;
+    /** Longest side of the frame handed to the model. Touch coordinates are
+     * pixels of that frame, so both axes keep one pixel per unit and no mental
+     * scaling is needed. 1600 is the largest square the runtime's model view
+     * still accepts without rescaling; matches FRAME_BOX in phone_control. */
+    private static final int FRAME_BOX = 1600;
 
-    /** Display size of the last captured frame; gesture coordinates are
-     * normalized against the frame the model actually saw. */
+    /** Display pixels of the last captured frame; gestures are dispatched in
+     * these coordinates. */
+    private static volatile int[] lastDeviceSize;
+    /** Size of the last saved frame, i.e. the coordinate space the model sees.
+     * Kept next to {@link #lastDeviceSize} so a touch maps back to the exact
+     * picture it was read from. */
     private static volatile int[] lastFrameSize;
 
     private PhoneBridge() {
@@ -73,10 +82,15 @@ final class PhoneBridge {
                     : new JSONObject(argsJson);
             WunderAccessibilityService service = WunderAccessibilityService.getInstance();
             boolean connected = service != null;
-            int[] size = screenSize(context);
+            int[] size = lastDeviceSize != null ? lastDeviceSize : screenSize(context);
+            int[] frame = lastFrameSize != null ? lastFrameSize : frameSize(size[0], size[1]);
             result.put("accessibility_connected", connected);
             result.put("screen_width", size[0]);
             result.put("screen_height", size[1]);
+            // The coordinate space of the frame the model receives; the runtime
+            // validates touch arguments against it and reports it to the model.
+            result.put("normalized_width", frame[0]);
+            result.put("normalized_height", frame[1]);
             result.put("settled", true);
 
             boolean ok = true;
@@ -294,11 +308,29 @@ final class PhoneBridge {
         return mapPointXY(context, args.optInt("x", 0), args.optInt("y", 0));
     }
 
-    private static int[] mapPointXY(Context context, int normX, int normY) {
-        int[] size = lastFrameSize != null ? lastFrameSize : screenSize(context);
-        int x = clamp(normX, 0, 1000) * Math.max(0, size[0] - 1) / 1000;
-        int y = clamp(normY, 0, 1000) * Math.max(0, size[1] - 1) / 1000;
+    /** Map a point from the frame the model looked at back to display pixels. */
+    private static int[] mapPointXY(Context context, int frameX, int frameY) {
+        int[] device = lastDeviceSize != null ? lastDeviceSize : screenSize(context);
+        int[] frame = lastFrameSize != null ? lastFrameSize : frameSize(device[0], device[1]);
+        int x = clamp(frameX, 0, frame[0]) * Math.max(0, device[0] - 1) / Math.max(1, frame[0]);
+        int y = clamp(frameY, 0, frame[1]) * Math.max(0, device[1] - 1) / Math.max(1, frame[1]);
         return new int[]{x, y};
+    }
+
+    /** Fit the display into a {@link #FRAME_BOX} square without upscaling and
+     * without touching the aspect: the saved frame is what the model reads its
+     * coordinates from, so a 1080x2400 phone becomes 720x1600. */
+    private static int[] frameSize(int width, int height) {
+        if (width <= 0 || height <= 0) {
+            return new int[]{FRAME_BOX, FRAME_BOX};
+        }
+        if (width <= FRAME_BOX && height <= FRAME_BOX) {
+            return new int[]{width, height};
+        }
+        if (width >= height) {
+            return new int[]{FRAME_BOX, (int) Math.max(1, (long) FRAME_BOX * height / width)};
+        }
+        return new int[]{(int) Math.max(1, (long) FRAME_BOX * width / height), FRAME_BOX};
     }
 
     private static int clamp(int value, int min, int max) {
@@ -749,20 +781,6 @@ final class PhoneBridge {
 
     // ---- screenshots --------------------------------------------------------
 
-    /**
-     * One-shot screenshot for the chat's 截图 action. Returns the cache path,
-     * or null when the service is disconnected or the frame failed.
-     */
-    static String captureScreenForUi(Context context) {
-        WunderAccessibilityService service = WunderAccessibilityService.getInstance();
-        if (service == null) {
-            return null;
-        }
-        // The chat only needs the bitmap; skip the UI-tree walk the agent
-        // tools do after every action.
-        return ScreenshotApi30.capture(context, service);
-    }
-
     private static Frame captureFrame(Context context, WunderAccessibilityService service) {
         if (service == null) {
             return null;
@@ -828,20 +846,38 @@ final class PhoneBridge {
             if (shot == null) {
                 return null;
             }
+            // Save the frame at the size the model will read coordinates from,
+            // so what it sees and what it taps are the same pixel grid.
+            int[] device = new int[]{shot.getWidth(), shot.getHeight()};
+            int[] frame = frameSize(device[0], device[1]);
+            Bitmap scaled = device[0] == frame[0] && device[1] == frame[1]
+                    ? shot
+                    : Bitmap.createScaledBitmap(shot, frame[0], frame[1], true);
+            if (scaled == null) {
+                shot.recycle();
+                return null;
+            }
             File directory = new File(context.getCacheDir(), "phone");
             if (!directory.exists() && !directory.mkdirs()) {
+                if (scaled != shot) {
+                    scaled.recycle();
+                }
                 shot.recycle();
                 return null;
             }
             File file = new File(directory, "shot-" + System.currentTimeMillis() + ".png");
             try (FileOutputStream out = new FileOutputStream(file)) {
-                shot.compress(Bitmap.CompressFormat.PNG, 100, out);
-                lastFrameSize = new int[]{shot.getWidth(), shot.getHeight()};
+                scaled.compress(Bitmap.CompressFormat.PNG, 100, out);
+                lastDeviceSize = device;
+                lastFrameSize = frame;
                 prune(directory);
                 return file.getAbsolutePath();
             } catch (Throwable error) {
                 return null;
             } finally {
+                if (scaled != shot) {
+                    scaled.recycle();
+                }
                 shot.recycle();
             }
         }

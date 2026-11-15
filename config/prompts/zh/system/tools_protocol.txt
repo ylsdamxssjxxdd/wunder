@@ -56,7 +56,7 @@ XML 兜底示例（仅在原生工具调用不可用时使用）：
 
 [[HAS_PHONE_CONTROL_TOOL]]
 [手机控制]
-- 坐标使用固定 1000x1000 的归一化空间（结果中的 normalized_width/normalized_height），bbox 格式为 [x1,y1,x2,y2] 或 [cx,cy]。
+- 坐标就是返回截图的像素坐标，空间尺寸以结果中的 normalized_width/normalized_height 为准（保持屏幕长宽比，如 720x1600），bbox 格式为 [x1,y1,x2,y2] 或 [cx,cy]；越界会被拒绝，不要自行假定尺寸。
 - 推荐循环：screenshot 或 ui_tree 确认界面 → 选择一个动作 → 查看返回截图 → 再决定下一步。open_app/open_url/open_settings 之后先确认目标界面已就绪。
 - type_text 可附带输入框 bbox，先点击再写入；press_key 只支持 back/home/recents/notifications/quick_settings。
 - 点击、滑动、输入、界面树和截图依赖无障碍服务；accessibility_connected=false 时先向用户说明并通过 open_settings（page=accessibility）打开设置，等用户开启后再继续。

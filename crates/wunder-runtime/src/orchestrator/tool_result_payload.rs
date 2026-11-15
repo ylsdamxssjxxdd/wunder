@@ -2039,6 +2039,11 @@ fn project_phone_control(data: &Value) -> Option<Value> {
             "accessibility_connected",
             "foreground_app",
             "message",
+            // The pixel grid the next bbox must use; without it a model that
+            // lost the followup image has to take a fresh screenshot to learn
+            // the size again.
+            "normalized_width",
+            "normalized_height",
         ],
     );
     if let Some(tree) = map

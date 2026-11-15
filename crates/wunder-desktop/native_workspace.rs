@@ -534,12 +534,25 @@ impl NativeDesktop {
         source: &str,
     ) -> Result<(String, String)> {
         let target = self.chat_resource_target(root_path, source)?;
-        for workspace in self.list_workspaces()? {
-            if let Some(relative) = workspace_relative_target(&workspace.root_path, &target) {
-                return Ok((workspace.workspace_id, relative));
-            }
+        match self.workspace_document_for(&target) {
+            Some(route) => Ok(route),
+            None => bail!("文件不在工作区内"),
         }
-        bail!("文件不在工作区内，无法用系统应用打开")
+    }
+
+    /// Provider route for one host file the transcript already resolved:
+    /// `(workspace id, workspace-relative path)`, or `None` when the file lives
+    /// outside every workspace.
+    ///
+    /// Platforms that can serve any readable local file (one-shot content
+    /// grants) ask this first so a workspace card keeps using the workspace
+    /// provider; everything else falls back to the local-file route.
+    pub fn workspace_document_for(&self, target: &Path) -> Option<(String, String)> {
+        let workspaces = self.list_workspaces().ok()?;
+        workspaces.into_iter().find_map(|workspace| {
+            workspace_relative_target(&workspace.root_path, target)
+                .map(|relative| (workspace.workspace_id, relative))
+        })
     }
 
     /// Show one workspace entry where it lives on disk. Windows selects the

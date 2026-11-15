@@ -153,4 +153,9 @@ fn transcript_cards_map_onto_the_workspace_provider_route() {
     assert!(runtime
         .chat_resource_document(&workspace.root_path, &outside_text)
         .is_err());
+    assert_eq!(runtime.workspace_document_for(&outside), None);
+    assert_eq!(
+        runtime.workspace_document_for(&inside),
+        Some((workspace.workspace_id.clone(), "notes/plan.md".into()))
+    );
 }

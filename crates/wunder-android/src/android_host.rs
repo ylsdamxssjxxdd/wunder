@@ -361,17 +361,6 @@ pub fn take_voice_events() -> Vec<String> {
     call_string_array("takeVoiceEvents")
 }
 
-/// Capture the current screen. Returns `pending` (the result arrives through
-/// [`take_screenshot_events`]) or `failed:<reason>`.
-pub fn capture_screenshot() -> String {
-    call_string("captureScreenshot")
-}
-
-/// Drain screenshot results: `ok|<path>`, `no_service` or `error|<message>`.
-pub fn take_screenshot_events() -> Vec<String> {
-    call_string_array("takeScreenshotEvents")
-}
-
 /// Raw permission states as one JSON object. The settings page maps them to
 /// user-facing labels; an unavailable activity yields an empty object.
 pub fn permission_snapshot() -> String {
@@ -409,6 +398,35 @@ pub fn open_workspace_file(workspace_id: &str, relative: &str) -> bool {
 /// Open the containing folder (or a directory itself) in a file manager.
 pub fn open_workspace_location(workspace_id: &str, relative_dir: &str) -> bool {
     call_workspace_bool("openWorkspaceLocation", workspace_id, relative_dir)
+}
+
+/// Open one local file that has no workspace provider route (a chat
+/// attachment, a temp artifact, or a file outside every workspace) with the
+/// system viewer. The host registers a one-shot read grant for exactly this
+/// path, so no directory is exposed.
+pub fn open_local_file(path: &str) -> bool {
+    let Some(host) = HOST.get() else {
+        return false;
+    };
+    let Ok(mut env) = host.vm.attach_current_thread() else {
+        return false;
+    };
+    let Ok(path) = env.new_string(path) else {
+        return false;
+    };
+    match env.call_static_method(
+        &host.ui_bridge,
+        "openLocalFile",
+        "(Ljava/lang/String;)Z",
+        &[JValue::Object(&path)],
+    ) {
+        Ok(value) => value.z().unwrap_or(false),
+        Err(error) => {
+            clear_java_exception(&mut env);
+            log::warn!("openLocalFile failed: {}", error);
+            false
+        }
+    }
 }
 
 /// Open one http(s) link from the transcript in the system browser. Returns

@@ -1503,12 +1503,6 @@ fn wire_callbacks(
     ui.on_record_voice(move || {
         let _ = sender.send(Command::VoiceToggle);
     });
-    let sender = commands.clone();
-    ui.on_capture_screenshot(move || {
-        let _ = sender.send(Command::CaptureScreenshot);
-    });
-    ui.on_remove_attachment(|_index| {});
-    ui.on_attach_files(|| {});
 
     // 撤下一条还在等待发送的消息：文本由引擎退回草稿，这一帧只发命令。
     let sender = commands.clone();
@@ -2161,6 +2155,8 @@ fn start_tick(
     let mut last_tool_editor = 0u64;
     let mut last_tool_file = 0u64;
     let mut last_agent = 0u64;
+    let mut last_greeting = 0u64;
+    let mut last_cloud_greeting = 0u64;
     let mut last_agent_seed = 0u64;
     let mut last_cron = 0u64;
     let mut last_cron_editor = 0u64;
@@ -2356,7 +2352,7 @@ fn start_tick(
                 let _ = commands.send(command);
             }
         }
-        // Voice and screenshot results are posted by Java workers; poll them
+        // Voice results are posted by Java workers; poll them
         // often enough that the capture strip reacts within a frame or two.
         #[cfg(target_os = "android")]
         if host_ticks % 6 == 0 {
@@ -2376,9 +2372,6 @@ fn start_tick(
                         message: format!("录音失败：{message}"),
                     });
                 }
-            }
-            for status in crate::android_host::take_screenshot_events() {
-                let _ = commands.send(Command::ScreenshotResult { status });
             }
         }
         // Back presses are recorded by the activity. Resolve them on the UI
@@ -3061,6 +3054,18 @@ fn start_tick(
                 }
             }
             last_tool_file = state.tool_file_rev;
+        }
+
+        if state.greeting_rev != last_greeting {
+            // 桌面版把内置智能体的问候语当作转录区顶部的欢迎语；手机沿用
+            // 同一句话，空串时才回落到 I18n.chat_greeting。
+            ui.set_greeting(state.greeting.as_str().into());
+            last_greeting = state.greeting_rev;
+        }
+
+        if state.cloud_greeting_rev != last_cloud_greeting {
+            ui.set_cloud_greeting(state.cloud_greeting.as_str().into());
+            last_cloud_greeting = state.cloud_greeting_rev;
         }
 
         if state.agent_rev != last_agent {
@@ -3852,7 +3857,7 @@ pub fn install_preview_data(
         MobilePermission {
             id: "accessibility".into(),
             title: "无障碍服务".into(),
-            description: "手机控制、界面读取与屏幕截图".into(),
+            description: "wunder 手机控制：界面读取、点击滑动输入与截图".into(),
             state_text: "未开启".into(),
             action_text: "去开启".into(),
             granted: false,
@@ -4443,7 +4448,12 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
         }
         "prompt-preview" => {
             ui.set_rows(ModelRc::default());
-            ui.set_greeting("你好，我是 wunder。把目标交给我，我来拆解并执行。".into());
+            // 与运行时内置智能体的默认问候语（DEFAULT_AGENT_GREETING）一致，
+            // 预览看到的就是真机首屏那句话。
+            ui.set_greeting(
+                "我是 wunder 的驾驶员，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧~"
+                    .into(),
+            );
             ui.set_loading(false);
         }
         "drawer" => {
@@ -4453,6 +4463,10 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
         "compose" => {
             ui.set_draft("把这份周报的结论改成三条要点，语气收紧一点。".into());
             ui.set_input_page_open(true);
+        }
+        // 加号功能面板：一排方块的实际宽度与间距在这里看。
+        "plus" => {
+            ui.set_plus_open(true);
         }
         "workspace-sheet" => {
             ui.set_drawer_open(true);

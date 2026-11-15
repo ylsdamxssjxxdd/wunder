@@ -1807,7 +1807,7 @@ fn view_size_with_limits(
     (scaled_width < width || scaled_height < height).then_some((scaled_width, scaled_height))
 }
 
-fn model_view_size(width: u32, height: u32) -> Option<(u32, u32)> {
+pub(crate) fn model_view_size(width: u32, height: u32) -> Option<(u32, u32)> {
     view_size_with_limits(
         width,
         height,
