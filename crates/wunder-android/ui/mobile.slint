@@ -1263,6 +1263,8 @@ export component MobileWindow inherits Window {
                 }
 
                 // 问询面板：触摸端直接复用桌面版的卡片，下面跟一个显式的提交键。
+                // 单选答案会自动翻到下一题，最后一题答完全部有答案时直接提交（与
+                // 桌面版、云端版同一条引导流程）；提交键留给自由文本与多选题。
                 // 展开全部时用内部滚动兜住高度，不让面板把输入区挤出屏幕。
                 if root.inquiry-total > 0 : Rectangle {
                     height: min(root.height * 0.46, inquiry-stack.preferred-height);

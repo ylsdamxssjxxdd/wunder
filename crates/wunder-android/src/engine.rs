@@ -548,6 +548,30 @@ impl InquiryView {
         self.questions.iter().any(Self::is_answered)
     }
 
+    /// 每题都答完。只有引导式单选推进需要它，用来判断「最后一题答完即完成」。
+    fn all_answered(&self) -> bool {
+        !self.questions.is_empty() && self.questions.iter().all(Self::is_answered)
+    }
+
+    /// 引导式单选流程：选完一题自动翻到下一题；最后一题答完且全部有答案时，
+    /// 返回 true 让调用方提交面板。多选题留在原页，方便用户把组合选完。
+    fn advance_after_answer(&mut self, index: usize) -> bool {
+        if self
+            .questions
+            .get(index)
+            .is_some_and(|question| question.multiple)
+            || !self.questions.get(index).is_some_and(Self::is_answered)
+        {
+            return false;
+        }
+        if index + 1 < self.questions.len() {
+            self.page = index + 1;
+            self.expanded = false;
+            return false;
+        }
+        self.all_answered()
+    }
+
     fn toggle_option(&mut self, index: usize, option: usize) {
         let Some(question) = self.questions.get_mut(index) else {
             return;
@@ -1871,24 +1895,36 @@ fn run(
             }
             Command::InquiryOption { row, option } => {
                 let session = shared.lock().unwrap().session_id.clone();
-                mutate_inquiry(&shared, &session, |panel| {
+                let submit = mutate_inquiry(&shared, &session, |panel| {
                     let index = panel.question_index(row);
                     panel.toggle_option(index, option.max(0) as usize);
+                    panel.advance_after_answer(index)
                 });
+                if submit == Some(true) {
+                    submit_inquiry(&desktop, &shared, &session);
+                }
             }
             Command::InquiryNoPreference { row } => {
                 let session = shared.lock().unwrap().session_id.clone();
-                mutate_inquiry(&shared, &session, |panel| {
+                let submit = mutate_inquiry(&shared, &session, |panel| {
                     let index = panel.question_index(row);
                     panel.toggle_no_preference(index);
+                    panel.advance_after_answer(index)
                 });
+                if submit == Some(true) {
+                    submit_inquiry(&desktop, &shared, &session);
+                }
             }
             Command::InquiryUseRecommended { row } => {
                 let session = shared.lock().unwrap().session_id.clone();
-                mutate_inquiry(&shared, &session, |panel| {
+                let submit = mutate_inquiry(&shared, &session, |panel| {
                     let index = panel.question_index(row);
                     panel.use_recommended(index);
+                    panel.advance_after_answer(index)
                 });
+                if submit == Some(true) {
+                    submit_inquiry(&desktop, &shared, &session);
+                }
             }
             Command::InquiryOther { row, text } => {
                 let session = shared.lock().unwrap().session_id.clone();
@@ -1923,14 +1959,7 @@ fn run(
             }
             Command::InquirySubmit => {
                 let session = shared.lock().unwrap().session_id.clone();
-                if session.is_empty() {
-                    notify(&shared, "会话尚未就绪");
-                    continue;
-                }
-                let answer = take_inquiry_answer(&shared, &session, true);
-                if let Some((text, turn_id)) = answer {
-                    submit_or_hold(desktop.clone(), shared.clone(), session, text, turn_id);
-                }
+                submit_inquiry(&desktop, &shared, &session);
             }
             Command::WithdrawWaiting(queue_id) => withdraw_waiting(&shared, &queue_id, false),
             Command::EditWaiting(queue_id) => withdraw_waiting(&shared, &queue_id, true),
@@ -2511,23 +2540,43 @@ fn run_chat_command(
     }
 }
 
-fn mutate_inquiry(
+fn mutate_inquiry<R>(
     shared: &Arc<Mutex<Shared>>,
     session: &str,
-    change: impl FnOnce(&mut InquiryView),
-) {
+    change: impl FnOnce(&mut InquiryView) -> R,
+) -> Option<R> {
     let Ok(mut state) = shared.lock() else {
-        return;
+        return None;
     };
     if state.session_id != session {
-        return;
+        return None;
     }
     let Some(panel) = state.inquiry.as_mut() else {
-        return;
+        return None;
     };
-    change(panel);
+    let result = change(panel);
     state.inquiry_rev = state.inquiry_rev.wrapping_add(1);
     state.touch();
+    Some(result)
+}
+
+/// 提交当前面板的答案。显式「提交」键与引导推进（最后一题答完）共用这一处：
+/// 面板一条答案都没有时由 `take_inquiry_answer` 统一提示，推进路径不会走到那里。
+fn submit_inquiry(desktop: &Arc<NativeDesktop>, shared: &Arc<Mutex<Shared>>, session: &str) {
+    if session.is_empty() {
+        notify(shared, "会话尚未就绪");
+        return;
+    }
+    let answer = take_inquiry_answer(shared, session, true);
+    if let Some((text, turn_id)) = answer {
+        submit_or_hold(
+            desktop.clone(),
+            shared.clone(),
+            session.to_string(),
+            text,
+            turn_id,
+        );
+    }
 }
 
 fn remember_consumed_inquiry(state: &mut Shared, key: String) {
