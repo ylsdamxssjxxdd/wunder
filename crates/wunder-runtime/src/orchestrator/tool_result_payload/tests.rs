@@ -331,19 +331,29 @@ fn single_long_command_line_keeps_a_distinct_tail_preview() {
 
 #[test]
 fn exited_command_session_preserves_an_explicit_null_exit_code() {
-    let result = ToolResultPayload::from_value(json!({
-        "ok": true,
-        "action": "command_session",
-        "state": "completed",
-        "data": {"status": "exited", "exit_code": null, "interrupted": true, "error": null}
-    }));
-    let observation = result.to_compact_payload("command_session");
-    assert!(observation["data"]
-        .as_object()
-        .unwrap()
-        .contains_key("exit_code"));
-    assert!(observation["data"]["exit_code"].is_null());
-    assert_eq!(observation["data"]["interrupted"], true);
+    for ok in [true, false] {
+        let result = ToolResultPayload::from_value(json!({
+            "ok": ok,
+            "action": "command_session",
+            "state": "completed",
+            "data": {"status": "exited", "exit_code": null, "interrupted": true, "error": null}
+        }));
+        let observation = result.to_compact_payload("command_session");
+        if ok {
+            assert!(observation["data"]
+                .as_object()
+                .unwrap()
+                .contains_key("exit_code"));
+            assert_eq!(observation["data"]["interrupted"], true);
+        } else {
+            assert!(observation.as_object().unwrap().contains_key("exit_code"));
+            assert_eq!(observation["interrupted"], true);
+        }
+        assert!(observation
+            .pointer(if ok { "/data/exit_code" } else { "/exit_code" })
+            .unwrap()
+            .is_null());
+    }
 }
 
 #[test]

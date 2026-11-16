@@ -121,6 +121,7 @@ impl SpecialLogEntry {
     pub(super) fn card_fold(&self, width: u16) -> Option<Disclosure> {
         match self {
             Self::Patch(entry) => entry.card_fold(width),
+            Self::Command(entry) => entry.card_fold(width),
             Self::Plan(entry) => entry.card_fold(),
             _ => None,
         }
@@ -382,74 +383,62 @@ impl CommandLogEntry {
         self.command.clone()
     }
 
-    fn merged_output_len(&self) -> usize {
-        self.sections
-            .iter()
-            .map(|section| section.lines.len())
-            .sum()
+    /// Everything the card can show under its head, in the order the reader meets it: the
+    /// command's remaining lines, the stdin note, then the output. Rows are counted here
+    /// once, so the fold row, the number it prints and the painted card cannot disagree.
+    fn body_rows(&self, width: u16) -> CommandBody {
+        let mut lead = Vec::new();
+        let mut first = true;
+        for command_line in self.command.lines().skip(1) {
+            lead.extend(render_wrapped_tail_text(
+                command_line,
+                command_style(),
+                first,
+                width,
+            ));
+            first = false;
+        }
+        if let Some(input) = self.interaction_input.as_deref() {
+            lead.extend(render_wrapped_tail_text(
+                format!("stdin › {}", crate::render::summarize_interaction_input(input)).as_str(),
+                summary_style(),
+                first,
+                width,
+            ));
+            first = false;
+        }
+        let mut output = Vec::new();
+        for section in &self.sections {
+            for index in 0..section.lines.len() {
+                output.extend(section.render_row(index, first, width));
+                first = false;
+            }
+        }
+        CommandBody { lead, output }
+    }
+
+    /// Rows a folded card hides: the lead rows plus everything past the preview window.
+    /// The fold is the card's own click, the way a thinking block and a patch card fold —
+    /// no key and no second screen.
+    fn card_fold(&self, width: u16) -> Option<Disclosure> {
+        Disclosure::new_lines(foldable_rows(&self.body_rows(width)))
     }
 
     fn render_lines_for_width(&self, width: u16, expanded: bool) -> Vec<Line<'static>> {
+        let body = self.body_rows(width);
+        let fold = Disclosure::new_lines(foldable_rows(&body));
         let mut lines = vec![self.header_line()];
-        let mut body_first = true;
+        let visible_rows = if expanded {
+            body.lead.len().saturating_add(body.output.len())
+        } else {
+            body.output.len().min(COMMAND_PREVIEW_LINES)
+        };
+        let body_first = visible_rows == 0;
         if expanded {
-            for command_line in self.command.lines().skip(1) {
-                lines.extend(render_wrapped_tail_text(
-                    command_line,
-                    command_style(),
-                    body_first,
-                    width,
-                ));
-                body_first = false;
-            }
-        }
-
-        if expanded {
-            if let Some(input) = self.interaction_input.as_deref() {
-                lines.extend(render_wrapped_tail_text(
-                    format!("stdin › {}", crate::render::summarize_interaction_input(input))
-                        .as_str(),
-                    summary_style(),
-                    body_first,
-                    width,
-                ));
-                body_first = false;
-            }
-        }
-
-        let mut remaining = COMMAND_PREVIEW_LINES;
-        let mut shown_logical = 0;
-        'sections: for section in &self.sections {
-            for index in 0..section.lines.len() {
-                let rendered = section.render_row(index, body_first, width);
-                let rendered_len = rendered.len();
-                if !expanded && rendered_len > remaining {
-                    lines.extend(rendered.into_iter().take(remaining));
-                    body_first = false;
-                    break 'sections;
-                }
-                body_first = body_first && rendered.is_empty();
-                lines.extend(rendered);
-                shown_logical += 1;
-                if !expanded {
-                    remaining = remaining.saturating_sub(rendered_len);
-                    if remaining == 0 {
-                        break 'sections;
-                    }
-                }
-            }
-        }
-
-        let hidden = self
-            .command
-            .lines()
-            .count()
-            .saturating_sub(1)
-            .saturating_add(self.merged_output_len().saturating_sub(shown_logical));
-        if !expanded && hidden > 0 {
-            lines.push(output_overflow_line(
-                hidden, self.is_zh, true, "    ", width,
-            ));
+            lines.extend(body.lead);
+            lines.extend(body.output);
+        } else {
+            lines.extend(body.output.into_iter().take(COMMAND_PREVIEW_LINES));
         }
 
         if self.sections.iter().any(|section| section.window_truncated) {
@@ -465,6 +454,10 @@ impl CommandLogEntry {
             if let Some(line) = self.footer_line() {
                 lines.push(line);
             }
+        }
+
+        if let Some(line) = disclosure_line(expanded, fold, width, self.is_zh) {
+            lines.push(line);
         }
         lines
     }
@@ -556,6 +549,23 @@ impl CommandLogEntry {
         }
         Line::from(spans)
     }
+}
+
+/// A command card's body, split where the fold draws its line: `lead` is what the head
+/// pushed below itself (the rest of a multi-line command, the stdin note), `output` is the
+/// stream. A folded card previews only the head of `output`, so the first thing a reader
+/// sees under a long command is still what it printed, not the rest of the script.
+struct CommandBody {
+    lead: Vec<Line<'static>>,
+    output: Vec<Line<'static>>,
+}
+
+/// Rows a folded card hides: the lead rows plus everything past the preview window. The
+/// fold and the row that prints its count read the same number.
+fn foldable_rows(body: &CommandBody) -> usize {
+    body.lead
+        .len()
+        .saturating_add(body.output.len().saturating_sub(COMMAND_PREVIEW_LINES))
 }
 
 #[derive(Debug, Clone)]
@@ -2764,8 +2774,8 @@ mod tests {
         let hidden = 8 - COMMAND_PREVIEW_LINES;
         assert!(
             folded.iter().any(|line| line
-                .contains(format!("+{hidden} lines (ctrl+t to view transcript)").as_str())),
-            "the preview counts the hidden output: {folded:?}"
+                .contains(format!("+{hidden} lines (enter to expand)").as_str())),
+            "the preview row counts the hidden output and opens it in place: {folded:?}"
         );
         assert!(
             folded.iter().any(|line| line.contains("line 1")),
@@ -3514,8 +3524,8 @@ mod tests {
         assert!(
             rendered
                 .iter()
-                .any(|line| line.contains("… +1 line (ctrl+t to view transcript)")),
-            "the hidden command row points to the transcript: {rendered:?}"
+                .any(|line| line.contains("+1 line (enter to expand)")),
+            "the hidden command row is the card's own fold, not a key to another screen: {rendered:?}"
         );
 
         let opened = flat_command_lines(&entry, 80, true);
@@ -3573,20 +3583,20 @@ mod tests {
         assert!(
             preview
                 .iter()
-                .any(|line| line.contains("… +6 lines (ctrl+t to view transcript)")),
+                .any(|line| line.contains("+6 lines (enter to expand)")),
             "{preview:?}"
         );
-        assert_eq!(
-            preview
-                .iter()
-                .filter(|line| line.contains("ctrl+t"))
-                .count(),
-            1,
-            "{preview:?}"
+        assert!(
+            !preview.iter().any(|line| line.contains("ctrl+t")),
+            "the fold is a click on the card, not a trip to the transcript view: {preview:?}"
         );
         let transcript = flat_command_lines(&entry, 80, true);
         assert!(transcript.iter().any(|line| line.contains("line 1")));
         assert!(transcript.iter().any(|line| line.contains("line 9")));
+        assert!(
+            transcript.iter().any(|line| line.contains("− Show less")),
+            "an open card offers to close itself: {transcript:?}"
+        );
         assert!(!transcript.iter().any(|line| line.contains("ctrl+t")));
     }
 
@@ -3629,9 +3639,9 @@ mod tests {
         );
     }
 
-    /// The transcript hint drops before the hidden-line count on narrow frames.
+    /// The fold hint drops before the hidden-row count on narrow frames.
     #[test]
-    fn a_chinese_output_hint_keeps_its_count_and_drops_its_key_before_it_overflows() {
+    fn a_chinese_fold_row_keeps_its_count_and_drops_its_hint_before_it_overflows() {
         let section = CommandSection {
             label: "输出".to_string(),
             lines: (1..=9).map(|n| format!("line {n}")).collect(),
@@ -3662,18 +3672,16 @@ mod tests {
                 "the count is the point, and it may not be the first thing lost: {folded:?}"
             );
         }
-        // At the tightest frame the key hint bows out; the count stays.
+        // At the tightest frame the hint bows out; the count stays.
         let tight = flat_command_lines(&entry, 24, false);
         assert!(
-            !tight.iter().any(|row| row.contains("Ctrl+T")),
+            !tight.iter().any(|row| row.contains("enter")),
             "the hint must not be squeezed into an overflow: {tight:?}"
         );
         // Given room it returns.
         let roomy = flat_command_lines(&entry, 40, false);
         assert!(
-            roomy
-                .iter()
-                .any(|row| row.contains("+6 行（Ctrl+T 查看完整转录）")),
+            roomy.iter().any(|row| row.contains("+6 行（enter 展开）")),
             "{roomy:?}"
         );
     }

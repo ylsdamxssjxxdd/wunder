@@ -363,11 +363,22 @@ fn compact_failure_observation_payload(map: &mut Map<String, Value>) -> bool {
             );
         }
     }
+    let command_terminal = raw_data.as_object().map(|data| {
+        ["status", "exit_code", "command_session_id", "interrupted"]
+            .into_iter()
+            .filter_map(|key| data.get(key).map(|value| (key.to_string(), value.clone())))
+            .collect::<Map<String, Value>>()
+    });
     let error = build_compact_failure_error_message(
         map.get("error").and_then(Value::as_str).unwrap_or(""),
         &raw_data,
     );
     map.remove("data");
+    if let Some(terminal) = command_terminal {
+        for (key, value) in terminal {
+            map.insert(key, value);
+        }
+    }
     if let Some(progress) = raw_data
         .as_object()
         .filter(|data| data.contains_key("completed_steps") && data.contains_key("failed_step"))

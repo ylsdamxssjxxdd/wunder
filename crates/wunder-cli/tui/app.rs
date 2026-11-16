@@ -6875,6 +6875,10 @@ impl TuiApp {
             let content = history_content_to_text(record.get("content"));
             match role {
                 "tool" => {
+                    if self.restore_tool_card_from_history(&record) {
+                        restored = restored.saturating_add(1);
+                        continue;
+                    }
                     let cleaned = content.trim();
                     if !cleaned.is_empty() {
                         let (preview, truncated) = truncate_by_chars(cleaned, 500);
@@ -6907,6 +6911,65 @@ impl TuiApp {
             );
         }
         restored
+    }
+
+    /// Rebuild the card a finished tool call had while it ran. A durable tool
+    /// item keeps its tool name, arguments and result payload, so the builders
+    /// the live stream uses produce the same card on resume instead of a raw
+    /// `[history] ...` text preview. A record with no tool name (the plain
+    /// model-message form) returns false and keeps that fallback.
+    fn restore_tool_card_from_history(&mut self, record: &Value) -> bool {
+        let Some(tool) = ["tool", "tool_name", "name"]
+            .iter()
+            .find_map(|key| record.get(*key).and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        else {
+            return false;
+        };
+        let is_zh = self.is_zh_language();
+        // A finished write lands on the diff card, exactly as the live stream
+        // routes it; a failed write keeps the tool card that can show the error.
+        let landed = record
+            .get("ok")
+            .or_else(|| record.get("result").and_then(|value| value.get("ok")))
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        if is_apply_patch_tool_name(tool)
+            || (crate::tool_presentation::is_write_tool_name(tool) && landed)
+        {
+            let special = build_completed_patch_log(record, is_zh);
+            let text = special.summary_text();
+            self.push_special_log(LogKind::Tool, text, special);
+            return true;
+        }
+        if is_execute_command_tool_name(tool) {
+            if let Some(special) = build_completed_command_log(record, is_zh) {
+                let text = special.summary_text();
+                self.push_special_log(LogKind::Tool, text, special);
+                return true;
+            }
+            // The same fallback the live stream uses for a command that never
+            // reported output: a failed call turns its head line into an error.
+            let mut lines = format_tool_result_lines(tool, record, is_zh);
+            let head_kind = if crate::render::tool_result_failed(record) {
+                LogKind::Error
+            } else {
+                LogKind::Tool
+            };
+            if !lines.is_empty() {
+                let head = lines.remove(0);
+                self.push_log(head_kind, head);
+            }
+            for line in lines {
+                self.push_log(LogKind::Tool, line);
+            }
+            return true;
+        }
+        let special = build_completed_tool_log(tool, record, is_zh, None);
+        let text = special.summary_text();
+        self.push_special_log(LogKind::Tool, text, special);
+        true
     }
 
     pub fn on_mouse(&mut self, mouse: MouseEvent) {

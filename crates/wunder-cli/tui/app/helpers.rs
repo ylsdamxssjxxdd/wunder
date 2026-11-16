@@ -1299,14 +1299,32 @@ pub(super) fn item_row_history_record(item: &Value) -> Option<Value> {
         return None;
     }
     let kind = item.get("kind").and_then(Value::as_str).unwrap_or("");
+    let payload = item.get("payload")?;
     let role = if kind == "user_message" {
         "user"
     } else if kind == "assistant_message" || kind.contains("reasoning") {
         "assistant"
+    } else if kind == "tool_result" {
+        // Tool items carry the tool name and its finished payload instead of
+        // message text, so they keep that payload and rebuild the same card the
+        // live stream produced. A row without a tool name is a workflow record,
+        // not a conversation message.
+        if payload
+            .get("tool")
+            .and_then(Value::as_str)
+            .is_none_or(|tool| tool.trim().is_empty())
+        {
+            return None;
+        }
+        let mut record = payload.clone();
+        if let Some(map) = record.as_object_mut() {
+            map.insert("role".into(), json!("tool"));
+            map.insert("kind".into(), json!("tool_result"));
+        }
+        return Some(record);
     } else {
         return None;
     };
-    let payload = item.get("payload")?;
     let content = payload.get("content").cloned().unwrap_or(Value::Null);
     let reasoning = payload
         .get("reasoning")
@@ -1318,8 +1336,8 @@ pub(super) fn item_row_history_record(item: &Value) -> Option<Value> {
 
 /// Project snapshot items (thread_items rows ordered by created_seq) into the
 /// history-record shape consumed by `restore_transcript_from_history`. Only
-/// readable conversation items are projected; tool, approval and model-call
-/// items degrade to the expired-replay notice instead of a JSON wall.
+/// readable conversation items are projected; approval and model-call items
+/// degrade to the expired-replay notice instead of a JSON wall.
 pub(super) fn snapshot_history_records(snapshot: &Value) -> Vec<Value> {
     let Some(items) = snapshot.get("items").and_then(Value::as_array) else {
         return Vec::new();

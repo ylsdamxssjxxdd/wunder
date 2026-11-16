@@ -201,11 +201,15 @@ pub fn build_shell_command_with_shell(command: &str, cwd: &Path, shell: &ShellLa
         if let Some(script) = env::var_os(SHELL_SCRIPT_ENV) {
             cmd.arg(PathBuf::from(script));
         }
-        // `-l` keeps the desktop Unix behaviour where a login shell publishes
-        // the PATH assembled by the host profile. Android's mksh accepts the
-        // same flags and has no profile to run, so one branch covers both.
+        // Keep the script out of argv: pkill/pgrep -f otherwise matches this
+        // wrapper shell along with the intended target and kills the session
+        // itself. eval parses the same script once without an extra shell.
         cmd.arg("-lc")
-            .arg(posix_command_with_pipefail(command))
+            .arg("eval \"${WUNDER_COMMAND_SCRIPT}\"")
+            .env(
+                "WUNDER_COMMAND_SCRIPT",
+                posix_command_with_pipefail(command),
+            )
             .current_dir(cwd);
         apply_platform_spawn_options(&mut cmd);
         cmd
@@ -1918,8 +1922,28 @@ mod tests {
         assert!(output.status.success());
         let stdout = String::from_utf8_lossy(&output.stdout);
         let option = stdout.lines().next().unwrap_or_default();
-        assert!(option.starts_with("pipefail") && option.ends_with("on"), "{stdout}");
+        assert!(
+            option.starts_with("pipefail") && option.ends_with("on"),
+            "{stdout}"
+        );
         assert!(stdout.ends_with('0'), "{stdout}");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn pkill_full_pattern_does_not_kill_the_wrapper_shell() {
+        let output = build_shell_command(
+            "bash -c 'sleep 5' cmdtest_sleeper & pid=$!; pkill -f cmdtest_sleeper; wait \"$pid\" || true",
+            Path::new("."),
+        )
+        .as_std_mut()
+        .output()
+        .expect("run literal pkill probe");
+        assert!(
+            output.status.success(),
+            "wrapper killed itself: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     fn command_args(command: &Command) -> Vec<String> {
@@ -2101,7 +2125,7 @@ mod tests {
         let command = build_shell_command("echo ok | head", Path::new("."));
         assert_eq!(
             command_args(&command),
-            vec!["-lc", "set -o pipefail; echo ok | head"]
+            vec!["-lc", "eval \"${WUNDER_COMMAND_SCRIPT}\""]
         );
     }
 
@@ -2119,7 +2143,7 @@ mod tests {
         // environment; the command contract is what Android relies on.
         assert_eq!(
             command_args(&command),
-            vec!["-lc", "set -o pipefail; echo ok | head"]
+            vec!["-lc", "eval \"${WUNDER_COMMAND_SCRIPT}\""]
         );
     }
 }

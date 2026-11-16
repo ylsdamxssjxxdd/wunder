@@ -586,13 +586,39 @@ async fn sandbox_background_output_streams_independently_and_polls_incrementally
         .json::<Value>()
         .await
         .unwrap();
-    let short_id = short_launch["data"]["command_session_id"].as_str().unwrap();
+    let short_id = short_launch["data"]["command_session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let began = std::time::Instant::now();
-    let (short, _) = await_sandbox_command_exit(&context, short_id, 0.1, None)
+    let (short, _) = await_sandbox_command_exit(&context, &short_id, 0.1, None)
         .await
         .unwrap();
     assert_eq!(short["status"], "running", "{short}");
     assert!(began.elapsed() < Duration::from_secs(2), "{short}");
+    let short_tracker = CommandSessionTracker::start_with_id(
+        &context,
+        Some(short_id.clone()),
+        short_command,
+        "",
+        0,
+        Some("sandbox".into()),
+        CommandSessionLaunchMode::Shell,
+        false,
+        false,
+    )
+    .unwrap();
+    let short_handle = Arc::new(CommandProcessHandle::new(None));
+    assert!(broker.register_process(&short_id, short_handle.clone()));
+    let short_observer = tokio::spawn(observe_sandbox_command(
+        config.clone(),
+        "user".into(),
+        "thread".into(),
+        short_tracker,
+        broker.clone(),
+        short_handle.cancellation_token(),
+        0,
+    ));
     let interrupted = command_session_control(
         &context,
         &json!({"command_session_id": short_id, "chars": "\u{3}", "yield_time_ms": 1000}),
@@ -607,6 +633,10 @@ async fn sandbox_background_output_streams_independently_and_polls_incrementally
         .unwrap()
         .contains_key("exit_code"));
     assert!(interrupted["data"]["exit_code"].is_null(), "{interrupted}");
+    tokio::time::timeout(Duration::from_secs(2), short_observer)
+        .await
+        .unwrap()
+        .unwrap();
 
     let (foreground, _after_seq) = await_sandbox_command_exit(&context, &id, 10.0, None)
         .await

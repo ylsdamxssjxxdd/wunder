@@ -157,6 +157,8 @@ struct SandboxCommandSessionState {
     delta_bytes: usize,
     first_seq: u64,
     expires_at: Option<Instant>,
+    pending_stdout: Vec<u8>,
+    pending_stderr: Vec<u8>,
 }
 
 struct SandboxCommandSession {
@@ -166,6 +168,38 @@ struct SandboxCommandSession {
     cancel: CancellationToken,
     changed: Notify,
     state: Mutex<SandboxCommandSessionState>,
+}
+
+fn decode_session_stream(pending: &mut Vec<u8>, chunk: &[u8], flush: bool) -> String {
+    pending.extend_from_slice(chunk);
+    let mut output = String::new();
+    loop {
+        match std::str::from_utf8(pending) {
+            Ok(text) => {
+                output.push_str(text);
+                pending.clear();
+                break;
+            }
+            Err(error) => {
+                let valid = error.valid_up_to();
+                if valid > 0 {
+                    output.push_str(std::str::from_utf8(&pending[..valid]).unwrap());
+                    pending.drain(..valid);
+                }
+                if let Some(invalid) = error.error_len() {
+                    output.push('\u{fffd}');
+                    pending.drain(..invalid);
+                    continue;
+                }
+                if flush {
+                    output.push_str(&String::from_utf8_lossy(pending));
+                    pending.clear();
+                }
+                break;
+            }
+        }
+    }
+    output
 }
 
 impl SandboxCommandSession {
@@ -201,14 +235,23 @@ impl SandboxCommandSession {
     }
 
     fn append_delta(&self, stream: &'static str, bytes: &[u8]) {
-        if bytes.is_empty() {
-            return;
-        }
-        let delta = String::from_utf8_lossy(bytes).into_owned();
+        self.append_delta_inner(stream, bytes, false);
+    }
+
+    fn append_delta_inner(&self, stream: &'static str, bytes: &[u8], flush: bool) {
+        let mut state = self.state.lock();
+        let delta = {
+            let state = &mut *state;
+            let pending = if stream == "stderr" {
+                &mut state.pending_stderr
+            } else {
+                &mut state.pending_stdout
+            };
+            decode_session_stream(pending, bytes, flush)
+        };
         if delta.is_empty() {
             return;
         }
-        let mut state = self.state.lock();
         state.seq = state.seq.saturating_add(1);
         let seq = state.seq;
         state.delta_bytes = state.delta_bytes.saturating_add(delta.len());
@@ -227,6 +270,8 @@ impl SandboxCommandSession {
     }
 
     fn finish(&self, exit_code: Option<i32>, timed_out: bool, error: Option<String>) {
+        self.append_delta_inner("stdout", &[], true);
+        self.append_delta_inner("stderr", &[], true);
         let mut state = self.state.lock();
         state.running = false;
         state.seq = state.seq.saturating_add(1);
@@ -878,6 +923,8 @@ async fn launch_command_session_inner(request: SandboxToolRequest) -> Value {
             delta_bytes: 0,
             first_seq: 1,
             expires_at: None,
+            pending_stdout: Vec::new(),
+            pending_stderr: Vec::new(),
         }),
     });
     command_sessions()
@@ -2377,6 +2424,21 @@ mod tests {
             resolve_path(&context, "./workspaces/admin__c__1/report.txt").expect("dot public path"),
             PathBuf::from("/workspaces/admin__c__1/report.txt")
         );
+    }
+
+    #[test]
+    fn session_stream_decoder_preserves_split_utf8_and_replaces_real_invalid_bytes() {
+        let mut pending = Vec::new();
+        let mut decoded = String::new();
+        for byte in "中文🧪".as_bytes() {
+            decoded.push_str(&decode_session_stream(&mut pending, &[*byte], false));
+        }
+        decoded.push_str(&decode_session_stream(&mut pending, &[], true));
+        assert_eq!(decoded, "中文🧪");
+        assert!(pending.is_empty());
+
+        let mut invalid = Vec::new();
+        assert_eq!(decode_session_stream(&mut invalid, &[0xff], true), "�");
     }
 
     #[test]

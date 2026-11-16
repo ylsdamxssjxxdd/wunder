@@ -1008,8 +1008,18 @@ pub(super) fn message_context(item: &Value, kind: &str) -> bool {
     } else {
         payload
     };
+    // A tool result that belongs to the conversation: either the model-message
+    // form (`role: tool`) or the richer transcript item, which names its tool
+    // instead of carrying a role. Without the second branch every transcript
+    // read dropped precisely the tool rows the reader had just watched run.
+    let visible_tool_result = kind == "tool_result"
+        && (body["role"] == "tool"
+            || body
+                .get("tool")
+                .and_then(Value::as_str)
+                .is_some_and(|name| !name.trim().is_empty()));
     matches!(kind, "user_message" | "assistant_message" | "agent_message")
-        || (kind == "tool_result" && body["role"] == "tool")
+        || visible_tool_result
         || (kind == "configuration"
             && body["role"] == "system"
             && body
@@ -2678,6 +2688,28 @@ mod tests {
         }))
         .expect("serialize record")
             + "\n"
+    }
+
+    #[test]
+    fn tool_results_naming_a_tool_are_transcript_messages() {
+        // The rich transcript item names its tool; the model-message form carries a role.
+        assert!(message_context(
+            &json!({"kind":"tool_result","payload":{"tool":"执行命令","args":{},"data":{"ok":true}}}),
+            "tool_result"
+        ));
+        assert!(message_context(
+            &json!({"kind":"tool_result","payload":{"role":"tool","content":"ok"}}),
+            "tool_result"
+        ));
+        // A workflow tool row with neither is not a conversation message.
+        assert!(!message_context(
+            &json!({"kind":"tool_result","payload":{"kind":"tool","content":"sample"}}),
+            "tool_result"
+        ));
+        assert!(!message_context(
+            &json!({"kind":"plan","payload":{"content":"sample"}}),
+            "configuration"
+        ));
     }
 
     #[test]

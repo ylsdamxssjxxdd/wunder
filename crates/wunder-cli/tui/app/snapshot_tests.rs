@@ -173,6 +173,70 @@ fn ctrl(code: KeyCode) -> KeyEvent {
 }
 
 #[tokio::test]
+async fn resume_restores_tool_cards_from_durable_history() {
+    let root = TempRoot::new("resume_tool_cards");
+    let mut app = fixture_app(root.path()).await;
+    app.logs.clear();
+    // The record shape a durable tool item projects into on resume: a tool name
+    // and the finished payload, never a plain `content` message.
+    let restored = app.restore_transcript_from_history(vec![
+        json!({"role":"user","content":"run the demo tests"}),
+        json!({
+            "role":"tool",
+            "kind":"tool_result",
+            "item_id":"thread:tool-call_1",
+            "tool":"执行命令",
+            "tool_call_id":"call_1",
+            "status":"completed",
+            "ok":true,
+            "args":{"content":"cargo test -p demo"},
+            "data":{"results":[{
+                "command":"cargo test -p demo",
+                "returncode":0,
+                "stdout":"running 3 tests\ntest result: ok\n",
+                "stderr":""
+            }]}
+        }),
+        json!({
+            "role":"tool",
+            "kind":"tool_result",
+            "tool":"读取文件",
+            "tool_call_id":"call_2",
+            "status":"completed",
+            "ok":true,
+            "args":{"path":"src/demo.rs"},
+            "data":{"content":"fn demo() {}"}
+        }),
+        json!({"role":"assistant","content":"the tests pass"}),
+    ]);
+    assert_eq!(restored, 4, "every history record keeps a visible cell");
+    let command = app
+        .logs
+        .iter()
+        .find(|entry| matches!(entry.special, Some(SpecialLogEntry::Command(_))))
+        .expect("the command call restores as a command card");
+    assert_eq!(command.text, "cargo test -p demo");
+    let tools: Vec<&str> = app
+        .logs
+        .iter()
+        .filter(|entry| matches!(entry.special, Some(SpecialLogEntry::Tool(_))))
+        .map(|entry| entry.text.as_str())
+        .collect();
+    assert_eq!(tools.len(), 1, "a non-command tool keeps its own card");
+    assert!(
+        tools[0].contains("src/demo.rs"),
+        "the tool card still names what it ran on: {}",
+        tools[0]
+    );
+    assert!(
+        !app.logs
+            .iter()
+            .any(|entry| entry.text.contains("[history]")),
+        "a tool item must never degrade to a raw history preview"
+    );
+}
+
+#[tokio::test]
 async fn live_acceptance_shortcuts_open_without_consuming_question_marks_in_a_draft() {
     let root = TempRoot::new("shortcut_input");
     let mut app = fixture_app(root.path()).await;
@@ -2401,6 +2465,80 @@ async fn a_click_on_the_disclosure_row_toggles_the_card_it_belongs_to() {
     assert!(
         !refolded.iter().any(|row| row.contains("reasoning line 12")),
         "the second click folded the card back:\n{refolded:?}"
+    );
+}
+
+/// 执行命令的结果较长时不再喊 ctrl+t：卡片自己折，点折叠行就地展开、再点收起，
+/// 与思考块、编辑卡片同一套手势。
+#[tokio::test]
+async fn a_click_on_a_long_command_card_folds_and_unfolds_it_in_place() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+    let root = TempRoot::new("command_fold_click");
+    let mut app = fixture_app(root.path()).await;
+    app.logs.clear();
+    app.invalidate_transcript_metrics();
+
+    let stdout = (1..=12)
+        .map(|index| format!("out {index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let card = build_completed_command_log(
+        &json!({"result": {"data": {"results": [{
+            "command": "ls",
+            "returncode": 0,
+            "stdout": stdout
+        }]}}}),
+        false,
+    )
+    .expect("command card");
+    app.push_special_log(LogKind::Tool, card.summary_text(), card);
+
+    let width = 80u16;
+    let height = 24u16;
+    let folded = draw_rows(&mut app, width, height);
+    let frame = folded.join("\n");
+    assert!(frame.contains("out 1"), "{frame}");
+    assert!(
+        !frame.contains("out 9"),
+        "the card folds its tail:\n{frame}"
+    );
+    assert!(
+        !frame.contains("ctrl+t"),
+        "the fold names no other screen:\n{frame}"
+    );
+    let fold_row = folded
+        .iter()
+        .position(|row| row.contains("+9 lines (enter to expand)"))
+        .unwrap_or_else(|| panic!("a long command offers its own fold row:\n{frame}"));
+
+    app.on_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 4,
+        row: u16::try_from(fold_row).expect("row fits"),
+        modifiers: KeyModifiers::NONE,
+    });
+    let opened = draw_rows(&mut app, width, height);
+    let opened_frame = opened.join("\n");
+    assert!(
+        opened_frame.contains("out 12"),
+        "the click opens the rest of the output in place:\n{opened_frame}"
+    );
+    let collapse_row = opened
+        .iter()
+        .position(|row| row.contains("\u{2212} Show less"))
+        .unwrap_or_else(|| panic!("an open card offers to close itself:\n{opened_frame}"));
+
+    app.on_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 4,
+        row: u16::try_from(collapse_row).expect("row fits"),
+        modifiers: KeyModifiers::NONE,
+    });
+    let refolded = draw_rows(&mut app, width, height).join("\n");
+    assert!(
+        !refolded.contains("out 12"),
+        "the second click folds it back:\n{refolded}"
     );
 }
 

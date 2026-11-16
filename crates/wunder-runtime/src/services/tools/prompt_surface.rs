@@ -169,8 +169,8 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "执行命令",
-        brief_en: "Run a shell command in the workspace. content is the command; optional workdir and yield_time_ms (default 10000). If it is still running, the result includes command_session_id and the current seq; continue it with command_session instead of starting it again. pgrep/pkill -f may match the current shell; use a literal-breaking pattern or a known PID.",
-        brief_zh: "在工作目录执行命令：content 为命令，可选 workdir、yield_time_ms（默认 10000）。仍在运行时返回 command_session_id 与当前 seq，随后用命令会话继续读取或输入，不要重跑；pgrep/pkill -f 会匹配到自身，应打断字面量或按 PID 处理，等进程用会话轮询或 kill -0 $PID。",
+        brief_en: "Run a shell command in the workspace. content is the command; optional workdir and yield_time_ms (default 10000). If it is still running, the result includes command_session_id and the current seq; continue it with command_session instead of starting it again.",
+        brief_zh: "在工作目录执行命令：content 为命令，可选 workdir、yield_time_ms（默认 10000）。仍在运行时返回 command_session_id 与当前 seq，随后用命令会话继续读取或输入，不要重跑；等进程用会话轮询或 kill -0 $PID。",
         drop_actions: &[],
         drop_fields: &["description", "dry_run"],
     },

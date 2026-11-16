@@ -22,6 +22,8 @@ async fn command_poll_exit_wait_does_not_return_on_output_and_snapshots_are_opti
             delta_bytes: 0,
             first_seq: 1,
             expires_at: None,
+            pending_stdout: Vec::new(),
+            pending_stderr: Vec::new(),
         }),
     });
     command_sessions()

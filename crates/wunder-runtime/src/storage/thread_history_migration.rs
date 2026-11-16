@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::io::BufReader;
 use std::path::Path;
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 const COMPACTION_PENDING: i64 = 2;
 
 pub(super) fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
@@ -50,6 +50,16 @@ pub(super) fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
         // file whose schema has not been created yet.
         migrate_bounded_window(conn)?;
         compact = true;
+    }
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if (1..6).contains(&version) {
+        // v6: transcript tool rows were projected with `message_context=0`
+        // because their payload names a tool instead of carrying `role: tool`,
+        // so `/resume` restored a thread without any of its tool cards. The
+        // flag is derived from the stored preview; bodies are untouched. No
+        // vacuum: the update rewrites qualifying rows in place and a full
+        // rebuild would cost a startup pause on large histories.
+        backfill_tool_message_context(conn)?;
     }
     if compact {
         tracing::info!("compacting migrated canonical history index");
@@ -278,6 +288,31 @@ fn migrate_bodies(conn: &mut Connection, path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// v6 upgrade: re-derive `message_context` for tool rows, whose payload names
+/// the tool instead of carrying `role: tool`. Only the bounded preview is
+/// consulted, so no canonical body has to be read or rewritten.
+fn backfill_tool_message_context(conn: &Connection) -> Result<()> {
+    let updated = match conn.execute(
+        "UPDATE thread_items SET message_context=1
+          WHERE item_type='tool_result' AND message_context=0
+            AND json_valid(preview_json)
+            AND json_extract(preview_json,'$.payload.tool') IS NOT NULL",
+        [],
+    ) {
+        Ok(updated) => updated,
+        // A corrupt preview must never block opening a thread's history; the rows
+        // it cannot read keep their old flag.
+        Err(error) => {
+            tracing::warn!("tool message-context backfill skipped: {error}");
+            return Ok(());
+        }
+    };
+    if updated > 0 {
+        tracing::info!(updated, "repaired tool result message-context flags");
+    }
+    Ok(())
+}
+
 /// v5 upgrade: introduce the sparse anchor table and the durable per-turn
 /// item count, backfill both from the existing rows, then shrink every
 /// rollout to its bounded active window. The outer migration runs VACUUM so
@@ -396,6 +431,44 @@ mod tests {
         .unwrap();
         drop(conn);
         (path, record, item)
+    }
+
+    #[test]
+    fn tool_message_context_backfill_reads_the_stored_preview() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE thread_items(
+                item_type TEXT NOT NULL,
+                message_context INTEGER NOT NULL,
+                preview_json TEXT NOT NULL);",
+        )
+        .unwrap();
+        let insert = |kind: &str, context: i64, preview: Value| {
+            conn.execute(
+                "INSERT INTO thread_items VALUES(?1,?2,?3)",
+                params![kind, context, preview.to_string()],
+            )
+            .unwrap();
+        };
+        insert("tool_result", 0, json!({"payload":{"tool":"执行命令"}}));
+        insert("tool_result", 0, json!({"payload":{"kind":"tool","content":"sample"}}));
+        insert("assistant_message", 1, json!({}));
+        backfill_tool_message_context(&conn).unwrap();
+        let flags: Vec<(String, i64)> = conn
+            .prepare("SELECT item_type,message_context FROM thread_items ORDER BY rowid")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            flags,
+            vec![
+                ("tool_result".to_string(), 1),
+                ("tool_result".to_string(), 0),
+                ("assistant_message".to_string(), 1),
+            ]
+        );
     }
 
     #[test]
