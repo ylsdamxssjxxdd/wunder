@@ -1,5 +1,5 @@
-//! On-demand process pages. Each expanded process retains one bounded page; reads and tool
-//! parsing run off the UI thread, and replies are scoped to the selected thread.
+//! On-demand process pages. Reads are bounded and run off the UI thread, while
+//! merged history keeps its cursors and the live tail; replies are thread-scoped.
 use crate::{MainWindow, ProcessEntry, TimelineRow};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{
@@ -45,6 +45,13 @@ pub(crate) fn page_edge(index: i32) -> Option<i64> {
     (index >= 0).then_some(index as i64)
 }
 
+pub(crate) fn live_older_requested(row: &TimelineRow, direction: i32) -> bool {
+    row.process_local
+        && row.status_kind == crate::timeline::STATUS_RUNNING
+        && direction == -1
+        && row.process_older
+}
+
 /// A process entry is addressed by `-1 - process * PROCESS_SLOT - index`.
 /// The slot is wide enough for a long process whose older pages were merged
 /// into one continuous list, while still keeping the process unambiguous.
@@ -72,9 +79,10 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
         {
             return;
         }
-        // The stream owns this model until settlement. A durable page is
-        // necessarily behind its active tail, and must never replace it.
-        if row.process_local && row.status_kind == crate::timeline::STATUS_RUNNING {
+        // A trimmed live tail can page backwards while it keeps streaming.
+        // Other durable reads still wait for settlement so they cannot replace it.
+        let live_older = live_older_requested(&row, direction);
+        if row.process_local && row.status_kind == crate::timeline::STATUS_RUNNING && !live_older {
             return;
         }
         if row.process_local && direction == 0 && !row.process_error {
@@ -171,7 +179,7 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
             let Some(mut row) = model.row_data(index) else {
                 return true;
             };
-            if !page_is_current(&row, &entries) {
+            if !page_is_current(&row, &entries, direction) {
                 return true;
             }
             row.process_loading = false;
@@ -239,9 +247,9 @@ pub(crate) fn apply_page(row: &mut TimelineRow, page: NativeProcessPage, directi
             .collect();
         merged.extend(row.process_entries.iter());
         merged
-    } else if direction > 0 && direction != 2 {
-        // A later page extends the tail and refreshes entries that appear in
-        // both; entries only the loaded range knows stay in place.
+    } else if direction > 0 {
+        // Later pages and live tail refreshes extend the loaded range instead
+        // of discarding older history that the reader already paged through.
         let mut merged: Vec<ProcessEntry> = row.process_entries.iter().collect();
         let mut index_of: HashMap<String, usize> = merged
             .iter()
@@ -304,6 +312,14 @@ pub(crate) fn apply_page(row: &mut TimelineRow, page: NativeProcessPage, directi
             row.process_first = page_first.unwrap_or(-1) as i32;
         }
         1 => {
+            row.process_newer = page.has_newer;
+            row.process_last = page_last.unwrap_or(-1) as i32;
+        }
+        2 => {
+            if row.process_first < 0 {
+                row.process_older = page.has_older;
+                row.process_first = page_first.unwrap_or(-1) as i32;
+            }
             row.process_newer = page.has_newer;
             row.process_last = page_last.unwrap_or(-1) as i32;
         }
@@ -415,9 +431,15 @@ fn project_page_entries(items: Vec<NativeProcessItem>) -> Vec<ProcessEntry> {
     entries
 }
 
-pub(crate) fn page_is_current(row: &TimelineRow, entries: &ModelRc<ProcessEntry>) -> bool {
+pub(crate) fn page_is_current(
+    row: &TimelineRow,
+    entries: &ModelRc<ProcessEntry>,
+    direction: i32,
+) -> bool {
     row.process_entries == *entries
-        && !(row.process_local && row.status_kind == crate::timeline::STATUS_RUNNING)
+        && !(direction != -1
+            && row.process_local
+            && row.status_kind == crate::timeline::STATUS_RUNNING)
 }
 
 fn stable_reasoning_item(id: &str) -> bool {
@@ -559,7 +581,8 @@ mod tests {
         );
         assert!(!page_is_current(
             &next[0],
-            &previous.row_data(0).unwrap().process_entries
+            &previous.row_data(0).unwrap().process_entries,
+            0
         ));
         apply_page(
             &mut next[0],
@@ -857,6 +880,128 @@ mod tests {
             row.process_entries.row_data(2).unwrap().payload,
             -1 - 2 * PROCESS_SLOT - 2,
             "payloads address the merged position"
+        );
+    }
+
+    #[test]
+    fn running_trimmed_process_pages_older_without_losing_live_tail() {
+        let item = |id: &str, index: i64, reasoning: &str, text: &str| NativeProcessItem {
+            id: id.into(),
+            item_index: index,
+            state: "completed".into(),
+            reasoning: reasoning.into(),
+            text: text.into(),
+            tokens: String::new(),
+            duration: String::new(),
+            tool: None,
+            round: 0,
+        };
+        let entries = ModelRc::new(VecModel::from(vec![
+            ProcessEntry {
+                id: "reason-fixture-root:text-2".into(),
+                kind: crate::timeline::KIND_REASON,
+                detail: "live thought".into(),
+                status_kind: crate::timeline::STATUS_RUNNING,
+                ..Default::default()
+            },
+            ProcessEntry {
+                id: "print-fixture-root:text-2".into(),
+                kind: crate::timeline::KIND_BODY,
+                text: "live print".into(),
+                ..Default::default()
+            },
+        ]));
+        let mut row = TimelineRow {
+            kind: crate::timeline::KIND_PROCESS,
+            process_idx: 3,
+            process_local: true,
+            process_older: true,
+            status_kind: crate::timeline::STATUS_RUNNING,
+            process_entries: entries.clone(),
+            ..Default::default()
+        };
+        assert!(live_older_requested(&row, -1));
+        assert!(page_is_current(&row, &entries, -1));
+        assert!(!page_is_current(&row, &entries, 0));
+
+        apply_page(
+            &mut row,
+            NativeProcessPage {
+                items: vec![
+                    item("fixture-root:text-1", 100, "older thought", "older print"),
+                    item("fixture-root:text-2", 101, "stale thought", "stale print"),
+                ],
+                first: Some(100),
+                last: Some(101),
+                has_older: true,
+                has_newer: false,
+            },
+            -1,
+        );
+        assert_eq!(
+            process_ids(&row),
+            vec![
+                "reason-fixture-root:text-1",
+                "print-fixture-root:text-1",
+                "reason-fixture-root:text-2",
+                "print-fixture-root:text-2"
+            ]
+        );
+        assert_eq!(
+            row.process_entries.row_data(2).unwrap().detail,
+            "live thought"
+        );
+        assert_eq!(row.process_entries.row_data(3).unwrap().text, "live print");
+        assert_eq!(row.process_first, 100);
+        assert!(row.process_paged && !row.process_local);
+
+        apply_page(
+            &mut row,
+            NativeProcessPage {
+                items: vec![item("fixture-root:text-3", 102, "new thought", "new print")],
+                first: Some(102),
+                last: Some(102),
+                has_older: true,
+                has_newer: false,
+            },
+            2,
+        );
+        assert_eq!(
+            row.process_first, 100,
+            "tail refresh keeps the oldest cursor"
+        );
+        assert_eq!(
+            row.process_entries.row_data(0).unwrap().detail,
+            "older thought"
+        );
+        assert_eq!(
+            row.process_entries.row_data(2).unwrap().detail,
+            "live thought"
+        );
+        assert_eq!(row.process_entries.row_count(), 6);
+
+        apply_page(
+            &mut row,
+            NativeProcessPage {
+                items: vec![item(
+                    "fixture-root:text-0",
+                    99,
+                    "first thought",
+                    "first print",
+                )],
+                first: Some(99),
+                last: Some(99),
+                has_older: false,
+                has_newer: true,
+            },
+            -1,
+        );
+        assert!(!row.process_older);
+        assert_eq!(row.process_first, 99);
+        assert_eq!(row.process_entries.row_count(), 8);
+        assert_eq!(
+            row.process_entries.row_data(4).unwrap().detail,
+            "live thought"
         );
     }
 }

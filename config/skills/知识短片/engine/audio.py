@@ -20,10 +20,6 @@ from pathlib import Path
 import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from render import ensure_render_lock, temp_output  # 与渲染共用工程锁和原子改名
-try:
-    from scipy.signal import fftconvolve, lfilter, butter
-except ModuleNotFoundError:
-    sys.exit("audio.py 需要 scipy：请使用带 scipy 的补充包，或在当前 Python 里安装 scipy")
 
 SR = 48000
 D3 = 146.83
@@ -37,10 +33,50 @@ def hz(semi, base=D3): return base * 2 ** (semi / 12)
 def env_exp(n, tau, attack=0.004):
     t = np.arange(n) / SR
     return np.minimum(1, t / attack) * np.exp(-t / tau)
-def lowpass(x, fc, order=2):
-    b, a = butter(order, fc / (SR / 2), "low"); return lfilter(b, a, x, axis=0)
-def highpass(x, fc, order=2):
-    b, a = butter(order, fc / (SR / 2), "high"); return lfilter(b, a, x, axis=0)
+# 只用 numpy，不带 scipy。二阶 Butterworth 经双线性变换后的幅度响应是
+# |H| = 1/sqrt(1+(tan(πf/SR)/tan(πfc/SR))^(2n))，直接在频域乘上它（零相位），
+# 对噪声塑形、混响 IR 的听感与 scipy 的逐样本 IIR 一致，但快得多，
+# 也不必为补充包背一个上百 MB 的 scipy。两端零填充避免循环卷积的边界振铃。
+_FILTER_CACHE = {}
+def _fast_len(n):                                      # 2/3/5 平滑长度：让 pocketfft 走快路径
+    best = 1 << (n - 1).bit_length()
+    p5 = 1
+    while p5 < best:
+        p35 = p5
+        while p35 < best:
+            q = p35
+            while q < n: q *= 2
+            if q < best: best = q
+            p35 *= 3
+        p5 *= 5
+    return best
+def _butter_mag(n, fc, kind, order=2):
+    key = (n, round(float(fc), 3), kind, order)
+    mag = _FILTER_CACHE.get(key)
+    if mag is None:
+        freqs = np.fft.rfftfreq(n, 1.0 / SR)
+        wa = np.tan(np.pi * np.minimum(freqs, SR / 2 - 1e-9) / SR)
+        wc = np.tan(np.pi * min(max(float(fc), 1e-6), SR / 2 - 1e-9) / SR)
+        ratio = np.maximum(wa, 1e-12) / wc
+        mag = 1.0 / np.sqrt(1.0 + (ratio if kind == "low" else 1.0 / ratio) ** (2 * order))
+        if len(_FILTER_CACHE) > 64: _FILTER_CACHE.clear()
+        _FILTER_CACHE[key] = mag
+    return mag
+def _filter(x, fc, kind, order=2):
+    x = np.asarray(x, dtype=np.float64)
+    if x.size == 0: return x
+    pad = min(max(int(.02 * SR), 64), x.shape[0])
+    padded = np.concatenate([np.zeros_like(x[:pad]), x, np.zeros_like(x[:pad])], 0)
+    n = _fast_len(padded.shape[0])
+    mag = _butter_mag(n, fc, kind, order)
+    if padded.ndim > 1: mag = mag.reshape((-1,) + (1,) * (padded.ndim - 1))
+    y = np.fft.irfft(np.fft.rfft(padded, n, axis=0) * mag, n=n, axis=0)
+    return y[pad:pad + x.shape[0]]
+def _convolve(x, ir):                                  # 线性卷积（补零到平滑长度，与 fftconvolve 等价）
+    size = _fast_len(x.size + ir.size - 1)
+    return np.fft.irfft(np.fft.rfft(x, size) * np.fft.rfft(ir, size), size)[:x.size]
+def lowpass(x, fc, order=2): return _filter(x, fc, "low", order)
+def highpass(x, fc, order=2): return _filter(x, fc, "high", order)
 def pan(x, p):                                        # p: -1 左 … 1 右
     l, r = np.cos((p + 1) * np.pi / 4), np.sin((p + 1) * np.pi / 4); return np.stack([x * l, x * r], 1)
 def add(buf, x, t):
@@ -103,7 +139,7 @@ def reverb(x, rng, t60=3.6, wet=.42):
     n = int(t60 * SR); t = np.arange(n) / SR
     ir = lowpass(rng.standard_normal((n, 2)) * np.exp(-6.9 * t / t60)[:, None], 5200); ir[:int(.012 * SR)] *= np.linspace(0, 1, int(.012 * SR))[:, None]
     ir /= np.sqrt((ir ** 2).sum(0)).max()
-    wetsig = np.stack([fftconvolve(x[:, c], ir[:, c])[:len(x)] for c in (0, 1)], 1)
+    wetsig = np.stack([_convolve(x[:, c], ir[:, c]) for c in (0, 1)], 1)
     return x + wetsig * wet
 
 def synth(spec, bgm=False):

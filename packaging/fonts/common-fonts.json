@@ -1,5 +1,5 @@
 {
-  "description": "公文/办公常用字体。字体本体不进 git；构建补充包或部署云端时下载到 config/fonts/common 或补充包 opt/fonts/common。",
+  "description": "公文/办公常用字体。字体本体不进 git；部署云端或手工放置到 opt/fonts 时下载到 config/fonts/common。",
   "files": [
     {
       "name": "simfang.ttf",

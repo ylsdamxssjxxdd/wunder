@@ -428,7 +428,7 @@ export component ToolProcess inherits Rectangle {
                 root.follow-tail = false;
             }
             // Reaching the top is the request for the older page.
-            if root.active && root.has-older && !root.loading && !root.failed
+            if (root.active || root.live) && root.has-older && !root.loading && !root.failed
                 && self.content-y >= -1px && root.last-content-y < -1px {
                 root.page(-1);
             }

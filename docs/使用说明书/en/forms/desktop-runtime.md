@@ -15,7 +15,7 @@ Desktop puts the engine in the same process: UI, agent scheduling and tool execu
 | --- | --- | --- |
 | Program | `<install root>/app/desktop` | Slint UI plus engine, with its own runtime libraries |
 | Launcher | `<install root>/bin/wunder-desktop` | Exports `WUNDER_HOME` and starts the program |
-| Bundled components | `<install root>/opt/` | Python, Git, ripgrep, FFmpeg, 7-Zip, browser, fonts |
+| Bundled components | `<install root>/opt/` | Python, Git, ripgrep, FFmpeg, 7-Zip, browser |
 | Local state | `<install root>/cli/WUNDER_TEMP/` | Sessions, tool logs and SQLite |
 
 ## Bundled components
@@ -30,7 +30,6 @@ Desktop and CLI share one `opt/`, so installing Desktop also provides the CLI ru
 | `opt/ffmpeg` | static 4.4.1 | Frame and audio extraction, transcoding (no `ffprobe`) |
 | `opt/7zip` | 25.01 | Archive packing and unpacking |
 | `opt/browser` | bundled Chrome 109 (win32) on Windows; Chrome for Testing 122 (amd64) or Chromium 120 (arm64) on Linux | Offline engine for the browser tool |
-| `opt/fonts` | Office fonts plus short-video fonts | Document layout, drawing, video rendering |
 | `opt/powershell` | PowerShell 7 (Windows only) | Command execution |
 
 Components follow the supplement, not the app version. Moving machines means copying the whole install root; `opt/` travels with it.

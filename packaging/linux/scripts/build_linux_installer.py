@@ -27,7 +27,7 @@ import tarfile
 import time
 from pathlib import Path
 
-KNOWN_COMPONENTS = ("python", "git", "rg", "ffmpeg", "7zip", "browser", "fonts")
+KNOWN_COMPONENTS = ("python", "git", "rg", "ffmpeg", "7zip", "browser")
 ELF_MACHINES = {"x64": 0x3E, "arm64": 0xB7}
 # The supplement keeps its published amd64/arm64 file names.
 SUPPLEMENT_ARCH = {"x64": "amd64", "arm64": "arm64"}
@@ -41,7 +41,6 @@ LABELS = {
     "ffmpeg": "FFmpeg {version}",
     "7zip": "7-Zip {version}",
     "browser": "内置浏览器 Chrome {version}",
-    "fonts": "字体（视频与公文）",
 }
 CHUNK = 4 * 1024 * 1024
 

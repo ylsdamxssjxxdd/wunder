@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""补齐引擎用到的字体。字体通常在补充包的 opt/fonts/video 里；开发环境缺字体时才下载。
+"""补齐引擎用到的字体。字体默认下到 engine/fonts；系统与云端字体已有时不再下载。
   python get_fonts.py                缺哪个下哪个（下到 engine/fonts/）
-  python get_fonts.py --check        只检查（含补充包与系统字体目录）
+  python get_fonts.py --check        只检查（含系统字体目录）
   python get_fonts.py --dest DIR     下载到指定目录（打包时用，如 <repo>/fonts/video）
 全部是 SIL OFL 1.1 授权的开源字体，来自 github.com/google/fonts。
-中文优先使用视频字体包的思源宋体/黑体（Noto SC 可变字重），
-缺失时退回补充包 opt/fonts/common 的宋体/雅黑。"""
+中文优先使用这里的思源宋体/黑体（Noto SC 可变字重），
+缺失时退回系统字体（Windows 宋体/雅黑，Linux 与安卓文泉驿/Noto）。"""
 import os, shutil, sys, urllib.request
 from pathlib import Path
 
@@ -27,7 +27,7 @@ FONTS = {   # 本地文件名: 仓库路径
 }
 
 def font_dirs():
-    """和 render.py 一致的查找顺序：engine/fonts → 补充包 → 系统字体目录。"""
+    """和 render.py 一致的查找顺序：engine/fonts → opt/fonts（手工放入时）→ 系统字体目录。"""
     dirs = [DEFAULT_DEST]
     home = os.environ.get("WUNDER_HOME", "").strip()
     if home:

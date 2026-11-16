@@ -9,8 +9,8 @@ FROM ubuntu:18.04
 ARG TARGETARCH
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Deterministic text handling: the pack manifest, README and bundled font
-# names carry non-ASCII strings and the build heredocs print with
+# Deterministic text handling: the pack manifest and README carry non-ASCII
+# strings and the build heredocs print with
 # ensure_ascii=False. With no locale set, Python 3.6 on bionic exposes an
 # ASCII stdout and those prints die with UnicodeEncodeError, so pin a UTF-8
 # locale and stdio encoding for every process in the container (the base image

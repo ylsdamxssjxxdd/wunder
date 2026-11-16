@@ -19,7 +19,6 @@ loguru
 tqdm
 numpy
 pandas
-scipy
 openpyxl
 xlrd
 xlsxwriter

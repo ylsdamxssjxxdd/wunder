@@ -10,7 +10,7 @@ engine/
   index.html   页面模板（new_film.py 会拷进工程）
   render.py    逐帧截图 → ffmpeg；也负责静帧、拼图、事件表、预览
   audio.py     按事件表合成声音，或垫一首现成配乐
-  get_fonts.py 字体缺了就下（补充包/云端字体优先，缺的才下载）
+  get_fonts.py 字体缺了就下（云端/engine/fonts 已有则复用，缺的才下载）
   fonts/      开发时的字体缓存；仓库只带 OFL 文本，字体本身不入库
 ```
 
@@ -84,8 +84,8 @@ ARM 服务器上单路截帧受单核性能限制，长片优先用 `--jobs`；�
 同一工程用 `renders/.render.lock` 做单实例互斥，并行渲染只由父进程派生子进程；产物先写 `.*.tmp-<pid>` 再 `os.replace`，
 所以 `renders/raw.mp4`、`_part*.mp4`、`final.mp4`、`web.mp4` 只要存在就是完整文件。渲染中探测 mp4 会报
 `moov atom not found`，这是文件尚未收尾，不是损坏；判断完成只认同名 `.done`。
-依赖：Python 的 `playwright`（优先用补充包里的 Chrome，其次用 Playwright 自带 Chromium，最后退回系统 Chrome）、`numpy`、`scipy`、`Pillow`，以及 `ffmpeg`（补充包不带 `ffprobe`；读视频信息会自动退回 `ffmpeg -i` 解析，脚本不要再新增 ffprobe 硬依赖）。
-桌面版/安卓补充包已带 scipy 和 8 个视频字体（思源宋体/黑体 + 6 个拉丁/等宽）；中文优先用视频字体，缺失时退回 `opt/fonts/common` 的宋体/雅黑。云端镜像也带 scipy，字体放在 `config/fonts/{video,common}`（挂到 `/usr/share/fonts/wunder`）。开发环境缺字体时跑 `python engine/get_fonts.py`。
+依赖：Python 的 `playwright`（优先用补充包里的 Chrome，其次用 Playwright 自带 Chromium，最后退回系统 Chrome）、`numpy`、`Pillow`，以及 `ffmpeg`（补充包不带 `ffprobe`；读视频信息会自动退回 `ffmpeg -i` 解析，脚本不要再新增 ffprobe 硬依赖）。`audio.py` 只用 numpy，不需要 scipy。
+补充包不再带视频字体：中文优先用系统字体（Windows 宋体/雅黑，Linux/安卓文泉驿/Noto），云端字体放在 `config/fonts/{video,common}`（挂到 `/usr/share/fonts/wunder`）。渲染器按 `engine/fonts` → `opt/fonts`（手工放入时）→ 系统字体逐个降级，缺字体只告警不阻塞；要固定字形就把字体放进 `engine/fonts`，开发环境缺字体跑 `python engine/get_fonts.py`。
 
 ## film.js 的样子
 

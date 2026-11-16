@@ -23,8 +23,8 @@ repo_root="${WUNDER_REPO_ROOT:-/app}"
 manifest_path="$repo_root/packaging/linux/scripts/linux-supplement-manifest.json"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
-# Deterministic text handling: the pack manifest, README and bundled font
-# names carry non-ASCII strings and the python3 heredocs below print with
+# Deterministic text handling: the pack manifest and README carry non-ASCII
+# strings and the python3 heredocs below print with
 # ensure_ascii=False. Under a bare C locale (Python 3.6 on bionic) stdout is
 # ASCII and those prints crash with UnicodeEncodeError, so pin the stdio
 # encoding for every python this script runs, in containers and offline
@@ -69,9 +69,6 @@ emit(
     ffmpeg=data["ffmpeg"],
     sevenzip=data["7zip"],
     browser=data.get("browser", {}),
-    fonts=data.get("fonts", []),
-    videoFonts=data.get("videoFonts", []),
-    commonFonts=data.get("commonFonts", []),
     install=data["install"],
 )
 PYEOF
@@ -277,69 +274,6 @@ if [[ -f "$matplotlibrc_source" ]]; then
   log "installed matplotlibrc into etc/"
 fi
 
-# Mirror the Win7 supplement so bundled Python keeps stable CJK/Latin
-# rendering; the fonts directory may be absent, in which case skip silently.
-# Bundled fonts are ADDED to the shipped mpl-data font dir (no default files
-# are replaced), so matplotlib's font scanner picks them up.
-fonts_source_dir="$repo_root/fonts"
-mpl_data_dir="$site_packages/matplotlib/mpl-data"
-if [[ -d "$fonts_source_dir" && -d "$mpl_data_dir/fonts/ttf" ]]; then
-  font_list="$(python3 - "$manifest_json" <<'PYEOF'
-import json, sys
-
-payload = json.loads(sys.argv[1])
-for font in payload.get("fonts", []):
-    print(font)
-PYEOF
-)"
-  while IFS= read -r font; do
-    [[ -n "$font" ]] || continue
-    [[ -f "$fonts_source_dir/$font" ]] || continue
-    cp -f "$fonts_source_dir/$font" "$mpl_data_dir/fonts/ttf/$font"
-    log "bundled matplotlib font: $font"
-  done <<< "$font_list"
-fi
-
-# 知识短片 skill 的 8 个 OFL 字体（思源宋体/黑体 + 6 个拉丁/等宽；中文缺失时退回 opt/fonts/common）：
-# 优先用部署机 config/fonts/video 的本地副本，没有就按 packaging/fonts/video-fonts.json 的固定 URL + SHA-256 下载。字体不进 git。
-video_fonts_rel="$(json_field install.videoFontsRoot)"
-[[ -n "$video_fonts_rel" && "$video_fonts_rel" != "null" ]] || video_fonts_rel="opt/fonts/video"
-video_fonts_cache="$build_root/video-fonts"
-video_fonts_source=""
-if [[ -d "$repo_root/config/fonts/video" ]]; then video_fonts_source="$repo_root/config/fonts/video"; fi
-log "staging video fonts: ${video_fonts_source:-pinned Google Fonts URLs}"
-fetch_args=(--dest "$video_fonts_cache" --licenses "$repo_root/config/skills/知识短片/engine/fonts")
-[[ -z "$video_fonts_source" ]] || fetch_args+=(--source-dir "$video_fonts_source")
-python3 "$repo_root/packaging/fonts/fetch_video_fonts.py" "${fetch_args[@]}"
-mkdir -p "$package_root/$video_fonts_rel"
-cp -f "$video_fonts_cache"/*.ttf "$package_root/$video_fonts_rel"/
-if compgen -G "$video_fonts_cache/OFL-*.txt" >/dev/null; then
-  cp -f "$video_fonts_cache"/OFL-*.txt "$package_root/$video_fonts_rel"/
-fi
-log "bundled video fonts: $(find "$package_root/$video_fonts_rel" -maxdepth 1 -name '*.ttf' | wc -l) ttf at $video_fonts_rel"
-
-# 公文/文档技能的通用字体组件：仿宋、楷体、黑体、宋体、方正小标宋、
-# 微软雅黑、等线与 Times New Roman，外加字体名映射。优先用部署机
-# config/fonts/common 的本地副本，没有就按固定 URL 下载。
-common_fonts_rel="$(json_field install.commonFontsRoot)"
-[[ -n "$common_fonts_rel" && "$common_fonts_rel" != "null" ]] || common_fonts_rel="opt/fonts/common"
-common_fonts_cache="$build_root/common-fonts"
-common_fonts_source=""
-if [[ -d "$repo_root/config/fonts/common" ]]; then common_fonts_source="$repo_root/config/fonts/common"; fi
-log "staging common fonts: ${common_fonts_source:-pinned upstream font URLs}"
-fetch_args=(--manifest "$repo_root/packaging/fonts/common-fonts.json" --dest "$common_fonts_cache")
-[[ -z "$common_fonts_source" ]] || fetch_args+=(--source-dir "$common_fonts_source")
-python3 "$repo_root/packaging/fonts/fetch_video_fonts.py" "${fetch_args[@]}"
-mkdir -p "$package_root/$common_fonts_rel" "$package_root/opt/fonts/conf.d"
-cp -f "$common_fonts_cache"/*.ttf "$package_root/$common_fonts_rel"/
-cp -f "$common_fonts_cache"/*.ttc "$package_root/$common_fonts_rel"/ 2>/dev/null || true
-cp -f "$repo_root/packaging/fonts/wunder-fonts.conf" "$package_root/opt/fonts/fonts.conf"
-cp -f "$repo_root/packaging/fonts/99-wunder-common.conf" "$package_root/opt/fonts/conf.d/99-wunder-common.conf"
-common_font_expected="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1], encoding="utf-8"))["files"]))' "$repo_root/packaging/fonts/common-fonts.json")"
-common_font_count="$(find "$package_root/$common_fonts_rel" -maxdepth 1 \( -name '*.ttf' -o -name '*.ttc' \) | wc -l)"
-[[ "$common_font_count" -ge "$common_font_expected" ]] || fail "common fonts incomplete: $common_font_count/$common_font_expected at $common_fonts_rel"
-log "bundled common fonts: $common_font_count files at $common_fonts_rel"
-
 log "building Git $git_version from source"
 obtain_file "$git_tarball_url" "$downloads_dir/$git_tarball_file" "$git_tarball_sha256"
 git_src="$stage_dir/git-$git_version"
@@ -452,15 +386,13 @@ FFmpeg: $ffmpeg_flavor $ffmpeg_version (opt/ffmpeg/bin/ffmpeg)
 7-Zip: $sevenzip_flavor $sevenzip_version (opt/7zip/bin/7zz, 7z symlink)
 Browser: $browser_version at opt/browser/$browser_executable_rel (when bundled)
 Browsers: Playwright Chromium in opt/python/ms-playwright (when bundled)
-Video fonts: 8 OFL fonts at opt/fonts/video (Noto Serif/Sans SC + 6 Latin/mono; Chinese fallback: opt/fonts/common)
-Document fonts: office fonts at opt/fonts/common (opt/fonts/fonts.conf maps 仿宋_GB2312/楷体_GB2312)
 
 Usage:
 1. Use Import supplement in the wunder Desktop settings, or close processes using this runtime.
 2. For manual installation, extract into WUNDER_HOME (default: ~/.wunder),
    including when wunder Desktop is distributed as an AppImage.
 3. Ensure the target now contains opt/python, opt/git, opt/rg, opt/ffmpeg,
-   opt/7zip, opt/fonts/video, opt/fonts/common (and opt/browser on amd64).
+   opt/7zip (and opt/browser on amd64).
 4. Start wunder Desktop or wunder CLI; both prepend the shared opt/python,
    opt/git, opt/rg, opt/ffmpeg and opt/7zip to PATH automatically.
 EOF
@@ -526,16 +458,6 @@ output = {
         "root": manifest["install"].get("browserRoot", "opt/browser"),
         "executable": (manifest["install"].get("browserRoot", "opt/browser") + "/" + ((manifest.get("browser", {}).get("archives", {}).get(arch, {}).get("executable") or manifest.get("browser", {}).get("executable", "")))) if os.path.isdir(os.path.join(os.path.dirname(destination), manifest["install"].get("browserRoot", "opt/browser"))) else None,
         "url": manifest.get("browser", {}).get("archives", {}).get(arch, {}).get("url") if isinstance(manifest.get("browser", {}).get("archives", {}).get(arch), dict) else None,
-    },
-    "videoFonts": {
-        "root": manifest["install"].get("videoFontsRoot", "opt/fonts/video"),
-        "packages": manifest.get("videoFonts", []),
-    },
-    "commonFonts": {
-        "root": manifest["install"].get("commonFontsRoot", "opt/fonts/common"),
-        "fontconfig": manifest["install"].get("fontconfigFile", "opt/fonts/fonts.conf"),
-        "aliases": manifest["install"].get("fontconfigAliases", "opt/fonts/conf.d/99-wunder-common.conf"),
-        "packages": manifest.get("commonFonts", []),
     },
     "install": manifest["install"],
 }

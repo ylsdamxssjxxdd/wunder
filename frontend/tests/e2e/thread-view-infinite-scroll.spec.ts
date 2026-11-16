@@ -79,7 +79,7 @@ test('work process crosses the retained window in both directions and keeps its 
   await service.install(page);
   const turn = service.scheduledTurn('completed');
   for (let index = 1; index <= 1300; index++) {
-    const item_id = `fixture-process-${index}`;
+    const item_id = index % 2 ? `${turn.turn_id}:text-${index}` : `${turn.turn_id}:tool-${index}`;
     service.items.set(item_id, {
       item_id, turn_id: turn.turn_id, root_turn_id: turn.turn_id, visibility: 'user', revision: 1,
       kind: index % 2 ? 'assistant_message' : 'tool_call', role: index % 2 ? 'assistant' : 'tool',
@@ -120,11 +120,15 @@ test('work process crosses the retained window in both directions and keeps its 
           return row ? row.getBoundingClientRect().top - element.getBoundingClientRect().top : null;
         }, anchor.key);
         expect(offset).not.toBeNull();
-        // The final page can contain only the filtered user/final-answer
-        // records. Removing its top hint clamps scrollTop at zero, so the
-        // first process row naturally aligns with the very start instead.
+        // Reaching the oldest page can reveal valid rows above the old anchor.
+        // The contract there is the true content start, not a zero anchor offset.
         const atStart = !data.has_older && await body.evaluate(element => element.scrollTop === 0);
-        expect(atStart ? Math.abs(offset!) : Math.abs(offset! - anchor.offset)).toBeLessThan(3);
+        if (!atStart) {
+          expect(Math.abs(offset! - anchor.offset), JSON.stringify({
+            offset, anchorOffset: anchor.offset,
+            scrollTop: await body.evaluate(element => element.scrollTop)
+          })).toBeLessThan(3);
+        }
       }
       expect(await body.locator('[data-process-key]').count()).toBeLessThanOrEqual(800);
       return data;

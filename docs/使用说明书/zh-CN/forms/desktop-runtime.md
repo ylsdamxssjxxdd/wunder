@@ -15,7 +15,7 @@ updated_at: 2026-11-14
 | --- | --- | --- |
 | 程序本体 | `<安装根>/app/desktop` | 界面（Slint）与引擎，自带所需运行库 |
 | 启动器 | `<安装根>/bin/wunder-desktop` | 导出 `WUNDER_HOME` 后拉起本体 |
-| 预置组件 | `<安装根>/opt/` | Python、Git、ripgrep、FFmpeg、7-Zip、浏览器、字体 |
+| 预置组件 | `<安装根>/opt/` | Python、Git、ripgrep、FFmpeg、7-Zip、浏览器 |
 | 本地状态 | `<安装根>/cli/WUNDER_TEMP/` | 会话、工具日志与 SQLite |
 
 ## 预置组件
@@ -30,7 +30,6 @@ updated_at: 2026-11-14
 | `opt/ffmpeg` | 静态 4.4.1 | 抽帧、抽音轨、转码（不含 `ffprobe`） |
 | `opt/7zip` | 25.01 | 压缩包打包与解压 |
 | `opt/browser` | Windows 内置 Chrome 109（win32）；Linux amd64 为 Chrome for Testing 122，arm64 为 Chromium 120 | 浏览器工具的离线内核 |
-| `opt/fonts` | 公文常用字体 + 短片字体 | 文档排版、绘图与短片渲染 |
 | `opt/powershell` | PowerShell 7（仅 Windows） | 命令执行 |
 
 组件版本跟随补充包走，不随程序本体升级；换机器时整个安装根一起复制即可，`opt/` 会跟过去。

@@ -30,9 +30,9 @@
                                                 （8765 被占用时自动换端口；页面出错会显示错误层）
 
 工程目录里只需要 index.html + film.js。引擎（vk.js、vk-kit.js）留在本文件所在目录，
-中文优先用补充包 opt/fonts/video 的思源宋体/黑体，缺失时退到 opt/fonts/common 的宋体/雅黑；
-拉丁与等宽字体也在 opt/fonts/video（桌面/安卓）或 /usr/share/fonts/wunder（云端），
-没有时退回 engine/fonts 或跑 get_fonts.py 下载。都由内置小服务器挂到 /engine/ 下，
+中文优先用 engine/fonts 里的思源宋体/黑体，缺失时退到系统字体（Windows 宋体/雅黑，
+Linux 与安卓文泉驿/Noto）或 /usr/share/fonts/wunder（云端）；要固定字形就放 engine/fonts，
+开发环境可跑 get_fonts.py 下载。字体都由内置小服务器挂到 /engine/ 下，
 不用往每个工程里拷字体，也没有 file:// 的跨目录字体限制。
 
 镜头表：film.js 里 VK.film({ shots: [{ no, name, from, to }, …] }) 声明后，--jobs 按镜头切段、
@@ -111,7 +111,7 @@ def ffmpeg_run(args, what):
     return r
 
 def font_dirs():
-    """字体查找顺序：本地 engine/fonts → 补充包 opt/fonts/video、opt/fonts/common → 系统字体目录。"""
+    """字体查找顺序：本地 engine/fonts → opt/fonts（手工放入时）→ 系统字体目录。"""
     dirs = [ENGINE / "fonts"]
     home = os.environ.get("WUNDER_HOME", "").strip()
     if home:
@@ -151,10 +151,10 @@ def warn_missing_fonts():
     missing = [n for n in REQUIRED_FONTS if not font_file(n)]
     if missing:
         print("提示：缺少视频字体：" + "、".join(missing) +
-              "\n  补充包应提供 opt/fonts/video；开发环境可运行 python engine/get_fonts.py", file=sys.stderr)
+              "\n  可把字体放进 engine/fonts，或运行 python engine/get_fonts.py 下载", file=sys.stderr)
 
 def apply_fontconfig_env():
-    """让 Chrome 通过 fontconfig 看到补充包 opt/fonts/common 里的宋体/雅黑。"""
+    """手工放了 opt/fonts 字体时，让 Chrome 通过该 fontconfig 看到宋体/雅黑。"""
     if os.environ.get("FONTCONFIG_FILE"):
         return
     home = os.environ.get("WUNDER_HOME", "").strip()

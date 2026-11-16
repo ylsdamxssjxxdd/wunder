@@ -48,9 +48,11 @@ public final class UbuntuRuntime {
     /// psmisc, lsof, bc, bzip2, time, python alias, iproute2) on top of the
     /// v5 fonts; v7 adds scipy and the video-skill fonts; v8 adds the
     /// document/office fonts; v9 trims video fonts to Latin/mono; v10 adds
-    /// back the Noto Serif/Sans SC variable fonts for 知识短片. Bumping the
-    /// marker re-extracts the pack on devices with an older version.
-    private static final String PACK_VERSION = "10";
+    /// back the Noto Serif/Sans SC variable fonts for 知识短片; v11 drops the
+    /// scipy wheel and every bundled font again (the pack only ships system
+    /// dependencies). Bumping the marker re-extracts the pack on devices with
+    /// an older version.
+    private static final String PACK_VERSION = "11";
     /// Browser overlay: Playwright plus an offline Chromium build. Release
     /// builds bundle it so browser-backed skills run out of the box; dev
     /// builds may omit it and skip the download/extraction cost.
@@ -513,6 +515,7 @@ public final class UbuntuRuntime {
         File archives = new File(files, "ubuntu-packs");
         mkdirs(archives);
         File archive = new File(archives, "common.tar.xz");
+        pruneRetiredPackContent(rootfs);
         int span = spanPct - basePct;
         int copyEnd = basePct + Math.max(2, span / 6);
         int extractBase = basePct + Math.max(3, span / 5);
@@ -527,11 +530,45 @@ public final class UbuntuRuntime {
             installPythonWheels(files, rootfs, extractEnd, Math.max(extractEnd, spanPct - 1));
             writeText(new File(rootfs, PACK_MARKER), PACK_VERSION + "\n");
             setStage("常用工具与 Python 库已就绪", spanPct);
-            Log.i(TAG, "offline packs installed: python/git/rg/ffmpeg/7zip + fonts + runtime CLI tools + python libraries");
+            Log.i(TAG, "offline packs installed: python/git/rg/ffmpeg/7zip + runtime CLI tools + python libraries");
         } finally {
             //noinspection ResultOfMethodCallIgnored
             archive.delete();
             deleteRecursive(archives);
+        }
+    }
+
+    /**
+     * v11 stops shipping scipy and the bundled fonts. A tar overlay never
+     * deletes, so devices that already extracted an older pack would keep those
+     * files and their storage forever; drop the pack-managed copies before the
+     * new pack lands. Only paths the pack itself created are touched.
+     */
+    private static void pruneRetiredPackContent(File rootfs) {
+        deleteRecursive(new File(rootfs, "usr/share/fonts/wunder"));
+        File wheels = new File(rootfs, "opt/wunder/wheels");
+        File[] retiredWheels = wheels.listFiles((dir, name) -> name.startsWith("scipy-"));
+        if (retiredWheels != null) {
+            for (File wheel : retiredWheels) {
+                deleteRecursive(wheel);
+            }
+        }
+        for (String libPath : new String[] {"usr/local/lib", "usr/lib"}) {
+            File[] pythons = new File(rootfs, libPath).listFiles(
+                    (dir, name) -> name.startsWith("python3"));
+            if (pythons == null) {
+                continue;
+            }
+            for (File python : pythons) {
+                File[] retired = new File(python, "dist-packages").listFiles(
+                        (dir, name) -> name.equals("scipy") || name.startsWith("scipy-"));
+                if (retired == null) {
+                    continue;
+                }
+                for (File path : retired) {
+                    deleteRecursive(path);
+                }
+            }
         }
     }
 

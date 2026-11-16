@@ -605,9 +605,9 @@ fn process_page(
     {
         return;
     }
-    // The stream owns this model until settlement: a durable page is behind its
-    // active tail and must never replace it.
-    if row.process_local && row.status_kind == crate::timeline::STATUS_RUNNING {
+    // A trimmed live tail can page backwards while it keeps streaming.
+    let live_older = crate::chat_process::live_older_requested(&row, direction);
+    if row.process_local && row.status_kind == crate::timeline::STATUS_RUNNING && !live_older {
         return;
     }
     if row.process_local && direction == 0 && !row.process_error {
@@ -687,7 +687,7 @@ fn process_page(
         let Some(mut row) = model.row_data(index) else {
             return true;
         };
-        if !crate::chat_process::page_is_current(&row, &entries) {
+        if !crate::chat_process::page_is_current(&row, &entries, direction) {
             return true;
         }
         row.process_loading = false;

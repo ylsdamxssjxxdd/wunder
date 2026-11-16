@@ -175,7 +175,7 @@ K.card(fr, t, { from: 10.9, to: 16.8, zh: '多普勒效应', sub: '为什么救�
 `new_film.py` 建出来的 `film.js` 只是能跑起来的骨架，里面一行画面都没有：没有现成的钩子、没有现成的图表。每一镜都照分镜表现写。
 先把 `SHOTS` 和 `SUBS` 填成和分镜表同一份时间（`K.cue(SHOTS)` 可以把字幕写成相对镜头的 `{shot, at, dur}`），再把分镜表里**最难画的那一镜**做出来，截静帧。
 引擎的用法在 `references/engine.md`。`examples/` 可以翻，看的是别人怎么把一张分镜表变成画面，不是去找能搬的零件。
-字体通常由补充包提供：中文优先用 `opt/fonts/video` 的思源宋体/黑体，缺失时退到 `opt/fonts/common` 的宋体/雅黑；拉丁与等宽也在 `opt/fonts/video`；云端在 `/usr/share/fonts/wunder`。开发环境缺字体时跑 `python engine/get_fonts.py`（缺哪个下哪个）。
+字体不再随桌面/安卓补充包分发：中文优先用系统字体（Windows 的宋体/雅黑，Linux 与安卓的文泉驿/Noto），云端在 `/usr/share/fonts/wunder`；渲染器按 `engine/fonts` → 补充包 `opt/fonts`（如果手工放过）→ 系统字体逐个降级，缺字体只告警不阻塞。要固定片子的字形就先把字体放进 `engine/fonts`，或在开发环境跑 `python engine/get_fonts.py`（缺哪个下哪个）。
 
 **看图不要靠猜。** 截出的帧用读图工具（read_image）直接看：`path` 指向 `review/s_0005.00.png`、`review/sheet.jpg`、`review/motion_*.jpg` 即可，不需要起服务、不需要浏览器。局部放大用 `crop="x,y,w,h"` + `scale`（如 `scale=2`）一步到位，不要再 PIL 裁切存图绕圈；全图默认会压到长边 ≤2048px，4K 上的极小字要看就得 crop 出那块原图区域，而不是重截。字幕区干不干净、某区域亮不亮这类数值判断用 `stats`（随图返回平均亮度、非背景/边缘像素占比）或 `stats_only`（只要数值不回图，适合逐帧巡检），别靠肉眼数包围盒。历史里的图像会随上下文保留，不必每轮重读；确实需要再看像素时（如压缩清退后）按路径重读即可回看同一帧。看一眼就落一条文字结论的习惯仍然值得保持。成片抽帧检查直接把 `path` 指向 `renders/final.mp4` 并给 `frame_rate`（长片用 0.1–0.3）。`--serve` + 浏览器只在需要交互预览动态效果时用：`?t=41` 冻结在 41 秒；页面加载慢或 JS 报错会在画面上显示提示/堆栈，不再只剩黑屏。
 
@@ -241,7 +241,7 @@ python engine/render.py <工程目录> --web              # renders/web.mp4，10
   改过台词或镜头时间后，`audio.py` 会拒绝旧事件表；加 `--refresh-events` 让它自动重导，或手动重跑 `--events`。
 - **B**：用户给一首配乐，`python engine/audio.py <工程> --bgm 曲子.mp3 -8`。先量配乐的速度，把每段的开头对到小节线上，
   最大的那次揭晓对到配乐重新进入的那一拍。用户没给配乐就说明白：成片目前只有事件音，等配乐。
-- `audio.py` 需要 scipy；桌面版/安卓补充包和云端镜像已带，开发机缺 scipy 时脚本会明确提示。
+- `audio.py` 只用 numpy（滤波器与混响都是频域实现），补充包不再需要 scipy。
 
 ### 9. 终检
 

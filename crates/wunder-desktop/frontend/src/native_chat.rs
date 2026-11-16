@@ -729,7 +729,9 @@ fn reducer_for(state: &mut State, session: &str) -> Rc<RefCell<crate::timeline::
         return reducer.clone();
     }
     let reducer = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
-    reducer.borrow_mut().set_markdown_desktop(state.desktop.clone());
+    reducer
+        .borrow_mut()
+        .set_markdown_desktop(state.desktop.clone());
     state.reducers.insert(session.to_string(), reducer.clone());
     state.reducer_order.push_back(session.to_string());
     // Evict least-recently-used threads that own no work in flight. A live
@@ -808,7 +810,11 @@ pub(crate) fn close_visible_thread(app: &MainWindow, session: &str) {
         // The thread is gone from the catalogue: its reducer, its live turn and
         // a held stream would only keep writing into rows nobody can reach.
         state.background.retain(|turn| turn.session != session);
-        if state.active.as_ref().is_some_and(|turn| turn.session == session) {
+        if state
+            .active
+            .as_ref()
+            .is_some_and(|turn| turn.session == session)
+        {
             state.active = None;
         }
         forget_reducer(&mut state, session);
@@ -1051,7 +1057,9 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         st.timeline
             .borrow_mut()
             .set_markdown_desktop(st.desktop.clone());
-        st.timeline.borrow_mut().set_markdown_root(markdown_root(app));
+        st.timeline
+            .borrow_mut()
+            .set_markdown_root(markdown_root(app));
     }
     VISIBLE_TIMELINE.with(|slot| *slot.borrow_mut() = Some(state.borrow().timeline.clone()));
     bind_refresh(app, state.clone());
@@ -1375,7 +1383,10 @@ fn sync_plan_cache(
         // shadow whatever this thread published in an earlier turn.
         None if steps.is_empty() && explanation.is_empty() => false,
         _ => {
-            plans.insert(session.to_string(), (explanation.to_string(), steps.to_vec()));
+            plans.insert(
+                session.to_string(),
+                (explanation.to_string(), steps.to_vec()),
+            );
             true
         }
     }
@@ -2226,7 +2237,9 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                 // streaming at once: a thread that falls out of that window
                 // keeps running durably and is replayed on return, which costs
                 // its live frames but never its work.
-                current.background.retain(|other| other.session != turn.session);
+                current
+                    .background
+                    .retain(|other| other.session != turn.session);
                 if current.background.len() >= MAX_BACKGROUND_TURNS {
                     current.background.remove(0);
                 }
@@ -2326,8 +2339,7 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
             let mut current = state.borrow_mut();
             bind_reducer(&app, &mut current, &id);
             // A live turn here means the pump has frames to deliver again.
-            (current.active.is_some() || !current.background.is_empty())
-                && !current.timer.running()
+            (current.active.is_some() || !current.background.is_empty()) && !current.timer.running()
         };
         if resume_pump {
             start_timer(&app, state.clone());
@@ -3663,14 +3675,10 @@ pub(crate) fn is_running(_app: &MainWindow, session: &str) -> bool {
             .active
             .as_ref()
             .is_some_and(|active| active.session == session)
-            || state
-                .background
-                .iter()
-                .any(|turn| turn.session == session)
-            || state
-                .submitting
-                .as_ref()
-                .is_some_and(|pending| pending.session == session && !pending.cancelled.load(Ordering::Acquire))
+            || state.background.iter().any(|turn| turn.session == session)
+            || state.submitting.as_ref().is_some_and(|pending| {
+                pending.session == session && !pending.cancelled.load(Ordering::Acquire)
+            })
     })
 }
 
@@ -3734,10 +3742,9 @@ fn hand_over_waiting_turns(app: &MainWindow, state: &Rc<RefCell<State>>, session
     }
     let turns: Vec<queue::WaitingTurn> = {
         let mut st = state.borrow_mut();
-        let (here, rest) =
-            std::mem::take(&mut st.waiting_turns)
-                .into_iter()
-                .partition(|turn| turn.session == session);
+        let (here, rest) = std::mem::take(&mut st.waiting_turns)
+            .into_iter()
+            .partition(|turn| turn.session == session);
         st.waiting_turns = rest;
         here
     };
@@ -4488,9 +4495,7 @@ fn bind_stop(app: &MainWindow, state: Rc<RefCell<State>>) {
                 .map(|turn| turn.client_message_id.clone())
                 .collect();
             if !held.is_empty() {
-                current
-                    .waiting_turns
-                    .retain(|turn| turn.session != session);
+                current.waiting_turns.retain(|turn| turn.session != session);
                 let mut timeline = current.timeline.borrow_mut();
                 let mut removed = false;
                 for client_message_id in &held {
@@ -4500,7 +4505,11 @@ fn bind_stop(app: &MainWindow, state: Rc<RefCell<State>>) {
                     publish_timeline_passive(&app, &timeline);
                 }
                 drop(timeline);
-                queue::publish_rows_with_waiting(&app, &current.queue_cache, &current.waiting_turns);
+                queue::publish_rows_with_waiting(
+                    &app,
+                    &current.queue_cache,
+                    &current.waiting_turns,
+                );
             }
             if current
                 .submitting
@@ -4914,11 +4923,7 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
             .map(|active| active.client_message_id.clone());
         if let Some(client_message_id) = promoted_client_id {
             queue::without_client_id(&mut state.queue_cache, client_message_id.as_str());
-            queue::publish_rows_with_waiting(
-                &app,
-                &state.queue_cache,
-                &state.waiting_turns,
-            );
+            queue::publish_rows_with_waiting(&app, &state.queue_cache, &state.waiting_turns);
         }
         let queue_generation = state.queue_generation.clone();
         request_queue_refresh(
@@ -5045,7 +5050,10 @@ fn drive_turn(
             NativeChatEvent::Event(event) => {
                 update_active_stats(active, &event);
                 if visible {
-                    apply_context_usage(&app, wunder_desktop::NativeContextUsage::from_value(&event));
+                    apply_context_usage(
+                        &app,
+                        wunder_desktop::NativeContextUsage::from_value(&event),
+                    );
                 }
                 // Cloud queue visibility (§4.4.4): `cloud_queue`
                 // incremental events carry the waiting position for the
@@ -5057,9 +5065,7 @@ fn drive_turn(
                     let queue_session = data["session_id"].as_str().unwrap_or("");
                     if queue_session.is_empty() || queue_session == active.session {
                         if visible {
-                            app.set_cloud_queue_position(
-                                position.clamp(0, i32::MAX as i64) as i32,
-                            );
+                            app.set_cloud_queue_position(position.clamp(0, i32::MAX as i64) as i32);
                         }
                         active.set_state(
                             format!("模型请求正在排队 · 前方 {position} 个任务"),
@@ -5372,9 +5378,7 @@ fn apply_event(
             let item_id = data["item_id"].as_str().unwrap_or_default();
             let offset = data["offset"].as_u64().unwrap_or(0) as usize;
             let text = data["text"].as_str().unwrap_or_default();
-            if field == "reasoning"
-                && timeline.apply_reasoning_tail(item_id, offset, text)?
-            {
+            if field == "reasoning" && timeline.apply_reasoning_tail(item_id, offset, text)? {
                 active.set_state("正在思考…", Phase::Running);
                 return Ok(true);
             }
@@ -5463,7 +5467,7 @@ fn apply_event(
                     return Ok(changed);
                 }
                 if active.round != active.body_round {
-                    timeline.start_body(active.round);
+                    timeline.start_body_item(&reasoning_item, active.round);
                     active.body_round = active.round;
                 }
                 timeline.append_body(delta)?;
@@ -5485,10 +5489,7 @@ fn apply_event(
             // could stop mid-sentence or never open at all. Every round ends
             // with this field, so adopting it heals the row here instead of
             // leaving the hole until the thread is reopened.
-            if let Some(reasoning) = data["reasoning"]
-                .as_str()
-                .filter(|text| !text.is_empty())
-            {
+            if let Some(reasoning) = data["reasoning"].as_str().filter(|text| !text.is_empty()) {
                 timeline.reconcile_reasoning(&reasoning_item, reasoning)?;
             }
             // A tool-only round still emits llm_output with empty content.
@@ -5501,7 +5502,7 @@ fn apply_event(
                 .filter(|text| !text.is_empty())
             {
                 if active.round != active.body_round {
-                    timeline.start_body(active.round);
+                    timeline.start_body_item(&reasoning_item, active.round);
                     active.body_round = active.round;
                 }
                 timeline.replace_body(text)?;
@@ -5596,7 +5597,10 @@ fn apply_event(
                 || matches!(data["status"].as_str(), Some("running"));
             if running {
                 active.set_state("上下文压缩中…", Phase::Running);
-            } else if matches!(data["status"].as_str(), Some("done" | "completed" | "fallback")) {
+            } else if matches!(
+                data["status"].as_str(),
+                Some("done" | "completed" | "fallback")
+            ) {
                 // The summary now stands in for the earlier turns: the gauge
                 // turns red for the rest of this thread's life.
                 active.compacted = true;
@@ -6284,7 +6288,7 @@ mod turn_tests {
         })).unwrap();
         apply_event(
             &mut output,
-                        &mut live,
+            &mut live,
             &serde_json::json!({
                 "event":"turn_terminal", "data":{"status":"cancelled"}
             }),
@@ -6309,7 +6313,7 @@ mod turn_tests {
         live.begin_turn("fixture-root", "Fixture input");
         apply_event(
             &mut output,
-                        &mut live,
+            &mut live,
             &serde_json::json!({
                 "event":"error", "data":{"message":"fixture transport error"}
             }),
@@ -6326,7 +6330,7 @@ mod turn_tests {
         live.begin_turn("fixture-root", "Fixture input");
         apply_event(
             &mut output,
-                        &mut live,
+            &mut live,
             &serde_json::json!({
                 "event":"turn_terminal", "data":{"status":"failed"}
             }),
@@ -6334,7 +6338,7 @@ mod turn_tests {
         .unwrap();
         assert!(!apply_event(
             &mut output,
-                        &mut live,
+            &mut live,
             &serde_json::json!({
                 "event":"final", "data":{"answer":"fixture late answer"}
             })
@@ -6355,7 +6359,7 @@ mod turn_tests {
         })).unwrap();
         apply_event(
             &mut output,
-                        &mut live,
+            &mut live,
             &serde_json::json!({
                 "event":"turn_terminal", "data":{"status":"completed"}
             }),
@@ -6378,7 +6382,7 @@ mod turn_tests {
         live.begin_turn("fixture-root", "Fixture input");
         apply_event(
             &mut output,
-                        &mut live,
+            &mut live,
             &serde_json::json!({
                 "event":"turn_terminal", "data":{"status":"completed"}
             }),
@@ -6389,7 +6393,7 @@ mod turn_tests {
         })).unwrap());
         assert!(apply_event(
             &mut output,
-                        &mut live,
+            &mut live,
             &serde_json::json!({
                 "event":"llm_output_delta", "data":{"model_round":1,"delta":"fixture next answer"}
             })
@@ -6411,7 +6415,7 @@ mod turn_tests {
             live.begin_turn("fixture-root", "Fixture input");
             apply_event(
                 &mut output,
-                                        &mut live,
+                &mut live,
                 &serde_json::json!({
                     "event":"turn_terminal", "data":{"status":status}
                 }),
@@ -6420,7 +6424,7 @@ mod turn_tests {
             let expected = output.state().to_string();
             assert!(apply_event(
                 &mut output,
-                                        &mut live,
+                &mut live,
                 &serde_json::json!({
                     "event":"final", "data":{"answer":"fixture final answer"}
                 })
@@ -6444,7 +6448,7 @@ mod turn_tests {
         for (index, delta) in ["First thought", " continued"].iter().enumerate() {
             assert!(apply_event(
                 &mut output,
-                                        &mut live,
+                &mut live,
                 &serde_json::json!({
                     "event":"thread_item_delta", "data":{"session_id":"fixture-session", "data":{
                         "source_event":"llm_output_delta", "model_round":1, "reasoning_delta":delta
@@ -6524,7 +6528,10 @@ mod turn_tests {
         let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
         let mut live = timeline.borrow_mut();
         live.begin_turn("fixture-root", "Fixture input");
-        for (execution, thought) in [("fixture-exec-1", "第一段思考"), ("fixture-exec-2", "第二段思考")] {
+        for (execution, thought) in [
+            ("fixture-exec-1", "第一段思考"),
+            ("fixture-exec-2", "第二段思考"),
+        ] {
             apply_event(
                 &mut output,
                 &mut live,
@@ -6623,14 +6630,14 @@ mod turn_tests {
         live.begin_turn("fixture-root", "Fixture input");
         apply_event(
             &mut output,
-                        &mut live,
+            &mut live,
             &json!({"event":"llm_output","data":{"model_round":1,"content":"Earlier reply"}}),
         )
         .unwrap();
         apply_event(&mut output, &mut live, &json!({"event":"native_execution_started","data":{"root_turn_id":"fixture-root","turn_id":"fixture-child"}})).unwrap();
         apply_event(
             &mut output,
-                        &mut live,
+            &mut live,
             &json!({"event":"llm_output_delta","data":{"model_round":1,"delta":"Next reply"}}),
         )
         .unwrap();
@@ -6656,7 +6663,7 @@ mod turn_tests {
         for (round, text) in [(1, "First thought"), (2, "Second thought"), (1, " stale")] {
             apply_event(
                 &mut output,
-                                        &mut live,
+                &mut live,
                 &json!({
                     "event":"reasoning_delta","data":{"model_round":round,"delta":text}
                 }),
@@ -6706,7 +6713,7 @@ mod turn_tests {
         );
         apply_event(
             &mut output,
-                        &mut live,
+            &mut live,
             &json!({"event":"native_execution_started","data":{
                 "root_turn_id":"fixture-root","turn_id":"fixture-continuation"
             }}),
@@ -6714,7 +6721,7 @@ mod turn_tests {
         .unwrap();
         apply_event(
             &mut output,
-                        &mut live,
+            &mut live,
             &json!({"event":"reasoning_delta","data":{
                 "turn_id":"fixture-continuation","model_round":1,"delta":"Fixture next execution"
             }}),
@@ -6722,7 +6729,7 @@ mod turn_tests {
         .unwrap();
         assert!(!apply_event(
             &mut output,
-                        &mut live,
+            &mut live,
             &json!({"event":"reasoning_delta","data":{
                 "turn_id":"fixture-root","model_round":3,"delta":" stale"
             }})
@@ -6829,13 +6836,13 @@ mod turn_tests {
         let mut live = timeline.borrow_mut();
         apply_event(
             &mut output,
-                        &mut live,
+            &mut live,
             &json!({"event":"llm_output","data":{"model_round":1,"answer":"Fixture answer"}}),
         )
         .unwrap();
         apply_event(
             &mut output,
-                        &mut live,
+            &mut live,
             &json!({"event":"turn_terminal","data":{
                 "status":"completed",
                 "message_stats":{"interaction_duration_s": 1.5, "toolCalls": 0}
@@ -7184,13 +7191,13 @@ mod turn_tests {
         let mut live = timeline.borrow_mut();
         apply_event(
             &mut output,
-                        &mut live,
+            &mut live,
             &json!({"event":"llm_output_delta","data":{"model_round":1,"delta":"Fixture partial"}}),
         )
         .unwrap();
         apply_event(
             &mut output,
-                        &mut live,
+            &mut live,
             &json!({"event":"compaction","data":{"summary_text":"Fixture summary"}}),
         )
         .unwrap();
@@ -7204,7 +7211,7 @@ mod turn_tests {
         .unwrap();
         apply_event(
             &mut output,
-                        &mut live,
+            &mut live,
             &json!({"event":"turn_terminal","data":{"status":"cancelled"}}),
         )
         .unwrap();
@@ -7212,7 +7219,7 @@ mod turn_tests {
         let before = live.row_count();
         assert!(!apply_event(
             &mut output,
-                        &mut live,
+            &mut live,
             &json!({"event":"final","data":{"content":"Late answer"}}),
         )
         .unwrap());
@@ -7334,7 +7341,10 @@ mod turn_tests {
         }))
         .expect("a three-question panel");
         panel.toggle_option(0, 0);
-        assert!(!panel.advance_after_answer(0), "the flow moves to question 2");
+        assert!(
+            !panel.advance_after_answer(0),
+            "the flow moves to question 2"
+        );
         assert_eq!(panel.page, 1);
         panel.questions[1].other = "fixture note".into();
 

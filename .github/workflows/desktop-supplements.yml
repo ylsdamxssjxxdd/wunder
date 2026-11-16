@@ -38,8 +38,8 @@ jobs:
         run: |
           # prune-supplement-stage.py 决定包内保留哪些文件（wheel 测试目录、异架构 PE、
           # MinGit 多余组件），它的内容变化同样必须触发重建。
-          win7_hash="${{ hashFiles('packaging/windows/scripts/build_win7_desktop_supplement.ps1', 'packaging/windows/scripts/prune-supplement-stage.py', 'packaging/windows/scripts/win7-supplement-manifest.json', 'packaging/python/requirements-win7-common.txt', 'config/matplotlibrc', 'fonts/*') }}"
-          linux_hash="${{ hashFiles('packaging/linux/scripts/build_linux_supplement.sh', 'packaging/linux/scripts/linux-supplement-manifest.json', 'packaging/python/requirements-linux-common.txt', 'packaging/docker/Dockerfile.ubuntu18-supplement', 'packaging/docker/Dockerfile.rust-builder-kylin-x86', 'config/matplotlibrc', 'fonts/*') }}"
+          win7_hash="${{ hashFiles('packaging/windows/scripts/build_win7_desktop_supplement.ps1', 'packaging/windows/scripts/prune-supplement-stage.py', 'packaging/windows/scripts/win7-supplement-manifest.json', 'packaging/python/requirements-win7-common.txt', 'config/matplotlibrc') }}"
+          linux_hash="${{ hashFiles('packaging/linux/scripts/build_linux_supplement.sh', 'packaging/linux/scripts/linux-supplement-manifest.json', 'packaging/python/requirements-linux-common.txt', 'packaging/docker/Dockerfile.ubuntu18-supplement', 'packaging/docker/Dockerfile.rust-builder-kylin-x86', 'config/matplotlibrc') }}"
           # 浏览器 pin（版本+SHA256 字面量）参与 win7 缓存键：来源变更即触发重建
           browser_pin='chromium-109.0.5414.120-r1070088-hibbiki-mini_installer.sync.exe-sha256-C1AABD6EEF38D759BBD92CA9516353D88C463A1E8389A875B4D12D53DB467F98'
           # 便携 PowerShell 7 pin：7.1.7 是最后一个能在 Win7 上启动的 pwsh（7.2 起需要 .NET 6 / Win8.1+），

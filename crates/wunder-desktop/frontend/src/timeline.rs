@@ -1092,20 +1092,24 @@ impl Timeline {
     }
 
     fn trim_process(&mut self) {
-        while self.model.row_count().saturating_sub(self.process_bar.saturating_add(1))
+        while self
+            .model
+            .row_count()
+            .saturating_sub(self.process_bar.saturating_add(1))
             > MAX_LIVE_PROCESS_ROWS
         {
             let protected_body = self.body.as_ref().map(|body| body.index);
             let protected_thinking = self.thinking.as_ref().map(|thinking| thinking.index);
             let Some(index) =
                 ((self.process_bar.saturating_add(1))..self.model.row_count()).find(|index| {
-                *index != self.last_body
-                    && Some(*index) != protected_body
-                    && Some(*index) != protected_thinking
-                    && self.model.row_data(*index).is_some_and(|row| {
-                        matches!(row.kind, KIND_TOOL | KIND_REASON | KIND_BODY | KIND_GROUP)
-                    })
-            }) else {
+                    *index != self.last_body
+                        && Some(*index) != protected_body
+                        && Some(*index) != protected_thinking
+                        && self.model.row_data(*index).is_some_and(|row| {
+                            matches!(row.kind, KIND_TOOL | KIND_REASON | KIND_BODY | KIND_GROUP)
+                        })
+                })
+            else {
                 break;
             };
             let removed = self.model.row_data(index).unwrap();
@@ -1181,6 +1185,10 @@ impl Timeline {
     /// Begin the next assistant body block; the runtime registers exactly one
     /// text item per model round, so a block starts where the last one ended.
     pub fn start_body(&mut self, round: i64) -> usize {
+        self.start_body_item("", round)
+    }
+
+    pub fn start_body_item(&mut self, item_id: &str, round: i64) -> usize {
         self.close_thinking(false);
         self.close_body();
         // The round is authoritative here: a body block belongs to the model
@@ -1188,10 +1196,12 @@ impl Timeline {
         self.model_round = i32::try_from(round).unwrap_or(i32::MAX).max(0);
         let blocks = crate::message_blocks::Blocks::new();
         self.body_serial = self.body_serial.wrapping_add(1);
-        let mut row = blank(
-            KIND_BODY,
-            format!("body-{}-{}-{round}", self.process, self.body_serial),
-        );
+        let id = if item_id.is_empty() {
+            format!("body-{}-{}-{round}", self.process, self.body_serial)
+        } else {
+            format!("print-{item_id}")
+        };
+        let mut row = blank(KIND_BODY, id);
         row.blocks = ModelRc::from(blocks.model.clone());
         let index = self.push(row);
         // The process child list orders entries by payload, so the body row
@@ -3077,9 +3087,9 @@ mod tests {
         let mut timeline = Timeline::new();
         timeline.begin_turn("fixture-tick", "Fixture input");
         // 运行中：秒表按真实时间推进，统计值不覆盖它。
-        timeline
-            .elapsed
-            .set(Some(std::time::Instant::now() - std::time::Duration::from_secs(7)));
+        timeline.elapsed.set(Some(
+            std::time::Instant::now() - std::time::Duration::from_secs(7),
+        ));
         timeline.set_turn_stats(stat_metrics(&crate::turn_stats::metrics(
             &serde_json::json!({"interaction_duration_s": 1.2}),
         )));
@@ -3116,11 +3126,9 @@ mod tests {
         timeline.begin_turn("fixture-calibrate", "Fixture input");
         // 服务端报 40s，本地秒表才走了 2s：基准前移到权威值，数字不倒退也不
         // 停在旧值上等下一个事件。
-        timeline
-            .elapsed
-            .set(Some(
-                std::time::Instant::now() - std::time::Duration::from_secs(2),
-            ));
+        timeline.elapsed.set(Some(
+            std::time::Instant::now() - std::time::Duration::from_secs(2),
+        ));
         timeline.set_turn_stats(stat_metrics(&crate::turn_stats::metrics(
             &serde_json::json!({"interaction_duration_s": 40.0}),
         )));
@@ -3131,11 +3139,9 @@ mod tests {
             .expect("a process bar");
         assert_eq!(bar.duration, "40s");
         // 校准之后本地继续往前走：再过 3s 就是 43s。
-        timeline
-            .elapsed
-            .set(Some(
-                std::time::Instant::now() - std::time::Duration::from_secs(3),
-            ));
+        timeline.elapsed.set(Some(
+            std::time::Instant::now() - std::time::Duration::from_secs(3),
+        ));
         assert!(timeline.tick_elapsed());
         let bar = timeline
             .model
@@ -4130,7 +4136,9 @@ mod tests {
         let mut timeline = Timeline::new();
         timeline.begin_turn("overtake", "Fixture input");
         timeline.set_process_root("overtake");
-        timeline.append_reasoning_item("overtake:text-1", "思考").unwrap();
+        timeline
+            .append_reasoning_item("overtake:text-1", "思考")
+            .unwrap();
         timeline.flush();
         let args = serde_json::json!({"args": {"path": "a.txt"}});
         // The result arrives first and creates the row.
@@ -4614,7 +4622,8 @@ mod tests {
         let mut away = Timeline::new();
         away.begin_turn("away-turn", "第一个问题");
         away.set_process_root("away-root");
-        away.append_reasoning_item("away-root:text-1", "Sec").unwrap();
+        away.append_reasoning_item("away-root:text-1", "Sec")
+            .unwrap();
         away.flush();
         let away_rows = away.row_count();
 
@@ -4629,17 +4638,16 @@ mod tests {
         shown.flush();
         assert_eq!(away.row_count(), away_rows, "A keeps its rows");
         assert!(
-            shown
-                .model
-                .iter()
-                .all(|row| !row.id.contains("away")),
+            shown.model.iter().all(|row| !row.id.contains("away")),
             "B never shows A's rows"
         );
 
         // Returning to A: the next delta extends the very same thought.
-        away.append_reasoning_item("away-root:text-1", "ond ").unwrap();
+        away.append_reasoning_item("away-root:text-1", "ond ")
+            .unwrap();
         away.flush();
-        away.append_reasoning_item("away-root:text-1", "thought").unwrap();
+        away.append_reasoning_item("away-root:text-1", "thought")
+            .unwrap();
         away.flush();
 
         let bar = away

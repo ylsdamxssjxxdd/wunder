@@ -367,7 +367,11 @@ pub fn recall_step(
         // A fresh draft keeps the arrow for the editor until the caret reaches
         // the end it has to leave from.
         if !draft.is_empty() {
-            let at_edge = if up { cursor == 0 } else { cursor as usize == draft.len() };
+            let at_edge = if up {
+                cursor == 0
+            } else {
+                cursor as usize == draft.len()
+            };
             if !at_edge {
                 return None;
             }
@@ -588,25 +592,21 @@ mod tests {
 
     #[test]
     fn holding_arrow_up_keeps_walking_while_the_caret_sits_at_the_end() {
-        let history = vec![
-            "最新".to_string(),
-            "更早".to_string(),
-            "最早".to_string(),
-        ];
+        let history = vec!["最新".to_string(), "更早".to_string(), "最早".to_string()];
         let mut state = Recall::default();
         // Every step leaves the caret at the end of the recalled row; the next
         // ArrowUp must still step instead of waiting for the caret to be moved
         // back to the top by hand.
         let first = recall_step(&mut state, &history, 1, 0, 0, "").expect("newest");
-        let second = recall_step(&mut state, &history, 1, first.caret, first.caret, "最新")
-            .expect("older");
+        let second =
+            recall_step(&mut state, &history, 1, first.caret, first.caret, "最新").expect("older");
         assert_eq!(second.text.as_str(), "更早");
-        let third =
-            recall_step(&mut state, &history, 1, second.caret, second.caret, "更早").expect("oldest");
+        let third = recall_step(&mut state, &history, 1, second.caret, second.caret, "更早")
+            .expect("oldest");
         assert_eq!(third.text.as_str(), "最早");
         // Down the same way: the caret stays at the end, the walk still steps.
-        let back = recall_step(&mut state, &history, -1, third.caret, third.caret, "最早")
-            .expect("newer");
+        let back =
+            recall_step(&mut state, &history, -1, third.caret, third.caret, "最早").expect("newer");
         assert_eq!(back.text.as_str(), "更早");
         // An edited draft ends the walk, and with the caret inside the text the
         // arrow belongs to the editor again.

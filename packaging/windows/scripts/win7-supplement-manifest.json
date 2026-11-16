@@ -10,11 +10,7 @@
     "rgRoot": "opt\\rg",
     "ffmpegRoot": "opt\\ffmpeg",
     "powershellRoot": "opt\\powershell",
-    "sevenZipRoot": "opt\\7zip",
-    "videoFontsRoot": "opt\\fonts\\video",
-    "commonFontsRoot": "opt\\fonts\\common",
-    "fontconfigFile": "opt\\fonts\\fonts.conf",
-    "fontconfigAliases": "opt\\fonts\\conf.d\\99-wunder-common.conf"
+    "sevenZipRoot": "opt\\7zip"
   },
   "browser": {
     "enabled": true,
@@ -77,7 +73,6 @@
           "cv2",
           "h5py",
           "seaborn",
-          "scipy",
           "pyecharts",
           "playwright",
           "pefile"
@@ -132,7 +127,8 @@
   "rg": {
     "version": "14.1.0",
     "flavor": "ripgrep official binary",
-    "source": "BurntSushi/ripgrep",    "notes": [
+    "source": "BurntSushi/ripgrep",
+    "notes": [
       "ripgrep is bundled as a standalone binary so search_content can use rg without relying on system installation.",
       "14.1.0 is the last official release that still runs on Windows 7: the i686 14.1.1 binary is built with Rust 1.78+ and statically imports bcryptprimitives.dll (ProcessPrng) plus api-ms-win-core-synch-l1-2-0.dll (WaitOnAddress), so it fails to start on Windows 7 and Git Bash reports a segmentation fault.",
       "Do not bump past 14.1.0 unless the binary is rebuilt with Rust <= 1.77.2; the build now rejects Win8+-only PE imports for rg."
@@ -201,29 +197,6 @@
       }
     }
   },
-  "videoFonts": [
-    "NotoSerifSC-VF.ttf",
-    "NotoSansSC-VF.ttf",
-    "CormorantGaramond.ttf",
-    "CormorantGaramond-Italic.ttf",
-    "Lora.ttf",
-    "Lora-Italic.ttf",
-    "JetBrainsMono.ttf",
-    "CourierPrime-Regular.ttf"
-  ],
-  "commonFonts": [
-    "simfang.ttf",
-    "simkai.ttf",
-    "simhei.ttf",
-    "simsun.ttc",
-    "FZXBSJW.ttf",
-    "msyh.ttc",
-    "Deng.ttf",
-    "times.ttf",
-    "timesbd.ttf",
-    "timesi.ttf",
-    "timesbi.ttf"
-  ],
   "ffmpeg": {
     "version": "4.4.1",
     "flavor": "static ffmpeg (ffmpeg-static)",

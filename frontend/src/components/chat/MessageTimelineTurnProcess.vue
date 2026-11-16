@@ -418,6 +418,10 @@ const loadPage = async (direction: ProcessPageDirection): Promise<void> => {
         .find(node => node.dataset.processKey === anchorKey);
       if (restored) body.scrollTop += restored.getBoundingClientRect().top - body.getBoundingClientRect().top - anchorOffset;
     }
+    if (older && !hasOlderItems.value) {
+      body.scrollTop = 0;
+      pageAnchor = null;
+    }
     restoredScrollTop = body.scrollTop;
     restorePageAnchor();
   } catch {

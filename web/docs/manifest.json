@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-11-15T05:40:44.593521+00:00",
+  "generated_at": "2026-11-16T00:40:01.605346+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is a general-purpose AI operating system: Desktop is the local AI workbench, Android is the Desktop's phone form, Cloud (web) is the cloud AI workbench, CLI is the manual local entry point, and the Admin is the governance backend. / wunder 是泛用型人工智能操作系统：桌面版（desktop）是本地 AI 工作台，安卓版（android）是桌面版的手机形态，云端版（web）是云端 AI 工作台，命令行（cli）是手工本地操作入口，管理端是治理后台。",
@@ -2596,7 +2596,7 @@
       "language": "zh-CN",
       "title": "桌面控制",
       "summary": "桌面控制的启用条件、坐标与 17 个动作（含 wait 观察）、type_text 的焦点与换行语义、截图追加给模型的方式、失败判定与回滚边界。",
-      "updated_at": "2026-11-10",
+      "updated_at": "2026-11-15",
       "read_when": [],
       "source_docs": [],
       "tab": "工具",
@@ -5655,7 +5655,7 @@
       "language": "en",
       "title": "Desktop Control",
       "summary": "Enablement conditions for Desktop Control, coordinates and the 17 actions (including the wait observation), type_text focus/newline semantics, how screenshots are appended to the model, failure diagnosis, and rollback boundaries.",
-      "updated_at": "2026-11-10",
+      "updated_at": "2026-11-15",
       "read_when": [],
       "source_docs": [],
       "tab": "Tools",
