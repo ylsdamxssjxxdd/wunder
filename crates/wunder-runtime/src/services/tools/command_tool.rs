@@ -1,14 +1,15 @@
 use super::{
-    apply_patch_tool, build_model_tool_success, build_model_tool_success_with_hint,
+    ToolContext, ToolEventEmitter, apply_patch_tool, build_model_tool_success,
+    build_model_tool_success_with_hint,
     command_options::{
+        CommandSessionInput, DEFAULT_COMMAND_YIELD_MS, MAX_COMMAND_SESSION_POLL_MS,
         apply_time_budget_secs, parse_command_budget, parse_command_session_input,
-        parse_command_session_wait, parse_dry_run, CommandSessionInput,
-        MAX_COMMAND_SESSION_POLL_MS,
+        parse_command_session_wait, parse_command_yield_time, parse_dry_run,
     },
     command_output_guard::{
-        derive_capture_policies, render_command_output, CommandOutputCapture,
-        CommandOutputCaptureMeta, CommandOutputCollector, CommandOutputPolicy,
-        DEFAULT_CAPTURE_TOTAL_BYTES, STDERR_CAPTURE_POLICY, STDOUT_CAPTURE_POLICY,
+        CommandOutputCapture, CommandOutputCaptureMeta, CommandOutputCollector,
+        CommandOutputPolicy, DEFAULT_CAPTURE_TOTAL_BYTES, STDERR_CAPTURE_POLICY,
+        STDOUT_CAPTURE_POLICY, derive_capture_policies, render_command_output,
     },
     command_sessions::{
         CommandProcessHandle, CommandSessionLaunchMode, CommandSessionStream,
@@ -16,26 +17,25 @@ use super::{
     },
     execute_in_sandbox, recover_tool_args_value, resolve_tool_name,
     tool_error::{
-        build_execute_command_failure_data, build_execute_command_failure_message,
-        build_failed_tool_result, command_timeout_outcome, tool_timeout_meta, ToolErrorMeta,
+        ToolErrorMeta, build_execute_command_failure_data, build_execute_command_failure_message,
+        build_failed_tool_result, command_timeout_outcome, tool_timeout_meta,
     },
-    ToolContext, ToolEventEmitter,
 };
 use crate::command_utils;
 use crate::config::Config;
 use crate::core::long_task;
-use crate::core::process_tree::{ProcessTree, PIPE_EOF_GRACE};
+use crate::core::process_tree::{PIPE_EOF_GRACE, ProcessTree};
 use crate::core::python_runtime;
 use crate::i18n;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 #[cfg(windows)]
 use encoding_rs::GBK;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::process::Child;
 use tokio_util::sync::CancellationToken;
@@ -51,36 +51,11 @@ fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
     }
 }
 
-const DEFAULT_COMMAND_YIELD_MS: u64 = 750;
-const MAX_COMMAND_YIELD_MS: u64 = 10_000;
 const DEFAULT_COMMAND_TIMEOUT_S: f64 = 120.0;
 const MAX_COMMAND_TIMEOUT_S: f64 = 3600.0;
-/// 前台等待到点后转后台的命令最长保留时间；到点仍未退出才终止，
-/// 避免一条挂死的命令永久占着会话槽位。
-const ESCALATED_COMMAND_MAX_S: f64 = 3600.0;
+/// 可交互进程的最长保留时间，避免挂死进程永久占用会话槽位。
+const INTERACTIVE_COMMAND_MAX_S: f64 = 3600.0;
 const SANDBOX_BLOCKING_WAIT_MARGIN_S: f64 = 15.0;
-const RECENT_OUTPUT_SCAN_LIMIT: usize = 2_000;
-
-fn parse_command_yield_time(args: &Value) -> Duration {
-    let value = args
-        .get("yield_time_ms")
-        .and_then(Value::as_u64)
-        .unwrap_or(DEFAULT_COMMAND_YIELD_MS)
-        .clamp(50, MAX_COMMAND_YIELD_MS);
-    Duration::from_millis(value)
-}
-
-fn parse_run_in_background(args: &Value) -> bool {
-    match args.get("run_in_background") {
-        Some(Value::Bool(flag)) => *flag,
-        Some(Value::String(text)) => matches!(
-            text.trim().to_ascii_lowercase().as_str(),
-            "true" | "1" | "yes" | "on"
-        ),
-        Some(Value::Number(number)) => number.as_f64().unwrap_or(0.0) != 0.0,
-        _ => false,
-    }
-}
 
 /// Detect commands that only idle (e.g. `sleep 5`) without doing real work.
 fn is_bare_sleep_command(command: &str) -> bool {
@@ -127,71 +102,6 @@ fn is_broken_pipe_exit(command: &str, returncode: i32, stderr: &str) -> bool {
     lowered.contains("broken pipe") || lowered.contains("epipe")
 }
 
-/// 超时转后台时给模型一份“可能已经落盘”的线索。只扫两层（工程目录的
-/// renders/、review/ 都在这一层），有界条数，避免在大工作区里全量遍历。
-fn recent_output_paths(root: &Path, since: SystemTime, limit: usize) -> Vec<String> {
-    let mut found: Vec<(SystemTime, String)> = Vec::new();
-    let mut queue = vec![(root.to_path_buf(), 0usize)];
-    let mut scanned = 0usize;
-    while let Some((dir, depth)) = queue.pop() {
-        if scanned >= RECENT_OUTPUT_SCAN_LIMIT {
-            break;
-        }
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            if scanned >= RECENT_OUTPUT_SCAN_LIMIT {
-                break;
-            }
-            scanned += 1;
-            let path = entry.path();
-            let Ok(metadata) = entry.metadata() else {
-                continue;
-            };
-            if metadata.is_dir() {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                if depth < 2 && !name.starts_with('.') && name != "node_modules" && name != "target"
-                {
-                    queue.push((path, depth + 1));
-                }
-                continue;
-            }
-            if !metadata.is_file() {
-                continue;
-            }
-            let Ok(modified) = metadata.modified() else {
-                continue;
-            };
-            if modified < since {
-                continue;
-            }
-            let Ok(relative) = path.strip_prefix(root) else {
-                continue;
-            };
-            found.push((modified, relative.to_string_lossy().to_string()));
-        }
-    }
-    found.sort_by(|a, b| b.0.cmp(&a.0));
-    found.truncate(limit);
-    found.into_iter().map(|(_, path)| path).collect()
-}
-
-/// 超时把前台命令转成后台会话后，模型需要知道怎样接着等、产物在哪。
-fn timeout_escalation_hint(command_session_id: &str, recent: &[String]) -> String {
-    let mut hint = format!(
-        "前台等待已到 timeout_s，命令没有终止，已转入后台继续运行（command_session_id={command_session_id}）。\
-         用命令会话工具读新增输出，需要阻塞到退出就传 wait_for=exit；退出后再检查产物，不要重跑同一条命令。"
-    );
-    if !recent.is_empty() {
-        hint.push_str(" 期间已写入/更新的文件：");
-        hint.push_str(&recent.join("、"));
-        hint.push('。');
-    }
-    hint
-}
-
 pub(crate) fn extract_direct_patch_from_command(content: &str) -> Option<String> {
     let trimmed = content.trim();
     if trimmed.starts_with("*** Begin Patch") && trimmed.ends_with("*** End Patch") {
@@ -202,11 +112,7 @@ pub(crate) fn extract_direct_patch_from_command(content: &str) -> Option<String>
 
 fn resolve_stream_chunk_size(config: &Config) -> usize {
     let size = config.server.stream_chunk_size;
-    if size == 0 {
-        1024
-    } else {
-        size
-    }
+    if size == 0 { 1024 } else { size }
 }
 
 fn safe_chunk_boundary(text: &str, max_bytes: usize) -> usize {
@@ -625,7 +531,6 @@ struct CommandRunResult {
     stderr_capture: CommandOutputCaptureMeta,
     command_session_id: Option<String>,
     running: bool,
-    escalated_on_timeout: bool,
 }
 
 /// 会话级取消令牌的登记守卫。前台阻塞命令在执行期间把令牌挂到 broker 上，
@@ -1061,7 +966,6 @@ async fn run_spawned_child_streaming(
         stderr_capture: stderr_capture.meta,
         command_session_id: command_session.map(|item| item.command_session_id().to_string()),
         running: false,
-        escalated_on_timeout: false,
     })
 }
 
@@ -1076,7 +980,6 @@ async fn detach_spawned_child(
     mut stdout_task: Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
     mut stderr_task: Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
     tree: ProcessTree,
-    escalated_on_timeout: bool,
     child_stdin: Option<tokio::process::ChildStdin>,
 ) -> Result<CommandRunResult> {
     let session_id = command_session.command_session_id().to_string();
@@ -1132,7 +1035,6 @@ async fn detach_spawned_child(
         stderr_capture: CommandOutputCaptureMeta::empty(),
         command_session_id: Some(session_id),
         running: true,
-        escalated_on_timeout,
     })
 }
 
@@ -1220,7 +1122,6 @@ async fn complete_detachable_child(
         stderr_capture: stderr_capture.meta,
         command_session_id: Some(command_session.command_session_id().to_string()),
         running: false,
-        escalated_on_timeout: false,
     })
 }
 
@@ -1235,7 +1136,6 @@ async fn run_command_streaming(
     stderr_policy: CommandOutputPolicy,
     command_index: usize,
     yield_time: Option<Duration>,
-    escalate_after: Option<Duration>,
     force_shell_launch: bool,
 ) -> Result<CommandRunResult> {
     let command_text = command.to_string();
@@ -1400,11 +1300,7 @@ async fn run_command_streaming(
         .as_ref()
         .map(|broker| SessionCancelGuard::register(broker, command_session.command_session_id()))
         .unzip();
-    let foreground_escalation = yield_time.is_none() && escalate_after.is_some();
-    let Some(wait) = yield_time
-        .or(escalate_after)
-        .filter(|wait| *wait > Duration::ZERO)
-    else {
+    let Some(wait) = yield_time.filter(|wait| *wait > Duration::ZERO) else {
         return run_spawned_child_streaming(
             context,
             child,
@@ -1517,22 +1413,14 @@ async fn run_command_streaming(
         )
         .await;
     };
-    // 前台超时转后台：等待预算已经用完，不能再用同一个 timeout 把刚保下来
-    // 的进程杀掉；改给一个较长的硬上限，避免挂死的命令永久占住会话。
-    let detached_timeout = if foreground_escalation {
-        Some(Duration::from_secs_f64(ESCALATED_COMMAND_MAX_S))
-    } else {
-        timeout
-    };
     detach_spawned_child(
         broker,
         child,
-        detached_timeout,
+        timeout,
         command_session,
         stdout_task,
         stderr_task,
         tree,
-        foreground_escalation,
         child_stdin,
     )
     .await
@@ -1542,7 +1430,7 @@ async fn run_command_streaming(
 /// Ctrl-C 中断。设计对齐 codex 的 unified exec：
 ///
 /// - 一次调用只有「读一眼」和「写一次」两种意图，不再额外要求 action；
-/// - 读一眼默认 250ms 就返回，需要阻塞到退出时才传 `wait_for=exit`；
+/// - 空输入等待新增输出，非空输入写 stdin 后在同一窗口等待新增输出；
 /// - 会话已退出不是错误，仍然返回最后一次输出，避免模型拿不到结果；
 /// - 没有可写 stdin 时给出可执行的替代做法，而不是让模型反复重试。
 pub(crate) async fn command_session_control(
@@ -1566,11 +1454,8 @@ pub(crate) async fn command_session_control(
     let input = parse_command_session_input(args);
     let wait = parse_command_session_wait(args);
     let yield_time_ms = wait.yield_time_ms;
-    // 喂完输入通常就是在等结果（`echo y | 命令` 的语义），中断更是在等进程真的
-    // 收尾，所以这两种意图在没显式声明 wait_for 时按「等退出」处理；纯轮询
-    // 仍然是读一眼就走。窗口不放大，交互式程序照样能很快把控制权交回来。
-    let settles_session = input.writes_stdin() || matches!(input, CommandSessionInput::Interrupt);
-    let wait_for_exit = wait.wait_for_exit || (settles_session && args.get("wait_for").is_none());
+    // 普通写入与普通轮询都只等待新增输出；中断则等进程完成收尾。
+    let wait_for_exit = wait.wait_for_exit || matches!(input, CommandSessionInput::Interrupt);
     let after_seq = args.get("after_seq").and_then(Value::as_u64);
     let broker = context.command_sessions.as_ref();
     let managed = broker.is_some_and(|broker| {
@@ -1723,10 +1608,13 @@ pub(crate) async fn command_session_control(
             map.insert("interrupted".to_string(), Value::Bool(true));
         }
     }
-    let data = match stdin_note {
+    let mut data = match stdin_note {
         Some(note) => with_stdin_note(data, note),
         None => data,
     };
+    if let CommandSessionInput::Text(text) = input {
+        data["interaction_input"] = Value::String(text.to_string());
+    }
     Ok(build_command_session_result(data))
 }
 
@@ -2006,8 +1894,8 @@ async fn await_sandbox_command_exit(
             map.insert("dropped".into(), json!(dropped));
             if running {
                 map.insert("status".into(), json!("running"));
-                map.insert("reason".into(), json!("timeout_escalated"));
-                map.insert("timeout_s".into(), json!(timeout_s));
+                map.insert("reason".into(), json!("yielded"));
+                map.insert("yield_time_ms".into(), json!((timeout_s * 1000.0) as u64));
                 map.insert("poll_after_seq".into(), json!(after_seq));
             }
         }
@@ -2169,6 +2057,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
     let command_budget = parse_command_budget(&args);
     let content = args
         .get("content")
+        .or_else(|| args.get("cmd"))
         .and_then(Value::as_str)
         .unwrap_or("")
         .trim()
@@ -2197,7 +2086,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             json!({ "command": content }),
             ToolErrorMeta::new(
                 "TOOL_EXEC_SLEEP_NOT_ALLOWED",
-                Some("不要用 sleep 空等：默认阻塞执行即可拿到结果；等待后台命令请用命令会话工具轮询。".to_string()),
+                Some("不要用 sleep 空等：未结束的命令会返回 command_session_id，请用 write_stdin 等待输出。".to_string()),
                 false,
                 None,
             ),
@@ -2221,22 +2110,26 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             })
         });
     let context = scoped_context.as_ref().unwrap_or(context);
-    let run_in_background = parse_run_in_background(&args);
+    let yield_time = context
+        .command_sessions
+        .is_some()
+        .then(|| parse_command_yield_time(&args));
     let timeout_s = parse_timeout_secs(args.get("timeout_s"))
         .map(|value| value.max(0.0))
         .unwrap_or(DEFAULT_COMMAND_TIMEOUT_S);
     let timeout_s = apply_time_budget_secs(timeout_s, &command_budget);
-    // 0/负数不再表示「不限制」：工具调用必须必然返回，无上限只会把整条
-    // 智能体线程冻死在一条挂住的命令上。回落到默认超时。
     let timeout_s = if timeout_s > 0.0 {
         timeout_s.min(MAX_COMMAND_TIMEOUT_S)
     } else {
         DEFAULT_COMMAND_TIMEOUT_S
     };
-    let timeout = Some(Duration::from_secs_f64(timeout_s));
-    // 前台命令到点后不杀进程：有会话管理时转入后台继续跑，模型随后轮询。
-    let escalate_after = (!run_in_background && context.command_sessions.is_some())
-        .then_some(Duration::from_secs_f64(timeout_s));
+    // 等待窗口与进程寿命分离：到点返回会话，不把仍在工作的进程误判为超时。
+    let process_timeout_s = if yield_time.is_some() {
+        INTERACTIVE_COMMAND_MAX_S
+    } else {
+        timeout_s
+    };
+    let timeout = Some(Duration::from_secs_f64(process_timeout_s));
     if crate::sandbox::sandbox_enabled(context.config) && !dry_run && !content.is_empty() {
         if let Some(result) = crate::sandbox::launch_command_session(
             context.config,
@@ -2294,9 +2187,9 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                                 .map(ToString::to_string),
                         );
                     }
-                } else if !run_in_background {
-                    // Default blocking mode: wait for the command to finish via
-                    // the session poll-with-wait loop instead of returning early.
+                } else {
+                    // Every command shares the same short initial wait. A still-running
+                    // process remains attached to its session instead of being killed.
                     let Some(command_session_id) = command_session_id.as_deref() else {
                         return Ok(build_failed_tool_result(
                             "sandbox command session id is missing",
@@ -2337,7 +2230,9 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                     match await_sandbox_command_exit(
                         context,
                         command_session_id,
-                        timeout_s,
+                        yield_time
+                            .map(|wait| wait.as_secs_f64())
+                            .unwrap_or(DEFAULT_COMMAND_YIELD_MS as f64 / 1000.0),
                         tracker.as_ref(),
                     )
                     .await
@@ -2410,35 +2305,18 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                         ),
                     );
                 }
-                let (summary, guidance) = if let Some(seq) = escalated_after_seq {
-                    let guidance = format!(
-                        "前台等待已到 timeout_s，命令没有终止，已转入后台命令会话继续运行（command_session_id={}）。\
-                         用命令会话工具轮询到退出后再检查产物；轮询时传 after_seq={seq} 只取新输出。不要重跑同一条命令。",
-                        data.get("command_session_id")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                    );
-                    (
-                        "Command exceeded the foreground timeout and is still running in the background."
-                            .to_string(),
-                        guidance,
-                    )
-                } else {
-                    (
-                        format!(
-                            "Sandbox command started in the background. {}",
-                            i18n::t("tool.exec.background_next_step")
-                        ),
-                        i18n::t("tool.exec.background_next_step"),
-                    )
-                };
+                let guidance = i18n::t("tool.exec.background_next_step");
                 if let Value::Object(ref mut map) = data {
-                    map.insert("next_step".to_string(), Value::String(guidance));
+                    map.insert("next_step".to_string(), Value::String(guidance.clone()));
+                    map.insert(
+                        "yield_time_ms".to_string(),
+                        json!(yield_time.map(|wait| wait.as_millis())),
+                    );
                 }
                 return Ok(build_model_tool_success(
                     "execute_command",
                     "running",
-                    summary,
+                    format!("Command is still running. {guidance}"),
                     data,
                 ));
             }
@@ -2620,7 +2498,6 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                 ));
             }
         }
-        let command_started = SystemTime::now();
         // 模型习惯把整条命令再包一层 `powershell -Command "..."`。当前 shell 本来
         // 就是 pwsh 时，这层包装只会多出一次文本解析：`$var`/`$_` 被外层提前展开，
         // `\"` 与 `` `" `` 被外层吃掉。冗余包装直接剥掉；显式指向系统 Windows
@@ -2654,8 +2531,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             stdout_policy,
             stderr_policy,
             command_index,
-            run_in_background.then(|| parse_command_yield_time(&args)),
-            escalate_after,
+            yield_time,
             force_shell_launch,
         )
         .await?;
@@ -2678,7 +2554,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             "command": command,
             "command_index": command_index,
             "command_session_id": run.command_session_id,
-            "returncode": run.returncode,
+            "returncode": (!run.running).then_some(run.returncode),
             "stdout": run.stdout,
             "stderr": run.stderr,
             "output_meta": {
@@ -2702,50 +2578,24 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
         if run.running {
             context.workspace.mark_tree_dirty(context.workspace_id);
             let guidance = i18n::t("tool.exec.background_next_step");
-            if run.escalated_on_timeout {
-                let recent = recent_output_paths(&cwd, command_started, 20);
-                let session_id = run.command_session_id.clone().unwrap_or_default();
-                let hint = timeout_escalation_hint(&session_id, &recent);
-                let partial_output = context
-                    .command_sessions
-                    .as_ref()
-                    .and_then(|broker| {
-                        broker.snapshot_for_scope(context.user_id, context.session_id, &session_id)
-                    })
-                    .map(|snapshot| {
-                        json!({
-                            "stdout_tail": snapshot.stdout_tail,
-                            "stderr_tail": snapshot.stderr_tail,
-                        })
-                    })
-                    .unwrap_or(Value::Null);
-                if let Some(last) = results.last_mut().and_then(Value::as_object_mut) {
-                    last.insert("running".to_string(), Value::Bool(true));
-                    last.insert("escalated_on_timeout".to_string(), Value::Bool(true));
-                }
-                return Ok(build_model_tool_success(
-                    "execute_command",
-                    "running",
-                    hint.clone(),
-                    json!({
-                        "command_session_id": session_id,
-                        "status": "running",
-                        "reason": "timeout_escalated",
-                        "timeout_s": timeout_s,
-                        "elapsed_s": command_started.elapsed().map(|d| d.as_secs_f64()).unwrap_or(0.0),
-                        "recent_files": recent,
-                        "partial_output": partial_output,
-                        "next_step": hint,
-                        "results": compact_command_results_for_model(&results),
-                    }),
-                ));
+            let session_id = run.command_session_id.clone().unwrap_or_default();
+            let partial_output = context.command_sessions.as_ref().and_then(|broker| {
+                broker.snapshot_for_scope(context.user_id, context.session_id, &session_id)
+            });
+            if let (Some(snapshot), Some(last)) = (
+                partial_output.as_ref(),
+                results.last_mut().and_then(Value::as_object_mut),
+            ) {
+                last.insert("running".to_string(), Value::Bool(true));
+                last.insert("stdout".to_string(), json!(snapshot.stdout_tail));
+                last.insert("stderr".to_string(), json!(snapshot.stderr_tail));
             }
             return Ok(build_model_tool_success(
                 "execute_command",
                 "running",
-                format!("Command started in the background. {guidance}"),
+                format!("Command is still running. {guidance}"),
                 json!({
-                    "command_session_id": run.command_session_id,
+                    "command_session_id": session_id,
                     "status": "running",
                     "next_step": guidance,
                     "results": compact_command_results_for_model(&results),

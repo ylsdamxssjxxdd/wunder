@@ -195,9 +195,11 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         assert_eq!(command.get_current_dir(), Some(workspace));
-        assert!(command
-            .get_envs()
-            .any(|(key, value)| key == "WUNDER_HOME" && value == Some(home.as_os_str())));
+        assert!(
+            command
+                .get_envs()
+                .any(|(key, value)| key == "WUNDER_HOME" && value == Some(home.as_os_str()))
+        );
     }
 
     #[cfg(windows)]

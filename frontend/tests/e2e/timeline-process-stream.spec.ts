@@ -431,3 +431,81 @@ test('a lone batch round opens its batch row when the caller marks it as the lat
   });
   expect(result).toEqual({ latest: { open: true, entries: 1 }, folded: { open: false, entries: 0 } });
 });
+
+
+test('command entries render Codex-style live output and settle in place', async ({ page }) => {
+  await page.goto('/__e2e/composer-b4');
+  const result = await page.evaluate(async () => {
+    const [source, storeSource] = await Promise.all([
+      (await fetch('/src/components/chat/MessageTimelineToolEntry.vue')).text(),
+      (await fetch('/src/stores/commandSessions.ts')).text()
+    ]);
+    const runtimeUrl = source.match(/from\s+["']([^"']*\/vue\.js[^"']*)["']/)?.[1];
+    const piniaUrl = storeSource.match(/from\s+["']([^"']*pinia[^"']*)["']/)?.[1];
+    if (!runtimeUrl || !piniaUrl) throw new Error('Missing fixture runtime');
+    const [
+      { createApp, h, nextTick, reactive },
+      { default: Tool },
+      { buildTimelineToolEntries },
+      { createPinia },
+      { useCommandSessionStore }
+    ] = await Promise.all([
+      import(runtimeUrl),
+      import('/src/components/chat/MessageTimelineToolEntry.vue'),
+      import('/src/components/chat/toolTimelineModel.ts'),
+      import(piniaUrl),
+      import('/src/stores/commandSessions.ts')
+    ]);
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;inset:0;padding:20px;background:#fbfaf8';
+    document.body.append(host);
+    const pinia = createPinia();
+    const commands = useCommandSessionStore(pinia);
+    commands.upsertSnapshot('fixture-thread', {
+      command_session_id: 'fixture-command', tool_call_id: 'fixture-call', session_id: 'fixture-thread',
+      command: 'fixture-command --wait', cwd: 'fixture/work', status: 'running', seq: 2,
+      stdout_tail: 'first\nsecond\n', stderr_tail: ''
+    });
+    const entry = buildTimelineToolEntries([{
+      id: 'fixture-call', eventType: 'tool_call', toolName: 'execute_command', toolCallId: 'fixture-call',
+      commandSessionId: 'fixture-command', status: 'running',
+      detail: JSON.stringify({ args: { description: 'fixture title', content: 'fixture-command --wait' } })
+    }], (key: string) => key).entries[0];
+    const model = reactive({ open: false });
+    const app = createApp({ setup: () => () => h(Tool, {
+      entry, open: model.open, onToggle: () => { model.open = !model.open; }
+    }) });
+    app.use(pinia);
+    try {
+      app.mount(host);
+      await nextTick();
+      const initialLabel = host.querySelector('.tl-entry-tool-label')?.textContent || '';
+      const initial = {
+        running: ['Running', '正在执行', 'chat.timeline.commandRunning'].includes(initialLabel),
+        command: host.textContent?.includes('fixture-command --wait') ?? false,
+        output: host.querySelector('.tl-entry-live-output')?.textContent === 'first\nsecond',
+        hidesDescription: !(host.textContent?.includes('fixture title') ?? true)
+      };
+      commands.appendDelta('fixture-thread', 'fixture-command', 'stderr', 'third\n', { seq: 3 });
+      await nextTick();
+      const interleaved = host.querySelector('.tl-entry-live-output')?.textContent === 'first\nsecond\nthird';
+      host.querySelector<HTMLButtonElement>('.tl-entry-head')!.click();
+      await nextTick();
+      const expanded = host.querySelector('.tl-entry-output')?.textContent?.includes('fixture/work') ?? false;
+      commands.upsertSnapshot('fixture-thread', {
+        command_session_id: 'fixture-command', status: 'exited', exit_code: 0, seq: 4
+      });
+      await nextTick();
+      const settledLabel = host.querySelector('.tl-entry-tool-label')?.textContent || '';
+      return { ...initial, interleaved, expanded,
+        settled: ['Ran', '执行', 'chat.timeline.commandRan'].includes(settledLabel) };
+    } finally {
+      app.unmount();
+      host.remove();
+    }
+  });
+  expect(result).toEqual({
+    running: true, command: true, output: true, hidesDescription: true,
+    interleaved: true, expanded: true, settled: true
+  });
+});

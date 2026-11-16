@@ -1,16 +1,16 @@
 use super::NativeDesktop;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde_json::Value;
 use wunder_server::api::user_channel_logs::{
     list_user_channel_runtime_logs, reconnect_user_channel,
 };
 use wunder_server::api::user_channels::{
-    build_weixin_qr_png_data_uri, delete_user_channel_account, delete_user_channel_binding,
-    list_user_channel_accounts, list_user_channel_bindings, start_user_weixin_qr_login,
-    upsert_user_channel_account, upsert_user_channel_binding, wait_user_weixin_qr_login,
     ChannelAccountUpsertRequest, ChannelBindingUpsertRequest, ChannelServiceError,
     FeishuAccountPayload, WechatAccountPayload, WechatMpAccountPayload, WeixinAccountPayload,
-    WeixinQrStartRequest, WeixinQrWaitRequest,
+    WeixinQrStartRequest, WeixinQrWaitRequest, build_weixin_qr_png_data_uri,
+    delete_user_channel_account, delete_user_channel_binding, list_user_channel_accounts,
+    list_user_channel_bindings, start_user_weixin_qr_login, upsert_user_channel_account,
+    upsert_user_channel_binding, wait_user_weixin_qr_login,
 };
 
 /// Secret-free projection for the desktop channel page. Secrets never cross

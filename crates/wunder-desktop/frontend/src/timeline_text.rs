@@ -27,8 +27,10 @@ pub fn tool_label(tool: &str) -> String {
             "网页搜索"
         }
         "web_fetch" | "web_fetch_tool" | "web fetch" | "webfetch" | "网页抓取" => "网页抓取",
-        "execute_command" | "run_command" | "shell" | "运行命令" => COMMAND_TOOL,
-        "command_session" => "命令会话",
+        "execute_command" | "exec_command" | "run_command" | "shell" | "运行命令" => {
+            COMMAND_TOOL
+        }
+        "command_session" | "write_stdin" | "write_command_stdin" => "命令交互",
         "question_panel" | "ask_panel" => "问询面板",
         "update_plan" | "plan_update" => "计划面板",
         "read_image" | "view_image" => "读图",
@@ -39,6 +41,26 @@ pub fn tool_label(tool: &str) -> String {
         other => other,
     };
     mapped.chars().take(64).collect()
+}
+
+pub fn tool_label_for_entry(entry: &NativeWorkflowEntry) -> String {
+    match entry.title.trim() {
+        "execute_command" | "exec_command" | "run_command" | "shell" | "运行命令" | "执行命令" => {
+            if entry.state == "running" {
+                "正在执行".into()
+            } else {
+                "执行".into()
+            }
+        }
+        "command_session" | "write_stdin" | "write_command_stdin" | "命令会话" | "命令交互" => {
+            if entry.command_meta.contains("stdin ›") {
+                "发送输入".into()
+            } else {
+                "等待".into()
+            }
+        }
+        _ => tool_label(&entry.title),
+    }
 }
 
 pub fn thought_running() -> &'static str {
@@ -198,11 +220,7 @@ fn glyph_width(ch: char) -> f32 {
             | 0xFFE0..=0xFFE6
             | 0x20000..=0x2FFFD
     );
-    if wide {
-        12.0
-    } else {
-        6.2
-    }
+    if wide { 12.0 } else { 6.2 }
 }
 
 /// Shorten a chip label to what the chip can actually print. The chip keeps
@@ -421,6 +439,8 @@ pub fn process_entry_for(row: &TimelineRow, narrow: bool) -> ProcessEntry {
         } else {
             row.detail.clone()
         },
+        command_output: row.command_output.clone(),
+        command_meta: row.command_meta.clone(),
         sections: row.sections.clone(),
         patch: row.patch.clone(),
         diff_add: diff_add.into(),
@@ -1006,6 +1026,8 @@ mod tests {
             tokens: String::new(),
             duration: String::new(),
             read_lines: String::new(),
+            command_output: String::new(),
+            command_meta: String::new(),
             sections: Vec::new(),
             patch_files: Vec::new(),
             round: 0,
@@ -1031,6 +1053,8 @@ mod tests {
             tokens: String::new(),
             duration: String::new(),
             read_lines: String::new(),
+            command_output: String::new(),
+            command_meta: String::new(),
             sections: Vec::new(),
             patch_files: Vec::new(),
             round: 0,
@@ -1065,6 +1089,8 @@ mod tests {
             tokens: String::new(),
             duration: String::new(),
             read_lines: String::new(),
+            command_output: String::new(),
+            command_meta: String::new(),
             sections: Vec::new(),
             patch_files: Vec::new(),
             round: 0,
@@ -1110,6 +1136,8 @@ mod tests {
             tokens: String::new(),
             duration: String::new(),
             read_lines: String::new(),
+            command_output: String::new(),
+            command_meta: String::new(),
             sections: Vec::new(),
             patch_files: Vec::new(),
             round: 0,

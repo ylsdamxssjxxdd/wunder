@@ -1,20 +1,16 @@
 use super::*;
 use crate::tool_display::tool_result_ledger_summary;
 use crate::tui::theme;
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction as LayoutDirection, Layout};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-use ratatui::Frame;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use wunder_server::stable_core::trajectory_axis as axis;
 
 fn tr(zh: bool, chinese: &'static str, english: &'static str) -> &'static str {
-    if zh {
-        chinese
-    } else {
-        english
-    }
+    if zh { chinese } else { english }
 }
 fn kind_label(kind: &str, zh: bool) -> &str {
     if !zh {

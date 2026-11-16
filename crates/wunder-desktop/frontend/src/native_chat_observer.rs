@@ -840,7 +840,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             }
             for item in &round.items {
                 let mut row = blank_row(crate::timeline::KIND_TOOL, format!("tool-{}", item.id));
-                let label = crate::timeline_text::tool_label(&item.title);
+                let label = crate::timeline_text::tool_label_for_entry(item);
                 let (target, patch) = crate::timeline_text::tool_target(item);
                 row.tool_name = label.as_str().into();
                 row.tool_icon = wunder_desktop::tool_icons::workflow_icon(&item.title).into();
@@ -852,6 +852,8 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 // keeps the full call preview even when the row drops it.
                 latest = crate::timeline_text::tool_summary(item).as_str().into();
                 row.detail = crate::timeline_text::copy_text(&item.sections, item.detail.as_str());
+                row.command_output = item.command_output.as_str().into();
+                row.command_meta = item.command_meta.as_str().into();
                 row.sections = crate::timeline_text::sections(&item.sections);
                 row.tokens = item.tokens.as_str().into();
                 row.duration = item.duration.as_str().into();
@@ -1300,6 +1302,8 @@ fn blank_row(kind: i32, id: String) -> TimelineRow {
         duration: Default::default(),
         read_lines: Default::default(),
         detail: Default::default(),
+        command_output: Default::default(),
+        command_meta: Default::default(),
         sections: ModelRc::default(),
         process_entries: ModelRc::default(),
         process_root: Default::default(),

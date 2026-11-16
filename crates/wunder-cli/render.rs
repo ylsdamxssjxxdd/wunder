@@ -5,8 +5,8 @@ use std::io::{self, Write};
 use wunder_server::schemas::StreamEvent;
 
 use crate::command_session_display::{
-    compact_text_preview, CommandSessionDisplayState, CommandSessionDisplayStatus,
-    CommandSessionUpdate, CommandSessionView,
+    CommandSessionDisplayState, CommandSessionDisplayStatus, CommandSessionUpdate,
+    CommandSessionView, compact_text_preview,
 };
 use crate::patch_diff::{build_patch_diff_preview, format_patch_diff_preview_lines};
 use crate::tool_display::summarize_tool_result;
@@ -253,6 +253,10 @@ impl StreamRenderer {
                 let failed = tool_result_failed(payload);
                 if is_apply_patch_tool_name(tool) {
                     for line in format_apply_patch_result_lines(tool, payload, self.is_zh) {
+                        self.progress_result_line(&line, failed);
+                    }
+                } else if crate::tool_presentation::is_command_session_tool_name(tool) {
+                    for line in format_command_interaction_result_lines(payload, self.is_zh) {
                         self.progress_result_line(&line, failed);
                     }
                 } else if is_execute_command_tool_name(tool) {
@@ -503,6 +507,19 @@ fn format_tool_call_line(tool: &str, args: &Value, repair: Option<&Value>, is_zh
         .unwrap_or_default();
     let tool_is_zh = is_zh;
     let mut lines = Vec::new();
+    if crate::tool_presentation::is_command_session_tool_name(tool) {
+        let input = args
+            .get("chars")
+            .or_else(|| args.get("input"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        return if input.is_empty() {
+            "• 等待命令输出".into()
+        } else {
+            format!("• 发送输入 `{}`", summarize_interaction_input(input))
+        };
+    }
+
     if is_execute_command_tool_name(tool) {
         if let Some(command) = args
             .get("content")
@@ -643,6 +660,14 @@ fn extract_patch_preview_lines(patch: &str, max_entries: usize, is_zh: bool) -> 
     } else {
         format_patch_diff_preview_lines(&preview)
     }
+}
+
+fn summarize_interaction_input(input: &str) -> String {
+    let sanitized = input
+        .replace('\r', "\\r")
+        .replace('\n', "\\n")
+        .replace('\t', "\\t");
+    sanitized.chars().take(80).collect()
 }
 
 /// One command on one header line: a runaway command would push the rest of the
@@ -1222,6 +1247,40 @@ fn format_execute_command_result_lines(tool: &str, result: &Value) -> Vec<String
     lines
 }
 
+fn format_command_interaction_result_lines(payload: &Value, is_zh: bool) -> Vec<String> {
+    let result = extract_tool_result_object(payload);
+    let data = extract_tool_result_data(result);
+    let command = data["command"].as_str().unwrap_or("command");
+    let input = data["interaction_input"].as_str().unwrap_or_default();
+    let action = if input.is_empty() {
+        if is_zh { "等待" } else { "Waited for" }
+    } else {
+        if is_zh {
+            "发送输入"
+        } else {
+            "Interacted with"
+        }
+    };
+    let mut lines = vec![format!("• {action} {}", clip_command(command))];
+    if !input.is_empty() {
+        push_tree_line(
+            &mut lines,
+            format!("stdin › {}", summarize_interaction_input(input)),
+        );
+    }
+    let output = data["output"].as_str().unwrap_or_default();
+    for line in compact_output_lines(output, 6, 1_200) {
+        push_tree_line(&mut lines, line);
+    }
+    if let Some(code) = data["exit_code"].as_i64() {
+        push_tree_line(&mut lines, format!("exit {code}"));
+    }
+    if lines.len() == 1 && data["status"].as_str() != Some("running") {
+        push_tree_line(&mut lines, "output: <empty>".to_string());
+    }
+    lines
+}
+
 fn command_session_status_line(view: &CommandSessionView) -> String {
     let mut metrics = Vec::new();
     if let Some(exit_code) = view.exit_code {
@@ -1681,12 +1740,16 @@ mod tests {
             }
         });
         let lines = format_apply_patch_result_lines("apply_patch", &payload, false);
-        assert!(lines
-            .iter()
-            .any(|line| line.contains("PATCH_CONTEXT_NOT_FOUND")));
-        assert!(lines
-            .iter()
-            .any(|line| line.contains("Read file and retry")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("PATCH_CONTEXT_NOT_FOUND"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("Read file and retry"))
+        );
     }
 
     #[test]
@@ -1738,9 +1801,11 @@ mod tests {
             true,
         );
         assert!(lines.iter().any(|line| line.contains("args repaired")));
-        assert!(lines
-            .iter()
-            .any(|line| line.contains("recovered malformed JSON arguments")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("recovered malformed JSON arguments"))
+        );
     }
 
     #[test]

@@ -15,8 +15,8 @@ use slint::{Model, ModelRc, VecModel};
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
-use wunder_desktop::native::{NativeSubagentCard, NativeWorkflowEntry};
 use wunder_desktop::NativeDesktop;
+use wunder_desktop::native::{NativeSubagentCard, NativeWorkflowEntry};
 
 /// Row kinds; keep in sync with `EntryKind` in ui/timeline.slint.
 pub const KIND_USER: i32 = 0;
@@ -211,6 +211,8 @@ fn blank(kind: i32, id: String) -> TimelineRow {
         duration: Default::default(),
         read_lines: Default::default(),
         detail: slint::SharedString::default(),
+        command_output: slint::SharedString::default(),
+        command_meta: slint::SharedString::default(),
         reasoning_blocks: ModelRc::default(),
         sections: ModelRc::default(),
         process_entries: ModelRc::default(),
@@ -1650,7 +1652,7 @@ impl Timeline {
 
     /// Append one tool entry, or update the entry of an already seen id.
     pub fn upsert_tool(&mut self, entry: &NativeWorkflowEntry) {
-        let label = crate::timeline_text::tool_label(&entry.title);
+        let label = crate::timeline_text::tool_label_for_entry(entry);
         let pending = status_kind(&entry.state) == STATUS_RUNNING;
         let (target, _) = crate::timeline_text::tool_target(entry);
         // A tool frame is proof that the round's thought is over. That holds for
@@ -1699,6 +1701,8 @@ impl Timeline {
                 row.target = target.as_str().into();
                 row.summary = row_summary.as_str().into();
                 row.detail = copy.clone();
+                row.command_output = entry.command_output.as_str().into();
+                row.command_meta = entry.command_meta.as_str().into();
                 row.sections = sections;
                 // Right-hand metrics are reported by one frame only (a call
                 // frame has none). A later trailing frame of the same call
@@ -1755,6 +1759,8 @@ impl Timeline {
             row.target = target.as_str().into();
             row.summary = row_summary.as_str().into();
             row.detail = copy;
+            row.command_output = entry.command_output.as_str().into();
+            row.command_meta = entry.command_meta.as_str().into();
             row.sections = sections;
             row.tokens = entry.tokens.as_str().into();
             row.duration = entry.duration.as_str().into();
@@ -3173,10 +3179,11 @@ mod tests {
         timeline.set_turn_status("已停止", 57);
         let row = timeline.model.row_data(timeline.footer.get()).unwrap();
         assert_eq!(row.stats.row_data(0).unwrap().key, "status-stopped");
-        assert!(row
-            .stats
-            .iter()
-            .any(|stat| stat.key == "screwdriver-wrench" && stat.value == "0"));
+        assert!(
+            row.stats
+                .iter()
+                .any(|stat| stat.key == "screwdriver-wrench" && stat.value == "0")
+        );
         assert_eq!(row.kind, KIND_FOOTER);
         assert_eq!(
             timeline
@@ -3341,9 +3348,11 @@ mod tests {
             .append_reasoning_item("fixture-exec:text-1", "想了")
             .unwrap();
         // 第二段在 delta 通道丢了，第三段带着自己的 offset 到达。
-        assert!(timeline
-            .apply_reasoning_tail("fixture-exec:text-1", 2, "再动手")
-            .unwrap());
+        assert!(
+            timeline
+                .apply_reasoning_tail("fixture-exec:text-1", 2, "再动手")
+                .unwrap()
+        );
         timeline.flush();
         let index = timeline.thinking.as_ref().unwrap().index;
         let row = timeline.model.row_data(index).unwrap();
@@ -3358,9 +3367,11 @@ mod tests {
         timeline
             .append_reasoning_item("fixture-exec:text-1", "想了")
             .unwrap();
-        assert!(!timeline
-            .apply_reasoning_tail("fixture-exec:text-1", 9, "再动手")
-            .unwrap());
+        assert!(
+            !timeline
+                .apply_reasoning_tail("fixture-exec:text-1", 9, "再动手")
+                .unwrap()
+        );
         timeline
             .reconcile_reasoning("fixture-exec:text-1", "想了想，再动手")
             .unwrap();
@@ -4013,11 +4024,13 @@ mod tests {
         let process = timeline.process_bar;
         let first = timeline.thinking.as_ref().unwrap().index;
         assert!(timeline.model.row_data(process).unwrap().visible);
-        assert!(timeline
-            .model
-            .iter()
-            .filter(|row| row.kind == KIND_GROUP)
-            .all(|row| !row.visible));
+        assert!(
+            timeline
+                .model
+                .iter()
+                .filter(|row| row.kind == KIND_GROUP)
+                .all(|row| !row.visible)
+        );
         assert!(
             timeline.model.row_data(first).unwrap().process_open,
             "first reveal unfolds the fold and its rows mirror it"
@@ -4236,6 +4249,8 @@ mod tests {
             tokens: String::new(),
             duration: String::new(),
             read_lines: String::new(),
+            command_output: String::new(),
+            command_meta: String::new(),
             sections: Vec::new(),
             patch_files: Vec::new(),
             round: 0,
@@ -4282,6 +4297,8 @@ mod tests {
             tokens: String::new(),
             duration: String::new(),
             read_lines: String::new(),
+            command_output: String::new(),
+            command_meta: String::new(),
             sections: Vec::new(),
             patch_files: Vec::new(),
             round: 0,
@@ -4601,9 +4618,11 @@ mod tests {
             .as_any()
             .downcast_ref::<VecModel<crate::ProcessEntry>>()
             .unwrap();
-        assert!(!children
-            .iter()
-            .any(|entry| entry.detail == "Settled thought"));
+        assert!(
+            !children
+                .iter()
+                .any(|entry| entry.detail == "Settled thought")
+        );
     }
 
     /// Two threads, two reducers. The thread that is off screen keeps its live

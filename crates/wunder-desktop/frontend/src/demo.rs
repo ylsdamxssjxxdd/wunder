@@ -621,6 +621,8 @@ fn fixture_row(kind: i32, index: usize, text: &str) -> TimelineRow {
         duration: Default::default(),
         read_lines: Default::default(),
         detail: Default::default(),
+        command_output: Default::default(),
+        command_meta: Default::default(),
         sections: ModelRc::default(),
         process_entries: ModelRc::default(),
         process_root: Default::default(),
@@ -743,6 +745,18 @@ fn demo_timeline() -> Vec<TimelineRow> {
     list.foldable = true;
     fold(&mut list);
     rows.push(list);
+    let mut command = fixture_row(crate::timeline::KIND_TOOL, rows.len(), "");
+    command.tool_name = "执行".into();
+    command.tool_icon = "terminal".into();
+    command.summary = "check sample.txt".into();
+    command.command_output = "first\nsecond\n… +1 lines\nfour\nfive".into();
+    command.command_meta = "示例/项目 · exit 0".into();
+    command.detail = "first\nsecond\nthird\nfour\nfive".into();
+    command.group_idx = 1;
+    command.group_open = true;
+    command.foldable = true;
+    fold(&mut command);
+    rows.push(command);
     let mut edit = fixture_row(crate::timeline::KIND_TOOL, rows.len(), "");
     edit.tool_name = "编辑文件".into();
     edit.tool_icon = "file-pen".into();
@@ -751,7 +765,7 @@ fn demo_timeline() -> Vec<TimelineRow> {
     edit.group_idx = 1;
     edit.group_open = true;
     edit.foldable = true;
-    edit.open = true;
+    edit.open = false;
     edit.patch = patch_card();
     fold(&mut edit);
     rows.push(edit);

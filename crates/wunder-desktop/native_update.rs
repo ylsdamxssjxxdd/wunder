@@ -19,16 +19,16 @@
 //!   discarded once the running version has caught up with it.
 
 use super::NativeDesktop;
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use wunder_server::cloud::update::{is_newer_version, UpdateSourceClient};
+use wunder_server::cloud::update::{UpdateSourceClient, is_newer_version};
 
 /// Environment flag handed to the relaunched binary: it retries the
 /// single-instance claim briefly while the old process is still exiting,

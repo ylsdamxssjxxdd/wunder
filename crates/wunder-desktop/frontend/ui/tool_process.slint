@@ -147,6 +147,7 @@ component ProcessEntryCard inherits Rectangle {
                     horizontal-stretch: 1; min-width: 0px; height: parent.height;
                     text: root.entry.summary;
                     color: Theme.timeline-entry-soft; font-size: Theme.font-sm;
+                    font-family: root.entry.tool-icon == "terminal" ? Theme.font-mono : "Segoe UI";
                     overflow: elide; vertical-alignment: center;
                 }
                 // Right-side metrics share fixed columns so every row starts
@@ -177,6 +178,12 @@ component ProcessEntryCard inherits Rectangle {
             }
 
         }
+        if !root.entry.open && root.entry.command-output != "" : Text {
+            x: 44px; width: parent.width - 68px;
+            text: root.entry.command-output;
+            color: Theme.muted; font-size: Theme.font-sm; font-family: Theme.font-mono;
+            wrap: word-wrap;
+        }
         // The fold is laid out from the start and only collapses its height.
         // A panel created on the expand tap measured wrapped text at its
         // unwrapped width, so the box stayed one line tall and command output
@@ -187,6 +194,11 @@ component ProcessEntryCard inherits Rectangle {
             padding-left: 44px; padding-right: 24px;
             padding-top: 4px; padding-bottom: 8px;
             spacing: 8px;
+            if root.entry.command-meta != "" : Text {
+                text: root.entry.command-meta;
+                color: Theme.muted; font-size: Theme.font-xs; font-family: Theme.font-mono;
+                wrap: word-wrap;
+            }
 
             // Command output has neither patch cards nor sections; its plain
             // fallback stays laid out while folded so the wrapped height is

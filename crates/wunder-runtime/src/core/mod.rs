@@ -30,6 +30,7 @@ pub mod runtime_tuning;
 pub mod rustls_provider;
 pub mod schemas;
 pub mod shutdown;
+pub mod startup_probe;
 pub mod state;
 pub mod token_utils;
 pub mod tool_args;

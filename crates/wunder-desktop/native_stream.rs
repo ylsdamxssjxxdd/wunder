@@ -1,13 +1,13 @@
 //! Bounded asynchronous delivery; dropping a subscriber never cancels a settled turn.
 use super::{NativeChatInput, ThreadLeaseHeartbeat};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use futures::{FutureExt, StreamExt};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio::{runtime::Runtime, sync::mpsc};
 use tokio_util::sync::CancellationToken;
 use wunder_server::{
-    api::chat::build_native_chat_request, blocking, state::AppState, ThreadSubmitOutcome,
+    ThreadSubmitOutcome, api::chat::build_native_chat_request, blocking, state::AppState,
 };
 
 #[path = "native_follow.rs"]
@@ -167,8 +167,7 @@ async fn run(
     request.config_overrides.get_or_insert_with(|| json!({}))["__local_open_lease"] = lease_proof;
     // 本地形态的输入框消息是「现在就说」：线程停在问询面板上时，运行时不得
     // 把它排进队列（面板正是这句话要回答的东西）。
-    request.config_overrides.get_or_insert_with(|| json!({}))["__interactive_chat"] =
-        json!(true);
+    request.config_overrides.get_or_insert_with(|| json!({}))["__interactive_chat"] = json!(true);
     if cancel.is_cancelled() {
         let _ = output
             .send(NativeChatEvent::Event(
@@ -504,7 +503,7 @@ fn is_transport_duplicate(event: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_transport_duplicate, TailLedger};
+    use super::{TailLedger, is_transport_duplicate};
     use serde_json::json;
 
     /// tail 是第二条通道：delta 已覆盖的那一段照旧丢掉（不占帧），跨过水位的
@@ -524,12 +523,18 @@ mod tests {
         let same = json!({"data": {
             "item_id": "t1:text-1", "field": "reasoning", "offset": 0, "text": "想了"
         }});
-        assert!(ledger.tail_is_redundant(&same), "delta 已覆盖的 tail 不该占一帧");
+        assert!(
+            ledger.tail_is_redundant(&same),
+            "delta 已覆盖的 tail 不该占一帧"
+        );
         let ahead = json!({"data": {
             "item_id": "t1:text-1", "field": "reasoning", "offset": 2, "text": "再动手"
         }});
         assert!(!ledger.tail_is_redundant(&ahead), "跨过水位的 tail 要放行");
-        assert!(ledger.tail_is_redundant(&ahead), "放行过的同一段再到达就该丢掉");
+        assert!(
+            ledger.tail_is_redundant(&ahead),
+            "放行过的同一段再到达就该丢掉"
+        );
     }
 
     /// 正文与思考两条通道的水位互不干扰；没有 turn_id 的增量不参与记账。
@@ -560,7 +565,10 @@ mod tests {
     #[test]
     fn transport_duplicates_never_reach_the_ui_channel() {
         for duplicate in ["thread_item_tail", "thread_process_item", "thread_change"] {
-            assert!(is_transport_duplicate(duplicate), "{duplicate} must be dropped");
+            assert!(
+                is_transport_duplicate(duplicate),
+                "{duplicate} must be dropped"
+            );
         }
     }
 
@@ -578,7 +586,10 @@ mod tests {
             "question_panel",
             "turn_terminal",
         ] {
-            assert!(!is_transport_duplicate(kept), "{kept} must reach the reducer");
+            assert!(
+                !is_transport_duplicate(kept),
+                "{kept} must reach the reducer"
+            );
         }
     }
 }

@@ -1103,7 +1103,9 @@ impl TuiApp {
                     crate::locale::tr(
                         self.display_language.as_str(),
                         &format!("配置已保存但无法解析，启动时会退回默认值: {err}"),
-                        &format!("config saved but unreadable, startup will fall back to defaults: {err}"),
+                        &format!(
+                            "config saved but unreadable, startup will fall back to defaults: {err}"
+                        ),
                     ),
                 );
             }

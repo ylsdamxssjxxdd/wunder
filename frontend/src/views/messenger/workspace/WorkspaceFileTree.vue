@@ -223,7 +223,8 @@ const props = withDefaults(
     highlightedPath: string;
     loading: boolean;
     error: string;
-    selectionMode: boolean;
+    /** 复选框多选模式（批量操作条）；文件区已改为快捷键多选，默认关闭。 */
+    selectionMode?: boolean;
     selectedPaths: string[];
     /** 只读投影（互通远程节点）：隐藏写操作菜单，只留预览/展开。 */
     readOnly?: boolean;
@@ -235,7 +236,7 @@ const props = withDefaults(
     /** 空态主文案覆盖（搜索结果等非目录语义）。 */
     emptyText?: string;
   }>(),
-  { readOnly: false, remote: false, archivingPath: '', emptyHint: '', emptyText: '' }
+  { selectionMode: false, readOnly: false, remote: false, archivingPath: '', emptyHint: '', emptyText: '' }
 );
 
 const emit = defineEmits<{

@@ -96,10 +96,26 @@ mod tests {
         assert_eq!(ledger.get(0, 80, false, false, 7), None);
         ledger.put(0, 80, false, false, 7, 4);
         assert_eq!(ledger.get(0, 80, false, false, 7), Some(4));
-        assert_eq!(ledger.get(0, 40, false, false, 7), None, "width is part of the key");
-        assert_eq!(ledger.get(0, 80, true, false, 7), None, "raw mode is part of the key");
-        assert_eq!(ledger.get(0, 80, false, true, 7), None, "fold state is part of the key");
-        assert_eq!(ledger.get(0, 80, false, false, 8), None, "a changed card is remeasured");
+        assert_eq!(
+            ledger.get(0, 40, false, false, 7),
+            None,
+            "width is part of the key"
+        );
+        assert_eq!(
+            ledger.get(0, 80, true, false, 7),
+            None,
+            "raw mode is part of the key"
+        );
+        assert_eq!(
+            ledger.get(0, 80, false, true, 7),
+            None,
+            "fold state is part of the key"
+        );
+        assert_eq!(
+            ledger.get(0, 80, false, false, 8),
+            None,
+            "a changed card is remeasured"
+        );
     }
 
     #[test]

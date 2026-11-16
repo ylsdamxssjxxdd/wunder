@@ -1,6 +1,6 @@
 //! Small, secret-free profile projection for the native desktop surface.
 use super::NativeDesktop;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 const PROFILE_PREFS_PREFIX: &str = "user_preferences:v1:";

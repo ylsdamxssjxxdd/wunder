@@ -235,6 +235,15 @@ log "installing Python packages from $(basename "$requirements_path")"
   --index-url "$index_url" \
   -r "$requirements_path"
 
+# Ship the mirror as the pack's own pip default so `pip install` works on a
+# machine without a pip.conf: sys.prefix/pip.conf is pip's site-level config,
+# still overridden by the user's own ~/.config/pip/pip.conf.
+cat > "$python_root/pip.conf" <<EOF
+[global]
+index-url = $index_url
+timeout = 60
+EOF
+
 # Playwright's pip package ships only the browser driver; the browser binaries
 # live outside Python. Pre-download Chromium into the supplement so the
 # browser_* tools work offline. browser_bridge.py auto-detects

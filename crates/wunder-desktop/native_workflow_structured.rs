@@ -1,6 +1,6 @@
 //! Readable native equivalents of the web tool-result groups. Array and text
 //! budgets apply before projection; binary media stays out of the UI model.
-use super::{line, push_body, text, Section};
+use super::{Section, line, push_body, text};
 use serde_json::Value;
 
 fn section(title: String, kind: &str) -> Section {

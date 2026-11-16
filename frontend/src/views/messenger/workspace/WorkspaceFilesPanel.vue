@@ -1,7 +1,7 @@
 <template>
   <div
     class="workspace-files"
-    :class="{ 'is-dragover': dragActive, 'is-selecting': selectionMode }"
+    :class="{ 'is-dragover': dragActive }"
     @dragenter="handleDragEnter($event)"
     @dragover.prevent="handleDragOver"
     @dragleave="handleDragLeave"
@@ -10,7 +10,7 @@
     <div class="messenger-sidebar-files-head">
       <template v-if="!searchOpen">
         <span class="workspace-files-head-title">{{ t('messenger.filesArea.group') }}</span>
-        <div v-if="!selectionMode" class="workspace-files-actions" role="toolbar" :aria-label="t('messenger.filesArea.group')">
+        <div class="workspace-files-actions" role="toolbar" :aria-label="t('messenger.filesArea.group')">
           <template v-if="!remoteInterlinkActive">
             <input
               ref="uploadInputRef"
@@ -39,28 +39,14 @@
               <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
             </button>
             <button
-              class="workspace-files-action workspace-files-action--icon"
+              class="workspace-files-action workspace-files-action--icon is-danger"
               type="button"
               :disabled="busy || archiving"
-              :aria-busy="archiving || undefined"
-              :title="t('messenger.filesArea.archiveCurrent')"
-              :aria-label="t('messenger.filesArea.archiveCurrent')"
-              @click="handleDownloadCurrentDirectory"
+              :title="t('messenger.filesArea.clear')"
+              :aria-label="t('messenger.filesArea.clear')"
+              @click="handleClearWorkspace"
             >
-              <i
-                class="fa-solid"
-                :class="archiving ? 'fa-spinner fa-spin' : 'fa-file-zipper'"
-                aria-hidden="true"
-              ></i>
-            </button>
-            <button
-              class="workspace-files-action workspace-files-action--icon"
-              type="button"
-              :title="t('messenger.filesArea.select')"
-              :aria-label="t('messenger.filesArea.select')"
-              @click="enterSelectionMode"
-            >
-              <i class="fa-solid fa-list-check" aria-hidden="true"></i>
+              <i class="fa-solid fa-broom" aria-hidden="true"></i>
             </button>
           </template>
           <button
@@ -112,26 +98,12 @@
       {{ t('interlink.workspace.treeTruncated') }}
     </div>
 
-    <div v-if="selectionMode" class="workspace-files-selection">
-      <span class="workspace-files-selection-count">
-        {{ t('messenger.filesArea.selectedCount', { count: selectedList.length }) }}
-      </span>
-      <button type="button" @click="exitSelectionMode">{{ t('common.cancel') }}</button>
-      <button type="button" :disabled="!selectedList.length" @click="handleBatchArchive">
-        {{ t('messenger.filesArea.batchDownload') }}
-      </button>
-      <button type="button" class="is-danger" :disabled="!selectedList.length" @click="handleBatchDelete">
-        {{ t('common.delete') }}
-      </button>
-    </div>
-
     <WorkspaceFileTree
       :rows="visibleFileRows"
       :active-path="searchActive ? '' : activePath"
       :highlighted-path="searchActive ? '' : highlightedPath"
       :loading="visibleFilesLoading"
       :error="visibleFilesError"
-      :selection-mode="!searchActive && selectionMode"
       :selected-paths="selectedList"
       :archiving-path="archivingPath"
       :read-only="!searchActive && remoteInterlinkActive && !remoteWritable"
@@ -143,7 +115,6 @@
       @activate="handleActivateRow"
       @select="handleRowSelect"
       @open="handleOpenRow"
-      @toggle-select="handleToggleSelect"
       @exit-selection="handleExitSelection"
       @retry="handleRetry"
       @command="handleRowCommand"
@@ -510,16 +481,13 @@ const {
   activePath,
   highlightedPath,
   selectedList,
-  selectionMode,
   loadMore,
   refreshDirectory,
   loadDirectory,
   revealPath,
   removePaths,
   setActivePath,
-  clearSelection,
-  toggleSelection,
-  exitSelectionMode
+  clearSelection
 } = tree;
 
 const uploadTarget = ref('');
@@ -695,11 +663,7 @@ const handleExitSelection = () => {
     exitSearch();
     return;
   }
-  if (selectionMode.value) {
-    exitSelectionMode();
-    return;
-  }
-  // 快捷多选没有多选模式，Esc 只清选择集合。
+  // 快捷多选（Ctrl/⌘、Shift）没有多选模式，Esc 只清选择集合。
   if (selectedList.value.length) clearSelection();
 };
 
@@ -732,7 +696,6 @@ const enterRemoteWorkspace = async (): Promise<void> => {
   const target = interlinkTarget.value;
   const deviceId = remoteInterlinkDeviceId.value;
   const workspaceId = interlinkWorkspaceId.value;
-  exitSelectionMode();
   remoteOperationState.value = '';
   directoryAbort.controller.abort();
   directoryAbort = createAbortHost();
@@ -1049,7 +1012,7 @@ const handleBlankActivate = () => {
   if (busy.value) return;
   setActivePath('');
   uploadTarget.value = '';
-  // 快捷多选与锚点一并复位；多选模式的开关本身保留，交给工具栏或 Esc 退出。
+  // 快捷多选与锚点一并复位。
   if (selectedList.value.length) clearSelection();
   selectionAnchorPath.value = '';
 };
@@ -1101,17 +1064,8 @@ const handleRefresh = async (options: { forceTree?: boolean } = {}) => {
   await directoryRefresh.request(options);
 };
 
-const enterSelectionMode = () => {
-  if (remoteInterlinkActive.value) return;
-  tree.clearSelection();
-  selectionMode.value = true;
-};
-
 /** Shift 扩选的锚点：最近一次点选的行；行列变化后按路径重新定位。 */
 const selectionAnchorPath = ref('');
-watch(selectionMode, (value) => {
-  if (!value) selectionAnchorPath.value = '';
-});
 
 const applySelection = (paths: string[], additive: boolean) => {
   if (!additive) {
@@ -1125,7 +1079,7 @@ const applySelection = (paths: string[], additive: boolean) => {
 
 /**
  * 行点击的多选语义：Ctrl/⌘ 切换单项；Shift 以锚点为起点按当前可见行序扩选区间。
- * 两者都只改选择集合，不进入带复选框与批量操作条的多选模式——那由工具栏按钮显式开启。
+ * 两者都只改选择集合，批量动作（下载/删除）由行与空白区右键菜单按整批执行。
  */
 const handleRowSelect = (payload: { row: WorkspaceVisibleRow; additive: boolean; range: boolean }) => {
   if (remoteInterlinkActive.value || searchActive.value) {
@@ -1181,18 +1135,12 @@ const commandSelectionPaths = (row: WorkspaceVisibleRow): string[] => {
   return [row.path];
 };
 
-const handleToggleSelect = (path: string) => {
-  selectionAnchorPath.value = normalizeWorkspaceRelativePath(path);
-  toggleSelection(path);
-};
-
 const archiveDirectoryName = (path: string): string =>
   path.split('/').filter(Boolean).pop() || t('messenger.filesArea.group');
 
 /**
- * 打包下载一个目录：工具栏按钮、右键菜单共用同一套交互——
- * 先弹确认（含目标目录名与耗时提醒），确认后进入打包中状态
- * （工具栏转圈 + 状态条 + 目录行内联转圈），失败时给统一错误提示。
+ * 打包下载一个目录（右键菜单入口）：先弹确认（含目标目录名与耗时提醒），
+ * 确认后进入打包中状态（状态条 + 目录行内联转圈），失败时给统一错误提示。
  */
 const archiveDirectory = async (path: string, title: string): Promise<void> => {
   if (archiving.value) return;
@@ -1548,8 +1496,7 @@ const deleteSelection = async (paths: string[]) => {
       outcome = await deleteWorkspacePaths(paths);
     }
     removePaths(paths);
-    if (selectionMode.value) exitSelectionMode();
-    else clearSelection();
+    clearSelection();
     const directories = new Set(paths.map((path) => workspaceParentPath(path)));
     for (const directory of directories) {
       await refreshDirectory(directory);
@@ -1566,10 +1513,6 @@ const deleteSelection = async (paths: string[]) => {
   } finally {
     busy.value = false;
   }
-};
-
-const handleBatchDelete = async () => {
-  await deleteSelection(selectedList.value.slice());
 };
 
 /** Bounded download fan-out (plan §6.6: download concurrency <= 3). */
@@ -1602,7 +1545,7 @@ const downloadSelection = async (paths: string[]) => {
   return done;
 };
 
-/** 批量下载：多选模式的批量条与右键多选菜单共用。 */
+/** 批量下载：右键菜单对多选集合按整批执行。 */
 const downloadSelectionPaths = async (paths: string[]) => {
   if (!paths.length) return;
   busy.value = true;
@@ -1616,10 +1559,6 @@ const downloadSelectionPaths = async (paths: string[]) => {
   } finally {
     busy.value = false;
   }
-};
-
-const handleBatchArchive = async () => {
-  await downloadSelectionPaths(selectedList.value.slice());
 };
 
 const quoteEntryToChat = (row: WorkspaceVisibleRow) => {
@@ -1967,6 +1906,7 @@ const handleClearWorkspace = async () => {
     // Root and every expanded directory changed; reset to a single fresh load.
     tree.reset();
     uploadTarget.value = '';
+    selectionAnchorPath.value = '';
     await loadDirectory('', { force: true });
     ElMessage.success(t('messenger.filesArea.clearSuccess'));
   } catch (error) {
@@ -1978,15 +1918,11 @@ const handleClearWorkspace = async () => {
 
 // -------------------------------------------------------- cross-module wiring
 
-/** Esc leaves search or selection mode from anywhere in the file area (plan §6.1). */
+/** Esc closes search or clears the shortcut selection from anywhere in the file area (plan §6.1). */
 const handleWindowKeydown = (event: KeyboardEvent) => {
   if (event.key !== 'Escape') return;
   if (searchOpen.value) {
     exitSearch();
-    return;
-  }
-  if (selectionMode.value) {
-    exitSelectionMode();
     return;
   }
   if (selectedList.value.length) clearSelection();

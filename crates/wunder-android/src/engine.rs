@@ -25,10 +25,9 @@ use wunder_desktop::native::{
     NativeToolFiles, NativeToolResource, ToolResourceKind,
 };
 use wunder_desktop::{
-    AgentSettingsEdit, ModelEdit, NativeChatEvent, NativeChatInput, NativeChatTurn,
-    NativeCronJobEdit, NativeDesktop, NativeThreadUpdate, NativeThreadWatchCancel,
-    NativeWorkflowEntry, NativeStream, ToolRecord, WorkspaceEdit, CURRENT_VERSION,
-    DEFAULT_AGENT_ID,
+    AgentSettingsEdit, CURRENT_VERSION, DEFAULT_AGENT_ID, ModelEdit, NativeChatEvent,
+    NativeChatInput, NativeChatTurn, NativeCronJobEdit, NativeDesktop, NativeStream,
+    NativeThreadUpdate, NativeThreadWatchCancel, NativeWorkflowEntry, ToolRecord, WorkspaceEdit,
 };
 
 pub enum Command {
@@ -1963,9 +1962,7 @@ fn run(
             }
             Command::WithdrawWaiting(queue_id) => withdraw_waiting(&shared, &queue_id, false),
             Command::EditWaiting(queue_id) => withdraw_waiting(&shared, &queue_id, true),
-            Command::InterjectWaiting(queue_id) => {
-                interject_waiting(&desktop, &shared, &queue_id)
-            }
+            Command::InterjectWaiting(queue_id) => interject_waiting(&desktop, &shared, &queue_id),
             Command::ReleaseWaiting => {
                 let session = shared.lock().unwrap().session_id.clone();
                 release_next_waiting(&desktop, &shared, &session);
@@ -6334,7 +6331,10 @@ fn upload_workspace(
     load_workspace(desktop, shared, dir);
     if failed == 0 {
         if attach && uploaded > 0 {
-            notify(shared, format!("已上传 {uploaded} 个文件，发送消息时会一并告知模型"));
+            notify(
+                shared,
+                format!("已上传 {uploaded} 个文件，发送消息时会一并告知模型"),
+            );
         } else {
             notify(shared, format!("已上传 {uploaded} 个文件"));
         }
@@ -7544,11 +7544,7 @@ fn withdraw_waiting(shared: &Arc<Mutex<Shared>>, queue_id: &str, refill: bool) {
 /// 插话：用户不再等这一轮结束。消息立刻交给引擎，并在引擎的队列行上提到
 /// 下一个动作边界——与桌面版 `interject_waiting_turn` 同一语义。真正的提升
 /// 发生在 `NativeChatEvent::Queued`，因为队列行要等引擎受理后才存在。
-fn interject_waiting(
-    desktop: &Arc<NativeDesktop>,
-    shared: &Arc<Mutex<Shared>>,
-    queue_id: &str,
-) {
+fn interject_waiting(desktop: &Arc<NativeDesktop>, shared: &Arc<Mutex<Shared>>, queue_id: &str) {
     let Some(turn) = take_waiting(shared, queue_id) else {
         return;
     };
@@ -7567,11 +7563,7 @@ fn interject_waiting(
 ///
 /// 只在消息所属线程就是当前线程时释放：窗口只有一个直播槽位，替用户没在看
 /// 的线程启动回合会盖掉正在显示的这一屏。那条消息会等用户切回去时再发。
-fn release_next_waiting(
-    desktop: &Arc<NativeDesktop>,
-    shared: &Arc<Mutex<Shared>>,
-    session: &str,
-) {
+fn release_next_waiting(desktop: &Arc<NativeDesktop>, shared: &Arc<Mutex<Shared>>, session: &str) {
     let next = {
         let mut state = shared.lock().unwrap();
         if state.session_id != session || state.generating || state.goal.active() {
@@ -8344,7 +8336,7 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                 .map(str::to_owned)
                 .unwrap_or_default();
             let entry = NativeWorkflowEntry::from_payload(id, title, detail, state, data);
-            let label = project::tool_label(&entry.title);
+            let label = project::tool_label_for_entry(&entry);
             let icon = project::tool_icon_key(&entry.title).to_string();
             let target = project::tool_target(&entry);
             if let Some(existing) = live.tool_mut(&entry.id) {
@@ -8360,6 +8352,8 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                 if !entry.detail.is_empty() {
                     existing.detail = entry.detail;
                 }
+                existing.command_output = entry.command_output;
+                existing.command_meta = entry.command_meta;
                 existing.tokens = entry.tokens;
                 existing.duration = entry.duration;
             } else {
@@ -8370,6 +8364,8 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                     summary: entry.preview,
                     state: entry.state,
                     detail: entry.detail,
+                    command_output: entry.command_output,
+                    command_meta: entry.command_meta,
                     target,
                     sections: entry.sections,
                     patch: entry.patch_files,
@@ -8466,18 +8462,36 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                     .map(|line| line.trim().chars().take(120).collect::<String>())
                     .filter(|line| !line.is_empty())
                     .unwrap_or_else(|| status_label.to_string());
+                let mut command_payload = data.clone();
+                command_payload["result"] = serde_json::json!({"data": {
+                    "command": command, "output": command_tail(&output), "cwd": data["cwd"],
+                    "status": data["status"], "exit_code": exit_code
+                }});
+                let entry = NativeWorkflowEntry::from_payload(
+                    id.as_str(),
+                    tool,
+                    detail,
+                    state,
+                    &command_payload,
+                );
                 if let Some(existing) = live.tool_mut(&id) {
-                    existing.state = state.into();
+                    existing.title = project::tool_label_for_entry(&entry);
+                    existing.state = entry.state;
                     existing.summary = summary;
-                    existing.detail = detail;
+                    existing.detail = entry.detail;
+                    existing.command_output = entry.command_output;
+                    existing.command_meta = entry.command_meta;
                 } else {
+                    let label = project::tool_label_for_entry(&entry);
                     live.push_tool(project::LiveTool {
-                        id,
-                        title: tool.to_owned(),
+                        id: entry.id,
+                        title: label,
                         tool_icon: "terminal".into(),
                         summary,
-                        state: state.into(),
-                        detail,
+                        state: entry.state,
+                        detail: entry.detail,
+                        command_output: entry.command_output,
+                        command_meta: entry.command_meta,
                         target: String::new(),
                         sections: Vec::new(),
                         patch: Vec::new(),
@@ -8514,6 +8528,8 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                     summary: summary.to_owned(),
                     state: state.into(),
                     detail: summary.to_owned(),
+                    command_output: String::new(),
+                    command_meta: String::new(),
                     target: String::new(),
                     sections: Vec::new(),
                     patch: Vec::new(),
@@ -8656,7 +8672,10 @@ mod tests {
         assert!(text.contains("请根据任务需要自行决定是否读取或处理"));
         // 提示只跟一条消息走：发出去以后输入框就该空了。
         assert!(shared.lock().unwrap().pending_uploads.is_empty());
-        assert_eq!(append_upload_notice(&shared, "下一条".to_string()), "下一条");
+        assert_eq!(
+            append_upload_notice(&shared, "下一条".to_string()),
+            "下一条"
+        );
     }
 
     #[test]
@@ -9082,11 +9101,12 @@ mod tests {
         assert_eq!(bar.process_children[2].detail, "第二段");
         assert_eq!(bar.process_children[2].status_kind, project::STATUS_DONE);
         // The answer starts a new phase; no thought is left spinning.
-        assert!(bar
-            .process_children
-            .iter()
-            .filter(|child| child.kind == project::KIND_REASON)
-            .all(|child| child.status_kind != project::STATUS_RUNNING));
+        assert!(
+            bar.process_children
+                .iter()
+                .filter(|child| child.kind == project::KIND_REASON)
+                .all(|child| child.status_kind != project::STATUS_RUNNING)
+        );
     }
 
     #[test]
@@ -9326,10 +9346,12 @@ mod tests {
         let workspace = create_managed_workspace(&desktop, "测试 工作区", "flask", "teal", "")
             .expect("create the managed workspace");
         assert!(std::path::Path::new(&workspace.root_path).is_dir());
-        assert!(workspace
-            .root_path
-            .replace('\\', "/")
-            .contains("/workspaces/"));
+        assert!(
+            workspace
+                .root_path
+                .replace('\\', "/")
+                .contains("/workspaces/")
+        );
         assert_eq!(workspace.name, "测试 工作区");
         assert_eq!(workspace.icon, "flask");
 
@@ -9347,10 +9369,12 @@ mod tests {
         .expect("create the picked folder workspace");
         assert!(std::path::Path::new(&external.root_path).is_dir());
         assert!(external.root_path.ends_with("picked-folder"));
-        assert!(!external
-            .root_path
-            .replace('\\', "/")
-            .contains("/workspaces/"));
+        assert!(
+            !external
+                .root_path
+                .replace('\\', "/")
+                .contains("/workspaces/")
+        );
 
         select_workspace(&desktop, &shared, &workspace.workspace_id).expect("select");
         assert_eq!(
@@ -9358,23 +9382,27 @@ mod tests {
             workspace.workspace_id
         );
         refresh_workspaces(&desktop, &shared).expect("refresh");
-        assert!(shared
-            .lock()
-            .unwrap()
-            .workspaces
-            .iter()
-            .find(|card| card.id == workspace.workspace_id)
-            .is_some_and(|card| card.active));
+        assert!(
+            shared
+                .lock()
+                .unwrap()
+                .workspaces
+                .iter()
+                .find(|card| card.id == workspace.workspace_id)
+                .is_some_and(|card| card.active)
+        );
 
         let session = desktop
             .create_session(Some(&workspace.workspace_id))
             .expect("session in the new workspace");
         assert_eq!(session.workspace_name, "测试 工作区");
-        assert!(desktop
-            .list_sessions(Some(&workspace.workspace_id))
-            .unwrap()
-            .iter()
-            .any(|candidate| candidate.id == session.id));
+        assert!(
+            desktop
+                .list_sessions(Some(&workspace.workspace_id))
+                .unwrap()
+                .iter()
+                .any(|candidate| candidate.id == session.id)
+        );
 
         // The drawer mirrors the desktop sidebar: a selected workspace hides
         // threads that live in another one.

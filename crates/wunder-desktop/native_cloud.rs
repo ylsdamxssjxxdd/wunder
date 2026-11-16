@@ -6,8 +6,8 @@
 //! persisted or projected back.
 
 use super::NativeDesktop;
-use anyhow::{anyhow, bail, Result};
-use wunder_server::cloud::{shared, CloudStatus};
+use anyhow::{Result, anyhow, bail};
+use wunder_server::cloud::{CloudStatus, shared};
 
 /// Cloud account passwords use the same portable contract in every desktop
 /// entry point. Rejecting non-ASCII and control characters avoids IME input
@@ -218,7 +218,7 @@ impl NativeDesktop {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_cloud_password, CloudStatusView};
+    use super::{CloudStatusView, validate_cloud_password};
 
     #[test]
     fn cloud_password_rejects_ime_and_control_input() {

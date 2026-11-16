@@ -48,11 +48,7 @@ pub(crate) struct ToolPresentation {
 
 impl ToolPresentation {
     pub(crate) fn verb(&self, is_zh: bool) -> &'static str {
-        if is_zh {
-            self.zh
-        } else {
-            self.en
-        }
+        if is_zh { self.zh } else { self.en }
     }
 
     pub(crate) fn verb_done(&self, is_zh: bool) -> &'static str {
@@ -168,6 +164,14 @@ pub(crate) fn is_write_tool_name(name: &str) -> bool {
 /// True for `执行命令` — one-shot command execution, including `execute_command`.
 pub(crate) fn is_command_tool_name(name: &str) -> bool {
     matches_canonical(name, CANONICAL_COMMAND, &["execute_command"])
+}
+
+pub(crate) fn is_command_session_tool_name(name: &str) -> bool {
+    matches_canonical(
+        name,
+        CANONICAL_COMMAND_SESSION,
+        &["command_session", "write_stdin", "write_command_stdin"],
+    )
 }
 
 /// True for the two web tools. They share the explore card shape, but the item vocabulary
@@ -362,7 +366,7 @@ fn classify(name: &str) -> Option<ToolPresentation> {
         CANONICAL_PATCH => call(ToolAccess::Mutate, "编辑", "Edit"),
         // Processes and the machine.
         CANONICAL_COMMAND => call(ToolAccess::Execute, "执行", "Ran"),
-        CANONICAL_COMMAND_SESSION => call(ToolAccess::Execute, "命令会话", "Command session"),
+        CANONICAL_COMMAND_SESSION => call(ToolAccess::Execute, "继续命令", "Continued"),
         // Browser: the aggregate entry and its one model-facing `browser` action tool.
         other if is_browser_group_name(other) || is_browser_tool_name(other) => {
             call(ToolAccess::Execute, "浏览网页", "Browse")
@@ -428,12 +432,7 @@ mod tests {
         ("写入文件", ToolAccess::Mutate, "写入", "Write"),
         ("文本编辑", ToolAccess::Mutate, "编辑", "Edit"),
         ("执行命令", ToolAccess::Execute, "执行", "Ran"),
-        (
-            "命令会话",
-            ToolAccess::Execute,
-            "命令会话",
-            "Command session",
-        ),
+        ("命令会话", ToolAccess::Execute, "继续命令", "Continued"),
         ("浏览器", ToolAccess::Execute, "浏览网页", "Browse"),
         ("桌面控制", ToolAccess::Execute, "桌面控制", "Desktop"),
         ("技能调用", ToolAccess::Delegate, "调用技能", "Run skill"),

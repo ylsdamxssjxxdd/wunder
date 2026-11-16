@@ -1,7 +1,7 @@
 //! Typed cloud thread façade. All calls use the engine cloud client and ledger.
 use super::NativeDesktop;
-use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, anyhow};
+use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 use wunder_server::{
     cloud::CloudThreadWatch,
@@ -412,7 +412,7 @@ impl NativeDesktop {
                             "{}: {}",
                             string(&record, "error_code"),
                             string(&record, "error_summary")
-                        ))
+                        ));
                     }
                     _ => {}
                 }

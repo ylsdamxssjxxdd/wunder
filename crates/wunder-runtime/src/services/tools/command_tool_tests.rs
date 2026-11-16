@@ -77,12 +77,9 @@ async fn local_command_timeout_preserves_side_effect_and_requires_verification()
     } else {
         "printf 'once\\n' >> probe.txt; sleep 5"
     };
-    let result = execute_command(
-        &context,
-        &json!({"content":command,"timeout_s":2,"run_in_background":false}),
-    )
-    .await
-    .unwrap();
+    let result = execute_command(&context, &json!({"content":command,"timeout_s":2}))
+        .await
+        .unwrap();
     assert_eq!(result["ok"], false);
     assert_eq!(result["error_meta"]["code"], "TOOL_EXEC_TIMEOUT");
     assert_eq!(result["error_meta"]["retryable"], false);
@@ -123,10 +120,12 @@ async fn local_command_timeout_preserves_side_effect_and_requires_verification()
         "stdout": "step 1 done\n"
     }));
     assert_eq!(progressed["data"]["execution_outcome"], "likely_applied");
-    assert!(progressed["data"]["next_step_hint"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("副作用"));
+    assert!(
+        progressed["data"]["next_step_hint"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("副作用")
+    );
 }
 
 #[tokio::test]
@@ -200,7 +199,7 @@ async fn foreground_command_can_be_terminated_from_the_task_panel() {
         }
         panic!("command session never appeared in running tasks");
     };
-    let args = json!({"content": command, "timeout_s": 60, "run_in_background": false});
+    let args = json!({"content": command, "timeout_s": 60});
     let runner = execute_command(&context, &args);
     let (result, _) = tokio::time::timeout(Duration::from_secs(20), async {
         tokio::join!(runner, canceller)
@@ -212,9 +211,11 @@ async fn foreground_command_can_be_terminated_from_the_task_panel() {
     let stderr = result["data"]["stderr"].as_str().unwrap_or("");
     assert!(stderr.contains("command cancelled"), "{result}");
     // 会话已收尾，面板不再列出这条任务。
-    assert!(broker
-        .running_tasks("fixture-user", "fixture-thread")
-        .is_empty());
+    assert!(
+        broker
+            .running_tasks("fixture-user", "fixture-thread")
+            .is_empty()
+    );
 }
 
 /// 后台会话的 stdin 是真管道：喂进去的内容命令能收到；会话退出后再喂，
@@ -276,26 +277,22 @@ async fn background_session_takes_stdin_and_still_returns_final_output_after_exi
     } else {
         "read -r line; printf 'GOT:%s\\n' \"$line\""
     };
-    let started = execute_command(
-        &context,
-        &json!({"content": command, "timeout_s": 30, "run_in_background": true, "yield_time_ms": 100}),
-    )
-    .await
-    .unwrap();
+    let started = execute_command(&context, &json!({"cmd": command, "yield_time_ms": 100}))
+        .await
+        .unwrap();
     assert_eq!(started["ok"], true, "{started}");
     let id = started["data"]["command_session_id"]
         .as_str()
         .unwrap_or_else(|| panic!("command session id missing: {started}"))
         .to_string();
-    // 喂一行 stdin：命令读完后退出，这次调用要直接拿到它的输出。
+    // 写入后一有输出就返回，不为了等待退出拖住这次调用。
     let answered = command_session_control(
         &context,
-        &json!({"command_session_id": id, "input": "hello\n", "yield_time_ms": 5000}),
+        &json!({"session_id": id, "chars": "hello\n", "yield_time_ms": 5000}),
     )
     .await
     .unwrap();
     assert_eq!(answered["ok"], true, "{answered}");
-    assert_eq!(answered["data"]["status"], "exited", "{answered}");
     assert!(
         answered["data"]["stdout"]
             .as_str()
@@ -303,6 +300,15 @@ async fn background_session_takes_stdin_and_still_returns_final_output_after_exi
             .contains("GOT:hello"),
         "{answered}"
     );
+    // 空 chars 复用同一会话；没有新增输出时等待进程退出。
+    let finished = command_session_control(
+        &context,
+        &json!({"session_id": id, "chars": "", "yield_time_ms": 5000}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(finished["data"]["status"], "exited", "{finished}");
+    assert_eq!(finished["data"]["exit_code"], 0, "{finished}");
     // 已经退出再喂：不算失败，照样返回最终输出，并说明输入没有送进去。
     let after_exit = command_session_control(
         &context,
@@ -374,7 +380,7 @@ async fn interrupt_input_cancels_the_session_without_reporting_failure() {
     };
     let started = execute_command(
         &context,
-        &json!({"content": "echo alive; sleep 30", "timeout_s": 60, "run_in_background": true, "yield_time_ms": 100}),
+        &json!({"content": "echo alive; sleep 30", "timeout_s": 60, "yield_time_ms": 100}),
     )
     .await
     .unwrap();
@@ -732,7 +738,7 @@ async fn timeout_kills_the_whole_tree_and_returns_promptly() {
 
 #[tokio::test]
 #[cfg(feature = "sqlite-storage")]
-async fn foreground_timeout_escalates_to_background_and_keeps_running() {
+async fn initial_wait_yields_partial_output_and_keeps_the_same_process_running() {
     if cfg!(windows) {
         return;
     }
@@ -788,18 +794,24 @@ async fn foreground_timeout_escalates_to_background_and_keeps_running() {
     let result = execute_command(
         &context,
         &json!({
-            "content": "sleep 2; printf 'finished\\n' > escalated.txt",
-            "timeout_s": 1,
-            "run_in_background": false
+            "content": "printf 'started\\n'; sleep 2; printf 'finished\\n' > escalated.txt",
+            "yield_time_ms": 100
         }),
     )
     .await
     .unwrap();
     assert_eq!(result["ok"], true, "{result}");
     assert_eq!(result["state"], "running", "{result}");
-    assert_eq!(result["data"]["reason"], "timeout_escalated", "{result}");
-    assert_eq!(result["data"]["timeout_s"], 1.0, "{result}");
+    assert_eq!(result["data"]["yield_time_ms"], 100, "{result}");
     assert!(result["data"]["command_session_id"].as_str().is_some());
+    assert!(
+        result["data"]["results"][0]["returncode"].is_null(),
+        "{result}"
+    );
+    assert_eq!(
+        result["data"]["results"][0]["stdout"], "started\n",
+        "{result}"
+    );
     // 进程没有被杀，继续在后台跑完并落盘。
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     let output = workspace
@@ -876,7 +888,7 @@ async fn foreground_quick_command_with_broker_returns_without_waiting_for_timeou
     let started = std::time::Instant::now();
     let result = execute_command(
         &context,
-        &json!({"content": "printf 'quick\\n'", "timeout_s": 60, "run_in_background": false}),
+        &json!({"content": "printf 'quick\\n'", "timeout_s": 60}),
     )
     .await
     .unwrap();
@@ -960,10 +972,12 @@ async fn sigpipe_exit_is_reported_as_truncated_output_not_failure() {
         json!(true),
         "{result}"
     );
-    assert!(result["data"]["results"][0]["warning"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("SIGPIPE"));
+    assert!(
+        result["data"]["results"][0]["warning"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("SIGPIPE")
+    );
 }
 
 #[test]

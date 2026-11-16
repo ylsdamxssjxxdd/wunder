@@ -6,7 +6,7 @@ use super::NativeDesktop;
 use crate::runtime::{
     load_desktop_settings, refresh_runtime_tool_env, resolve_effective_tool_bins,
 };
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use std::path::{Path, PathBuf};
 use wunder_server::archive_extract;
 
@@ -458,15 +458,17 @@ mod tests {
         std::fs::write(source.join("opt/python/bin/python3"), b"fixture").unwrap();
         std::fs::write(source.join("manifest.json"), b"{}").unwrap();
         let archive = dir.path().join("supplement.tar.gz");
-        assert!(tar_command()
-            .arg("-czf")
-            .arg(&archive)
-            .arg("-C")
-            .arg(&source)
-            .arg(".")
-            .status()
-            .unwrap()
-            .success());
+        assert!(
+            tar_command()
+                .arg("-czf")
+                .arg(&archive)
+                .arg("-C")
+                .arg(&source)
+                .arg(".")
+                .status()
+                .unwrap()
+                .success()
+        );
         let home = dir.path().join("profile");
         assert_eq!(
             import_supplement_archive(&archive, archive_extract::ArchiveKind::TarLike, &home)
@@ -483,15 +485,17 @@ mod tests {
         std::fs::create_dir_all(wrapped.join("bundle/opt/rg/bin")).unwrap();
         std::fs::write(wrapped.join("bundle/opt/rg/bin/rg"), b"fixture").unwrap();
         let archive = dir.path().join("wrapped.tar.gz");
-        assert!(tar_command()
-            .arg("-czf")
-            .arg(&archive)
-            .arg("-C")
-            .arg(&wrapped)
-            .arg(".")
-            .status()
-            .unwrap()
-            .success());
+        assert!(
+            tar_command()
+                .arg("-czf")
+                .arg(&archive)
+                .arg("-C")
+                .arg(&wrapped)
+                .arg(".")
+                .status()
+                .unwrap()
+                .success()
+        );
         assert_eq!(
             import_supplement_archive(&archive, archive_extract::ArchiveKind::TarLike, &home)
                 .unwrap(),
@@ -503,7 +507,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn merge_keeps_python_aliases_and_rejects_external_links() {
-        use std::os::unix::fs::{symlink, PermissionsExt};
+        use std::os::unix::fs::{PermissionsExt, symlink};
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("opt/python/bin");
         std::fs::create_dir_all(&source).unwrap();

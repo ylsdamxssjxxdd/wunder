@@ -606,6 +606,7 @@ component FoldEntry inherits Rectangle {
                             ? max(parent.width, self.preferred-width) : parent.width;
                         height: parent.height;
                         text: root.data.summary; color: Theme.timeline-entry-soft; font-size: Theme.font-sm;
+                        font-family: root.data.tool-icon == "terminal" ? Theme.font-mono : "Segoe UI";
                         overflow: elide; vertical-alignment: center;
                     }
                 }
@@ -625,6 +626,13 @@ component FoldEntry inherits Rectangle {
                 }
             }
         }
+        if !root.data.open && root.data.command-output != "" : Text {
+            x: Theme.timeline-padding + TimelineMetrics.gutter;
+            width: parent.width - Theme.timeline-padding * 2 - TimelineMetrics.gutter;
+            text: root.data.command-output;
+            color: Theme.muted; font-size: Theme.font-sm; font-family: Theme.font-mono;
+            wrap: word-wrap;
+        }
         // The expanded payload clears the page margin and the gutter it hangs
         // from.
         if root.data.open : VerticalLayout {
@@ -633,6 +641,11 @@ component FoldEntry inherits Rectangle {
             padding-top: 4px; padding-bottom: 8px;
             spacing: 8px;
             for card in root.data.patch : PatchDiffCard { card: card; mobile: root.mobile; }
+            if root.data.command-meta != "" : Text {
+                text: root.data.command-meta;
+                color: Theme.muted; font-size: Theme.font-xs; font-family: Theme.font-mono;
+                wrap: word-wrap;
+            }
             // A thinking entry shows its own text, unlabelled: the web timeline
             // renders it as a plain block, while a tool result keeps the
             // structured viewer with its "输出" head.

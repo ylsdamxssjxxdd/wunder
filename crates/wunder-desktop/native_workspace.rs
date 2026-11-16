@@ -7,7 +7,7 @@
 //! and execution semantics stay in the shared engine.
 
 use super::{NativeDesktop, NativeInterlinkEntry, NativeInterlinkListing};
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use std::{
     cmp::Ordering,
     collections::{BinaryHeap, HashMap},
@@ -15,7 +15,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 use wunder_server::interlink::client::shadow::Sections;
-use wunder_server::storage::{WorkspaceRecord, USER_PRIVATE_CONTAINER_ID};
+use wunder_server::storage::{USER_PRIVATE_CONTAINER_ID, WorkspaceRecord};
 
 #[cfg(windows)]
 use std::ffi::OsStr;

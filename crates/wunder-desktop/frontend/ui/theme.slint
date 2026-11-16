@@ -216,6 +216,8 @@ export struct ProcessEntry {
     // tooltip.
     target-label: string,
     detail: string, sections: [WorkflowSection], patch: [PatchCard],
+    command-output: string,
+    command-meta: string,
     // Collapsed-row change size of an edit-style call, pre-formatted as plain
     // counts ("12" / "3"). Empty means that side has no change, so a tool row
     // shows only the number that applies instead of a meaningless "+0 −0".
@@ -252,6 +254,8 @@ export struct TimelineRow {
     // Returned line count of a read call, shown beside its file chip.
     read-lines: string,
     detail: string,
+    command-output: string,
+    command-meta: string,
     // Settled reasoning text, projected once into the shared Markdown block
     // model. Empty while the thought is still streaming: the live view stays
     // plain text and costs nothing to re-lay-out.

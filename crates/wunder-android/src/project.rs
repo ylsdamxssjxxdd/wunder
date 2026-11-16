@@ -54,6 +54,8 @@ pub struct ProcessChildData {
     pub tool_icon: String,
     pub target: String,
     pub detail: String,
+    pub command_output: String,
+    pub command_meta: String,
     pub sections: Vec<NativeWorkflowSection>,
     pub patch: Vec<NativePatchFile>,
     pub tokens: String,
@@ -81,6 +83,8 @@ pub struct RowData {
     pub tool_icon: String,
     pub target: String,
     pub detail: String,
+    pub command_output: String,
+    pub command_meta: String,
     pub reasoning_src: String,
     pub status_kind: i32,
     pub foldable: bool,
@@ -190,6 +194,8 @@ impl RowData {
         row.tool_icon = self.tool_icon.as_str().into();
         row.target = self.target.as_str().into();
         row.detail = self.detail.as_str().into();
+        row.command_output = self.command_output.as_str().into();
+        row.command_meta = self.command_meta.as_str().into();
         row.status_kind = self.status_kind;
         row.foldable = self.foldable;
         row.open = self.open;
@@ -236,6 +242,8 @@ impl RowData {
                         // the narrow chip width in the same pass.
                         target_label: fit_chip_label(&target_label(&child.target), true).into(),
                         detail: child.detail.as_str().into(),
+                        command_output: child.command_output.as_str().into(),
+                        command_meta: child.command_meta.as_str().into(),
                         sections: workflow_sections(&child.sections),
                         patch: patch_cards(&child.patch),
                         diff_add: diff_add.as_str().into(),
@@ -287,6 +295,8 @@ fn blank(kind: i32, id: impl Into<SharedString>) -> TimelineRow {
         model_round: 0,
         read_lines: SharedString::default(),
         detail: SharedString::default(),
+        command_output: SharedString::default(),
+        command_meta: SharedString::default(),
         reasoning_blocks: ModelRc::default(),
         sections: ModelRc::default(),
         process_entries: ModelRc::default(),
@@ -652,8 +662,8 @@ pub(crate) fn tool_label(tool: &str) -> String {
             "网页搜索"
         }
         "web_fetch" | "web_fetch_tool" | "web fetch" | "webfetch" | "网页抓取" => "网页抓取",
-        "execute_command" | "run_command" | "shell" | "运行命令" => "运行命令",
-        "command_session" => "命令会话",
+        "execute_command" | "exec_command" | "run_command" | "shell" | "运行命令" => "执行命令",
+        "command_session" | "write_stdin" | "write_command_stdin" => "命令交互",
         "question_panel" | "ask_panel" => "问询面板",
         "update_plan" | "plan_update" => "计划面板",
         "read_image" | "view_image" => "读图",
@@ -664,6 +674,26 @@ pub(crate) fn tool_label(tool: &str) -> String {
         other => other,
     };
     mapped.chars().take(64).collect()
+}
+
+pub(crate) fn tool_label_for_entry(entry: &NativeWorkflowEntry) -> String {
+    match entry.title.trim() {
+        "execute_command" | "exec_command" | "run_command" | "shell" | "运行命令" | "执行命令" => {
+            if entry.state == "running" {
+                "正在执行".into()
+            } else {
+                "执行".into()
+            }
+        }
+        "command_session" | "write_stdin" | "write_command_stdin" | "命令会话" | "命令交互" => {
+            if entry.command_meta.contains("stdin ›") {
+                "发送输入".into()
+            } else {
+                "等待".into()
+            }
+        }
+        _ => tool_label(&entry.title),
+    }
 }
 
 /// Icon key resolved by the shared `ToolIcons` global. This mirrors the common
@@ -800,11 +830,7 @@ fn glyph_width(ch: char) -> f32 {
             | 0xFFE0..=0xFFE6
             | 0x20000..=0x2FFFD
     );
-    if wide {
-        12.0
-    } else {
-        6.2
-    }
+    if wide { 12.0 } else { 6.2 }
 }
 
 pub(crate) fn fit_chip_label(label: &str, narrow: bool) -> String {
@@ -858,10 +884,12 @@ fn tool_child(turn_id: &str, entry: &NativeWorkflowEntry) -> ProcessChildData {
         id: format!("{turn_id}-tool-{}", entry.id),
         kind: KIND_TOOL,
         summary: row_summary(&entry.preview, &tool_target(entry)),
-        tool_name: tool_label(&entry.title),
+        tool_name: tool_label_for_entry(entry),
         tool_icon: tool_icon_key(&entry.title).into(),
         target: tool_target(entry),
         detail: entry.detail.clone(),
+        command_output: entry.command_output.clone(),
+        command_meta: entry.command_meta.clone(),
         sections: entry.sections.clone(),
         patch: entry.patch_files.clone(),
         tokens: entry.tokens.clone(),
@@ -1194,6 +1222,8 @@ pub struct LiveTool {
     pub summary: String,
     pub state: String,
     pub detail: String,
+    pub command_output: String,
+    pub command_meta: String,
     pub target: String,
     pub sections: Vec<NativeWorkflowSection>,
     pub patch: Vec<NativePatchFile>,
@@ -1431,6 +1461,8 @@ impl LiveTurn {
                         &tool.target,
                     ),
                     detail: tool.detail.clone(),
+                    command_output: tool.command_output.clone(),
+                    command_meta: tool.command_meta.clone(),
                     sections: tool.sections.clone(),
                     patch: tool.patch.clone(),
                     tokens: tool.tokens.clone(),
@@ -1563,6 +1595,8 @@ mod tests {
             tokens: "1.2k".into(),
             duration: "0.3s".into(),
             read_lines: String::new(),
+            command_output: String::new(),
+            command_meta: String::new(),
             sections: vec![NativeWorkflowSection {
                 title: "src/main.rs".into(),
                 meta: "12 行".into(),
@@ -1782,6 +1816,8 @@ mod tests {
             summary: "src/main.rs".into(),
             state: "completed".into(),
             detail: String::new(),
+            command_output: String::new(),
+            command_meta: String::new(),
             target: String::new(),
             sections: Vec::new(),
             patch: Vec::new(),
@@ -1809,6 +1845,8 @@ mod tests {
             summary: "cargo test".into(),
             state: "running".into(),
             detail: String::new(),
+            command_output: String::new(),
+            command_meta: String::new(),
             target: String::new(),
             sections: Vec::new(),
             patch: Vec::new(),
@@ -1848,6 +1886,8 @@ mod tests {
             summary: "src/main.rs".into(),
             state: "completed".into(),
             detail: String::new(),
+            command_output: String::new(),
+            command_meta: String::new(),
             target: String::new(),
             sections: Vec::new(),
             patch: Vec::new(),

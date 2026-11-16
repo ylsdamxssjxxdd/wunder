@@ -273,11 +273,7 @@ pub(super) fn format_mcp_server_lines_for_tui(
 
 pub(super) fn format_mcp_state_label(enabled: bool, is_zh: bool) -> &'static str {
     if is_zh {
-        if enabled {
-            "启用"
-        } else {
-            "禁用"
-        }
+        if enabled { "启用" } else { "禁用" }
     } else if enabled {
         "enabled"
     } else {
@@ -933,11 +929,7 @@ mod win32_clipboard {
         let _guard = OpenGuard;
         let text = if unsafe { IsClipboardFormatAvailable(CF_UNICODETEXT) } != 0 {
             let handle = unsafe { GetClipboardData(CF_UNICODETEXT) };
-            if handle == 0 {
-                None
-            } else {
-                text_from(handle)
-            }
+            if handle == 0 { None } else { text_from(handle) }
         } else {
             None
         };
@@ -1115,12 +1107,16 @@ mod clipboard_command_tests {
     fn termux_uses_the_api_clipboard_first() {
         assert_eq!(clipboard_read_commands(true)[0].0, "termux-clipboard-get");
         assert_eq!(clipboard_write_commands(true)[0].0, "termux-clipboard-set");
-        assert!(clipboard_read_commands(false)
-            .iter()
-            .all(|(name, _)| *name != "termux-clipboard-get"));
-        assert!(clipboard_write_commands(false)
-            .iter()
-            .all(|(name, _)| *name != "termux-clipboard-set"));
+        assert!(
+            clipboard_read_commands(false)
+                .iter()
+                .all(|(name, _)| *name != "termux-clipboard-get")
+        );
+        assert!(
+            clipboard_write_commands(false)
+                .iter()
+                .all(|(name, _)| *name != "termux-clipboard-set")
+        );
     }
 }
 
@@ -2293,8 +2289,9 @@ pub(super) fn localize_cli_notice(language: &str, text: &str) -> String {
             "输入 /help 查看可用 slash 命令".to_string()
         }
         "available models:" => "可用模型：".to_string(),
-        "no models configured. add one with /model add." =>
-            "尚未配置模型，请用 /model add 添加".to_string(),
+        "no models configured. add one with /model add." => {
+            "尚未配置模型，请用 /model add 添加".to_string()
+        }
         "no saved session found" => "未找到保存的会话".to_string(),
         "no llm model configured" => "尚未配置 LLM 模型".to_string(),
         "session id is empty" => "会话 ID 不能为空".to_string(),

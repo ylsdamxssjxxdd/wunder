@@ -1,4 +1,4 @@
-use super::context::{normalize_model_context_message, MODEL_CONTEXT_INTERNAL_META_TYPE};
+use super::context::{MODEL_CONTEXT_INTERNAL_META_TYPE, normalize_model_context_message};
 use super::*;
 
 pub(super) const TOOL_TIMEOUT_ERROR: &str = "tool_timeout";
@@ -1077,39 +1077,18 @@ pub(super) fn resolve_tool_timeout(
     let _ = canonical_tool_name;
     let mut timeout_s = parse_timeout_secs(args.get("timeout_s")).unwrap_or(0.0);
     if canonical_tool_name == "执行命令" {
-        let run_in_background = match args.get("run_in_background") {
-            Some(Value::Bool(flag)) => *flag,
-            Some(Value::String(text)) => matches!(
-                text.trim().to_ascii_lowercase().as_str(),
-                "true" | "1" | "yes" | "on"
-            ),
-            _ => false,
-        };
-        if !run_in_background {
-            // Blocking mode: the tool waits for the command up to its own
-            // timeout_s (default 120s; 0/negative falls back to that
-            // default), so the outer budget must always exist — a tool
-            // call without a watchdog would freeze the whole agent thread
-            // on one hung command.
-            let effective = if timeout_s > 0.0 {
-                timeout_s.min(MAX_COMMAND_TIMEOUT_SECS)
-            } else {
-                120.0
-            };
-            return Some(Duration::from_secs_f64(
-                (effective + 30.0).max(MIN_TOOL_TIMEOUT_S),
-            ));
-        }
-        if timeout_s <= 0.0 {
-            timeout_s = DEFAULT_TOOL_TIMEOUT_S;
-        }
-        timeout_s = timeout_s.min(MAX_COMMAND_TIMEOUT_SECS);
+        // The initial wait always has a bounded yield. Long processes keep
+        // running in their session after the tool call returns.
+        let yield_s = crate::tools::command_options::parse_command_yield_time(args).as_secs_f64();
+        return Some(Duration::from_secs_f64(
+            (yield_s + 30.0).max(MIN_TOOL_TIMEOUT_S),
+        ));
     } else if canonical_tool_name == "命令会话" {
-        // A poll may wait up to 60s server-side before responding.
+        // A poll may wait up to 30s server-side before responding.
         let yield_s = crate::tools::command_options::parse_command_session_wait(args).yield_time_ms
             as f64
             / 1000.0;
-        timeout_s = timeout_s.max(yield_s.min(60.0) + 30.0);
+        timeout_s = timeout_s.max(yield_s.min(30.0) + 30.0);
     } else if tool_name.contains('@') {
         if timeout_s <= 0.0 {
             let fallback = DEFAULT_TOOL_TIMEOUT_S;
@@ -1757,10 +1736,12 @@ mod tests {
             "artifacts/frame.png"
         );
         assert_eq!(result.meta.as_ref().unwrap()["exit_code"], 9);
-        assert!(result.data["recovery_hint"]
-            .as_str()
-            .unwrap()
-            .contains("not stored"));
+        assert!(
+            result.data["recovery_hint"]
+                .as_str()
+                .unwrap()
+                .contains("not stored")
+        );
     }
 
     #[test]

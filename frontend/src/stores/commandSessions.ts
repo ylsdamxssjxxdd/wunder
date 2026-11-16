@@ -33,6 +33,7 @@ export type CommandSessionRuntimeEntry = {
   stdoutTail: string;
   stderrTail: string;
   ptyTail: string;
+  outputTail: string;
 };
 
 const OUTPUT_TAIL_MAX_CHARS = 24000;
@@ -195,7 +196,8 @@ const defaultEntry = (
   ptyDroppedBytes: 0,
   stdoutTail: '',
   stderrTail: '',
-  ptyTail: ''
+  ptyTail: '',
+  outputTail: ''
 });
 
 const resolveSessionId = (fallbackSessionId: string, payload: Record<string, unknown>): string =>
@@ -212,6 +214,12 @@ const normalizeEntryPayload = (
   );
   if (!commandSessionId) return null;
   const sessionId = resolveSessionId(fallbackSessionId, source);
+  const stdoutTail = String(source.stdout_tail ?? source.stdoutTail ?? '');
+  const stderrTail = String(source.stderr_tail ?? source.stderrTail ?? '');
+  const ptyTail = String(source.pty_tail ?? source.ptyTail ?? '');
+  const outputTail = String(
+    source.output_tail ?? source.outputTail ?? [ptyTail, stdoutTail, stderrTail].filter(Boolean).join('\n')
+  );
   return {
     commandSessionId,
     toolCallId: normalizeText(source.tool_call_id ?? source.toolCallId),
@@ -249,9 +257,10 @@ const normalizeEntryPayload = (
       source.stderrDroppedBytes
     ),
     ptyDroppedBytes: normalizeCount(source.pty_dropped_bytes, source.ptyDroppedBytes),
-    stdoutTail: String(source.stdout_tail ?? source.stdoutTail ?? ''),
-    stderrTail: String(source.stderr_tail ?? source.stderrTail ?? ''),
-    ptyTail: String(source.pty_tail ?? source.ptyTail ?? '')
+    stdoutTail,
+    stderrTail,
+    ptyTail,
+    outputTail
   };
 };
 
@@ -369,7 +378,7 @@ export const useCommandSessionStore = defineStore('commandSessions', {
       if (!normalized) return null;
       // Reconnect hydration uses backend tails (up to hundreds of KB); retain
       // the same bounded preview as the live-delta path.
-      for (const field of ['stdoutTail', 'stderrTail', 'ptyTail'] as const) {
+      for (const field of ['stdoutTail', 'stderrTail', 'ptyTail', 'outputTail'] as const) {
         normalized[field] = compactTerminalText('', normalized[field]).value;
       }
       const existing = this.entries[normalized.commandSessionId];
@@ -397,6 +406,7 @@ export const useCommandSessionStore = defineStore('commandSessions', {
               stdoutTail: existing.stdoutTail || normalized.stdoutTail,
               stderrTail: existing.stderrTail || normalized.stderrTail,
               ptyTail: existing.ptyTail || normalized.ptyTail,
+              outputTail: existing.outputTail || normalized.outputTail,
               stdoutBytes: Math.max(existing.stdoutBytes, normalized.stdoutBytes),
               stderrBytes: Math.max(existing.stderrBytes, normalized.stderrBytes),
               ptyBytes: Math.max(existing.ptyBytes, normalized.ptyBytes),
@@ -420,6 +430,7 @@ export const useCommandSessionStore = defineStore('commandSessions', {
         next.stdoutTail = mergeTerminalText(normalized.stdoutTail, existing.stdoutTail);
         next.stderrTail = mergeTerminalText(normalized.stderrTail, existing.stderrTail);
         next.ptyTail = mergeTerminalText(normalized.ptyTail, existing.ptyTail);
+        next.outputTail = mergeTerminalText(normalized.outputTail, existing.outputTail);
         next.stdoutBytes = Math.max(existing.stdoutBytes, normalized.stdoutBytes);
         next.stderrBytes = Math.max(existing.stderrBytes, normalized.stderrBytes);
         next.ptyBytes = Math.max(existing.ptyBytes, normalized.ptyBytes);
@@ -484,6 +495,7 @@ export const useCommandSessionStore = defineStore('commandSessions', {
       }
       next.updatedAt = new Date().toISOString();
       next.seq = incomingSeq ?? next.seq + 1;
+      next.outputTail = compactTerminalText(next.outputTail, textDelta).value;
 
       if (streamName === 'stderr') {
         const tail = compactTerminalText(next.stderrTail, textDelta);

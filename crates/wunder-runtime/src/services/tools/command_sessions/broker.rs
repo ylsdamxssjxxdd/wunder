@@ -6,8 +6,8 @@ use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
 use parking_lot::Mutex;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::io::AsyncWriteExt;
 use tokio::process::ChildStdin;
 use tokio::sync::Notify;
@@ -660,7 +660,9 @@ impl CommandSessionBroker {
                     let mut stdout = String::new();
                     let mut stderr = String::new();
                     let mut pty = String::new();
+                    let mut output = String::new();
                     for delta in record.deltas.iter().filter(|delta| delta.seq > cursor) {
+                        output.push_str(&delta.text);
                         match delta.stream {
                             CommandSessionStream::Stdout => stdout.push_str(&delta.text),
                             CommandSessionStream::Stderr => stderr.push_str(&delta.text),
@@ -676,6 +678,9 @@ impl CommandSessionBroker {
                         "exit_code": record.exit_code,
                         "timed_out": record.timed_out,
                         "error": record.error,
+                        "command": record.command,
+                        "cwd": record.cwd,
+                        "output": output,
                         "stdout": stdout, "stderr": stderr, "pty": pty,
                         "dropped": dropped,
                         "output_truncated": dropped,
@@ -991,12 +996,16 @@ mod tests {
         let scoped = broker.list_session_snapshots("user_a", "sess_1");
         assert_eq!(scoped.len(), 1);
         assert_eq!(scoped[0].command_session_id, "cmd_test");
-        assert!(broker
-            .snapshot_for_scope("user_a", "sess_1", "cmd_test")
-            .is_some());
-        assert!(broker
-            .snapshot_for_scope("user_a", "sess_1", "cmd_other")
-            .is_none());
+        assert!(
+            broker
+                .snapshot_for_scope("user_a", "sess_1", "cmd_test")
+                .is_some()
+        );
+        assert!(
+            broker
+                .snapshot_for_scope("user_a", "sess_1", "cmd_other")
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -1020,17 +1029,22 @@ mod tests {
         assert_eq!(snapshot["status"], "exited");
         assert_eq!(snapshot["exit_code"], 0);
         assert_eq!(snapshot["stdout"], "ready\n");
-        assert!(broker
-            .poll(
-                "user_b",
-                "sess_1",
-                "cmd_test",
-                None,
-                std::time::Duration::ZERO,
-                true
-            )
-            .await
-            .is_err());
+        assert_eq!(snapshot["output"], "ready\n");
+        assert_eq!(snapshot["command"], "echo hi");
+        assert_eq!(snapshot["cwd"], "/tmp");
+        assert!(
+            broker
+                .poll(
+                    "user_b",
+                    "sess_1",
+                    "cmd_test",
+                    None,
+                    std::time::Duration::ZERO,
+                    true
+                )
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1170,7 +1184,7 @@ mod tests {
 
     #[tokio::test]
     async fn websocket_command_stream_hydrates_and_isolates_thread_output() {
-        use crate::api::ws_helpers::{watch_command_sessions, WsSender};
+        use crate::api::ws_helpers::{WsSender, watch_command_sessions};
         let broker = Arc::new(CommandSessionBroker::new());
         broker.start_session(build_start_spec());
         let mut foreign = build_start_spec();
@@ -1277,12 +1291,16 @@ mod tests {
     fn finish_session_if_running_is_idempotent() {
         let broker = CommandSessionBroker::new();
         broker.start_session(build_start_spec());
-        assert!(broker
-            .finish_session_if_running("cmd_test", "ended without completion")
-            .is_some());
-        assert!(broker
-            .finish_session_if_running("cmd_test", "ended without completion")
-            .is_none());
+        assert!(
+            broker
+                .finish_session_if_running("cmd_test", "ended without completion")
+                .is_some()
+        );
+        assert!(
+            broker
+                .finish_session_if_running("cmd_test", "ended without completion")
+                .is_none()
+        );
     }
 
     #[test]
@@ -1346,9 +1364,11 @@ mod tests {
         assert_eq!(final_data["status"], "exited");
         assert_eq!(final_data["exit_code"], 0);
         // 跨作用域仍然拒绝。
-        assert!(broker
-            .write_stdin("user_b", "sess_1", "cmd_test", b"x")
-            .await
-            .is_err());
+        assert!(
+            broker
+                .write_stdin("user_b", "sess_1", "cmd_test", b"x")
+                .await
+                .is_err()
+        );
     }
 }

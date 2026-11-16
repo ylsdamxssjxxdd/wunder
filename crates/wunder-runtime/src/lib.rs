@@ -26,8 +26,8 @@ pub use core::{
     approval, approval_registry, auth, blocking, bounded_queue, command_utils, config,
     config_store, dpi, drawio_config, exec_policy, http_client, i18n, local_assets,
     local_bootstrap, logging, long_task, onlyoffice_config, path_utils, process_file_lock,
-    repo_assets, runtime_metrics, runtime_tuning, rustls_provider, schemas, shutdown, state,
-    token_utils,
+    repo_assets, runtime_metrics, runtime_tuning, rustls_provider, schemas, shutdown,
+    startup_probe, state, token_utils,
 };
 pub use lsp::LspManager;
 pub use ops::{benchmark, monitor, performance, startup, throughput};

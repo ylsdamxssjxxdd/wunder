@@ -6,12 +6,12 @@ use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     rc::Rc,
-    sync::{mpsc::sync_channel, Arc},
+    sync::{Arc, mpsc::sync_channel},
     time::Duration,
 };
 use wunder_desktop::{
-    native::{NativeProcessItem, NativeProcessPage},
     NativeDesktop,
+    native::{NativeProcessItem, NativeProcessPage},
 };
 
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
@@ -393,7 +393,7 @@ fn project_page_entries(items: Vec<NativeProcessItem>) -> Vec<ProcessEntry> {
             entries.push(ProcessEntry {
                 kind: crate::timeline::KIND_TOOL,
                 id: format!("tool-{}", tool.id).into(),
-                tool_name: crate::timeline_text::tool_label(&tool.title).into(),
+                tool_name: crate::timeline_text::tool_label_for_entry(&tool).into(),
                 tool_icon: wunder_desktop::tool_icons::workflow_icon(&tool.title).into(),
                 target: target.as_str().into(),
                 // The durable page does not know the shell width, so it takes
@@ -405,6 +405,8 @@ fn project_page_entries(items: Vec<NativeProcessItem>) -> Vec<ProcessEntry> {
                 .into(),
                 summary: summary.into(),
                 detail: crate::timeline_text::copy_text(&[], &tool.detail),
+                command_output: tool.command_output.into(),
+                command_meta: tool.command_meta.into(),
                 sections: crate::timeline_text::sections(&tool.sections),
                 patch: if patch {
                     crate::timeline_text::patch_cards(&tool.patch_files)
@@ -527,6 +529,8 @@ mod tests {
                         tokens: "9.1k".into(),
                         duration: "0.1s".into(),
                         read_lines: String::new(),
+                        command_output: String::new(),
+                        command_meta: String::new(),
                         sections: Vec::new(),
                         patch_files: Vec::new(),
                     }),
@@ -604,6 +608,8 @@ mod tests {
                         tokens: String::new(),
                         duration: String::new(),
                         read_lines: String::new(),
+                        command_output: String::new(),
+                        command_meta: String::new(),
                         sections: Vec::new(),
                         patch_files: Vec::new(),
                         round: 0,

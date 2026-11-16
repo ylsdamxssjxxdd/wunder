@@ -1,11 +1,11 @@
 //! Passive, bounded observation of every user turn in the selected thread.
-use super::{chat_turns, NativeChatTurn, NativeDesktop};
-use anyhow::{anyhow, Result};
+use super::{NativeChatTurn, NativeDesktop, chat_turns};
+use anyhow::{Result, anyhow};
 use serde_json::Value;
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use wunder_server::{blocking, state::AppState, watch_thread_changes, ThreadChangeFrame};
+use wunder_server::{ThreadChangeFrame, blocking, state::AppState, watch_thread_changes};
 
 #[derive(Debug)]
 pub enum NativeThreadUpdate {
@@ -497,7 +497,7 @@ mod tests {
                 .unwrap()
             {
                 NativeThreadUpdate::Reset(turns) | NativeThreadUpdate::Turns(turns) => {
-                    return turns
+                    return turns;
                 }
                 NativeThreadUpdate::QueueChanged
                 | NativeThreadUpdate::Context(_)
@@ -706,17 +706,19 @@ mod tests {
         assert_eq!(restored[3].assistant.stats_status, "已停止");
         task.abort();
         let (output, _receiver) = mpsc::channel(8);
-        assert!(observe(
-            state,
-            "fixture-other".into(),
-            session.into(),
-            None,
-            None,
-            &output,
-            &CancellationToken::new()
-        )
-        .await
-        .is_err());
+        assert!(
+            observe(
+                state,
+                "fixture-other".into(),
+                session.into(),
+                None,
+                None,
+                &output,
+                &CancellationToken::new()
+            )
+            .await
+            .is_err()
+        );
     }
 
     #[tokio::test]

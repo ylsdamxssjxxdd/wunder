@@ -1,6 +1,6 @@
 //! Agent-scoped expert operations; no transport or UI dependencies.
 use super::{NativeDesktop, NativeSession};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use wunder_server::agent_management;
 use wunder_server::memory_fragments::{
     MemoryFragmentInput, MemoryFragmentListOptions, MemoryFragmentStore,

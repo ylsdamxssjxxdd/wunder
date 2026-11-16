@@ -422,12 +422,14 @@ mod tests {
 
     #[test]
     fn unrelated_tools_never_produce_a_card() {
-        assert!(project(
-            "read_file",
-            &json!({"files": [{"path": "x"}]}),
-            &Value::Null
-        )
-        .is_empty());
+        assert!(
+            project(
+                "read_file",
+                &json!({"files": [{"path": "x"}]}),
+                &Value::Null
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -490,18 +492,22 @@ mod tests {
 
     #[test]
     fn edit_preview_skips_view_and_identical_text() {
-        assert!(project(
-            "文本编辑",
-            &json!({}),
-            &json!({"command":"view","file_path":"sample.txt"})
-        )
-        .is_empty());
-        assert!(project(
-            "文本编辑",
-            &json!({}),
-            &json!({"file_path":"sample.txt","old_string":"same","new_string":"same"})
-        )
-        .is_empty());
+        assert!(
+            project(
+                "文本编辑",
+                &json!({}),
+                &json!({"command":"view","file_path":"sample.txt"})
+            )
+            .is_empty()
+        );
+        assert!(
+            project(
+                "文本编辑",
+                &json!({}),
+                &json!({"file_path":"sample.txt","old_string":"same","new_string":"same"})
+            )
+            .is_empty()
+        );
         let created = project(
             "str_replace_editor",
             &json!({}),

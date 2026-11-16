@@ -5,6 +5,7 @@ use crate::channels::{ChannelHub, ChannelHubSharedState};
 use crate::config::Config;
 use crate::config_store::ConfigStore;
 use crate::core::approval_registry::PendingApprovalRegistry;
+use crate::core::startup_probe;
 use crate::cron::{CronScheduler, CronWakeSignal};
 use crate::gateway::GatewayHub;
 use crate::lsp::LspManager;
@@ -35,7 +36,6 @@ use serde::Serialize;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
-use tracing::info;
 #[cfg(any(feature = "sqlite-storage", test))]
 use tracing::warn;
 // `ensure_initialized` is a trait method: both `SqliteStorage` and
@@ -254,7 +254,7 @@ impl AppState {
         options: AppStateInitOptions,
     ) -> Result<Self> {
         let app_state_start = Instant::now();
-        info!("[startup][app-state] point=new_begin total_ms=0.0");
+        startup_probe::point("new_begin", 0.0);
         let runtime_profile = options.runtime_profile;
         let runtime_capabilities = options.resolve_capabilities(&config);
         validate_profile_storage(runtime_profile, &config.storage.backend)?;
@@ -323,9 +323,9 @@ impl AppState {
                 )))
             }
         };
-        info!(
-            "[startup][app-state] point=init_storage_done total_ms={:.1}",
-            app_state_start.elapsed().as_secs_f64() * 1000.0
+        startup_probe::point(
+            "init_storage_done",
+            app_state_start.elapsed().as_secs_f64() * 1000.0,
         );
         let workspace = Arc::new(WorkspaceManager::new(
             &config.workspace.root,
@@ -344,24 +344,24 @@ impl AppState {
             config.observability.deleted_session_log_grace_hours,
         );
         let lsp_manager = LspManager::new(workspace.clone());
-        info!(
-            "[startup][app-state] point=workspace_lsp_done total_ms={:.1}",
-            app_state_start.elapsed().as_secs_f64() * 1000.0
+        startup_probe::point(
+            "workspace_lsp_done",
+            app_state_start.elapsed().as_secs_f64() * 1000.0,
         );
         let monitor = Arc::new(MonitorState::new(
             storage.clone(),
             config.observability.clone(),
             config.workspace.root.clone(),
         ));
-        info!(
-            "[startup][app-state] point=monitor_done total_ms={:.1}",
-            app_state_start.elapsed().as_secs_f64() * 1000.0
+        startup_probe::point(
+            "monitor_done",
+            app_state_start.elapsed().as_secs_f64() * 1000.0,
         );
         let skills_registry = load_skills(&config, true, true, true);
         let skills = Arc::new(RwLock::new(skills_registry));
-        info!(
-            "[startup][app-state] point=load_skills_done total_ms={:.1}",
-            app_state_start.elapsed().as_secs_f64() * 1000.0
+        startup_probe::point(
+            "load_skills_done",
+            app_state_start.elapsed().as_secs_f64() * 1000.0,
         );
         let user_tool_store = Arc::new(
             UserToolStore::new(&config, workspace.clone()).context("初始化用户工具存储失败")?,
@@ -382,9 +382,9 @@ impl AppState {
         let external_auth_codes = Arc::new(ExternalAuthCodeStore::new());
         let approval_registry = Arc::new(PendingApprovalRegistry::new());
         let command_sessions = Arc::new(CommandSessionBroker::new());
-        info!(
-            "[startup][app-state] point=base_services_done total_ms={:.1}",
-            app_state_start.elapsed().as_secs_f64() * 1000.0
+        startup_probe::point(
+            "base_services_done",
+            app_state_start.elapsed().as_secs_f64() * 1000.0,
         );
 
         if options.resolved_seed_org_units() {
@@ -404,9 +404,9 @@ impl AppState {
             gateway.clone().spawn_maintenance();
         }
         let cron_wake_signal = CronWakeSignal::new();
-        info!(
-            "[startup][app-state] point=gateway_done total_ms={:.1}",
-            app_state_start.elapsed().as_secs_f64() * 1000.0
+        startup_probe::point(
+            "gateway_done",
+            app_state_start.elapsed().as_secs_f64() * 1000.0,
         );
 
         let orchestrator = Arc::new(Orchestrator::new(
@@ -426,9 +426,9 @@ impl AppState {
             Some(cron_wake_signal.clone()),
             thread_store.clone(),
         ));
-        info!(
-            "[startup][app-state] point=orchestrator_done total_ms={:.1}",
-            app_state_start.elapsed().as_secs_f64() * 1000.0
+        startup_probe::point(
+            "orchestrator_done",
+            app_state_start.elapsed().as_secs_f64() * 1000.0,
         );
 
         let thread_runtime = ThreadRuntime::new(
@@ -441,9 +441,9 @@ impl AppState {
         if options.resolved_start_thread_runtime() {
             thread_runtime.clone().start();
         }
-        info!(
-            "[startup][app-state] point=thread_runtime_done total_ms={:.1}",
-            app_state_start.elapsed().as_secs_f64() * 1000.0
+        startup_probe::point(
+            "thread_runtime_done",
+            app_state_start.elapsed().as_secs_f64() * 1000.0,
         );
 
         let memory = Arc::new(MemoryStore::new(storage.clone()));
@@ -466,9 +466,9 @@ impl AppState {
                 },
             },
         ));
-        info!(
-            "[startup][app-state] point=channel_hub_done total_ms={:.1}",
-            app_state_start.elapsed().as_secs_f64() * 1000.0
+        startup_probe::point(
+            "channel_hub_done",
+            app_state_start.elapsed().as_secs_f64() * 1000.0,
         );
         let cron = CronScheduler::new(
             config_store.clone(),
@@ -482,9 +482,9 @@ impl AppState {
         if options.resolved_start_cron() {
             cron.start();
         }
-        info!(
-            "[startup][app-state] point=cron_done total_ms={:.1}",
-            app_state_start.elapsed().as_secs_f64() * 1000.0
+        startup_probe::point(
+            "cron_done",
+            app_state_start.elapsed().as_secs_f64() * 1000.0,
         );
 
         let throughput = ThroughputManager::new();
@@ -497,9 +497,9 @@ impl AppState {
             skills.clone(),
             user_tool_manager.clone(),
         );
-        info!(
-            "[startup][app-state] point=new_done total_ms={:.1}",
-            app_state_start.elapsed().as_secs_f64() * 1000.0
+        startup_probe::point(
+            "new_done",
+            app_state_start.elapsed().as_secs_f64() * 1000.0,
         );
         Ok(Self {
             config_store,

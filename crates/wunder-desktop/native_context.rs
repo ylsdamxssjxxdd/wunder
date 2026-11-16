@@ -1,5 +1,5 @@
 //! Context occupancy is independent from billing and cumulative output tokens.
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde_json::Value;
 use std::sync::Arc;
 use wunder_server::{blocking, state::AppState};

@@ -203,12 +203,14 @@ mod tests {
         let value = read_detail(|cursor| {
             visited.push(cursor);
             Ok(ThreadBodyPage {
-                chunks: vec![if cursor == 0 {
-                    "{\"summary_text\":\"Fixture "
-                } else {
-                    "retained context.\"}"
-                }
-                .into()],
+                chunks: vec![
+                    if cursor == 0 {
+                        "{\"summary_text\":\"Fixture "
+                    } else {
+                        "retained context.\"}"
+                    }
+                    .into(),
+                ],
                 has_more: cursor == 0,
                 next_cursor: (cursor == 0).then_some(16),
                 ..Default::default()
@@ -221,17 +223,21 @@ mod tests {
             read_detail(|_| Ok(ThreadBodyPage::default())).unwrap(),
             Value::Null
         );
-        assert!(read_detail(|_| Ok(ThreadBodyPage {
-            has_more: true,
-            next_cursor: Some(0),
-            ..Default::default()
-        }))
-        .is_err());
-        assert!(read_detail(|_| Ok(ThreadBodyPage {
-            chunks: vec!["x".repeat(2 * 1024 * 1024 + 1)],
-            ..Default::default()
-        }))
-        .is_err());
+        assert!(
+            read_detail(|_| Ok(ThreadBodyPage {
+                has_more: true,
+                next_cursor: Some(0),
+                ..Default::default()
+            }))
+            .is_err()
+        );
+        assert!(
+            read_detail(|_| Ok(ThreadBodyPage {
+                chunks: vec!["x".repeat(2 * 1024 * 1024 + 1)],
+                ..Default::default()
+            }))
+            .is_err()
+        );
     }
 
     #[cfg(feature = "sqlite-storage")]

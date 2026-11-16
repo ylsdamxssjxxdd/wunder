@@ -1,7 +1,7 @@
-use super::super::snapshot_tests::{fixture_app, TempRoot};
+use super::super::snapshot_tests::{TempRoot, fixture_app};
 use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::{backend::TestBackend, Terminal};
+use ratatui::{Terminal, backend::TestBackend};
 use serde_json::json;
 
 fn rows(start: i64, end: i64) -> Vec<TrajectoryViewRow> {
@@ -300,13 +300,14 @@ async fn trajectory_storage_keyboard_search_detail_export_and_frames() {
     store.append_thread_item(&user, &json!({"session_id":session,"turn_id":turn_id,"item_id":"fixture-answer", "kind":"assistant_message","status":"completed","content":content})).unwrap();
     app.open_trajectory_view(None).await.unwrap();
     settle(&mut app).await;
-    assert!(app
-        .trajectory_view
-        .as_ref()
-        .unwrap()
-        .rows
-        .iter()
-        .any(|r| r.item_id == "fixture-answer"));
+    assert!(
+        app.trajectory_view
+            .as_ref()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.item_id == "fixture-answer")
+    );
     let wide = render(&mut app, 140, 34);
     assert!(wide.contains("Trajectory"));
     assert!(wide.contains("Ledger"));
@@ -329,16 +330,19 @@ async fn trajectory_storage_keyboard_search_detail_export_and_frames() {
     app.on_paste("needle-final".into());
     key(&mut app, KeyCode::Enter).await;
     let view = app.trajectory_view.as_ref().unwrap();
-    assert!(view
-        .hits
-        .as_ref()
-        .unwrap()
-        .iter()
-        .any(|r| r.item_id == "fixture-answer"));
-    assert!(view.detail.value["content"]
-        .as_str()
-        .unwrap()
-        .contains("needle-final"));
+    assert!(
+        view.hits
+            .as_ref()
+            .unwrap()
+            .iter()
+            .any(|r| r.item_id == "fixture-answer")
+    );
+    assert!(
+        view.detail.value["content"]
+            .as_str()
+            .unwrap()
+            .contains("needle-final")
+    );
     for (width, height) in [(1, 1), (20, 8), (80, 24), (140, 34)] {
         render(&mut app, width, height);
     }

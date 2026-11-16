@@ -2,7 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPinia, setActivePinia } from 'pinia';
 import { useCommandSessionStore } from '../../src/stores/commandSessions';
-import { commandSessionOutputPreview, resolveTimelineCommandSessionRef } from '../../src/components/chat/toolTimelineCommandSession';
+import {
+  commandSessionLivePreview,
+  commandSessionOutputPreview,
+  resolveCommandInteractionKind,
+  resolveCommandRunOutput,
+  resolveTimelineCommandSessionRef
+} from '../../src/components/chat/toolTimelineCommandSession';
 import type { RawToolRun } from '../../src/components/chat/toolWorkflowRunModel';
 
 test('live output survives duplicate send/watch delivery and snapshot replay', () => {
@@ -20,6 +26,7 @@ test('live output survives duplicate send/watch delivery and snapshot replay', (
   store.upsertSnapshot('thread', { command_session_id: 'command', seq: 4, status: 'exited', exit_code: 0 });
   assert.equal(store.getById('command')?.stdoutTail, 'first\nsecond\n');
   assert.equal(store.getByToolCallId('call')?.stderrTail, 'warning\n');
+  assert.equal(store.getById('command')?.outputTail, 'first\nsecond\nwarning\n');
   assert.equal(store.getById('command')?.status, 'exited');
 });
 
@@ -63,4 +70,42 @@ test('timeline resolves a command poll and an execute result to the same live se
   assert.equal(resolveTimelineCommandSessionRef({ ...run, callItem: null,
     resultItem: { detail: JSON.stringify({ ok: true, data: { command_session_id: 'command', status: 'running' } }) }
   }), 'command');
+});
+
+
+test('command preview and interaction copy follow the Codex command lifecycle', () => {
+  const execute: RawToolRun = {
+    key: 'execute-call', toolName: 'execute_command', toolRuntimeName: 'execute_command',
+    toolDisplayName: '执行命令', toolFunctionName: 'execute_command', outputItem: null, resultItem: null,
+    callItem: { detail: JSON.stringify({ arguments: { content: 'printf ready' } }) }
+  };
+  assert.equal(resolveCommandInteractionKind(execute), 'execute');
+  const write: RawToolRun = {
+    ...execute,
+    key: 'write-call', toolName: 'write_stdin', toolRuntimeName: 'write_stdin',
+    callItem: { detail: JSON.stringify({ arguments: { command_session_id: 'command', chars: 'yes\n' } }) }
+  };
+  assert.equal(resolveCommandInteractionKind(write), 'write');
+  assert.equal(resolveCommandInteractionKind({
+    ...write, callItem: { detail: JSON.stringify({ arguments: { command_session_id: 'command', chars: '' } }) }
+  }), 'poll');
+  assert.equal(commandSessionLivePreview('one\ntwo\nthree\nfour\nfive\nsix'), 'one\ntwo\n… +2 lines\nfive\nsix');
+});
+
+test('command output extraction reads the first-class results array without JSON noise', () => {
+  const run: RawToolRun = {
+    key: 'execute-call', toolName: 'execute_command', toolRuntimeName: 'execute_command',
+    toolDisplayName: '执行命令', toolFunctionName: 'execute_command', outputItem: null,
+    callItem: null,
+    resultItem: {
+      detail: JSON.stringify({
+        ok: true,
+        data: {
+          status: 'running',
+          results: [{ stdout: 'partial output\n', stderr: 'warning\n', returncode: -1 }]
+        }
+      })
+    }
+  };
+  assert.equal(resolveCommandRunOutput(run), 'partial output\n\nwarning\n');
 });

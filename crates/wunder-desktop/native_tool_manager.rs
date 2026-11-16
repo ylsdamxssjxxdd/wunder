@@ -1,7 +1,7 @@
 //! Typed tool-management projection for native clients. All calls run on the
 //! caller's worker thread and reuse the runtime's stores and archive handling.
 use super::{NativeDesktop, ToolRecord};
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -177,12 +177,13 @@ impl NativeDesktop {
         let global = self
             .runtime
             .block_on(async { self.state().skills.read().await.list_specs() });
-        config.skills.paths = vec![self
-            .state()
-            .user_tool_store
-            .get_skill_root(self.user_id())
-            .to_string_lossy()
-            .into_owned()];
+        config.skills.paths = vec![
+            self.state()
+                .user_tool_store
+                .get_skill_root(self.user_id())
+                .to_string_lossy()
+                .into_owned(),
+        ];
         let custom = skills::load_skills(&config, false, false, false).list_specs();
         let mut names = HashSet::new();
         let mut result = custom

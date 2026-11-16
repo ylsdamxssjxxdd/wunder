@@ -1,18 +1,26 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
+use std::time::Duration;
 
+pub(crate) const DEFAULT_COMMAND_YIELD_MS: u64 = 10_000;
+pub(crate) const MAX_COMMAND_YIELD_MS: u64 = 30_000;
 const MIN_TIME_BUDGET_MS: u64 = 1;
 const MAX_TIME_BUDGET_MS: u64 = 10 * 60 * 1000;
 const MIN_OUTPUT_BUDGET_BYTES: usize = 4 * 1024;
 const MAX_OUTPUT_BUDGET_BYTES: usize = 4 * 1024 * 1024;
 const MIN_COMMAND_LIMIT: usize = 1;
 const MAX_COMMAND_LIMIT: usize = 200;
-pub(crate) const MAX_COMMAND_SESSION_POLL_MS: u64 = 60_000;
-/// 命令会话默认的等待窗口：取一眼新输出就返回，不阻塞线程。
-///
-/// 设计对齐 codex 的 unified exec：后台会话的默认动作是「读一下」，
-/// 需要阻塞到退出时才由调用方显式声明 `wait_for=exit`。这样模型连续
-/// 轮询时每一步都是毫秒级返回，不会因为默认 60s 空等把一轮对话拖死。
-pub(crate) const DEFAULT_COMMAND_SESSION_POLL_MS: u64 = 250;
+pub(crate) const MAX_COMMAND_SESSION_POLL_MS: u64 = 30_000;
+/// 与 Codex 的 write_stdin 一致：一次调用等待一小段输出后即交还控制权。
+pub(crate) const DEFAULT_COMMAND_SESSION_POLL_MS: u64 = 1_000;
+
+pub(crate) fn parse_command_yield_time(args: &Value) -> Duration {
+    let value = args
+        .get("yield_time_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(DEFAULT_COMMAND_YIELD_MS)
+        .clamp(50, MAX_COMMAND_YIELD_MS);
+    Duration::from_millis(value)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CommandSessionWaitOptions {
@@ -37,9 +45,14 @@ impl CommandSessionInput<'_> {
     }
 }
 
-/// 模型的输入是一次「写 stdin」而不是独立的 action：空 input 就是轮询。
+/// `chars` 对齐 Codex；`input` 仅用于兼容已保存的调用。
 pub(crate) fn parse_command_session_input(args: &Value) -> CommandSessionInput<'_> {
-    match args.get("input").and_then(Value::as_str).unwrap_or("") {
+    let input = args
+        .get("chars")
+        .or_else(|| args.get("input"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    match input {
         "" => CommandSessionInput::Poll,
         // Ctrl-C / ETX：非 tty 会话也支持，语义是终止这条命令。
         "\x03" => CommandSessionInput::Interrupt,
@@ -201,7 +214,7 @@ mod tests {
                 yield_time_ms: DEFAULT_COMMAND_SESSION_POLL_MS
             }
         );
-        // 显式要阻塞时才给长窗口，且未知取值一律按「读一下」处理。
+        // 兼容旧调用中的显式退出等待；新调用只需设置同一个等待窗口。
         for args in [
             json!({"wait_for": "exit"}),
             json!({"wait_for": "EXIT", "yield_time_ms": 90_000}),
@@ -210,7 +223,7 @@ mod tests {
                 parse_command_session_wait(&args),
                 CommandSessionWaitOptions {
                     wait_for_exit: true,
-                    yield_time_ms: 60_000
+                    yield_time_ms: 30_000
                 }
             );
         }
@@ -224,7 +237,7 @@ mod tests {
         );
         assert_eq!(
             parse_command_session_wait(&json!({"yield_time_ms": 90_000})).yield_time_ms,
-            60_000
+            30_000
         );
     }
 
@@ -247,6 +260,11 @@ mod tests {
             CommandSessionInput::Interrupt
         );
         assert!(parse_command_session_input(&json!({"input": "ls\n"})).writes_stdin());
+        assert!(parse_command_session_input(&json!({"chars": "y\n"})).writes_stdin());
+        assert_eq!(
+            parse_command_session_input(&json!({"chars": "preferred\n", "input": "legacy\n"})),
+            CommandSessionInput::Text("preferred\n")
+        );
         assert!(!parse_command_session_input(&json!({})).writes_stdin());
     }
 }

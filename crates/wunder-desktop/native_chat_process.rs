@@ -1,6 +1,6 @@
 //! Bounded, native work-process reads using the same durable keyset pages as web.
 use super::{NativeDesktop, NativeWorkflowEntry};
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use serde_json::Value;
 use std::collections::HashSet;
 use wunder_server::stable_core::thread_view::ChatViewRow;

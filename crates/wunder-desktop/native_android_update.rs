@@ -13,10 +13,10 @@
 //! moving `nightly` release carry updates without a separate manifest.
 
 use super::NativeDesktop;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::path::Path;
-use std::sync::atomic::AtomicU64;
 use std::sync::OnceLock;
+use std::sync::atomic::AtomicU64;
 use wunder_server::cloud::update::{AndroidRelease, UpdateAsset, UpdateSourceClient};
 
 static SOURCE_CLIENT: OnceLock<UpdateSourceClient> = OnceLock::new();

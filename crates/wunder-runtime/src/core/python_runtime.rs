@@ -10,6 +10,9 @@ const DESKTOP_APP_DIR_ENV: &str = "WUNDER_DESKTOP_APP_DIR";
 const DESKTOP_RUNTIME_ROOT_ENV: &str = "WUNDER_DESKTOP_RUNTIME_ROOT";
 const DESKTOP_SETTINGS_PATH_ENV: &str = "WUNDER_DESKTOP_SETTINGS_PATH";
 const PYTHON_BIN_ENV: &str = "WUNDER_PYTHON_BIN";
+/// 补充包里 python 的默认包索引：与补充包构建、安卓/桌面离线包的下载源保持一致。
+/// 只在国内镜像可用时给默认值，用户自定义 PIP_INDEX_URL 时不覆盖。
+const DEFAULT_PYTHON_INDEX_URL: &str = "https://pypi.tuna.tsinghua.edu.cn/simple";
 
 #[derive(Clone, Debug)]
 pub struct PythonRuntime {
@@ -196,7 +199,12 @@ pub fn apply_python_env(cmd: &mut TokioCommand, runtime: &PythonRuntime) {
         }
     }
     cmd.env("PYTHONNOUSERSITE", "1");
-    cmd.env("PIP_NO_INDEX", "1");
+    // 补充包自带的 Python 是通用运行时，不是离线封闭环境：允许 pip 联网装包，
+    // 未显式配置镜像时回落到国内索引，避免默认 pypi.org 在本地网络里超时。
+    cmd.env_remove("PIP_NO_INDEX");
+    if std::env::var_os("PIP_INDEX_URL").is_none() {
+        cmd.env("PIP_INDEX_URL", DEFAULT_PYTHON_INDEX_URL);
+    }
 
     if let Some(lib_dir) = &runtime.lib_dir {
         if cfg!(windows) {
@@ -217,6 +225,7 @@ pub fn apply_system_python_env_if_configured(cmd: &mut TokioCommand) {
     cmd.env_remove("PYTHONPATH");
     cmd.env_remove("PYTHONNOUSERSITE");
     cmd.env_remove("PIP_NO_INDEX");
+    cmd.env_remove("PIP_INDEX_URL");
     remove_path_env_entries(cmd, "PATH", &bundled_python_path_entries());
 }
 

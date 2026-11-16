@@ -12,7 +12,7 @@ import { test, expect, type APIRequestContext, type Locator, type Page } from '@
  * 关键实现事实（读源码 + 真机核对，供后续维护）：
  * - 文件区根：`.messenger-sidebar-files-region`；面板：`.workspace-files`；
  *   上传 input：`.messenger-sidebar-files-region input[type="file"]`（隐藏，可直接 setInputFiles）。
- * - 工具栏按钮用中文 `aria-label`：上传到当前目录 / 刷新 / 多选（多选态变「退出多选」）。
+ * - 工具栏按钮用中文 `aria-label`：上传到当前目录 / 按文件名搜索 / 清空工作目录 / 刷新（纯图标）。
  * - 行菜单是**自绘**的：`contextmenu`（或行内 `⋯` 按钮 `.workspace-file-menu`）打开
  *   `.workspace-files-menu`（Teleport 到 body），菜单项 `.workspace-files-menu-item`。
  *   注意：`.workspace-file-menu` 是行内那个省略号按钮本身，**不是**菜单弹层。
@@ -21,8 +21,10 @@ import { test, expect, type APIRequestContext, type Locator, type Page } from '@
  * - 右击树区**空白处**呼出同一个菜单（没有宿主行）：新建目录/新建文件落在当前目录，
  *   并承接原头部 `⋯`（已下线）的三项：打包下载当前目录 / 刷新 / 清空工作目录。
  * - 移动/复制已从行菜单下线（重命名仍走 `/workspace/move`）。
- * - 标题行右侧工具栏：上传 / 搜索 / 打包下载 / 多选 / 刷新（纯图标 + 中文 aria-label）；
+ * - 标题行右侧工具栏：上传 / 搜索 / 清空工作目录 / 刷新（纯图标 + 中文 aria-label）；
  *   点搜索后整行换成搜索框，结果平铺在同一个行视图里（不再有底部用量读数）。
+ * - 多选没有独立的复选框模式：「Ctrl/⌘ 点」切换单项、「Shift 点」按可见行序扩选，
+ *   批量下载/删除由行与空白区右键菜单按整批执行。
  * - 预览弹层：`.workspace-dialog.workspace-dialog--file-preview`（append-to-body，挂在 body 下），
  *   正文渲染在 CodeMirror 的 `.cm-content`；关闭按钮 `.messenger-dialog-close`；
  *   仅当 `editable`（文本类）时头部才有「保存」按钮（`.workspace-btn--primary`）。
@@ -526,36 +528,31 @@ test('云端工作目录：§6.2 文件操作清单逐项真机走查', async ({
     renamedFile
   );
 
-  // ============================================================ §6.2-9 批量（多选后批量删除）
-  await toolbarButton(page, '多选').click();
-  await expect(
-    filesRegion(page).locator('.workspace-files-selection'),
-    '进入多选后标题行工具栏让位给多选操作条'
-  ).toBeVisible({ timeout: 10_000 });
-
-  // 只勾目录内的 innerFile，验证未被勾选的行不被误删。
+  // ============================================================ §6.2-9 批量（Ctrl 多选后右键批量删除）
+  // 工具栏已无多选按钮：多选改由 Ctrl/⌘、Shift 点击完成，批量动作挂在行右键菜单上
+  // （右键目标在这一批里时按整批执行）。
   await expandDir(page, dirName);
-  const checkOf = (name: string) => rowByName(page, name).locator('input.workspace-file-check');
-  await expect(checkOf(innerFile), '多选态下每行应有复选框').toHaveCount(1);
-  await checkOf(innerFile).click();
-  await expect(checkOf(innerFile)).toBeChecked();
-  await expect(filesRegion(page).locator('.workspace-files-selection-count')).toContainText('已选 1 项');
+  await rowByName(page, innerFile).click({ modifiers: ['Control'] });
+  await expect(rowByName(page, innerFile), 'Ctrl 点击后该行应进入选中态').toHaveClass(/is-selected/);
+  await rowByName(page, createdFile).click({ modifiers: ['Control'] });
+  await expect(rowByName(page, createdFile), 'Ctrl 点击应把第二行加入同一批').toHaveClass(/is-selected/);
 
-  await filesRegion(page).locator('.workspace-files-selection button.is-danger').click();
+  await rowByName(page, innerFile).click({ button: 'right' });
+  await expect(rowMenu(page), '右键选中行应弹出 .workspace-files-menu').toBeVisible({ timeout: 10_000 });
+  await rowMenuItem(page, '删除').click();
   await answerConfirm(page, '删除');
   await expect(rowByName(page, innerFile), `批量删除后 ${innerFile} 应消失`).toHaveCount(0, {
     timeout: 20_000
   });
-  await expect(rowByName(page, createdFile), '未被勾选的新建文件不应被批量删除带走').toBeVisible({
+  await expect(rowByName(page, createdFile), `批量删除后 ${createdFile} 也应消失`).toHaveCount(0, {
     timeout: 20_000
   });
   await expect(rowByName(page, dirName), '目录本身不应被删除').toBeVisible();
-  expect(await serverEntryNames(page, request, dirName), `服务端 ${dirName} 应只剩 ${createdFile}`).toEqual([
-    createdFile
-  ]);
-  await expect(toolbarButton(page, '多选'), '批量删除后应自动退出多选').toBeVisible({
-    timeout: 10_000
+  await expect(rowByName(page, rootFileB), '没进这一批的根文件不应被批量删除带走').toBeVisible({
+    timeout: 20_000
   });
+  expect(await serverEntryNames(page, request, dirName), `服务端 ${dirName} 应已清空`).toEqual([]);
+  expect(await serverEntryNames(page, request), `服务端根目录仍应有 ${rootFileB}`).toContain(rootFileB);
 
   // ============================================================ §6.2-10 删除单文件
   // 先补两个文件：delFile 用于单文件删除，editFile 留给后面的预览/编辑/引用。
@@ -630,7 +627,10 @@ test('云端工作目录：§6.2 文件操作清单逐项真机走查', async ({
   await expect(searchInput, 'Esc 应关闭搜索框').toHaveCount(0);
 
   // ============================================================ §6.2-11 清空工作目录（放最后，它会清空整根）
-  await runBlankCommand(page, '清空工作目录');
+  // 工具栏只留上传 / 搜索 / 清空工作目录 / 刷新：打包下载与多选按钮已下线。
+  await expect(toolbarButton(page, '打包下载当前目录'), '工具栏不应再有打包下载按钮').toHaveCount(0);
+  await expect(toolbarButton(page, '多选'), '工具栏不应再有多选按钮').toHaveCount(0);
+  await toolbarButton(page, '清空工作目录').click();
   await expect(messageBox(page), '清空应弹出高危险确认框').toContainText('清空');
   await expect(
     messageBox(page).locator('.mz-dialog-input'),

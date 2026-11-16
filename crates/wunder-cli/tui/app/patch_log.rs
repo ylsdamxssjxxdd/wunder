@@ -9,13 +9,13 @@ use super::plan_panel::PlanLogEntry;
 use crate::command_session_display::{CommandSessionDisplayStatus, CommandSessionView};
 use crate::empty_state_animation::Banner;
 use crate::patch_diff::{
-    build_patch_diff_preview, patch_diff_preview_from_blocks, PatchDiffBlock, PatchDiffBlockKind,
-    PatchDiffLine, PatchDiffLineKind, PatchDiffPreview,
+    PatchDiffBlock, PatchDiffBlockKind, PatchDiffLine, PatchDiffLineKind, PatchDiffPreview,
+    build_patch_diff_preview, patch_diff_preview_from_blocks,
 };
 use crate::tool_display::summarize_tool_result;
 use crate::tool_presentation::{
-    is_mcp_tool_name, is_subagent_tool, mcp_invocation_label, present, present_subagent_action,
-    target_argument, ToolAccess, ToolPresentation,
+    ToolAccess, ToolPresentation, is_mcp_tool_name, is_subagent_tool, mcp_invocation_label,
+    present, present_subagent_action, target_argument,
 };
 use crate::tui::activity_indicator;
 use crate::tui::theme;
@@ -353,11 +353,20 @@ enum CommandLogStatus {
     Completed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommandInteraction {
+    Execute,
+    Wait,
+    Input,
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct CommandLogEntry {
     status: CommandLogStatus,
     success: bool,
     command: String,
+    interaction: CommandInteraction,
+    interaction_input: Option<String>,
     metrics: Option<String>,
     /// The exit code the footer states once the card is open. `None` while the process runs.
     exit_code: Option<i64>,
@@ -386,6 +395,22 @@ impl CommandLogEntry {
                 lines.extend(render_wrapped_tail_text(
                     command_line,
                     command_style(),
+                    body_first,
+                    width,
+                ));
+                body_first = false;
+            }
+        }
+
+        if expanded {
+            if let Some(input) = self.interaction_input.as_deref() {
+                let input = input
+                    .replace('\r', "\\r")
+                    .replace('\n', "\\n")
+                    .replace('\t', "\\t");
+                lines.extend(render_wrapped_tail_text(
+                    format!("stdin › {input}").as_str(),
+                    summary_style(),
                     body_first,
                     width,
                 ));
@@ -505,7 +530,25 @@ impl CommandLogEntry {
         let command = self.command.lines().next().unwrap_or_default().to_string();
         // The head names the tool and then what it ran, the way every other card does:
         // a bare command line read as stray output rather than as a card.
-        let verb = crate::tool_presentation::present("执行命令").verb(self.is_zh);
+        let verb = match self.interaction {
+            CommandInteraction::Execute => {
+                crate::tool_presentation::present("执行命令").verb(self.is_zh)
+            }
+            CommandInteraction::Wait => {
+                if self.is_zh {
+                    "等待"
+                } else {
+                    "Waited for"
+                }
+            }
+            CommandInteraction::Input => {
+                if self.is_zh {
+                    "发送输入"
+                } else {
+                    "Interacted with"
+                }
+            }
+        };
         let mut spans = vec![
             icon,
             Span::styled(format!("{verb} "), command_style()),
@@ -1227,11 +1270,7 @@ pub(super) fn continuation_prefix() -> &'static str {
 }
 
 fn tree_item_prefix(is_last: bool) -> &'static str {
-    if is_last {
-        "  └ "
-    } else {
-        "  ├ "
-    }
+    if is_last { "  └ " } else { "  ├ " }
 }
 
 fn tree_item_continuation_prefix(is_last: bool) -> &'static str {
@@ -1389,6 +1428,8 @@ pub(super) fn build_pending_command_log(args: &Value, is_zh: bool) -> Option<Spe
         is_zh,
         success: true,
         command,
+        interaction: CommandInteraction::Execute,
+        interaction_input: None,
         metrics: None,
         exit_code: None,
         duration_ms: None,
@@ -1443,7 +1484,12 @@ pub(super) fn build_command_session_log(view: &CommandSessionView, is_zh: bool) 
 
     // One stream with one tail budget. stderr keeps its own colour but no longer gets its
     // own fold row, which is what made a single card promise expansion twice.
-    if !view.pty.trim().is_empty() {
+    if !view.output.trim().is_empty() {
+        if let Some(section) = build_output_section("output", view.output.as_str(), summary_style())
+        {
+            sections.push(section);
+        }
+    } else if !view.pty.trim().is_empty() {
         if let Some(section) = build_output_section("output", view.pty.as_str(), summary_style()) {
             sections.push(section);
         }
@@ -1485,6 +1531,8 @@ pub(super) fn build_command_session_log(view: &CommandSessionView, is_zh: bool) 
         },
         success: !terminal || success,
         command,
+        interaction: CommandInteraction::Execute,
+        interaction_input: None,
         metrics: (!metrics.is_empty()).then(|| metrics.join(", ")),
         exit_code: terminal.then_some(view.exit_code.unwrap_or(if success { 0 } else { 1 })),
         duration_ms: view.duration_ms,
@@ -1557,9 +1605,100 @@ pub(super) fn build_completed_command_log(payload: &Value, is_zh: bool) -> Optio
         status: CommandLogStatus::Completed,
         success,
         command,
+        interaction: CommandInteraction::Execute,
+        interaction_input: None,
         metrics: None,
         exit_code: Some(returncode),
         duration_ms,
+        sections,
+        is_zh,
+    }))
+}
+
+pub(super) fn build_command_interaction_log(
+    payload: &Value,
+    is_zh: bool,
+) -> Option<SpecialLogEntry> {
+    let result = payload.get("result").unwrap_or(payload);
+    let data = result.get("data").unwrap_or(result);
+    let source = data
+        .get("results")
+        .and_then(Value::as_array)
+        .and_then(|items| items.first())
+        .unwrap_or(data);
+    let command = source
+        .get("command")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(if is_zh { "命令" } else { "command" })
+        .to_string();
+    let interaction_input = source
+        .get("interaction_input")
+        .or_else(|| data.get("interaction_input"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let interaction = if interaction_input
+        .as_deref()
+        .is_some_and(|value| !value.is_empty())
+    {
+        CommandInteraction::Input
+    } else {
+        CommandInteraction::Wait
+    };
+    let running = source
+        .get("status")
+        .or_else(|| data.get("status"))
+        .and_then(Value::as_str)
+        == Some("running");
+    let exit_code = value_as_i64(source.get("exit_code"));
+    let success = !running && exit_code.unwrap_or(0) == 0 && result["ok"].as_bool() != Some(false);
+    let output = source
+        .get("output")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            ["pty", "stdout", "stderr"]
+                .into_iter()
+                .filter_map(|key| source.get(key).and_then(Value::as_str))
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
+    let mut sections = Vec::new();
+    if let Some(section) = build_output_section("output", output.as_str(), summary_style()) {
+        sections.push(section);
+    }
+    if let Some(error) = source
+        .get("error")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if let Some(section) = build_output_section(
+            if is_zh { "错误" } else { "error" },
+            error,
+            Style::default().fg(Color::Red),
+        ) {
+            sections.push(section);
+        }
+    }
+    if !running && sections.is_empty() {
+        sections.push(empty_output_section(is_zh));
+    }
+    Some(SpecialLogEntry::Command(CommandLogEntry {
+        status: if running {
+            CommandLogStatus::Pending
+        } else {
+            CommandLogStatus::Completed
+        },
+        success,
+        command,
+        interaction,
+        interaction_input,
+        metrics: None,
+        exit_code: (!running).then_some(exit_code.unwrap_or(if success { 0 } else { 1 })),
+        duration_ms: value_as_i64(result.get("meta").and_then(|meta| meta.get("duration_ms"))),
         sections,
         is_zh,
     }))
@@ -1879,11 +2018,7 @@ pub(super) fn build_completed_patch_log(payload: &Value, is_zh: bool) -> Special
 /// names the tool, because "已修改" is a finished-state claim on a card that may still
 /// be waiting for approval. State lives in the icon colour, never in these words.
 fn patch_tool_name(is_zh: bool) -> &'static str {
-    if is_zh {
-        "文本编辑"
-    } else {
-        "Edit"
-    }
+    if is_zh { "文本编辑" } else { "Edit" }
 }
 
 fn patch_files_header(count: usize, is_zh: bool) -> String {
@@ -2048,12 +2183,14 @@ fn empty_output_section(is_zh: bool) -> CommandSection {
         label: if is_zh { "输出" } else { "output" }.to_string(),
         // The reference states a silent run as a sentence, not as a sentinel from a
         // serialiser: `<empty>` read like the stream had a literal value rather than none.
-        lines: vec![if is_zh {
-            "（无输出）"
-        } else {
-            "(no output)"
-        }
-        .to_string()],
+        lines: vec![
+            if is_zh {
+                "（无输出）"
+            } else {
+                "(no output)"
+            }
+            .to_string(),
+        ],
         window_truncated: false,
         style: theme::secondary_text(),
     }
@@ -2415,9 +2552,11 @@ mod tests {
         assert_eq!(entry.header, "Edited 2 files");
         assert_eq!(entry.files.len(), 2);
         assert_eq!(entry.files[0].marker, 'R');
-        assert!(entry.files[0]
-            .text
-            .contains("src/main.rs → src/bin/main.rs"));
+        assert!(
+            entry.files[0]
+                .text
+                .contains("src/main.rs → src/bin/main.rs")
+        );
         assert_eq!(entry.files[1].marker, 'A');
     }
 
@@ -2432,10 +2571,12 @@ mod tests {
         };
         assert!(entry.header.contains("Edited src/main.rs"));
         assert_eq!(entry.files.len(), 0);
-        assert!(entry
-            .summary
-            .as_deref()
-            .is_some_and(|value| value.contains("+1")));
+        assert!(
+            entry
+                .summary
+                .as_deref()
+                .is_some_and(|value| value.contains("+1"))
+        );
     }
 
     #[test]
@@ -2455,14 +2596,18 @@ mod tests {
         };
         assert_eq!(entry.status, PatchLogStatus::Failure);
         assert_eq!(entry.header, "Failed to apply patch");
-        assert!(entry
-            .notes
-            .iter()
-            .any(|note| note.text.contains("PATCH_CONTEXT_NOT_FOUND")));
-        assert!(entry
-            .notes
-            .iter()
-            .any(|note| note.text.contains("regenerate patch")));
+        assert!(
+            entry
+                .notes
+                .iter()
+                .any(|note| note.text.contains("PATCH_CONTEXT_NOT_FOUND"))
+        );
+        assert!(
+            entry
+                .notes
+                .iter()
+                .any(|note| note.text.contains("regenerate patch"))
+        );
     }
 
     #[test]
@@ -2552,12 +2697,16 @@ mod tests {
                     .collect::<String>()
             })
             .collect::<Vec<_>>();
-        assert!(rendered
-            .iter()
-            .any(|line| line.contains("  ├ A src/new.rs (1 hunk)")));
-        assert!(rendered
-            .iter()
-            .any(|line| line.contains("  └ R src/old.rs → src/main.rs (2 hunks)")));
+        assert!(
+            rendered
+                .iter()
+                .any(|line| line.contains("  ├ A src/new.rs (1 hunk)"))
+        );
+        assert!(
+            rendered
+                .iter()
+                .any(|line| line.contains("  └ R src/old.rs → src/main.rs (2 hunks)"))
+        );
     }
 
     #[test]
@@ -2617,15 +2766,19 @@ mod tests {
         assert_eq!(entry.metrics, None);
         assert_eq!(entry.duration_ms, Some(28));
         assert_eq!(entry.exit_code, Some(1));
-        assert!(entry
-            .sections
-            .iter()
-            .any(|section| section.label == "stderr"));
-        assert!(entry
-            .sections
-            .iter()
-            .flat_map(|section| section.lines.iter())
-            .any(|line| line.contains("fatal: not a git repository")));
+        assert!(
+            entry
+                .sections
+                .iter()
+                .any(|section| section.label == "stderr")
+        );
+        assert!(
+            entry
+                .sections
+                .iter()
+                .flat_map(|section| section.lines.iter())
+                .any(|line| line.contains("fatal: not a git repository"))
+        );
     }
 
     #[test]
@@ -2712,18 +2865,21 @@ mod tests {
             stdout: "line 1\nline 2".to_string(),
             stderr: "warning".to_string(),
             pty: String::new(),
+            output: "line 1\nline 2\nwarning".to_string(),
         };
         let SpecialLogEntry::Command(entry) = build_command_session_log(&view, false) else {
             panic!("expected command log");
         };
         assert_eq!(entry.status, CommandLogStatus::Pending);
-        assert_eq!(entry.sections[0].label, "stdout");
-        assert_eq!(entry.sections[1].label, "stderr");
-        assert!(entry
-            .sections
-            .iter()
-            .flat_map(|section| section.lines.iter())
-            .any(|line| line.contains("line 1")));
+        assert_eq!(entry.sections[0].label, "output");
+        assert_eq!(entry.sections.len(), 1);
+        assert!(
+            entry
+                .sections
+                .iter()
+                .flat_map(|section| section.lines.iter())
+                .any(|line| line.contains("line 1"))
+        );
     }
 
     #[test]
@@ -2884,9 +3040,11 @@ mod tests {
                     .collect::<String>()
             })
             .collect::<Vec<_>>();
-        assert!(rendered
-            .iter()
-            .any(|line| line.contains("Edited src/main.rs")));
+        assert!(
+            rendered
+                .iter()
+                .any(|line| line.contains("Edited src/main.rs"))
+        );
         // One file, one path: the header names it, so the body does not repeat it the way a
         // multi-file card has to.
         assert!(
@@ -3286,9 +3444,11 @@ mod tests {
                     .collect::<String>()
             })
             .collect::<Vec<_>>();
-        assert!(rendered
-            .iter()
-            .any(|line| line.contains("Edited src/main.rs")));
+        assert!(
+            rendered
+                .iter()
+                .any(|line| line.contains("Edited src/main.rs"))
+        );
         // The inherited diff belongs to the one file the header already names, so the body
         // does not spend a row repeating the path.
         assert!(
@@ -3364,6 +3524,8 @@ mod tests {
             status: CommandLogStatus::Completed,
             success: false,
             command: "echo first\necho second".to_string(),
+            interaction: CommandInteraction::Execute,
+            interaction_input: None,
             metrics: None,
             exit_code: Some(1),
             duration_ms: Some(28),
@@ -3422,6 +3584,8 @@ mod tests {
             status: CommandLogStatus::Completed,
             success: true,
             command: "ls".to_string(),
+            interaction: CommandInteraction::Execute,
+            interaction_input: None,
             metrics: None,
             exit_code: None,
             duration_ms: None,
@@ -3471,6 +3635,8 @@ mod tests {
             status: CommandLogStatus::Completed,
             success: true,
             command: "ls".to_string(),
+            interaction: CommandInteraction::Execute,
+            interaction_input: None,
             metrics: None,
             exit_code: None,
             duration_ms: None,
@@ -3507,6 +3673,8 @@ mod tests {
             status: CommandLogStatus::Completed,
             success: true,
             command: "ls".to_string(),
+            interaction: CommandInteraction::Execute,
+            interaction_input: None,
             metrics: None,
             exit_code: None,
             duration_ms: None,
@@ -3575,10 +3743,12 @@ mod tests {
         assert_eq!(entry.status, GenericToolLogStatus::Failure);
         // The status lives in the card's own mark, not in a second word on the header.
         assert_eq!(entry.header_text(), "Read");
-        assert!(entry
-            .details
-            .iter()
-            .any(|detail| detail.text.contains("file not found")));
+        assert!(
+            entry
+                .details
+                .iter()
+                .any(|detail| detail.text.contains("file not found"))
+        );
     }
 
     /// §11.1's acceptance shape: no card may push a row past the transcript width, whether
@@ -3629,5 +3799,49 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn command_interaction_uses_original_command_and_chronological_output() {
+        let payload = serde_json::json!({
+            "result": {
+                "ok": true,
+                "data": {
+                    "command": "fixture-command --wait",
+                    "status": "running",
+                    "interaction_input": "yes\n",
+                    "output": "question\nanswer\n",
+                    "stdout": "question\nanswer\n",
+                    "stderr": ""
+                }
+            }
+        });
+        let SpecialLogEntry::Command(entry) =
+            build_command_interaction_log(&payload, false).expect("interaction")
+        else {
+            panic!("expected command interaction");
+        };
+        assert_eq!(entry.interaction, CommandInteraction::Input);
+        assert_eq!(entry.status, CommandLogStatus::Pending);
+        let header = entry
+            .header_line()
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(header.contains("Interacted with fixture-command --wait"));
+        let expanded = entry
+            .render_lines_for_width(100, true)
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(expanded.contains("stdin › yes\\n"));
+        assert!(expanded.contains("question"));
     }
 }

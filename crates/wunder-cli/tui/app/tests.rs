@@ -315,9 +315,11 @@ fn plain_transcript_lines_use_hanging_indent_without_role_labels() {
                 .collect::<String>()
         })
         .collect::<Vec<_>>();
-    assert!(rendered
-        .first()
-        .is_some_and(|line| line.starts_with("\u{2022} ")));
+    assert!(
+        rendered
+            .first()
+            .is_some_and(|line| line.starts_with("\u{2022} "))
+    );
     assert!(rendered.iter().skip(1).all(|line| line.starts_with("  ")));
     assert!(rendered.iter().all(|line| !line.contains("assistant>")));
     assert!(rendered.iter().all(|line| !line.contains("you>")));
@@ -418,9 +420,11 @@ fn format_execute_command_result_lines_prioritizes_failure_output() {
     assert!(!lines.is_empty());
     assert_eq!(lines[0], "exec (exit=1, 15ms)");
     assert!(lines.iter().any(|line| line.starts_with("  stderr:")));
-    assert!(!lines
-        .iter()
-        .any(|line| line.starts_with("  output: <empty>")));
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.starts_with("  output: <empty>"))
+    );
 }
 
 #[test]
@@ -464,9 +468,11 @@ fn format_tool_result_lines_surfaces_apply_patch_error_code_and_hint() {
 
     let lines = format_tool_result_lines("apply_patch", &payload, false);
     assert!(lines.iter().any(|line| line.contains("failed")));
-    assert!(lines
-        .iter()
-        .any(|line| line.contains("PATCH_CONTEXT_NOT_FOUND")));
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("PATCH_CONTEXT_NOT_FOUND"))
+    );
     assert!(lines.iter().any(|line| line.contains("regenerate patch")));
 }
 
@@ -737,12 +743,18 @@ fn temp_tool_kinds_only_match_pending_cards_of_the_same_shape() {
         &serde_json::json!({"path": "a.txt"}),
         false,
     ));
-    assert!(TempToolKind::Generic("read_file".into())
-        .matches_result("read_file", pending_tool.as_ref()));
-    assert!(!TempToolKind::Generic("read_file".into())
-        .matches_result("read_file", pending_patch.as_ref()));
-    assert!(!TempToolKind::Generic("list_dir".into())
-        .matches_result("read_file", pending_tool.as_ref()));
+    assert!(
+        TempToolKind::Generic("read_file".into())
+            .matches_result("read_file", pending_tool.as_ref())
+    );
+    assert!(
+        !TempToolKind::Generic("read_file".into())
+            .matches_result("read_file", pending_patch.as_ref())
+    );
+    assert!(
+        !TempToolKind::Generic("list_dir".into())
+            .matches_result("read_file", pending_tool.as_ref())
+    );
 }
 
 #[test]

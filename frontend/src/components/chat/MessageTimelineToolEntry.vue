@@ -1,5 +1,5 @@
 <template>
-  <div class="tl-entry" :class="[`is-${displayStatus}`, { 'is-open': open }]">
+  <div class="tl-entry" :class="[`is-${displayStatus}`, { 'is-open': open, 'is-command': isCommand }]">
     <component
       :is="interactive ? 'button' : 'div'"
       class="tl-entry-head"
@@ -17,7 +17,7 @@
       </span>
       <span v-if="entry.toolLabel" class="tl-entry-tool">
         <i :class="['fa-solid', entry.toolIconClass]" aria-hidden="true"></i>
-        <span class="tl-entry-tool-label">{{ entry.toolLabel }}</span>
+        <span class="tl-entry-tool-label">{{ commandToolLabel || entry.toolLabel }}</span>
       </span>
       <span v-if="entry.targets.length" class="tl-entry-chips">
         <button
@@ -43,11 +43,11 @@
       <!-- 读取量：与编辑行的 +/- 同一位置，窗口读取带上文件总行数。 -->
       <span v-if="entry.readLines" class="tl-entry-read-lines">{{ readLinesLabel }}</span>
       <span
-        v-if="entry.summary"
+        v-if="commandSummary || entry.summary"
         class="tl-entry-summary"
         :class="{ 'is-mono': entry.summaryMono }"
-        :title="entry.summary"
-      >{{ entry.summary }}</span>
+        :title="commandSummary || entry.summary"
+      >{{ commandSummary || entry.summary }}</span>
       <!-- 与桌面端折叠行一致：右侧依次是模型轮次、该次请求的上下文占用与工具耗时。
            各列定宽且左对齐，跨条目的数值从同一位置起排；轮次为空也占列。 -->
       <span v-if="roundLabel || tokenMetric || durationMetric" class="tl-entry-metrics">
@@ -56,6 +56,11 @@
         <span>{{ durationMetric }}</span>
       </span>
     </component>
+
+    <pre
+      v-if="isCommand && !open && commandLivePreview"
+      class="tl-entry-live-output"
+    >{{ commandLivePreview }}</pre>
 
     <div v-if="interactive && open" class="tl-entry-body">
       <div v-if="entry.errorText" class="tl-entry-error" role="note">
@@ -79,9 +84,10 @@
         :view="structuredView"
       />
 
-      <div v-else-if="outputText" class="tl-entry-output">
+      <div v-else-if="outputText || isCommand" class="tl-entry-output" :class="{ 'is-command-output': isCommand }">
         <div class="tl-entry-output-head">
           <span>{{ t('chat.timeline.entryOutputTitle') }}</span>
+          <span v-if="commandSession?.cwd" class="tl-entry-output-cwd">{{ commandSession.cwd }}</span>
           <span
             v-if="displayExitCode !== null"
             class="tl-entry-output-exit"
@@ -90,7 +96,9 @@
             {{ t('chat.timeline.entryOutputExitCode', { code: displayExitCode }) }}
           </span>
         </div>
-        <pre class="tl-entry-output-body">{{ outputText }}</pre>
+        <pre v-if="interactionInput" class="tl-entry-input">stdin › {{ interactionInput }}</pre>
+        <pre v-if="outputText" class="tl-entry-output-body">{{ outputText }}</pre>
+        <pre v-else class="tl-entry-output-body is-empty">{{ t('chat.timeline.commandNoOutput') }}</pre>
       </div>
 
       <div v-else-if="!entry.errorText" class="tl-entry-output">
@@ -115,7 +123,12 @@ import { extractWorkflowCallArgs } from './toolWorkflowCallDebug';
 import { parseToolWorkflowResultObject } from './toolWorkflowResultPayload';
 import { buildToolResultPreview } from './toolWorkflowPreview';
 import { useCommandSessionStore } from '@/stores/commandSessions';
-import { commandSessionOutputPreview, resolveTimelineCommandSessionRef } from './toolTimelineCommandSession';
+import {
+  commandSessionLivePreview,
+  commandSessionOutputPreview,
+  resolveCommandInteractionInput,
+  resolveTimelineCommandSessionRef
+} from './toolTimelineCommandSession';
 import { formatDurationLabel, formatTokenLabel } from './toolWorkflowCollapsedMetadata';
 
 const props = withDefaults(defineProps<{
@@ -140,6 +153,24 @@ const commandSession = computed(() => commandSessionId.value
   ? commandStore.getById(commandSessionId.value)
   : commandStore.getByToolCallId(String(props.entry.run.callItem?.toolCallId ??
       props.entry.run.callItem?.tool_call_id ?? props.entry.run.key)));
+const isCommand = computed(() => props.entry.commandInteraction !== null);
+const commandToolLabel = computed(() => {
+  switch (props.entry.commandInteraction) {
+    case 'execute':
+      return t(displayStatus.value === 'loading'
+        ? 'chat.timeline.commandRunning'
+        : 'chat.timeline.commandRan');
+    case 'write':
+      return t('chat.timeline.commandInput');
+    case 'poll':
+      return t('chat.timeline.commandWait');
+    default:
+      return '';
+  }
+});
+const commandSummary = computed(() =>
+  isCommand.value ? String(commandSession.value?.command || props.entry.summary || '') : ''
+);
 const displayStatus = computed(() => {
   const command = commandSession.value;
   if (!command) return props.entry.status;
@@ -163,7 +194,7 @@ const readLinesLabel = computed(() => {
     : t('chat.timeline.entryReadLines', { lines: lines.read });
 });
 
-const interactive = computed(() => Boolean(props.entry.expandable || commandSession.value));
+const interactive = computed(() => Boolean(isCommand.value || props.entry.expandable || commandSession.value));
 const fallbackStatus = computed(() => t({
   loading: 'chat.toolWorkflow.toolResultPending',
   completed: 'chat.toolWorkflow.resultDone',
@@ -184,14 +215,30 @@ const callPreview = computed(() => {
  * 服务端可能返回几十万字的输出，整段塞进 `<pre>` 会同时撑大内存与 `innerText`
  * 成本；这里保留开头与最新尾部并显式标注省略量。
  */
+const commandRawOutput = computed(() => String(
+  commandSession.value?.outputTail || props.entry.detailText || commandSession.value?.error || ''
+));
+const commandLivePreview = computed(() =>
+  isCommand.value ? commandSessionLivePreview(commandRawOutput.value) : ''
+);
+const interactionInput = computed(() => {
+  if (props.entry.commandInteraction !== 'write') return '';
+  const input = resolveCommandInteractionInput(props.entry.run)
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n')
+    .replace(/\t/g, '\\t');
+  return input.length > 160 ? `${input.slice(0, 157)}...` : input;
+});
 const outputText = computed(() => {
+  if (isCommand.value) {
+    return props.open ? commandSessionOutputPreview(commandRawOutput.value) : '';
+  }
   const command = props.open ? commandSession.value : null;
   if (command) {
     const text = [command.ptyTail, command.stdoutTail, command.stderrTail, command.error].filter(Boolean).join('\n');
     if (text) return commandSessionOutputPreview(text);
   }
-  const text = String(props.entry.detailText || '');
-  return commandSessionOutputPreview(text);
+  return commandSessionOutputPreview(String(props.entry.detailText || ''));
 });
 
 const handleHeadClick = (): void => {
@@ -408,6 +455,18 @@ button.tl-entry-head:focus-visible {
   white-space: nowrap;
 }
 
+.tl-entry-live-output {
+  margin: 2px 24px 7px 44px;
+  padding-left: 10px;
+  border-left: 1px solid var(--mz-timeline-line, #e2dfda);
+  color: var(--mz-text-muted, #8a8f99);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* 展开内容左内边距保持 24px（沟槽 20px + 24px = 44px），不被分组沟槽挤压。 */
 .tl-entry-body {
   margin: 4px 24px 8px 44px;
@@ -460,6 +519,28 @@ button.tl-entry-head:focus-visible {
   color: var(--mz-text-muted, #8a8f99);
   font-size: 11px;
   font-weight: 600;
+}
+
+.tl-entry-output-cwd {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+}
+
+.tl-entry-input {
+  margin: 7px 0 0;
+  color: var(--mz-text-secondary, #3d3d3d);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tl-entry-output-body.is-empty {
+  opacity: 0.72;
 }
 
 /* 命令类工具的退出码：数字用等宽、成功弱化、非 0 走危险色。 */

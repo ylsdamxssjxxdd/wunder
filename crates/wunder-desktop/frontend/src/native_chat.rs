@@ -2,8 +2,8 @@
 use wunder_desktop::native::NativeWorkflowEntry;
 
 use crate::{
-    runtime_phase::Phase, Conversation, DraftRecall, InquiryOption, InquiryQuestion, MainWindow,
-    PlanStep, TimelineRow,
+    Conversation, DraftRecall, InquiryOption, InquiryQuestion, MainWindow, PlanStep, TimelineRow,
+    runtime_phase::Phase,
 };
 use serde_json::Value;
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
@@ -12,8 +12,8 @@ use std::{
     collections::VecDeque,
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -31,7 +31,7 @@ pub(crate) use observer::project_cloud_history;
 pub(crate) use observer::project_history;
 #[path = "native_chat_queue.rs"]
 pub(crate) mod queue;
-use queue::{drain_entry, EntrySignal, ParkedTurn, Recall};
+use queue::{EntrySignal, ParkedTurn, Recall, drain_entry};
 #[path = "native_chat_status.rs"]
 mod status;
 pub(crate) use status::settled_now;
@@ -5754,7 +5754,8 @@ fn apply_event(
                 let mut command_payload = data.clone();
                 command_payload["args"] = serde_json::json!({"command": command});
                 command_payload["result"] = serde_json::json!({"data": {
-                    "command": command, "stdout": bounded, "exit_code": exit_code
+                    "command": command, "output": bounded, "cwd": data["cwd"],
+                    "status": data["status"], "exit_code": exit_code
                 }});
                 active.upsert_workflow(
                     timeline,
@@ -5763,11 +5764,7 @@ fn apply_event(
                         tool,
                         lines.join("\n"),
                         if terminal {
-                            if failed {
-                                "failed"
-                            } else {
-                                "completed"
-                            }
+                            if failed { "failed" } else { "completed" }
                         } else {
                             "running"
                         },
@@ -6298,9 +6295,10 @@ mod turn_tests {
         live.set_turn_status(output.state(), 1);
         let rows: Vec<_> = live.model().iter().collect();
         assert_eq!(output.state(), "已停止");
-        assert!(rows
-            .iter()
-            .all(|row| row.status_kind != crate::timeline::STATUS_RUNNING));
+        assert!(
+            rows.iter()
+                .all(|row| row.status_kind != crate::timeline::STATUS_RUNNING)
+        );
         assert!(rows.iter().any(|row| row.kind == crate::timeline::KIND_TOOL
             && row.status_kind == crate::timeline::STATUS_FAILED));
     }
@@ -6336,14 +6334,16 @@ mod turn_tests {
             }),
         )
         .unwrap();
-        assert!(!apply_event(
-            &mut output,
-            &mut live,
-            &serde_json::json!({
-                "event":"final", "data":{"answer":"fixture late answer"}
-            })
-        )
-        .unwrap());
+        assert!(
+            !apply_event(
+                &mut output,
+                &mut live,
+                &serde_json::json!({
+                    "event":"final", "data":{"answer":"fixture late answer"}
+                })
+            )
+            .unwrap()
+        );
         assert!(output.failed());
         assert_eq!(output.state(), "执行失败");
     }
@@ -6366,11 +6366,12 @@ mod turn_tests {
         )
         .unwrap();
         live.finish(output.settle());
-        assert!(live
-            .model()
-            .iter()
-            .any(|row| row.kind == crate::timeline::KIND_TOOL
-                && row.status_kind == crate::timeline::STATUS_FAILED));
+        assert!(
+            live.model()
+                .iter()
+                .any(|row| row.kind == crate::timeline::KIND_TOOL
+                    && row.status_kind == crate::timeline::STATUS_FAILED)
+        );
         assert!(!output.failed());
     }
 
@@ -6400,10 +6401,11 @@ mod turn_tests {
         )
         .unwrap());
         live.flush();
-        assert!(live
-            .model()
-            .iter()
-            .any(|row| row.text == "fixture next answer"));
+        assert!(
+            live.model()
+                .iter()
+                .any(|row| row.text == "fixture next answer")
+        );
     }
 
     #[test]
@@ -6422,19 +6424,22 @@ mod turn_tests {
             )
             .unwrap();
             let expected = output.state().to_string();
-            assert!(apply_event(
-                &mut output,
-                &mut live,
-                &serde_json::json!({
-                    "event":"final", "data":{"answer":"fixture final answer"}
-                })
-            )
-            .unwrap());
+            assert!(
+                apply_event(
+                    &mut output,
+                    &mut live,
+                    &serde_json::json!({
+                        "event":"final", "data":{"answer":"fixture final answer"}
+                    })
+                )
+                .unwrap()
+            );
             live.flush();
-            assert!(live
-                .model()
-                .iter()
-                .any(|row| row.text == "fixture final answer"));
+            assert!(
+                live.model()
+                    .iter()
+                    .any(|row| row.text == "fixture final answer")
+            );
             assert_eq!(output.state(), expected);
         }
     }
@@ -6727,14 +6732,16 @@ mod turn_tests {
             }}),
         )
         .unwrap();
-        assert!(!apply_event(
-            &mut output,
-            &mut live,
-            &json!({"event":"reasoning_delta","data":{
-                "turn_id":"fixture-root","model_round":3,"delta":" stale"
-            }})
-        )
-        .unwrap());
+        assert!(
+            !apply_event(
+                &mut output,
+                &mut live,
+                &json!({"event":"reasoning_delta","data":{
+                    "turn_id":"fixture-root","model_round":3,"delta":" stale"
+                }})
+            )
+            .unwrap()
+        );
         live.flush();
         assert_eq!(bar.process_entries.row_count(), 3);
         assert_eq!(
@@ -7217,12 +7224,14 @@ mod turn_tests {
         .unwrap();
         assert_eq!(output.state(), "已停止");
         let before = live.row_count();
-        assert!(!apply_event(
-            &mut output,
-            &mut live,
-            &json!({"event":"final","data":{"content":"Late answer"}}),
-        )
-        .unwrap());
+        assert!(
+            !apply_event(
+                &mut output,
+                &mut live,
+                &json!({"event":"final","data":{"content":"Late answer"}}),
+            )
+            .unwrap()
+        );
         assert_eq!(live.row_count(), before);
         live.flush();
         live.finish(crate::timeline::Settle::Failed);

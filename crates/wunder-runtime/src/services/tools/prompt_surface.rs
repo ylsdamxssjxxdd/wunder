@@ -169,15 +169,15 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "执行命令",
-        brief_en: "Run a shell command in the workspace. content is the command; optional workdir, timeout_s, yield_time_ms, run_in_background. Large output becomes a paged tool-result handle.",
-        brief_zh: "在工作目录执行命令：content 为命令，可选 workdir、timeout_s、yield_time_ms、run_in_background；大输出转为可分页的结果句柄。",
+        brief_en: "Run a shell command in the workspace. content is the command; optional workdir and yield_time_ms (default 10000). If it is still running, the result includes command_session_id; continue it with write_stdin instead of starting it again.",
+        brief_zh: "在工作目录执行命令：content 为命令，可选 workdir、yield_time_ms（默认 10000）。仍在运行时返回 command_session_id，随后用 write_stdin 继续读取或输入，不要重跑。",
         drop_actions: &[],
         drop_fields: &["description", "dry_run"],
     },
     SurfaceRule {
         tool: "命令会话",
-        brief_en: "Read a background command session or feed its stdin. Empty input just returns new output (default yield_time_ms=250); non-empty input writes stdin and then waits for the command to exit within the same window. Pass wait_for=exit to block on a plain read. A finished session still returns its final output.",
-        brief_zh: "读取后台命令会话或喂 stdin：input 为空只取新输出（默认 yield_time_ms=250），非空先写 stdin，随后在同一个窗口内等命令退出；纯轮询要阻塞到退出才传 wait_for=exit。会话已退出时仍会返回最后的输出。",
+        brief_en: "Continue a running command (write_stdin). command_session_id comes from execute_command. Empty chars polls new output; non-empty chars writes stdin. Both wait up to yield_time_ms (default 1000, max 30000) and return status plus new output. Reuse the same id until exit_code is present.",
+        brief_zh: "继续运行中的命令（write_stdin）：command_session_id 来自执行命令。chars 为空读取新增输出，非空写入 stdin；两者都在 yield_time_ms（默认 1000，最大 30000）内等待并返回状态与新增输出。复用同一 id，直到拿到 exit_code。",
         drop_actions: &[],
         drop_fields: &[],
     },
@@ -608,9 +608,11 @@ mod tests {
             .expect("plan spec");
         let projected = prompt_tool_spec(&spec, "zh-CN");
         // 只有一种形态：current 不再出现在模型看到的 schema 里。
-        assert!(projected.input_schema["properties"]
-            .get("current")
-            .is_none());
+        assert!(
+            projected.input_schema["properties"]
+                .get("current")
+                .is_none()
+        );
         // 步骤条目 step + status 都必填，模型不会漏 status 再被提示补一次。
         assert_eq!(
             projected.input_schema["properties"]["plan"]["items"]["required"],
@@ -716,14 +718,18 @@ mod tests {
             projected.input_schema["properties"]["action"]["enum"],
             json!(["navigate", "click"])
         );
-        assert!(projected.input_schema["properties"]
-            .get("from_ref")
-            .is_none());
+        assert!(
+            projected.input_schema["properties"]
+                .get("from_ref")
+                .is_none()
+        );
         assert!(projected.input_schema["properties"].get("value").is_none());
         assert_eq!(projected.input_schema["required"], json!(["action"]));
-        assert!(projected.input_schema["$defs"]
-            .get("used")
-            .is_some_and(Value::is_object));
+        assert!(
+            projected.input_schema["$defs"]
+                .get("used")
+                .is_some_and(Value::is_object)
+        );
         assert!(projected.input_schema["$defs"].get("orphan").is_none());
         assert!(projected.title.is_none());
         assert!(projected.description.starts_with("Built-in browser"));
@@ -746,9 +752,11 @@ mod tests {
         assert!(!properties.contains_key("load_state"));
         assert!(!properties.contains_key("state"));
         assert!(properties.contains_key("wait_ms"));
-        assert!(projected
-            .description
-            .contains("wait_ms only applies to wait"));
+        assert!(
+            projected
+                .description
+                .contains("wait_ms only applies to wait")
+        );
     }
 
     #[test]

@@ -51,6 +51,104 @@ pub(super) fn result_data(payload: &Value) -> &Value {
     current
 }
 
+fn is_command_tool(tool: &str) -> bool {
+    matches!(
+        tool.trim(),
+        "execute_command"
+            | "exec_command"
+            | "run_command"
+            | "shell"
+            | "运行命令"
+            | "执行命令"
+            | "command_session"
+            | "write_stdin"
+            | "write_command_stdin"
+            | "命令会话"
+            | "命令交互"
+    )
+}
+
+fn command_source(data: &Value) -> &Value {
+    let result = result_data(data);
+    result["results"]
+        .as_array()
+        .and_then(|items| items.first())
+        .filter(|item| item.is_object())
+        .unwrap_or(result)
+}
+
+fn command_output(data: &Value) -> Option<String> {
+    let source = command_source(data);
+    if let Some(output) = source["output"].as_str() {
+        return Some(output.to_string());
+    }
+    let stdout = source["stdout"].as_str().unwrap_or_default();
+    let stderr = source["stderr"].as_str().unwrap_or_default();
+    let pty = source["pty"].as_str().unwrap_or_default();
+    if stdout.is_empty() && stderr.is_empty() && pty.is_empty() {
+        return None;
+    }
+    Some(
+        [pty, stdout, stderr]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
+fn command_preview(data: &Value) -> String {
+    let Some(output) = command_output(data) else {
+        return String::new();
+    };
+    let lines = output.lines().collect::<Vec<_>>();
+    let preview = if lines.len() <= 4 {
+        lines.join("\n")
+    } else {
+        let mut preview: Vec<String> = lines[..2].iter().map(|line| (*line).to_string()).collect();
+        preview.push(format!("… +{} lines", lines.len() - 4));
+        preview.extend(
+            lines[lines.len() - 2..]
+                .iter()
+                .map(|line| (*line).to_string()),
+        );
+        preview.join("\n")
+    };
+    preview.chars().take(1_200).collect()
+}
+
+fn command_meta(data: &Value) -> String {
+    let source = command_source(data);
+    let mut parts = Vec::new();
+    if let Some(cwd) = source["cwd"]
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        parts.push(cwd.to_string());
+    }
+    if result_data(data)["status"].as_str() != Some("running") {
+        if let Some(code) = source["exit_code"]
+            .as_i64()
+            .or_else(|| source["returncode"].as_i64())
+        {
+            parts.push(format!("exit {code}"));
+        }
+    }
+    if let Some(input) = source["interaction_input"]
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let input = input.replace(['\r', '\n', '\t'], " ");
+        parts.push(format!(
+            "stdin › {}",
+            input.chars().take(80).collect::<String>()
+        ));
+    }
+    parts.join(" · ")
+}
+
 impl NativeWorkflowEntry {
     /// Folded metrics of one model round, for the thinking row that has no tool
     /// payload of its own. Same two columns as a tool row, so the frontend does
@@ -105,11 +203,18 @@ impl NativeWorkflowEntry {
         let round = number(data, &["model_round"], 0)
             .map(|round| round as i32)
             .unwrap_or_default();
+        let command = is_command_tool(title);
         Self {
             id: id.into(),
             title: title.into(),
             preview,
-            detail: complete_copy_text(data).unwrap_or(detail),
+            detail: if command {
+                command_output(data).unwrap_or(detail)
+            } else {
+                complete_copy_text(data).unwrap_or(detail)
+            },
+            command_output: command.then(|| command_preview(data)).unwrap_or_default(),
+            command_meta: command.then(|| command_meta(data)).unwrap_or_default(),
             state: state.into(),
             round,
             tokens,
@@ -250,10 +355,7 @@ fn call_preview(tool: &str, data: &Value) -> String {
         .filter(|value| value.len() <= 8192)
         .and_then(|value| serde_json::from_str::<Value>(value).ok());
     let args = parsed.as_ref().or(args).unwrap_or(&Value::Null);
-    let command = matches!(
-        tool,
-        "execute_command" | "run_command" | "shell" | "运行命令" | "执行命令" | "command_session"
-    );
+    let command = is_command_tool(tool);
     if matches!(tool, "记忆管理" | "memory_manager" | "memory_manage") {
         let parsed_args = args
             .as_str()
@@ -301,12 +403,24 @@ fn call_preview(tool: &str, data: &Value) -> String {
             .take(640)
             .collect();
     }
-    keys.iter()
+    let preview = keys
+        .iter()
         .find_map(|key| args.get(*key).and_then(Value::as_str))
-        .unwrap_or_default()
-        .chars()
-        .take(640)
-        .collect()
+        .unwrap_or_default();
+    if command {
+        let original = command_source(data)["command"].as_str().unwrap_or_default();
+        if matches!(
+            tool,
+            "command_session" | "write_stdin" | "write_command_stdin" | "命令会话" | "命令交互"
+        ) && !original.trim().is_empty()
+        {
+            return original.chars().take(640).collect();
+        }
+        if preview.trim().is_empty() {
+            return original.chars().take(640).collect();
+        }
+    }
+    preview.chars().take(640).collect()
 }
 
 /// Match the web timeline's collapsed-row metadata: context occupancy wins,
@@ -815,5 +929,30 @@ mod tests {
             NativeWorkflowEntry::model_round_metrics(&json!({"reasoning":"x"})),
             (String::new(), String::new())
         );
+    }
+
+    #[test]
+    fn command_interaction_keeps_original_command_output_and_metadata() {
+        let entry = NativeWorkflowEntry::from_payload(
+            "interaction-1",
+            "command_session",
+            String::new(),
+            "running",
+            &json!({
+                "args": {"command_session_id":"cmd-1", "chars":"yes\n"},
+                "result": {"data": {
+                    "command": "fixture-command --wait",
+                    "cwd": "fixture/work",
+                    "status": "running",
+                    "interaction_input": "yes\n",
+                    "output": "one\ntwo\nthree\nfour\nfive\n"
+                }}
+            }),
+        );
+        assert_eq!(entry.preview, "fixture-command --wait");
+        assert_eq!(entry.command_output, "one\ntwo\n… +1 lines\nfour\nfive");
+        assert!(entry.command_meta.contains("fixture/work"));
+        assert!(entry.command_meta.contains("stdin › yes"));
+        assert_eq!(entry.detail, "one\ntwo\nthree\nfour\nfive\n");
     }
 }

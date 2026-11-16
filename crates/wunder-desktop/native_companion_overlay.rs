@@ -8,7 +8,7 @@
 //! source of truth (`enabled`), so a pet hidden from its context menu can
 //! always be brought back from the settings switch.
 
-use super::{now_ts, NativeDesktop};
+use super::{NativeDesktop, now_ts};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

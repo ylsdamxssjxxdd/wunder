@@ -14,8 +14,8 @@
 //! against what the reader actually saw rather than against a fresh re-wrap that could
 //! disagree with it.
 
-use super::helpers::is_word_char;
 use super::TuiApp;
+use super::helpers::is_word_char;
 use crate::tui::text_tabs;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};

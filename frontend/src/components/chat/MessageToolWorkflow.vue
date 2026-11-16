@@ -3238,8 +3238,9 @@ const buildExecuteCommandView = (
   const structuredStdout = pickString(...structuredCandidates.map((item) => item.stdout));
   const structuredStderr = pickString(...structuredCandidates.map((item) => item.stderr));
   const structuredReturncode = toOptionalInt(...structuredCandidates.map((item) => item.returncode));
-  const liveStdout = pickString(snapshot?.ptyTail, snapshot?.stdoutTail);
-  const liveStderr = pickString(snapshot?.stderrTail);
+  const liveOutput = pickString(snapshot?.outputTail);
+  const liveStdout = liveOutput || pickString(snapshot?.ptyTail, snapshot?.stdoutTail);
+  const liveStderr = liveOutput ? '' : pickString(snapshot?.stderrTail);
 
   const resolvedCommand = pickString(
     command,
@@ -3852,7 +3853,8 @@ const summarizeCommandSessionRevision = (entry: RawEntry): string => {
     snapshot.ptyBytes,
     snapshot.stdoutTail.length,
     snapshot.stderrTail.length,
-    snapshot.ptyTail.length
+    snapshot.ptyTail.length,
+    snapshot.outputTail.length
   ].join('\u0002');
 };
 

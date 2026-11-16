@@ -12,8 +12,8 @@ use crate::tui::app::text_selection::SelectionUnit;
 use crate::tui::frame_scheduler::spawn_frame_scheduler;
 use crate::tui::ui::layout::CONTENT_GUTTER_COLS;
 use clap::Parser;
-use ratatui::backend::TestBackend;
 use ratatui::Terminal;
+use ratatui::backend::TestBackend;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -271,9 +271,11 @@ async fn live_acceptance_incomplete_reasoning_and_answer_deltas_are_visible_with
     app.merge_reasoning_delta("Checking");
     let reasoning = app.active_reasoning.expect("reasoning entry");
     let reasoning_lines = app.render_entry_lines(reasoning, false, 80);
-    assert!(reasoning_lines
-        .iter()
-        .any(|line| line.to_string().contains("Checking")));
+    assert!(
+        reasoning_lines
+            .iter()
+            .any(|line| line.to_string().contains("Checking"))
+    );
     assert_eq!(
         reasoning_lines.len(),
         app.entry_visual_line_count(reasoning, 80)
@@ -289,10 +291,11 @@ async fn live_acceptance_incomplete_reasoning_and_answer_deltas_are_visible_with
 
     app.merge_assistant_delta("Hello");
     let assistant = app.active_assistant.expect("assistant entry");
-    assert!(app
-        .render_entry_lines(assistant, false, 80)
-        .iter()
-        .any(|line| line.to_string().contains("Hello")));
+    assert!(
+        app.render_entry_lines(assistant, false, 80)
+            .iter()
+            .any(|line| line.to_string().contains("Hello"))
+    );
     app.merge_assistant_delta(" world\n");
     let live = app
         .render_entry_lines(assistant, false, 80)
@@ -381,10 +384,12 @@ async fn malformed_patch_arguments_use_one_tool_card_without_a_duplicate_marker(
         10081,
     );
     assert_eq!(app.logs.len(), 1, "the result settles the same card");
-    assert!(app.logs[0]
-        .special
-        .as_ref()
-        .is_some_and(|entry| !entry.is_pending()));
+    assert!(
+        app.logs[0]
+            .special
+            .as_ref()
+            .is_some_and(|entry| !entry.is_pending())
+    );
 }
 
 #[tokio::test]
@@ -397,13 +402,14 @@ async fn live_acceptance_new_thread_owns_a_lease_before_accepting_commands() {
     assert_ne!(app.session_id, previous);
     app.validate_thread_lease()
         .expect("new thread owns its lease");
-    assert!(app
-        .runtime
-        .state
-        .storage
-        .get_thread_open_lease(&previous, &app.runtime.user_id)
-        .expect("read previous lease")
-        .is_none());
+    assert!(
+        app.runtime
+            .state
+            .storage
+            .get_thread_open_lease(&previous, &app.runtime.user_id)
+            .expect("read previous lease")
+            .is_none()
+    );
     app.submit_line("/status".to_string())
         .await
         .expect("command in new thread");
@@ -655,11 +661,12 @@ async fn tool_progress_never_becomes_an_assistant_message() {
         "{frame}"
     );
     assert!(!frame.contains("calling tools"), "stale progress: {frame}");
-    assert!(app
-        .logs
-        .iter()
-        .filter(|entry| entry.kind == LogKind::Assistant)
-        .all(|entry| entry.text == "fixture answer\n" || entry.text == "fixture answer"));
+    assert!(
+        app.logs
+            .iter()
+            .filter(|entry| entry.kind == LogKind::Assistant)
+            .all(|entry| entry.text == "fixture answer\n" || entry.text == "fixture answer")
+    );
 }
 
 #[tokio::test]
@@ -5414,8 +5421,8 @@ async fn the_gap_carries_its_state_without_color() {
 // The helpers below drive exactly that: every keystroke is followed by a real frame, because
 // the frame is the only thing that moves the scan forward.
 
-use super::transcript_search::SearchProgress;
 use super::transcript_search::SEARCH_MATCH_CAP;
+use super::transcript_search::SearchProgress;
 
 /// Open the search the way the reader does: take the transcript focus, then press `/`.
 async fn open_search(app: &mut TuiApp) {

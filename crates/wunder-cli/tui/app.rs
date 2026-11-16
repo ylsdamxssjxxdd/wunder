@@ -1,5 +1,5 @@
 use super::frame_scheduler::FrameRequester;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::TimeZone;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use futures::StreamExt;
@@ -7,7 +7,7 @@ use ratatui::layout::Position;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
@@ -16,14 +16,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, error::TryRecvError};
 use unicode_width::UnicodeWidthStr;
+use wunder_server::ThreadChangeFrame;
 use wunder_server::approval::{
-    new_channel as new_approval_channel, ApprovalRequest, ApprovalRequestKind, ApprovalResponse,
+    ApprovalRequest, ApprovalRequestKind, ApprovalResponse, new_channel as new_approval_channel,
 };
 use wunder_server::interlink::client::Decision;
 use wunder_server::schemas::StreamEvent;
 use wunder_server::storage::ThreadOpenLeaseStatus;
 use wunder_server::user_tools::UserMcpServer;
-use wunder_server::ThreadChangeFrame;
 
 const LOCAL_THREAD_LEASE_TTL_S: f64 = 15.0;
 
@@ -35,9 +35,9 @@ use crate::render::FinalEvent;
 use crate::runtime::CliRuntime;
 use crate::slash_command::{self, ParsedSlashCommand, SlashCommand};
 use crate::tui::command_center::{CommandCenterState, ThreadStatusFilter};
-use crate::tui::pointer::{wheel_direction, WheelScroll};
+use crate::tui::pointer::{WheelScroll, wheel_direction};
 use crate::tui::thread_registry::ThreadRegistry;
-use crate::tui::ui::centered_picker::{BodyLine, CenteredListSpec, PickerRow, MAX_VISIBLE_ROWS};
+use crate::tui::ui::centered_picker::{BodyLine, CenteredListSpec, MAX_VISIBLE_ROWS, PickerRow};
 
 const MAX_LOG_ENTRIES: usize = super::transcript::MAX_TRANSCRIPT_CELLS;
 const MAX_LOG_TOTAL_CHARS: usize = super::transcript::MAX_TRANSCRIPT_CHARS;
@@ -91,12 +91,12 @@ mod transcript_rows;
 mod transcript_search;
 mod transcript_view;
 use input_selection::MouseSelection;
-use text_selection::build_transcript_hit_map;
+#[cfg(test)]
+use text_selection::CLIPBOARD_WRITER;
 use text_selection::TranscriptHitMap;
 use text_selection::TranscriptSelection;
 use text_selection::WindowPoint;
-#[cfg(test)]
-use text_selection::CLIPBOARD_WRITER;
+use text_selection::build_transcript_hit_map;
 use thread_ui_state::ThreadUiState;
 use transcript_search::TranscriptSearch;
 
@@ -3600,7 +3600,9 @@ impl TuiApp {
             self.transcript_offset_from_bottom,
         );
         let entries = (window.start_entry..window.end_entry_exclusive)
-            .map(|index| TranscriptRenderEntry { global_index: index })
+            .map(|index| TranscriptRenderEntry {
+                global_index: index,
+            })
             .collect::<Vec<_>>();
         let window_line_counts =
             line_counts[window.start_entry..window.end_entry_exclusive].to_vec();
@@ -4142,14 +4144,8 @@ impl TuiApp {
         }
         let rows = self.measure_entry_rows(index, width);
         if !volatile {
-            self.transcript_rows.put(
-                index,
-                width_key,
-                self.raw_output,
-                expanded,
-                stamp,
-                rows,
-            );
+            self.transcript_rows
+                .put(index, width_key, self.raw_output, expanded, stamp, rows);
         }
         rows
     }
@@ -8754,6 +8750,9 @@ impl TuiApp {
                     } else if !self.push_command_call_log(args, tool_call_key.clone()) {
                         self.push_generic_tool_call_log(tool, args, tool_call_key);
                     }
+                } else if crate::tool_presentation::is_command_session_tool_name(tool) {
+                    // The original command card already carries the live process. The
+                    // completed wait/write arrives as its own interaction card below.
                 } else {
                     self.push_generic_tool_call_log(tool, args, tool_call_key);
                 }
@@ -8805,6 +8804,14 @@ impl TuiApp {
                         .unwrap_or(true);
                 if is_apply_patch_tool_name(tool) || write_landed {
                     self.complete_patch_log(payload);
+                } else if crate::tool_presentation::is_command_session_tool_name(tool) {
+                    for update in self.command_sessions.register_tool_result_all(payload) {
+                        self.upsert_command_session_log(&update);
+                    }
+                    if let Some(special) = build_command_interaction_log(payload, is_zh) {
+                        let text = special.summary_text();
+                        self.push_special_log(LogKind::Tool, text, special);
+                    }
                 } else if is_execute_command_tool_name(tool) {
                     let updates = self.command_sessions.register_tool_result_all(payload);
                     if !updates.is_empty() {

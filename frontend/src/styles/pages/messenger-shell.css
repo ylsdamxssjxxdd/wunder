@@ -964,6 +964,12 @@ button.messenger-sidebar-workspace-row {
   outline-offset: 1px;
 }
 
+/* 清空工作目录这类不可撤销动作：只在悬停时给危险色，平时与其它图标按钮同形。 */
+.workspace-files-action.is-danger:hover:not(:disabled) {
+  color: var(--mz-danger);
+  border-color: var(--mz-danger);
+}
+
 .workspace-files-action:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -975,48 +981,6 @@ button.messenger-sidebar-workspace-row {
   padding: 3px;
 }
 
-
-.workspace-files-selection {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 6px;
-  margin: 0 var(--mz-sidebar-padding) 4px;
-  padding: 4px 6px;
-  border-radius: var(--mz-radius-tag);
-  background: var(--mz-selected);
-  font-size: var(--mz-font-xs);
-}
-
-.workspace-files-selection-count {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--mz-text-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-files-selection button {
-  padding: 2px 6px;
-  border: 1px solid var(--mz-border-strong);
-  border-radius: var(--mz-radius-tag);
-  color: var(--mz-text-secondary);
-  background: var(--mz-surface);
-  font: inherit;
-  font-size: var(--mz-font-xs);
-  cursor: pointer;
-}
-
-.workspace-files-selection button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.workspace-files-selection button.is-danger:not(:disabled) {
-  color: var(--mz-danger);
-  border-color: var(--mz-danger);
-}
 
 /* ------------------------------------------------------------------- tree */
 

@@ -900,6 +900,12 @@ Invoke-Python -PythonExe $pythonExe -Arguments @(
   [string](Get-PropertyValue -Object $bootstrap -Name 'wheelSpec' -Default 'wheel')
 )
 
+# pip's site-level config (sys.prefix) so `pip install` in the pack uses the
+# mirror by default; the user's own %APPDATA%\pip\pip.ini still wins.
+$pipIni = Join-Path $pythonRoot 'pip.ini'
+Write-Utf8NoBom -Path $pipIni -Content ("[global]`r`nindex-url = " + $indexUrl + "`r`ntimeout = 60`r`n")
+Write-Step ("pip index pinned to " + $indexUrl)
+
 $profileNode = Get-PropertyValue -Object (Get-PropertyValue -Object $pythonMeta -Name 'profiles') -Name $PythonProfile
 if ($null -eq $profileNode) { Fail "manifest has no python profile '$PythonProfile'" }
 $requirementsRel = [string](Get-PropertyValue -Object $profileNode -Name 'requirementsPath' -Default '')

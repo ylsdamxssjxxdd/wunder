@@ -49,8 +49,8 @@ use crate::locale::ui_text;
 use crate::tui::text_tabs;
 use crate::tui::theme;
 
-use super::text_selection::{slice_line_by_display_columns, LineIdentity};
 use super::TuiApp;
+use super::text_selection::{LineIdentity, slice_line_by_display_columns};
 
 /// Hits one search keeps. Past it the scan stops and the band marks the count as a floor.
 pub(super) const SEARCH_MATCH_CAP: usize = 200;

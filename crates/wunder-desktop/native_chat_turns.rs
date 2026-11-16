@@ -1,10 +1,10 @@
 //! Durable user-turn projection. Execution turns never allocate page rows.
 use super::{
-    attachment_from_value, message_from_value, NativeDesktop, NativeMessage, NativeSubagentCard,
-    NativeWorkflowEntry,
+    NativeDesktop, NativeMessage, NativeSubagentCard, NativeWorkflowEntry, attachment_from_value,
+    message_from_value,
 };
-use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, anyhow};
+use serde_json::{Value, json};
 use wunder_server::{
     stable_core::thread_view::{ChatViewRow, ViewMessage},
     storage::StorageBackend,
@@ -833,10 +833,12 @@ mod tests {
         assert_eq!(turn.user.text, "/compact");
         assert_eq!(turn.rounds[0].items.len(), 1);
         assert_eq!(turn.rounds[0].items[0].state, "failed");
-        assert!(turn.rounds[0].items[0]
-            .sections
-            .iter()
-            .any(|section| section.kind == "error"));
+        assert!(
+            turn.rounds[0].items[0]
+                .sections
+                .iter()
+                .any(|section| section.kind == "error")
+        );
     }
 
     #[test]

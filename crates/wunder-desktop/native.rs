@@ -5,9 +5,9 @@
 //! calls; it does not duplicate scheduling or permission rules.
 
 use crate::{args::DesktopArgs, runtime::DesktopRuntime};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use bytes::Bytes;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -60,7 +60,7 @@ mod stream;
 pub use crate::runtime::RuntimeToolStatus;
 pub use chat_turns::{NativeChatRound, NativeChatTurn, NativePlanStep, NativePlanView};
 pub use observer::{NativeThreadUpdate, NativeThreadWatch, NativeThreadWatchCancel};
-pub use queue::{NativeQueueTurn, NATIVE_QUEUE_LIMIT};
+pub use queue::{NATIVE_QUEUE_LIMIT, NativeQueueTurn};
 pub use stream::{NativeChatEvent, NativeStream};
 #[path = "native_catalog.rs"]
 mod catalog;
@@ -86,8 +86,8 @@ mod companion_overlay;
 #[path = "native_companions.rs"]
 mod companions;
 pub use companion_overlay::{
-    clamp_companion_scale, CompanionOverlayState, CompanionPlacement, COMPANION_SCALE_MAX,
-    COMPANION_SCALE_MIN, DEFAULT_COMPANION_SCALE,
+    COMPANION_SCALE_MAX, COMPANION_SCALE_MIN, CompanionOverlayState, CompanionPlacement,
+    DEFAULT_COMPANION_SCALE, clamp_companion_scale,
 };
 #[path = "native_navigation.rs"]
 mod navigation;
@@ -124,13 +124,13 @@ mod supplement;
 mod update;
 #[path = "native_workspace.rs"]
 mod workspace;
-pub use catalog::{AgentRecord, AgentSettingsEdit, ToolRecord, DEFAULT_AGENT_ID};
+pub use catalog::{AgentRecord, AgentSettingsEdit, DEFAULT_AGENT_ID, ToolRecord};
 pub use channels::{
     ChannelAccountCard, ChannelAccountListing, ChannelBindingCard, ChannelCatalogItem,
     ChannelLogEntry, NativeChannelAccountEdit, NativeChannelBindingEdit, WeixinQrLoginStart,
     WeixinQrLoginStatus,
 };
-pub use cloud::{validate_cloud_password, CloudStatusView};
+pub use cloud::{CloudStatusView, validate_cloud_password};
 pub use cron::{CronRecord, CronRunRecord, NativeCronJobEdit};
 pub use profile::NativeProfile;
 pub use settings::{
@@ -138,12 +138,12 @@ pub use settings::{
 };
 pub use supplement::SupplementImportReport;
 pub use update::{
-    UpdateStateView, CURRENT_VERSION, RELAUNCH_ENV as UPDATE_RELAUNCH_ENV, TARGET_CLI,
-    TARGET_DESKTOP, TARGET_SUPPLEMENT, UPDATE_GITHUB_REPO,
+    CURRENT_VERSION, RELAUNCH_ENV as UPDATE_RELAUNCH_ENV, TARGET_CLI, TARGET_DESKTOP,
+    TARGET_SUPPLEMENT, UPDATE_GITHUB_REPO, UpdateStateView,
 };
 pub use workspace::{
-    random_workspace_visual, NativeWorkspace, WorkspaceDeleteSummary, WorkspaceEdit,
-    WorkspacePathReport, WORKSPACE_COLORS, WORKSPACE_ICONS,
+    NativeWorkspace, WORKSPACE_COLORS, WORKSPACE_ICONS, WorkspaceDeleteSummary, WorkspaceEdit,
+    WorkspacePathReport, random_workspace_visual,
 };
 
 #[derive(Debug, Clone)]
@@ -259,6 +259,10 @@ pub struct NativeWorkflowEntry {
     pub title: String,
     pub preview: String,
     pub detail: String,
+    /// Bounded, chronological output preview for command tools.
+    pub command_output: String,
+    /// Working directory, exit status and stdin details for command tools.
+    pub command_meta: String,
     pub state: String,
     /// Model round that issued this call, from the event payload. Zero when the
     /// adapter did not record one (fixtures, legacy rows).
@@ -660,13 +664,17 @@ impl NativeDesktop {
         if !args.background_runtime {
             // Startup self-healing probe: refresh the session, re-synthesize
             // the cloud models and fire one heartbeat in the background.
-            // Returns immediately; never blocks startup and never logs secrets.
-            runtime.block_on(
-                desktop
-                    .state
-                    .cloud
-                    .startup_probe(&desktop.state.config_store),
-            );
+            //
+            // 它内部要先抢 `config/cloud.session.lock`（命令行同时在线、上一
+            // 进程没退净时会等），超时预算 8 秒。放在启动关键路径上，工作台会
+            // 一直停在「正在准备本地运行环境…」；探针体本身只写连接状态，因此
+            // 整体挪到后台，未登录时也照旧只做一次 adopt 尝试。
+            {
+                let state = Arc::clone(&desktop.state);
+                runtime.spawn(async move {
+                    state.cloud.startup_probe(&state.config_store).await;
+                });
+            }
             // Interlink tunnel (互通方案 I9): one shared client per process. A
             // no-session start stays a cheap poller; the loop picks up the
             // session after a later login on its own. `start` takes a blocking
@@ -699,9 +707,13 @@ impl NativeDesktop {
         // 显示“运行中”。A background tick must never settle turns owned by
         // the live UI process.
         if !args.background_runtime {
+            // 这三步都要摸数据库，是最容易在老机器上把「正在加载运行时…」拖长
+            // 的部分，各自记一个阶段耗时，卡在哪一步可以直接从启动日志读出。
+            //
             // 桌面版由单实例锁保证本机只有一个桌面进程，因此上一次崩溃/强杀
             // 留下的 desktop 打开租约必然是死的。不清扫时线程要等满 15 秒
             // TTL 才能重新打开，中间每一次点击都只回 THREAD_IN_USE。
+            let mut stage_start = std::time::Instant::now();
             match desktop
                 .state
                 .storage
@@ -713,10 +725,20 @@ impl NativeDesktop {
                 Ok(_) => {}
                 Err(error) => tracing::warn!(%error, "purge stale thread leases failed"),
             }
+            wunder_server::startup_probe::point(
+                "desktop:purge_thread_leases",
+                stage_start.elapsed().as_secs_f64() * 1000.0,
+            );
+            stage_start = std::time::Instant::now();
             let recovered = recover_restarted_threads(&desktop, &instance_id);
             if recovered > 0 {
                 tracing::info!(recovered, "settled restarted thread status");
             }
+            wunder_server::startup_probe::point(
+                "desktop:settle_restarted_threads",
+                stage_start.elapsed().as_secs_f64() * 1000.0,
+            );
+            stage_start = std::time::Instant::now();
             // 任务台账同样会留下上一进程的 running 行：队列只领取
             // pending/retry，没有人会再收尾它们，归档门禁却会一直把它当成
             // 在途工作。趁启动没有本地执行器时一次结清。
@@ -731,6 +753,10 @@ impl NativeDesktop {
                 Ok(_) => {}
                 Err(error) => tracing::warn!(%error, "settle orphaned running task rows failed"),
             }
+            wunder_server::startup_probe::point(
+                "desktop:settle_orphaned_tasks",
+                stage_start.elapsed().as_secs_f64() * 1000.0,
+            );
         }
         let open_threads: Arc<Mutex<HashMap<String, u64>>> = Arc::new(Mutex::new(HashMap::new()));
         let chat_snapshot_cache = Arc::new(Mutex::new(HashMap::new()));

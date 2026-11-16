@@ -114,7 +114,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
     wunder_desktop::install_local_home_env();
+    rotate_startup_log();
     let startup_boot = *STARTUP_BOOT.get_or_init(std::time::Instant::now);
+    // 引擎内部的阶段耗时默认只走 tracing，桌面版没有 subscriber；注册后同一批
+    // 里程碑也写进启动日志，卡在哪个阶段可以直接读出来。
+    wunder_server::startup_probe::install(engine_startup_point);
     startup_log("process_begin", startup_boot);
     install_slint_platform()?;
     startup_log("slint_platform_ready", startup_boot);
@@ -528,33 +532,73 @@ fn install_window_chrome(app: &MainWindow) {
     });
 }
 
+/// 启动里程碑默认落盘。桌面版没有控制台，也没有安装 tracing subscriber：
+/// 不默认记录时，「老机器上打开后停在正在加载运行时」这类反馈就只剩一句描述、
+/// 没有证据。默认开启，可用 `WUNDER_STARTUP_TIMING=0` 关掉（与运行时侧一致）。
 fn startup_timing_enabled() -> bool {
-    matches!(
-        std::env::var("WUNDER_STARTUP_TIMING").ok().as_deref(),
-        Some("1" | "true" | "yes")
-    )
+    match std::env::var("WUNDER_STARTUP_TIMING")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+    {
+        Some(value) if matches!(value.as_str(), "0" | "false" | "off" | "no") => false,
+        _ => true,
+    }
 }
 
-fn startup_log(point: &str, boot: std::time::Instant) {
-    if startup_timing_enabled() {
-        let line = format!(
-            "[startup][desktop-ui] point={point} total_ms={:.1}",
-            boot.elapsed().as_secs_f64() * 1000.0
-        );
-        eprintln!("{line}");
-        // 桌面版是 GUI 进程：没有控制台，stderr 会随进程一起消失。启动里程碑同时
-        // 落到 <home>/logs/startup.log，报障时只需提供这一个文件。
-        use std::io::Write;
+/// 引擎侧的启动里程碑（存储初始化、技能加载、服务装配等）走同一条落点。
+fn engine_startup_point(name: &str, total_ms: f64) {
+    if let Some(boot) = STARTUP_BOOT.get() {
+        startup_log(&format!("stage={} stage_ms={:.1}", name, total_ms), *boot);
+    }
+}
+
+/// 启动日志只保留最近两次运行：老机器反复启动时不会长成无界文件。
+fn rotate_startup_log() {
+    const LIMIT: u64 = 512 * 1024;
+    let path = wunder_desktop::local_logs_dir().join("startup.log");
+    let too_large = std::fs::metadata(&path)
+        .map(|meta| meta.len() > LIMIT)
+        .unwrap_or(false);
+    if too_large {
+        let _ = std::fs::rename(&path, path.with_extension("log.1"));
+    }
+}
+
+/// 启动日志句柄。里程碑每次 open/close 一次的话，老机器上杀软会逐次扫描，
+/// 记录本身反而拖慢启动；这里只开一次，之后每条只做一次追加写。
+fn startup_log_file() -> Option<&'static std::sync::Mutex<std::fs::File>> {
+    static FILE: std::sync::OnceLock<Option<std::sync::Mutex<std::fs::File>>> =
+        std::sync::OnceLock::new();
+    FILE.get_or_init(|| {
         let path = wunder_desktop::local_logs_dir().join("startup.log");
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        if let Ok(mut file) = std::fs::OpenOptions::new()
+        std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&path)
-        {
-            let stamp = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f");
+            .ok()
+            .map(std::sync::Mutex::new)
+    })
+    .as_ref()
+}
+
+fn startup_log(point: &str, boot: std::time::Instant) {
+    if !startup_timing_enabled() {
+        return;
+    }
+    let line = format!(
+        "[startup][desktop-ui] point={point} total_ms={:.1}",
+        boot.elapsed().as_secs_f64() * 1000.0
+    );
+    eprintln!("{line}");
+    // 桌面版是 GUI 进程：没有控制台，stderr 会随进程一起消失。启动里程碑同时
+    // 落到 <home>/logs/startup.log，报障时只需提供这一个文件。
+    use std::io::Write;
+    let stamp = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f");
+    if let Some(file) = startup_log_file() {
+        if let Ok(mut file) = file.lock() {
             let _ = writeln!(file, "{stamp} {line}");
         }
     }

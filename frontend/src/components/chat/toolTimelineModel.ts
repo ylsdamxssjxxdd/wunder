@@ -22,6 +22,12 @@ import { resolveToolIconClass } from '@/utils/abilityVisuals';
 import { extractToolResultDataObject, parseToolWorkflowResultObject } from './toolWorkflowResultPayload';
 import { buildToolResultPreview } from './toolWorkflowPreview';
 import {
+  resolveCommandInteractionKind,
+  resolveCommandRunOutput,
+  resolveExecuteCommandText,
+  type CommandInteractionKind
+} from './toolTimelineCommandSession';
+import {
   buildCompactionDisplay,
   resolveCompactionInstanceLabel,
   type CompactionDisplay
@@ -64,6 +70,7 @@ export type TimelineToolEntry = {
   summary: string;
   /** 摘要是否为命令/代码形态（用等宽字体渲染）。 */
   summaryMono: boolean;
+  commandInteraction: CommandInteractionKind | null;
   /** 编辑/补丁类工具的 +/- 行数统计（其他工具为 null）。 */
   diffStats: TimelineDiffStats | null;
   /** 读取文件返回的行数（其他工具为 null）。 */
@@ -352,6 +359,7 @@ const resolveRunStatus = (run: RawToolRun): TimelineEntryStatus => {
   for (const detail of detailObjects) {
     const data = asObject(detail.data) || detail;
     const nested = asObject(data.result) || data;
+    if (String(nested.status || data.status || '').toLowerCase() === 'running') return 'loading';
     const timedOut = nested.timed_out === true || nested.timedOut === true;
     const errorText = pickString(nested.error, nested.error_message, nested.errorMessage);
     const exitCode = toOptionalInt(
@@ -427,11 +435,6 @@ const resolveRunDetailText = (run: RawToolRun): string => {
   return '';
 };
 
-const isExecuteCommandToolName = (toolName: unknown): boolean => {
-  const normalized = String(toolName || '').trim().toLowerCase();
-  return normalized === 'execute_command' || normalized.includes('\u6267\u884c\u547d\u4ee4');
-};
-
 /**
  * 记忆管理的展开正文：后端在结果 data.detail 里给出了本地化的一句话操作
  * （保存/更新/删除了哪条记忆），这里再补上读者关心的正文——get 的完整内容、
@@ -479,6 +482,7 @@ const resolveRunExitCode = (run: RawToolRun): number | null => {
   for (const detail of details) {
     const data = asObject(detail.data) || detail;
     const nested = asObject(data.result) || data;
+    if (String(nested.status || data.status || '').toLowerCase() === 'running') continue;
     const exitCode = toOptionalInt(
       nested.exit_code,
       nested.exitCode,
@@ -723,6 +727,7 @@ const resolveCompactionEntry = (
     modelRound: resolveRunRound(run),
     summary: truncateSingleLine([instanceLabel, display.summaryTitle || display.resultSummary].filter(Boolean).join(' · ')),
     summaryMono: false,
+    commandInteraction: null,
     diffStats: null,
     readLines: null,
     targets: [],
@@ -745,15 +750,20 @@ export const buildTimelineToolEntry = (
   const toolName = pickString(run.toolName, run.toolRuntimeName, run.toolDisplayName);
   const toolLabel = pickString(run.toolDisplayName, toolName, t('chat.workflow.toolUnknown'));
   const status = resolveRunStatus(run);
+  const commandInteraction = resolveCommandInteractionKind(run);
   const collapsed = buildCollapsedToolWorkflowSummary(run, toolLabel);
   const targets = buildTargets(run);
   const errorText = status === 'failed' ? resolveRunErrorText(run) : '';
   const exitCode = resolveRunExitCode(run);
-  const rawDetailText = resolveRunDetailText(run);
+  const rawDetailText = commandInteraction
+    ? resolveCommandRunOutput(run) || resolveRunDetailText(run)
+    : resolveRunDetailText(run);
   // 失败时 stderr 与错误摘要重复：输出块不再渲染同一份内容。
   const detailText = detailDuplicatesError(rawDetailText, errorText) ? '' : rawDetailText;
-  // 摘要只描述调用本身（命令 / 路径 / query），错误与结果留给展开区。
-  let summary = truncateSingleLine(collapsed.brief);
+  // 命令行始终展示真实命令，而不是 description 或会话 ID。
+  let summary = truncateSingleLine(
+    commandInteraction === 'execute' ? resolveExecuteCommandText(run) : collapsed.brief
+  );
   if (!summary) {
     // 折叠摘要只扫有界前缀；没有命中时补一次轻量兜底，避免条目只有工具名。
     summary = status === 'loading'
@@ -782,7 +792,8 @@ export const buildTimelineToolEntry = (
     metrics: resolveRunMetrics(run),
     modelRound: resolveRunRound(run),
     summary,
-    summaryMono: isExecuteCommandToolName(run.toolName),
+    summaryMono: commandInteraction !== null,
+    commandInteraction,
     // +/- 统计只描述实际生效的改动：失败/取消的调用没有改出这个结果，不显示。
     diffStats: status === 'failed' || status === 'cancelled' ? null : buildTimelineDiffStats(run),
     // 读取行数同理只在成功返回后展示。

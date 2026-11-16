@@ -1,6 +1,6 @@
 //! Small per-user navigation preferences, independent of session execution.
 use super::NativeDesktop;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

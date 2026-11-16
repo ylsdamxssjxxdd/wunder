@@ -85,6 +85,7 @@ struct CommandSessionRecord {
     stdout: BoundedTextBuffer,
     stderr: BoundedTextBuffer,
     pty: BoundedTextBuffer,
+    output: BoundedTextBuffer,
 }
 
 impl CommandSessionRecord {
@@ -103,11 +104,15 @@ impl CommandSessionRecord {
             stdout: self.stdout.preview(),
             stderr: self.stderr.preview(),
             pty: self.pty.preview(),
+            output: self.output.preview(),
         }
     }
 
     fn has_output(&self) -> bool {
-        !self.stdout.is_empty() || !self.stderr.is_empty() || !self.pty.is_empty()
+        !self.output.is_empty()
+            || !self.stdout.is_empty()
+            || !self.stderr.is_empty()
+            || !self.pty.is_empty()
     }
 }
 
@@ -126,6 +131,7 @@ pub(crate) struct CommandSessionView {
     pub(crate) stdout: String,
     pub(crate) stderr: String,
     pub(crate) pty: String,
+    pub(crate) output: String,
 }
 
 impl CommandSessionView {
@@ -149,7 +155,8 @@ impl CommandSessionView {
     }
 
     pub(crate) fn has_output(&self) -> bool {
-        !self.stdout.trim().is_empty()
+        !self.output.trim().is_empty()
+            || !self.stdout.trim().is_empty()
             || !self.stderr.trim().is_empty()
             || !self.pty.trim().is_empty()
     }
@@ -253,6 +260,7 @@ impl CommandSessionDisplayState {
             .get("delta")
             .and_then(Value::as_str)
             .unwrap_or_default();
+        record.output.append(delta);
         match payload
             .get("stream")
             .and_then(Value::as_str)
@@ -356,7 +364,8 @@ impl CommandSessionDisplayState {
         if record.command.trim().is_empty() {
             merge_text_field(&mut record.command, payload, "command");
         }
-        if let Some(returncode) = number_field(item, "returncode")
+        if let Some(returncode) = number_field(item, "exit_code")
+            .or_else(|| number_field(item, "returncode"))
             .or_else(|| nested_number_field(result, &["meta", "exit_code"]))
         {
             record.exit_code = Some(returncode);
@@ -364,7 +373,9 @@ impl CommandSessionDisplayState {
         if let Some(duration_ms) = nested_number_field(result, &["meta", "duration_ms"]) {
             record.duration_ms = Some(duration_ms);
         }
-        record.status = if result.get("ok").and_then(Value::as_bool) == Some(false)
+        record.status = if item.get("status").and_then(Value::as_str) == Some("running") {
+            CommandSessionDisplayStatus::Running
+        } else if result.get("ok").and_then(Value::as_bool) == Some(false)
             && record.exit_code.is_none()
         {
             CommandSessionDisplayStatus::FailedToStart
@@ -388,6 +399,20 @@ impl CommandSessionDisplayState {
             if !stderr.is_empty() || record.stderr.is_empty() {
                 record.stderr.set_text(stderr);
             }
+        }
+        if let Some(output) = item.get("output").and_then(Value::as_str) {
+            if !output.is_empty() || record.output.is_empty() {
+                record.output.set_text(output);
+            }
+        } else if record.output.is_empty() {
+            let stdout = record.stdout.preview();
+            let stderr = record.stderr.preview();
+            let output = [stdout, stderr]
+                .into_iter()
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            record.output.set_text(&output);
         }
 
         Some(CommandSessionUpdate {
@@ -642,6 +667,14 @@ mod tests {
             .expect("delta");
         assert_eq!(delta.view.primary_id, "cmd_1");
         assert_eq!(delta.view.stdout, "ok\n");
+        let warning = state
+            .register_delta(&json!({
+                "command_session_id": "cmd_1",
+                "stream": "stderr",
+                "delta": "warning\n"
+            }))
+            .expect("stderr delta");
+        assert_eq!(warning.view.output, "ok\nwarning\n");
     }
 
     #[test]

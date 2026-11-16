@@ -54,6 +54,10 @@ file xxd hexedit libarchive-tools lzop \
 curl wget unzip zip procps psmisc lsof bc bzip2 time python-is-python3 iproute2 \
 fontconfig fonts-dejavu-core fonts-liberation fonts-noto-color-emoji fonts-wqy-microhei}"
 PY_REQUIREMENTS="${WUNDER_PY_REQUIREMENTS:-$ROOT/packaging/python/requirements-android.txt}"
+# Host-side wheel download and the pip default inside the pack use the same
+# mirror, so a device that installs an extra library does not have to reach
+# pypi.org first.
+PIP_INDEX="${WUNDER_PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
 
 case "$ABI" in
     arm64)
@@ -193,8 +197,11 @@ case "$ABI" in
         PACK_PLATFORMS=(--platform manylinux2014_x86_64 --platform manylinux_2_28_x86_64)
         ;;
 esac
-python3 -m pip download --only-binary=:all: "${PACK_PLATFORMS[@]}" \
+# 构建机常常本身就跑在 wunder 的命令工具里，那里会注入 PIP_NO_INDEX=1
+# （离线语义），会让这里的下载直接变成 "from versions: none"。
+env -u PIP_NO_INDEX python3 -m pip download --only-binary=:all: "${PACK_PLATFORMS[@]}" \
     --python-version 312 --implementation cp --abi cp312 \
+    -i "$PIP_INDEX" \
     -d "$WHEELS" -r "$PY_REQUIREMENTS"
 cp "$PY_REQUIREMENTS" "$WHEELS/requirements-android.txt"
 if find "$WHEELS" -type f ! -name '*.whl' ! -name 'requirements-android.txt' | grep -q .; then
@@ -261,6 +268,16 @@ mkdir -p "$WORK/work/dev" "$WORK/work/proc" "$WORK/work/sys" "$WORK/work/tmp" \
          "$WORK/work/var/tmp"
 chmod 1777 "$WORK/work/tmp" "$WORK/work/var/tmp"
 
+# pip inside the runtime defaults to the mirror used to build the pack: the
+# device installs the shipped wheelhouse with --no-index, this only covers
+# libraries the user adds later.
+mkdir -p "$WORK/work/etc"
+cat > "$WORK/work/etc/pip.conf" <<EOF
+[global]
+index-url = $PIP_INDEX
+timeout = 60
+EOF
+
 echo "==> diff base -> installed"
 python3 - "$WORK/base" "$WORK/work" "$WORK/files.txt" <<'PY'
 import hashlib
@@ -319,8 +336,7 @@ added = sum(1 for rel in changed if rel not in base_rows)
 print(f"files: {len(changed)} ({added} new)")
 PY
 
-echo "==> pack $(wc -l < "$WORK/files.txt") entries"
-mkdir -p "$(dirname "$OUT")"
+echo "==> pack $(wc -l < "$WORK/files.txt") entries"mkdir -p "$(dirname "$OUT")"
 # 9e trims the pack by several percent versus the old -6 stream; the extra
 # build time is paid once per pack rebuild. No BCJ filter here: see
 # require_plain_xz above.

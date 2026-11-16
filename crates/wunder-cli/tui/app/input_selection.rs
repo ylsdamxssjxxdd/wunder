@@ -20,13 +20,13 @@
 //! for instead of the one the last frame painted — the coupling that makes an edge drag
 //! either stick or jump two rows.
 
+use super::TuiApp;
+use super::WrappedInputLine;
 use super::helpers::byte_index_for_display_column;
 use super::helpers::is_word_char;
 use super::helpers::next_char_boundary;
 use super::helpers::prev_char_boundary;
 use super::text_selection::SelectionUnit;
-use super::TuiApp;
-use super::WrappedInputLine;
 use crate::tui::theme;
 use crossterm::event::MouseEvent;
 use ratatui::text::{Line, Span};
