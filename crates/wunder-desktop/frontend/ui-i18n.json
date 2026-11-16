@@ -1953,12 +1953,12 @@
  },
  {
   "key": "msg_thought",
-  "zh": "已思考",
+  "zh": "思考",
   "en": "Thought"
  },
  {
   "key": "msg_thinking",
-  "zh": "思考中",
+  "zh": "思考",
   "en": "Thinking"
  },
  {
@@ -3994,14 +3994,14 @@
   ]
  },
  {
-  "key": "wm_status_idle",
-  "zh": "空闲",
-  "en": "Idle"
- },
- {
   "key": "wm_status_starting",
   "zh": "正在启动",
   "en": "Starting"
+ },
+ {
+  "key": "wm_status_idle",
+  "zh": "空闲",
+  "en": "Idle"
  },
  {
   "key": "err_cannot",
@@ -6571,12 +6571,12 @@
  },
  {
   "key": "tl_thought_done",
-  "zh": "已思考",
+  "zh": "思考",
   "en": "Thought"
  },
  {
   "key": "tl_thought_running",
-  "zh": "正在思考…",
+  "zh": "思考",
   "en": "Thinking…"
  },
  {

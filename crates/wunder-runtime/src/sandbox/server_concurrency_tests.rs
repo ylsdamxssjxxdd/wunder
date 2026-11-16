@@ -407,3 +407,57 @@ async fn background_command_session_can_be_cancelled() {
     );
     server.abort();
 }
+
+#[tokio::test]
+async fn etx_stdin_cancels_background_command_and_preserves_null_exit_code() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, build_router()).await.unwrap() });
+    let client = reqwest::Client::new();
+    let command = if cfg!(windows) {
+        "ping 127.0.0.1 -n 30 > NUL"
+    } else {
+        "sleep 30"
+    };
+    let launch = client
+        .post(format!(
+            "http://{address}/sandboxes/command-sessions/launch"
+        ))
+        .json(&json!({
+            "user_id": "user_etx", "session_id": "thread_etx",
+            "workspace_root": "/", "container_root": "/", "allow_commands": ["*"],
+            "args": {"content": command, "yield_time_ms": 50}
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(launch.get("ok").and_then(Value::as_bool), Some(true));
+    let id = launch
+        .pointer("/data/command_session_id")
+        .and_then(Value::as_str)
+        .unwrap();
+    let interrupted = client
+        .post(format!("http://{address}/sandboxes/command-sessions/stdin"))
+        .json(&json!({
+            "user_id": "user_etx", "session_id": "thread_etx",
+            "command_session_id": id, "input": "\u{3}",
+            "yield_time_ms": 1000, "wait_for_exit": true
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(interrupted.get("ok").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        interrupted.pointer("/data/status").and_then(Value::as_str),
+        Some("exited")
+    );
+    assert!(interrupted.pointer("/data/exit_code").is_some());
+    assert!(interrupted.pointer("/data/exit_code").unwrap().is_null());
+    server.abort();
+}

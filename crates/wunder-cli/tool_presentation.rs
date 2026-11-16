@@ -350,53 +350,51 @@ fn classify(name: &str) -> Option<ToolPresentation> {
         "读取文件" => call(ToolAccess::Explore, "读取", "Read"),
         "列出文件" => call(ToolAccess::Explore, "列出", "List"),
         "搜索内容" => call(ToolAccess::Explore, "搜索", "Search"),
-        CANONICAL_GLOB => call(ToolAccess::Explore, "匹配文件", "Find files"),
+        CANONICAL_GLOB => call(ToolAccess::Explore, "匹配", "Find files"),
         CANONICAL_READ_IMAGE | "查看图片" => {
-            call(ToolAccess::Explore, "查看图片", "View image")
+            call(ToolAccess::Explore, "看图", "View image")
         }
         // Web and knowledge reads: exploring without changing anything, but their own
         // result is the point of the call, so they keep their own card.
-        "网页搜索" | "联网搜索" => call(ToolAccess::Explore, "联网搜索", "Web search"),
-        "网页抓取" | "获取网页" => call(ToolAccess::Explore, "获取网页", "Fetch page"),
+        "网页搜索" | "联网搜索" => call(ToolAccess::Explore, "联网", "Web search"),
+        "网页抓取" | "获取网页" => call(ToolAccess::Explore, "抓取", "Fetch page"),
         "知识库" | "knowledge" | "knowledge_search" => {
-            call(ToolAccess::Explore, "检索知识库", "Search knowledge")
+            call(ToolAccess::Explore, "知识", "Search knowledge")
         }
         // Mutations.
         CANONICAL_WRITE => call(ToolAccess::Mutate, "写入", "Write"),
         CANONICAL_PATCH => call(ToolAccess::Mutate, "编辑", "Edit"),
         // Processes and the machine.
         CANONICAL_COMMAND => call(ToolAccess::Execute, "执行", "Ran"),
-        CANONICAL_COMMAND_SESSION => call(ToolAccess::Execute, "继续命令", "Continued"),
+        CANONICAL_COMMAND_SESSION => call(ToolAccess::Execute, "续命令", "Continued"),
         // Browser: the aggregate entry and its one model-facing `browser` action tool.
         other if is_browser_group_name(other) || is_browser_tool_name(other) => {
-            call(ToolAccess::Execute, "浏览网页", "Browse")
+            call(ToolAccess::Execute, "浏览", "Browse")
         }
         "桌面控制" | "desktop_control" | "desktop" => {
-            call(ToolAccess::Execute, "桌面控制", "Desktop")
+            call(ToolAccess::Execute, "桌面", "Desktop")
         }
         // Work handed to another agent, skill or channel.
-        "技能调用" => call(ToolAccess::Delegate, "调用技能", "Run skill"),
-        CANONICAL_SUBAGENT => call(ToolAccess::Delegate, "子智能体", "Subagent"),
-        "会话线程控制" | "线程控制" => {
-            call(ToolAccess::Delegate, "会话线程控制", "Thread control")
-        }
+        "技能调用" => call(ToolAccess::Delegate, "技能", "Run skill"),
+        CANONICAL_SUBAGENT => call(ToolAccess::Delegate, "子代理", "Subagent"),
+        "会话线程控制" | "线程控制" => call(ToolAccess::Delegate, "线程", "Thread control"),
         // Panels, schedules and self-reporting: no target file, no output stream.
-        "计划面板" => call(ToolAccess::Other, "更新计划", "Update plan"),
+        "计划面板" => call(ToolAccess::Other, "计划", "Update plan"),
         "问询面板" => call(ToolAccess::Other, "问询", "Ask"),
-        "定时任务" => call(ToolAccess::Other, "定时任务", "Schedule task"),
-        "记忆管理" => call(ToolAccess::Other, "记忆管理", "Memory"),
-        "goal" => call(ToolAccess::Other, "管理目标", "Manage goal"),
+        "定时任务" => call(ToolAccess::Other, "定时", "Schedule task"),
+        "记忆管理" => call(ToolAccess::Other, "记忆", "Memory"),
+        "goal" => call(ToolAccess::Other, "目标", "Manage goal"),
         // Generated artefacts: the result is a file the reader picks up, not a diff.
-        "语音生成" => call(ToolAccess::Other, "生成语音", "Generate speech"),
-        "声转文" => call(ToolAccess::Other, "语音转写", "Transcribe"),
-        "图像生成" | "绘图生成" => call(ToolAccess::Other, "生成图像", "Generate image"),
-        "视频生成" => call(ToolAccess::Other, "生成视频", "Generate video"),
+        "语音生成" => call(ToolAccess::Other, "语音", "Generate speech"),
+        "声转文" => call(ToolAccess::Other, "转写", "Transcribe"),
+        "图像生成" | "绘图生成" => call(ToolAccess::Other, "图像", "Generate image"),
+        "视频生成" => call(ToolAccess::Other, "视频", "Generate video"),
         _ => {
             // Provider names are not in the alias table, and an empty registry would
             // not know them; the `browser_` prefix keeps old rows on the same card.
             return name
                 .starts_with("browser_")
-                .then(|| call(ToolAccess::Execute, "浏览网页", "Browse"));
+                .then(|| call(ToolAccess::Execute, "浏览", "Browse"));
         }
     };
     Some(presentation)
@@ -411,7 +409,7 @@ fn unknown_named(name: &str) -> ToolPresentation {
         return call(ToolAccess::Delegate, "工具包", "Tool pack");
     }
     if is_mcp_tool_name(name) || is_legacy_mcp_name(name) {
-        return call(ToolAccess::Delegate, "外部工具", "External tool");
+        return call(ToolAccess::Delegate, "外部", "External tool");
     }
     UNKNOWN
 }
@@ -425,33 +423,28 @@ mod tests {
         ("读取文件", ToolAccess::Explore, "读取", "Read"),
         ("列出文件", ToolAccess::Explore, "列出", "List"),
         ("搜索内容", ToolAccess::Explore, "搜索", "Search"),
-        ("文件名匹配", ToolAccess::Explore, "匹配文件", "Find files"),
-        ("读图工具", ToolAccess::Explore, "查看图片", "View image"),
-        ("网页搜索", ToolAccess::Explore, "联网搜索", "Web search"),
-        ("网页抓取", ToolAccess::Explore, "获取网页", "Fetch page"),
+        ("文件名匹配", ToolAccess::Explore, "匹配", "Find files"),
+        ("读图工具", ToolAccess::Explore, "看图", "View image"),
+        ("网页搜索", ToolAccess::Explore, "联网", "Web search"),
+        ("网页抓取", ToolAccess::Explore, "抓取", "Fetch page"),
         ("写入文件", ToolAccess::Mutate, "写入", "Write"),
         ("文本编辑", ToolAccess::Mutate, "编辑", "Edit"),
         ("执行命令", ToolAccess::Execute, "执行", "Ran"),
-        ("命令会话", ToolAccess::Execute, "继续命令", "Continued"),
-        ("浏览器", ToolAccess::Execute, "浏览网页", "Browse"),
-        ("桌面控制", ToolAccess::Execute, "桌面控制", "Desktop"),
-        ("技能调用", ToolAccess::Delegate, "调用技能", "Run skill"),
-        ("子智能体控制", ToolAccess::Delegate, "子智能体", "Subagent"),
-        (
-            "会话线程控制",
-            ToolAccess::Delegate,
-            "会话线程控制",
-            "Thread control",
-        ),
-        ("计划面板", ToolAccess::Other, "更新计划", "Update plan"),
+        ("命令会话", ToolAccess::Execute, "续命令", "Continued"),
+        ("浏览器", ToolAccess::Execute, "浏览", "Browse"),
+        ("桌面控制", ToolAccess::Execute, "桌面", "Desktop"),
+        ("技能调用", ToolAccess::Delegate, "技能", "Run skill"),
+        ("子智能体控制", ToolAccess::Delegate, "子代理", "Subagent"),
+        ("会话线程控制", ToolAccess::Delegate, "线程", "Thread control"),
+        ("计划面板", ToolAccess::Other, "计划", "Update plan"),
         ("问询面板", ToolAccess::Other, "问询", "Ask"),
-        ("定时任务", ToolAccess::Other, "定时任务", "Schedule task"),
-        ("记忆管理", ToolAccess::Other, "记忆管理", "Memory"),
-        ("goal", ToolAccess::Other, "管理目标", "Manage goal"),
-        ("语音生成", ToolAccess::Other, "生成语音", "Generate speech"),
-        ("声转文", ToolAccess::Other, "语音转写", "Transcribe"),
-        ("图像生成", ToolAccess::Other, "生成图像", "Generate image"),
-        ("视频生成", ToolAccess::Other, "生成视频", "Generate video"),
+        ("定时任务", ToolAccess::Other, "定时", "Schedule task"),
+        ("记忆管理", ToolAccess::Other, "记忆", "Memory"),
+        ("goal", ToolAccess::Other, "目标", "Manage goal"),
+        ("语音生成", ToolAccess::Other, "语音", "Generate speech"),
+        ("声转文", ToolAccess::Other, "转写", "Transcribe"),
+        ("图像生成", ToolAccess::Other, "图像", "Generate image"),
+        ("视频生成", ToolAccess::Other, "视频", "Generate video"),
     ];
 
     #[test]
@@ -581,7 +574,7 @@ mod tests {
         let external = present("crm@lookup");
         assert_eq!(external.access, ToolAccess::Delegate);
         assert_eq!(external.verb(false), "External tool");
-        assert_eq!(external.verb(true), "外部工具");
+        assert_eq!(external.verb(true), "外部");
         assert_eq!(
             present("crm@__mcp_pack__").verb(false),
             "Tool pack",

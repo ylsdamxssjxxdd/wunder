@@ -283,7 +283,7 @@ fn busy_activity_line_names_the_phase_without_repeating_the_thinking_text() {
     );
     assert_eq!(
         format_busy_activity_line(true, 3, false, true, true),
-        "\u{2022} 思考中 (3s \u{00b7} Esc 可中断)"
+        "\u{2022} 思考 (3s \u{00b7} Esc 可中断)"
     );
 }
 

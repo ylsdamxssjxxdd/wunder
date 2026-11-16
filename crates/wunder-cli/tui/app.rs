@@ -535,6 +535,10 @@ pub struct TuiApp {
     frame_requester: FrameRequester,
     display_language: String,
     session_id: String,
+    /// The name of the thread on screen, read from the session record. It names
+    /// the OS window too, so it is refreshed whenever the thread or its name
+    /// changes rather than derived again from the transcript.
+    session_title: String,
     input: String,
     input_cursor: usize,
     input_viewport_width: u16,
@@ -822,6 +826,7 @@ impl TuiApp {
             frame_requester,
             display_language,
             session_id: session_id.clone(),
+            session_title: crate::CLI_DEFAULT_SESSION_TITLE.to_string(),
             input: String::new(),
             input_cursor: 0,
             input_viewport_width: 1,
@@ -972,6 +977,7 @@ impl TuiApp {
             pending_shell_results: Vec::new(),
         };
         app.acquire_thread_lease(&session_id).await?;
+        app.refresh_session_title().await;
         app.load_persisted_history();
         app.load_popup_recents();
         app.refresh_workspace_context();
@@ -1503,6 +1509,42 @@ impl TuiApp {
         } else {
             text
         })
+    }
+
+    /// Read the thread name from the session record, the single owner of it.
+    /// A failed read keeps the name already on screen: a window title is not
+    /// worth failing a turn or a thread switch over.
+    pub(crate) async fn refresh_session_title(&mut self) {
+        match crate::session_title_of(&self.runtime, self.session_id.as_str()).await {
+            Ok(Some(title)) if !title.trim().is_empty() => {
+                self.session_title = title.trim().to_string();
+            }
+            Ok(_) => self.session_title = crate::CLI_DEFAULT_SESSION_TITLE.to_string(),
+            Err(error) => tracing::debug!("[cli][title] session title read failed: {error}"),
+        }
+    }
+
+    /// Take the name straight from the message that titled the thread, so the
+    /// window follows the store without a second read on the first turn.
+    pub(crate) fn adopt_auto_session_title(&mut self, prompt: &str) {
+        if !crate::should_auto_title(self.session_title.as_str()) {
+            return;
+        }
+        if let Some(title) = crate::build_session_title(prompt) {
+            self.session_title = title;
+        }
+    }
+
+    /// What the OS window is called: the thread on screen, so several terminals
+    /// can be told apart. A thread that has no name yet falls back to the form
+    /// name instead of the placeholder the store carries.
+    pub fn window_title(&self) -> String {
+        let name = self.session_title.trim();
+        if name.is_empty() || crate::should_auto_title(name) {
+            crate::session_header::brand_name(self.is_zh_language()).to_string()
+        } else {
+            name.to_string()
+        }
     }
 
     /// Right-aligned footer context as styled spans: the model id and the
@@ -3595,10 +3637,10 @@ impl TuiApp {
     }
 
     pub(crate) fn composer_height(&mut self, width: u16, height: u16) -> u16 {
-        let text_width = usize::from(width.saturating_sub(4).max(1));
-        let rows = build_wrapped_input_lines(&self.input, text_width)
-            .len()
-            .max(1);
+        // The rows have to be counted against the width the frame will actually paint
+        // with, so both sides ask the composer for that one number.
+        let text_width = usize::from(crate::tui::ui::composer::composer_text_width(width));
+        let rows = wrapped_input_visual_rows(&self.input, self.input_cursor, text_width).max(1);
         // The reading control, a copy result and the search query paint in the layout's
         // own gap row, never inside this band: the band keeps one height whether the row
         // above it says something or nothing, so the transcript below the reader never
@@ -6420,6 +6462,9 @@ impl TuiApp {
                 .queue_approval(previous_session_id.as_str(), request);
         }
         self.session_id = session_id.to_string();
+        // The name belongs to the thread that is now on screen; the store read
+        // below replaces the placeholder once the switch has settled.
+        self.session_title = crate::CLI_DEFAULT_SESSION_TITLE.to_string();
         self.release_thread_lease_async(&previous_session_id, previous_lease_token)
             .await;
         self.thread_registry.activate(session_id);
@@ -6487,6 +6532,7 @@ impl TuiApp {
         }
         self.session_stats = crate::SessionStatsSnapshot::default();
         self.reload_session_stats().await;
+        self.refresh_session_title().await;
         if self.is_zh_language() {
             self.push_log(
                 LogKind::Info,
@@ -7400,6 +7446,63 @@ impl TuiApp {
         self.request_redraw();
     }
 
+    /// A turn the user stopped does not hand its queued follow-ups to the engine: the
+    /// queue comes back down into the composer instead, joined by newlines in the order
+    /// it was typed and with the current draft last. That is codex's
+    /// `on_interrupted_turn`: an interrupt means "hold on", so the next message must
+    /// wait for a human keypress rather than fire the instant the interrupted stream
+    /// closes. Attachment payloads cannot be spelled back into text, so a queued turn
+    /// that carried them says so and asks for them again.
+    ///
+    /// Returns whether anything was restored.
+    fn restore_queued_prompts_into_draft(&mut self) -> bool {
+        if self.queued_prompts.is_empty() {
+            return false;
+        }
+        let is_zh = self.is_zh_language();
+        let mut restored: Vec<String> = Vec::new();
+        let mut with_attachments = 0usize;
+        while let Some(queued) = self.queued_prompts.pop_front() {
+            if queued
+                .attachments
+                .as_ref()
+                .is_some_and(|items| !items.is_empty())
+            {
+                with_attachments += 1;
+            }
+            restored.push(queued.prompt);
+        }
+        let count = restored.len();
+        let draft = std::mem::take(&mut self.input);
+        if !draft.trim().is_empty() {
+            restored.push(draft);
+        }
+        self.input = restored.join("\n");
+        // The caret belongs at the end of the text it just received, and no gesture
+        // mark or scroll offset from before the interrupt still names a live byte.
+        self.input_cursor = self.input.len();
+        self.input_scroll = None;
+        self.forget_input_gesture();
+        let note = if is_zh {
+            if with_attachments > 0 {
+                format!("本轮已中断：{count} 条排队消息已放回输入区，附件需要重新添加")
+            } else {
+                format!("本轮已中断：{count} 条排队消息已放回输入区，修改后回车再发送")
+            }
+        } else if with_attachments > 0 {
+            format!(
+                "turn interrupted: {count} queued message(s) went back into the composer; re-add their attachments"
+            )
+        } else {
+            format!(
+                "turn interrupted: {count} queued message(s) went back into the composer; edit, then press enter"
+            )
+        };
+        self.push_log(LogKind::Info, note);
+        self.request_redraw();
+        true
+    }
+
     /// Send the oldest queued follow-up once nothing is running on this thread.
     /// The idle tick calls this, so a turn that ends without a keystroke still
     /// lets the queue advance.
@@ -7531,6 +7634,9 @@ impl TuiApp {
             attachments,
         )
         .await?;
+        // Building the request is also what names an untitled thread from this
+        // first message, so the window title follows the store immediately.
+        self.adopt_auto_session_title(prompt.as_str());
         request.config_overrides.get_or_insert_with(|| json!({}))["__local_open_lease"] =
             json!({"owner":self.open_instance_id,"token":self.open_lease_token});
         if let Some(inquiry_turn_id) = inquiry_turn_id {
@@ -8594,6 +8700,12 @@ impl TuiApp {
                 self.tool_phase_notice_emitted = false;
                 self.session_stats_dirty = true;
                 self.refresh_workspace_context();
+                // A round the user stopped hands its queued follow-ups back to the
+                // composer instead of sending the next one the moment this stream
+                // closes (codex's on_interrupted_turn).
+                if self.turn_was_interrupted {
+                    self.restore_queued_prompts_into_draft();
+                }
             }
             StreamMessage::Done { session_id } => {
                 self.active_stream_sessions.remove(session_id.as_str());
@@ -8648,6 +8760,12 @@ impl TuiApp {
                 self.tool_phase_notice_emitted = false;
                 self.session_stats_dirty = true;
                 self.refresh_workspace_context();
+                // A round the user stopped hands its queued follow-ups back to the
+                // composer instead of sending the next one the moment this stream
+                // closes (codex's on_interrupted_turn).
+                if self.turn_was_interrupted {
+                    self.restore_queued_prompts_into_draft();
+                }
             }
         }
     }
@@ -10270,7 +10388,7 @@ fn format_busy_activity_line(
     // status row only names the phase: echoing the last thought line here made
     // the same sentence appear twice and repaint on every reasoning token.
     let label = match (is_zh, reasoning_active) {
-        (true, true) => "思考中",
+        (true, true) => "思考",
         (true, false) => "运行中",
         (false, true) => "Thinking",
         (false, false) => "Working",

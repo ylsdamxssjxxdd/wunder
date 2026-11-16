@@ -282,24 +282,40 @@ impl GenericToolLogEntry {
     }
 
     /// The tool and its target stay in place while status and output settle below them.
-    fn header_text(&self) -> String {
+    /// The tool's own name, alone: one span that carries the tool hue, with the
+    /// target rendered next to it in plain text.
+    fn header_name(&self) -> String {
         let verb = self.presentation.verb(self.is_zh);
         let names_self =
             self.presentation.access == ToolAccess::Other || is_mcp_tool_name(&self.tool_name);
-        let subject = || match mcp_invocation_label(self.tool_name.as_str()) {
-            Some(label) => label,
-            None => self.tool_name.clone(),
-        };
         let action = if self.status == GenericToolLogStatus::Pending {
             verb
         } else {
             self.presentation.verb_done(self.is_zh)
         };
-        let mut text = if names_self {
-            format!("{action} {}", subject())
-        } else {
-            action.to_string()
-        };
+        let mut text = action.to_string();
+        if names_self {
+            let subject = match mcp_invocation_label(self.tool_name.as_str()) {
+                Some(label) => label,
+                None => self.tool_name.clone(),
+            };
+            text.push(' ');
+            text.push_str(&subject);
+        }
+        text
+    }
+
+    /// The target keeps the name's weight but not its hue, so a long path never
+    /// turns the whole row blue.
+    fn target_style(&self) -> Style {
+        match self.status {
+            GenericToolLogStatus::Failure => theme::danger_text(),
+            _ => theme::tool_subject(),
+        }
+    }
+
+    fn header_text(&self) -> String {
+        let mut text = self.header_name();
         if let Some(target) = self.target.as_ref().filter(|target| !target.is_empty()) {
             text.push(' ');
             text.push_str(target);
@@ -308,16 +324,18 @@ impl GenericToolLogEntry {
     }
 
     fn header_line(&self) -> Line<'static> {
-        let (icon, icon_style, text_style) = self.header_parts();
+        let (icon, icon_style, name_style) = self.header_parts();
         let icon_span = if self.status == GenericToolLogStatus::Pending {
             pending_status_icon_span()
         } else {
             status_icon_span(icon, icon_style)
         };
-        Line::from(vec![
-            icon_span,
-            Span::styled(self.header_text(), text_style),
-        ])
+        let mut spans = vec![icon_span, Span::styled(self.header_name(), name_style)];
+        if let Some(target) = self.target.as_ref().filter(|target| !target.is_empty()) {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(target.clone(), self.target_style()));
+        }
+        Line::from(spans)
     }
 
     fn header_parts(&self) -> (&'static str, Style, Style) {
@@ -516,7 +534,7 @@ impl CommandLogEntry {
         let verb = crate::tool_presentation::present("执行命令").verb(self.is_zh);
         let mut spans = vec![
             icon,
-            Span::styled(format!("{verb} "), command_style()),
+            Span::styled(format!("{verb} "), theme::tool_title()),
             Span::styled(command, command_style()),
         ];
         // A multi-line command keeps its head in the header; the rest is a fold, exactly as
@@ -580,10 +598,51 @@ enum PatchLogStatus {
     Failure,
 }
 
+/// A patch card's head, split so the tool name can carry the tool hue while the
+/// target path stays plain: `编辑 src/main.rs`, not one blue run of text.
+#[derive(Debug, Clone)]
+pub(super) struct PatchHead {
+    name: String,
+    target: Option<String>,
+}
+
+impl PartialEq<str> for PatchHead {
+    fn eq(&self, other: &str) -> bool {
+        self.text() == other
+    }
+}
+
+impl PartialEq<&str> for PatchHead {
+    fn eq(&self, other: &&str) -> bool {
+        self.text() == *other
+    }
+}
+
+impl PatchHead {
+    fn new(name: impl Into<String>, target: Option<String>) -> Self {
+        Self {
+            name: name.into(),
+            target,
+        }
+    }
+
+    fn text(&self) -> String {
+        match self.target.as_deref().filter(|target| !target.is_empty()) {
+            Some(target) => {
+                let mut text = self.name.clone();
+                text.push(' ');
+                text.push_str(target);
+                text
+            }
+            None => self.name.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct PatchLogEntry {
     status: PatchLogStatus,
-    header: String,
+    header: PatchHead,
     summary: Option<String>,
     notes: Vec<PatchNote>,
     files: Vec<PatchFileRow>,
@@ -597,9 +656,9 @@ pub(super) struct PatchLogEntry {
 impl PatchLogEntry {
     fn summary_text(&self) -> String {
         if let Some(summary) = self.summary.as_ref().filter(|value| !value.is_empty()) {
-            format!("{} {}", self.header, summary)
+            format!("{} {}", self.header.text(), summary)
         } else {
-            self.header.clone()
+            self.header.text()
         }
     }
 
@@ -732,25 +791,45 @@ impl PatchLogEntry {
     }
 
     fn header_line(&self) -> Line<'static> {
-        let (icon, icon_style, text_style) = self.header_parts();
+        let (icon, icon_style, name_style) = self.header_parts();
         let icon_span = if self.status == PatchLogStatus::Pending {
             pending_status_icon_span()
         } else {
             status_icon_span(icon, icon_style)
         };
-        Line::from(vec![
+        let mut spans = vec![
             icon_span,
-            Span::styled(self.header.clone(), text_style),
-        ])
+            Span::styled(self.header.name.clone(), name_style),
+        ];
+        if let Some(target) = self
+            .header
+            .target
+            .as_deref()
+            .filter(|target| !target.is_empty())
+        {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(target.to_string(), self.target_style()));
+        }
+        Line::from(spans)
+    }
+
+    /// The target of a failed edit stays red like the rest of its head; a landed
+    /// one keeps the plain weight, so the blue name is the only hue on the row.
+    fn target_style(&self) -> Style {
+        match self.status {
+            PatchLogStatus::Failure => theme::danger_text(),
+            _ => theme::tool_subject(),
+        }
     }
 
     fn header_line_with_summary(&self, summary: &str, width: u16) -> Option<Line<'static>> {
         if summary.contains('\n') {
             return None;
         }
-        let (icon, icon_style, text_style) = self.header_parts();
+        let (icon, icon_style, name_style) = self.header_parts();
+        let head = self.header.text();
         let total_width =
-            UnicodeWidthStr::width(format!("{icon} {} {summary}", self.header).as_str());
+            UnicodeWidthStr::width([icon, " ", head.as_str(), " ", summary].concat().as_str());
         if total_width > usize::from(width.max(1)) {
             return None;
         }
@@ -759,12 +838,22 @@ impl PatchLogEntry {
         } else {
             status_icon_span(icon, icon_style)
         };
-        Some(Line::from(vec![
+        let mut spans = vec![
             icon_span,
-            Span::styled(self.header.clone(), text_style),
-            Span::raw(" "),
-            Span::styled(summary.to_string(), summary_style()),
-        ]))
+            Span::styled(self.header.name.clone(), name_style),
+        ];
+        if let Some(target) = self
+            .header
+            .target
+            .as_deref()
+            .filter(|target| !target.is_empty())
+        {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(target.to_string(), self.target_style()));
+        }
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(summary.to_string(), summary_style()));
+        Some(Line::from(spans))
     }
 
     fn header_parts(&self) -> (&'static str, Style, Style) {
@@ -1712,7 +1801,7 @@ pub(super) fn build_pending_patch_log(args: &Value, is_zh: bool) -> Option<Speci
         // the patch is still waiting for approval.
         patch_files_header(files.len(), is_zh)
     } else {
-        patch_tool_name(is_zh).to_string()
+        PatchHead::new(patch_tool_name(is_zh), None)
     };
     let mut summary = (!summary.is_empty()).then_some(summary);
     let mut header_names_file = false;
@@ -1764,9 +1853,9 @@ pub(super) fn build_completed_patch_log(payload: &Value, is_zh: bool) -> Special
     let mut header = if ok {
         patch_files_header(changed_files.max(0) as usize, is_zh)
     } else if is_zh {
-        "文本编辑 应用失败".to_string()
+        PatchHead::new(patch_tool_name(is_zh), Some("应用失败".to_string()))
     } else {
-        "Failed to apply patch".to_string()
+        PatchHead::new("Failed to apply patch", None)
     };
 
     let added_lines = value_as_i64(data.get("added_lines"))
@@ -1886,59 +1975,44 @@ pub(super) fn build_completed_patch_log(payload: &Value, is_zh: bool) -> Special
 /// own words. codex prints the past tense ("Edited src/main.rs"); the Chinese head
 /// names the tool, because "已修改" is a finished-state claim on a card that may still
 /// be waiting for approval. State lives in the icon colour, never in these words.
-fn patch_tool_name(is_zh: bool) -> &'static str {
-    if is_zh { "文本编辑" } else { "Edit" }
+/// The edit card's name, taken from the same table every other card reads: the
+/// two-character verb. The catalog's own `文本编辑` pushed the path right and made
+/// the card carry four characters of name where every other tool carries two.
+fn patch_tool_name(is_zh: bool) -> String {
+    crate::tool_presentation::present("文本编辑")
+        .verb(is_zh)
+        .to_string()
 }
 
-fn patch_files_header(count: usize, is_zh: bool) -> String {
+fn patch_files_header(count: usize, is_zh: bool) -> PatchHead {
     if is_zh {
-        return join_head("文本编辑", &(count.to_string() + " 个文件"));
+        return PatchHead::new(patch_tool_name(is_zh), Some(count.to_string() + " 个文件"));
     }
     if count == 1 {
-        "Edited 1 file".to_string()
+        PatchHead::new("Edited", Some("1 file".to_string()))
     } else {
-        join_head("Edited", &(count.to_string() + " files"))
+        PatchHead::new("Edited", Some(count.to_string() + " files"))
     }
 }
 
-/// One prefix, one path: the shape every edit head wears, so a tool name and a file
-/// name always read as one line with a single space between them.
-fn join_head(prefix: &str, path: &str) -> String {
-    let mut text = String::with_capacity(prefix.len() + path.len() + 1);
-    text.push_str(prefix);
-    text.push(' ');
-    text.push_str(path);
-    text
-}
-
-fn single_file_patch_header(file: &PatchFileRow, is_zh: bool) -> String {
-    match file.marker {
-        'A' => join_head(
-            if is_zh {
-                "文本编辑 新增"
-            } else {
-                "Added"
-            },
-            &file.text,
-        ),
-        'D' => join_head(
-            if is_zh {
-                "文本编辑 删除"
-            } else {
-                "Deleted"
-            },
-            &file.text,
-        ),
-        'R' => join_head(
-            if is_zh {
-                "文本编辑 重命名"
-            } else {
-                "Renamed"
-            },
-            &file.text,
-        ),
-        _ => join_head(if is_zh { "文本编辑" } else { "Edited" }, &file.text),
-    }
+fn single_file_patch_header(file: &PatchFileRow, is_zh: bool) -> PatchHead {
+    let name = if is_zh {
+        let verb = patch_tool_name(is_zh);
+        match file.marker {
+            'A' => verb + " 新增",
+            'D' => verb + " 删除",
+            'R' => verb + " 重命名",
+            _ => verb,
+        }
+    } else {
+        match file.marker {
+            'A' => "Added".to_string(),
+            'D' => "Deleted".to_string(),
+            'R' => "Renamed".to_string(),
+            _ => "Edited".to_string(),
+        }
+    };
+    PatchHead::new(name, Some(file.text.clone()))
 }
 
 fn extract_patch_input(args: &Value) -> Option<&str> {
@@ -2438,7 +2512,7 @@ mod tests {
         else {
             panic!("expected patch log");
         };
-        assert!(entry.header.contains("Edited src/main.rs"));
+        assert!(entry.header.text().contains("Edited src/main.rs"));
         assert_eq!(entry.files.len(), 0);
         assert!(
             entry
@@ -3095,6 +3169,34 @@ mod tests {
         );
     }
 
+    /// The tool name is the one blue run on the row: the target keeps the plain
+    /// weight, so a long path cannot dominate the card. Both come from the theme,
+    /// which means `NO_COLOR` degrades the pair together instead of leaving a hue.
+    #[test]
+    fn an_edit_card_paints_its_name_in_the_tool_blue() {
+        let SpecialLogEntry::Patch(entry) = build_completed_patch_log(
+            &serde_json::json!({"result": {"ok": true, "data": {
+                "added_lines": 1, "deleted_lines": 0, "changed_files": 1,
+                "files": [{"action": "update", "path": "src/main.rs",
+                    "added_lines": 1, "deleted_lines": 0,
+                    "diff_blocks": [{"header": "",
+                        "start_line_before": 3, "end_line_before": 3,
+                        "start_line_after": 3, "end_line_after": 4,
+                        "lines": [{"kind": "add", "old_line": null, "new_line": 4, "text": "let c = 4;"}]}]}]
+            }}}),
+            true,
+        ) else {
+            panic!("expected a patch card");
+        };
+        let lines = entry.render_lines_for_width(80, false);
+        let head = &lines[0];
+        assert!(head.spans.len() >= 4, "{head:?}");
+        assert_eq!(head.spans[1].content.as_ref(), "编辑");
+        assert_eq!(head.spans[1].style.fg, Some(theme::accent_color()));
+        assert_eq!(head.spans[3].content.as_ref(), "src/main.rs");
+        assert_ne!(head.spans[3].style.fg, Some(theme::accent_color()));
+    }
+
     /// A write is not a patch the model wrote, so nothing parseable ever arrived: the
     /// applied blocks are the only way this card can exist at all.
     #[test]
@@ -3119,7 +3221,7 @@ mod tests {
         let rows = flat_patch_lines(&entry, 80, false);
         assert!(
             rows.iter()
-                .any(|row| row.contains("文本编辑 新增 notes/new.md")),
+                .any(|row| row.contains("编辑 新增 notes/new.md")),
             "{rows:?}"
         );
         assert!(rows.iter().any(|row| row.contains("# 第一段")), "{rows:?}");

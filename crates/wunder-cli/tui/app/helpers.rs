@@ -1217,6 +1217,24 @@ pub(super) fn build_wrapped_input_lines(text: &str, width: usize) -> Vec<Wrapped
     lines
 }
 
+/// Rows the composer band has to reserve for this draft.
+///
+/// The wrap itself, plus the one row a caret sitting just past a full-width row occupies:
+/// a caret whose display column equals the width is drawn on the next row (that is where a
+/// terminal puts it), and `input_view` promotes it there too. Counting only the wrapped
+/// rows reserved one row too few, so at the exact wrap boundary the band scrolled the row
+/// the caret had just left out of view.
+pub(super) fn wrapped_input_visual_rows(text: &str, cursor: usize, width: usize) -> usize {
+    let width = width.max(1);
+    let lines = build_wrapped_input_lines(text, width);
+    let cursor = cursor.min(text.len());
+    let (row, _column) = normalize_wrapped_cursor_position(
+        cursor_visual_position(text, &lines, cursor),
+        width,
+    );
+    lines.len().max(row.saturating_add(1))
+}
+
 pub(super) fn cursor_visual_position(
     text: &str,
     lines: &[WrappedInputLine],

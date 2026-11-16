@@ -9,7 +9,6 @@ use ratatui::text::Span;
 use ratatui::text::Text;
 use ratatui::widgets::Block;
 use ratatui::widgets::Paragraph;
-use ratatui::widgets::Wrap;
 use ratatui::Frame;
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
@@ -22,6 +21,19 @@ use crate::tui::ui::layout::padded_columns;
 use crate::tui::ui::layout::CONTENT_GUTTER_COLS;
 
 const INPUT_PROMPT: &str = "› ";
+
+/// Columns the draft itself gets inside the composer band.
+///
+/// The band is full-bleed, so the draft only owns what the two content gutters and the
+/// prompt glyph leave over. Both the rows the band reserves (`TuiApp::composer_height`)
+/// and the width the frame paints with (`draw_input`) come from here, because a wrap
+/// measured against one width and painted against another reserves the wrong height.
+pub(crate) fn composer_text_width(band_width: u16) -> u16 {
+    band_width
+        .saturating_sub(CONTENT_GUTTER_COLS.saturating_mul(2))
+        .saturating_sub(UnicodeWidthStr::width(INPUT_PROMPT) as u16)
+        .max(1)
+}
 
 pub(crate) fn draw_activity(frame: &mut Frame, area: Rect, app: &TuiApp) {
     if area.height == 0 || area.width == 0 {
@@ -109,10 +121,15 @@ pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh:
     );
 
     let prompt_width = UnicodeWidthStr::width(INPUT_PROMPT) as u16;
+    // The same width `composer_height` reserved rows for, capped by what the inset band
+    // can hold on a frame too narrow for the two gutters.
+    let text_width = composer_text_width(band.width)
+        .min(input_area.width.saturating_sub(prompt_width))
+        .max(1);
     let text_area = Rect {
         x: input_area.x.saturating_add(prompt_width),
         y: input_area.y,
-        width: input_area.width.saturating_sub(prompt_width),
+        width: text_width,
         height: input_area.height,
     };
     app.set_input_viewport(text_area.width.max(1));
@@ -155,10 +172,14 @@ pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh:
             Text::from(lines)
         };
 
+        // `view.lines` already IS the wrap: every row is a byte range the composer itself
+        // measured against `text_width`, tabs projected, and the band reserved exactly
+        // these rows. A second wrap here would re-measure rows the composer has settled
+        // and can only disagree with the height and the caret. Paint the composer's rows
+        // as they are; a row wider than the band (only reachable on a one-column frame
+        // holding a wide glyph) is truncated, never re-wrapped.
         frame.render_widget(
-            Paragraph::new(body)
-                .wrap(Wrap { trim: false })
-                .style(theme::composer_surface()),
+            Paragraph::new(body).style(theme::composer_surface()),
             text_area,
         );
     }

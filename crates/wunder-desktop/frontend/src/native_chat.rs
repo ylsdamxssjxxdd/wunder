@@ -7069,10 +7069,10 @@ mod turn_tests {
             !group.visible && group.group_open && group.group_idx == 0,
             "ownership batches have no second visible fold"
         );
-        assert_eq!(rows[3].tool_name, "已思考");
+        assert_eq!(rows[3].tool_name, "思考");
         assert_eq!(rows[3].status_kind, crate::timeline::STATUS_DONE);
         assert!(rows[3].detail.contains("Fixture thinking"));
-        assert_eq!(rows[4].tool_name, "读取文件");
+        assert_eq!(rows[4].tool_name, "读取");
         assert_eq!(rows[4].target, "example.txt");
         assert_eq!(rows[4].status_kind, crate::timeline::STATUS_DONE);
         assert_eq!(rows[4].payload, 4);
@@ -7234,7 +7234,7 @@ mod turn_tests {
             .iter()
             .find(|row| row.kind == crate::timeline::KIND_TOOL)
             .expect("the compaction row");
-        assert_eq!(row.tool_name, "上下文压缩");
+        assert_eq!(row.tool_name, "压缩");
         assert_eq!(row.model_round, 1);
         assert_eq!(
             (row.tokens.as_str(), row.duration.as_str()),

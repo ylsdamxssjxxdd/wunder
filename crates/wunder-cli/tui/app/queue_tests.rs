@@ -172,3 +172,67 @@ fn a_preview_stays_on_one_short_line() {
     assert!(long.ends_with('…'), "a long preview is clipped: {long}");
     assert_eq!(long.chars().count(), 49);
 }
+
+/// An interrupt means "hold on": the follow-ups typed during the stopped round come back
+/// down into the composer (codex's `on_interrupted_turn`), and nothing is sent on the
+/// strength of the stream closing.
+#[tokio::test]
+async fn an_interrupted_turn_hands_the_queue_back_to_the_composer() {
+    let (_root, mut app) = queue_fixture("queue_interrupt").await;
+    mark_running(&mut app);
+    app.submit_line("first follow-up".to_string())
+        .await
+        .expect("submit");
+    app.submit_line("second follow-up".to_string())
+        .await
+        .expect("submit");
+    app.input = "draft in progress".to_string();
+    app.input_cursor = app.input.len();
+
+    app.turn_was_interrupted = true;
+    let session_id = app.session_id.clone();
+    app.handle_stream_message(StreamMessage::Done { session_id });
+
+    assert!(
+        app.queued_prompts.is_empty(),
+        "the queue is drained into the draft, not kept for autosend"
+    );
+    assert_eq!(
+        app.input, "first follow-up\nsecond follow-up\ndraft in progress",
+        "queued order first, the draft last, joined by newlines"
+    );
+    assert_eq!(app.input_cursor, app.input.len(), "caret waits at the end");
+    assert!(
+        last_log_text(&app).contains("went back into the composer"),
+        "the restore is visible: {}",
+        last_log_text(&app)
+    );
+    assert!(
+        !app.logs
+            .iter()
+            .any(|entry| matches!(entry.kind, LogKind::User)),
+        "nothing was sent on the interrupted round"
+    );
+}
+
+/// The queue still advances on its own when the round ended by itself, so the interrupt
+/// handling above only applies to a turn the user actually stopped.
+#[tokio::test]
+async fn a_turn_that_ended_on_its_own_keeps_the_queue_for_autosend() {
+    let (_root, mut app) = queue_fixture("queue_autosend").await;
+    mark_running(&mut app);
+    app.submit_line("sends on its own".to_string())
+        .await
+        .expect("submit");
+
+    app.turn_was_interrupted = false;
+    let session_id = app.session_id.clone();
+    app.handle_stream_message(StreamMessage::Done { session_id });
+
+    assert_eq!(
+        app.queued_prompts.len(),
+        1,
+        "a natural end leaves the follow-up queued for the idle tick"
+    );
+    assert!(app.input.is_empty(), "the draft stays untouched");
+}

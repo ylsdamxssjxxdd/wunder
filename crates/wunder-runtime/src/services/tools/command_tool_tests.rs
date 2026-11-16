@@ -565,6 +565,49 @@ async fn sandbox_background_output_streams_independently_and_polls_incrementally
     .unwrap();
     assert_eq!(next["data"]["stdout"], "");
     assert!(broker.snapshot(&id).unwrap().stdout_tail.contains("first"));
+
+    let short_command = if cfg!(windows) {
+        "ping 127.0.0.1 -n 30 > NUL"
+    } else {
+        "printf 'fixture\\n'; sleep 5"
+    };
+    let short_launch = http
+        .post(format!(
+            "http://{address}/sandboxes/command-sessions/launch"
+        ))
+        .json(&json!({
+            "user_id": "user", "session_id": "thread", "workspace_root": "/",
+            "container_root": "/", "allow_commands": ["*"],
+            "args": {"content": short_command, "yield_time_ms": 50}
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    let short_id = short_launch["data"]["command_session_id"].as_str().unwrap();
+    let began = std::time::Instant::now();
+    let (short, _) = await_sandbox_command_exit(&context, short_id, 0.1, None)
+        .await
+        .unwrap();
+    assert_eq!(short["status"], "running", "{short}");
+    assert!(began.elapsed() < Duration::from_secs(2), "{short}");
+    let interrupted = command_session_control(
+        &context,
+        &json!({"command_session_id": short_id, "chars": "\u{3}", "yield_time_ms": 1000}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(interrupted["ok"], true, "{interrupted}");
+    assert_eq!(interrupted["data"]["status"], "exited", "{interrupted}");
+    assert_eq!(interrupted["data"]["interrupted"], true, "{interrupted}");
+    assert!(interrupted["data"]
+        .as_object()
+        .unwrap()
+        .contains_key("exit_code"));
+    assert!(interrupted["data"]["exit_code"].is_null(), "{interrupted}");
+
     let (foreground, _after_seq) = await_sandbox_command_exit(&context, &id, 10.0, None)
         .await
         .unwrap();

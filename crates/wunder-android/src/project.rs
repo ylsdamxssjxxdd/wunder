@@ -659,7 +659,13 @@ fn action_label(action: &str) -> &'static str {
 pub(crate) fn is_command_tool(tool: &str) -> bool {
     matches!(
         tool.trim(),
-        "execute_command" | "exec_command" | "run_command" | "shell" | "运行命令" | "执行命令"
+        "execute_command"
+            | "exec_command"
+            | "run_command"
+            | "shell"
+            | "运行命令"
+            | "执行命令"
+            | "执行"
     )
 }
 
@@ -671,28 +677,43 @@ pub(crate) fn command_open(tool: &str, status: i32) -> bool {
 /// Align a raw tool id with 桌面版's Chinese row labels.
 pub(crate) fn tool_label(tool: &str) -> String {
     if is_command_tool(tool) {
-        return "执行命令".into();
+        return "执行".into();
     }
+    // Two characters per name, the same table the desktop and the CLI read: the
+    // row already carries an icon and a status mark, so a four-character name
+    // only pushed the target out of the first line.
     let mapped = match tool.trim() {
-        "read_file" | "read files" => "读取文件",
-        "write_file" => "写入文件",
-        "edit_file" | "edit_file2" | "text_editor" => "编辑文件",
-        "apply_patch" => "应用补丁",
-        "list_files" | "list_file" => "列出文件",
-        "glob" | "glob_files" | "文件名匹配" => "文件名匹配",
-        "search_content" | "search_files" => "搜索内容",
-        "web_search" | "web_search_tool" | "web search" | "websearch" | "网页搜索" => {
-            "网页搜索"
-        }
-        "web_fetch" | "web_fetch_tool" | "web fetch" | "webfetch" | "网页抓取" => "网页抓取",
-        "command_session" | "write_stdin" | "write_command_stdin" => "命令交互",
-        "question_panel" | "ask_panel" => "问询面板",
-        "update_plan" | "plan_update" => "计划面板",
-        "read_image" | "view_image" => "读图",
-        "skill_call" | "skill_get" => "技能调用",
-        "schedule_task" => "定时任务",
-        "context_compaction" | "compact" => "上下文压缩",
         "" => "工具",
+        "读取文件" | "read_file" | "read files" => "读取",
+        "写入文件" | "write_file" => "写入",
+        "文本编辑" | "编辑文件" | "apply_patch" | "应用补丁" | "edit_file" | "edit_file2"
+        | "text_editor" | "text_edit" | "str_replace_editor" | "str_replace_based_edit_tool" => {
+            "编辑"
+        }
+        "列出文件" | "list_files" | "list_file" => "列出",
+        "文件名匹配" | "glob" | "glob_files" => "匹配",
+        "搜索内容" | "search_content" | "search_files" => "搜索",
+        "网页搜索" | "web_search" | "web_search_tool" | "web search" | "websearch" => "联网",
+        "网页抓取" | "web_fetch" | "web_fetch_tool" | "web fetch" | "webfetch" => "抓取",
+        "命令会话" | "命令交互" | "command_session" | "write_stdin" | "write_command_stdin" => {
+            "续命令"
+        }
+        "问询面板" | "question_panel" | "ask_panel" => "问询",
+        "计划面板" | "update_plan" | "plan_update" => "计划",
+        "读图工具" | "读图" | "read_image" | "view_image" => "看图",
+        "技能调用" | "skill_call" | "skill_get" => "技能",
+        "定时任务" | "schedule_task" => "定时",
+        "上下文压缩" | "context_compaction" | "compact" => "压缩",
+        "子智能体控制" | "subagent_control" => "子代理",
+        "会话线程控制" | "线程控制" | "thread_control" | "session_thread" => "线程",
+        "记忆管理" | "memory_manager" => "记忆",
+        "浏览器" | "browser" => "浏览",
+        "桌面控制" | "desktop_control" | "desktop" => "桌面",
+        "goal" => "目标",
+        "语音生成" | "generate_speech" => "语音",
+        "声转文" | "transcribe_speech" => "转写",
+        "图像生成" | "绘图生成" | "generate_image" => "图像",
+        "视频生成" | "generate_video" => "视频",
         other => other,
     };
     mapped.chars().take(64).collect()
@@ -700,11 +721,7 @@ pub(crate) fn tool_label(tool: &str) -> String {
 
 pub(crate) fn tool_label_for_entry(entry: &NativeWorkflowEntry) -> String {
     if is_command_tool(&entry.title) {
-        return if entry.state == "running" {
-            "正在执行".into()
-        } else {
-            "执行".into()
-        };
+        return "执行".into();
     }
     match entry.title.trim() {
         "command_session" | "write_stdin" | "write_command_stdin" | "命令会话" | "命令交互" => {
@@ -1676,7 +1693,7 @@ mod tests {
     #[test]
     fn tool_rows_keep_the_desktop_detail_projection() {
         let child = tool_child("turn", &entry());
-        assert_eq!(child.tool_name, "读取文件");
+        assert_eq!(child.tool_name, "读取");
         assert_eq!(child.tool_icon, "file-lines");
         assert_eq!(child.target, "src/main.rs");
         // The chip already prints the file name; the row must not repeat it.
@@ -1889,7 +1906,7 @@ mod tests {
             .find(|row| row.kind == KIND_PROCESS)
             .expect("process bar");
         // The tool name is its own verb phrase, so no 正在执行工具… wrapper.
-        assert_eq!(bar.summary, "执行命令");
+        assert_eq!(bar.summary, "执行");
         // 执行命令的输出跑起来就先铺开，读者不用先点一下。
         assert!(
             bar.process_children[0].open,

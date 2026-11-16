@@ -238,8 +238,26 @@ where
     }
 
     let split_at = capture.split_at.min(capture.bytes.len());
-    let head = decode(&capture.bytes[..split_at]);
-    let tail = decode(&capture.bytes[split_at..]);
+    let mut head_end = split_at;
+    let mut tail_start = split_at;
+    #[cfg(not(windows))]
+    {
+        // The capture budget is byte-based. Move both edges away from UTF-8
+        // continuation bytes so decoding never invents replacement characters.
+        while head_end > 0
+            && head_end < capture.bytes.len()
+            && capture.bytes[head_end] & 0b1100_0000 == 0b1000_0000
+        {
+            head_end -= 1;
+        }
+        while tail_start < capture.bytes.len()
+            && capture.bytes[tail_start] & 0b1100_0000 == 0b1000_0000
+        {
+            tail_start += 1;
+        }
+    }
+    let head = decode(&capture.bytes[..head_end]);
+    let tail = decode(&capture.bytes[tail_start..]);
     let marker = format!(
         "...(truncated command output, omitted {} bytes)...",
         capture.meta.omitted_bytes
@@ -312,6 +330,23 @@ mod tests {
         assert!(rendered.starts_with("abc"));
         assert!(rendered.contains("truncated command output"));
         assert!(rendered.ends_with("jkl"));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn truncated_utf8_output_does_not_decode_partial_glyphs() {
+        let mut collector = CommandOutputCollector::new(CommandOutputPolicy {
+            head_bytes: 4,
+            tail_bytes: 5,
+        });
+        collector.push_chunk("甲乙丙丁戊己".as_bytes());
+        let capture = collector.finish();
+        assert_eq!(capture.split_at, 4);
+        let rendered = render_command_output(&capture, decode_utf8_lossy);
+
+        assert!(!rendered.contains('\u{fffd}'), "{rendered}");
+        assert!(rendered.starts_with('甲'), "{rendered}");
+        assert!(rendered.ends_with('己'), "{rendered}");
     }
 
     #[test]

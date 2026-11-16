@@ -699,7 +699,7 @@ fn demo_timeline() -> Vec<TimelineRow> {
     fold(&mut group);
     rows.push(group);
     let mut reason = fixture_row(crate::timeline::KIND_REASON, rows.len(), "");
-    reason.tool_name = "已思考".into();
+    reason.tool_name = "思考".into();
     reason.summary = "先读取目录清单，确认文件类型，再检查文本内容是否可用。".into();
     reason.detail = reason.summary.clone();
     reason.group_idx = 0;

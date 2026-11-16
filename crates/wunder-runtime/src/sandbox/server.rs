@@ -700,12 +700,16 @@ async fn poll_command_session_inner(
         return json!({"ok": false, "error": "unknown command session"});
     };
     if write_stdin && !request.input.is_empty() {
-        let mut stdin = session.stdin.lock().await;
-        let Some(stdin) = stdin.as_mut() else {
-            return json!({"ok": false, "error": "command stdin is unavailable"});
-        };
-        if let Err(error) = stdin.write_all(request.input.as_bytes()).await {
-            return json!({"ok": false, "error": format!("failed to write command stdin: {error}")});
+        if request.input == "\x03" {
+            session.cancel.cancel();
+        } else {
+            let mut stdin = session.stdin.lock().await;
+            let Some(stdin) = stdin.as_mut() else {
+                return json!({"ok": false, "error": "command stdin is unavailable"});
+            };
+            if let Err(error) = stdin.write_all(request.input.as_bytes()).await {
+                return json!({"ok": false, "error": format!("failed to write command stdin: {error}")});
+            }
         }
     }
     // Register the waiter before the snapshot so a concurrently appended

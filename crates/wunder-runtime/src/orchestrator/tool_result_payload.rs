@@ -2211,6 +2211,13 @@ fn project_command_session_success(data: &Value) -> Option<Value> {
             "interrupted",
         ],
     );
+    if map.get("status").and_then(Value::as_str) != Some("running") {
+        if let Some(exit_code) = map.get("exit_code") {
+            // null is meaningful for signal termination: the session has ended,
+            // but the operating system supplied no normal exit code.
+            projected.insert("exit_code".to_string(), exit_code.clone());
+        }
+    }
     for key in ["stdout", "stderr", "pty", "error"] {
         if let Some(value) = map
             .get(key)
@@ -2585,6 +2592,24 @@ fn command_output_preview(text: &str) -> (String, String) {
         // Short output: the head already covers it, do not duplicate it.
         String::new()
     };
+    if tail.is_empty() {
+        if let Some(line) = all
+            .last()
+            .filter(|line| line.chars().count() > COMMAND_PREVIEW_LINE_CHARS)
+        {
+            // One long line (or a captured head+marker+tail) still has useful
+            // tail context. Return its last characters instead of an empty tail.
+            let tail = line
+                .chars()
+                .rev()
+                .take(COMMAND_PREVIEW_LINE_CHARS)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<String>();
+            return (head, tail);
+        }
+    }
     (head, tail)
 }
 

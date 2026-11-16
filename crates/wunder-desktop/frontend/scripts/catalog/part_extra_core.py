@@ -27,8 +27,8 @@ ENTRIES = [
     # message.slint
     ("msg_code", "代码", "Code"),
     ("msg_copied", "已复制", "Copied"),
-    ("msg_thought", "已思考", "Thought"),
-    ("msg_thinking", "思考中", "Thinking"),
+    ("msg_thought", "思考", "Thought"),
+    ("msg_thinking", "思考", "Thinking"),
     ("msg_not_loaded", "（暂未加载）", "(not loaded yet)"),
     # runtime_status.slint
     ("rs_queued", "任务已排队", "Task queued"),

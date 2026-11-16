@@ -387,8 +387,8 @@ export global I18n {
     out property <string> tl_user_turn: zh ? "用户轮次 " : "User turn ";
     out property <string> msg_code: zh ? "代码" : "Code";
     out property <string> msg_copied: zh ? "已复制" : "Copied";
-    out property <string> msg_thought: zh ? "已思考" : "Thought";
-    out property <string> msg_thinking: zh ? "思考中" : "Thinking";
+    out property <string> msg_thought: zh ? "思考" : "Thought";
+    out property <string> msg_thinking: zh ? "思考" : "Thinking";
     out property <string> msg_not_loaded: zh ? "（暂未加载）" : "(not loaded yet)";
     out property <string> rs_queued: zh ? "任务已排队" : "Task queued";
     out property <string> rs_failed: zh ? "执行失败" : "Execution failed";
@@ -793,8 +793,8 @@ export global I18n {
     out property <string> wm_restore: zh ? "还原" : "Restore";
     public pure function wm_status_running(count: string) -> string { return zh ? "运行中 " + count + " 线程" : "" + count + " running"; }
     public pure function wm_status_inquiry(count: string) -> string { return zh ? "问询 " + count + "" : "Inquiry " + count + ""; }
-    out property <string> wm_status_idle: zh ? "空闲" : "Idle";
     out property <string> wm_status_starting: zh ? "正在启动" : "Starting";
+    out property <string> wm_status_idle: zh ? "空闲" : "Idle";
     out property <string> err_cannot: zh ? "无法{0}：{1}" : "Unable to {0}: {1}";
     out property <string> err_failed: zh ? "{0}失败：{1}" : "{0} failed: {1}";
     out property <string> st_error_prefix: zh ? "错误：{0}" : "Error: {0}";
@@ -1302,8 +1302,8 @@ export global I18n {
     out property <string> tl_stat_context: zh ? "上下文占用" : "Context occupancy";
     out property <string> tl_stat_quota: zh ? "上下文消耗" : "Consumed tokens";
     out property <string> tl_stat_tools: zh ? "工具调用次数" : "Tool calls";
-    out property <string> tl_thought_done: zh ? "已思考" : "Thought";
-    out property <string> tl_thought_running: zh ? "正在思考…" : "Thinking…";
+    out property <string> tl_thought_done: zh ? "思考" : "Thought";
+    out property <string> tl_thought_running: zh ? "思考" : "Thinking…";
     out property <string> tl_thought_failed: zh ? "思考中断" : "Thinking interrupted";
     public pure function tl_tool_calls(count: string) -> string { return zh ? "执行工具 " + count + " 次" : "Ran " + count + " tools"; }
     out property <string> tl_entry_output: zh ? "输出" : "Output";

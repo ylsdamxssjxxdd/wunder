@@ -1728,6 +1728,8 @@ impl TuiApp {
         }
         let saved =
             crate::rename_session_title(&self.runtime, self.session_id.as_str(), title).await?;
+        // The store accepted the new name; the OS window wears it from here on.
+        self.session_title = saved.clone();
         if self.is_zh_language() {
             self.push_log(LogKind::Info, format!("会话已重命名: {saved}"));
         } else {
@@ -2254,6 +2256,9 @@ impl TuiApp {
         }
 
         self.session_id = next_session_id;
+        // A thread this process just opened has no record yet: it carries the
+        // placeholder name until its first message titles it.
+        self.session_title = crate::CLI_DEFAULT_SESSION_TITLE.to_string();
         self.release_thread_lease_async(&previous_session_id, previous_lease_token)
             .await;
         // A thread this process just created is writable by definition.

@@ -249,7 +249,14 @@ fn render_frame<B: ratatui::backend::Backend + io::Write>(
     } else {
         Ok(())
     };
-    result.and(finish)
+    let outcome = result.and(finish);
+    if outcome.is_ok() {
+        // The OS window is named after the thread on screen. It is synced after
+        // the frame closes so the escape cannot land inside the synchronized
+        // block, and the module skips both the repeat and a redirected stdout.
+        crate::terminal_title::set(app.window_title().as_str());
+    }
+    outcome
 }
 
 /// Whether this console actually parses escape sequences. Windows 7's conhost

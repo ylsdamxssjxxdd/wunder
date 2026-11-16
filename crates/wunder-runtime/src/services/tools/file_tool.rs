@@ -1443,11 +1443,11 @@ fn parse_saved_result_read_args(args: &Value) -> Result<Option<SavedResultReadAr
     }))
 }
 
-/// Handle reads page through the serialized JSON payload, so a caller asking for
-/// one page gets JSON-escaped text with the envelope's own metadata in the way.
-/// When the whole payload is small and carries plain text, hand that text back
-/// directly; larger payloads keep the byte-paged raw view.
-const MAX_TEXT_VIEW_PAYLOAD_BYTES: u64 = 128 * 1024;
+/// Saved results retain at most 8 MiB. An explicit read may parse that bounded
+/// document once so callers see extracted text instead of JSON escapes and
+/// envelope metadata; responses remain limited to 16 KiB per page. Payloads
+/// without a text projection still fall back to raw byte paging.
+const MAX_TEXT_VIEW_PAYLOAD_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_TEXT_VIEW_BYTES: usize = 16 * 1024;
 
 fn saved_result_text_view(
@@ -2714,6 +2714,34 @@ mod saved_result_read_tests {
             saved_result_text(&parsed).as_deref(),
             Some("out text\n\nstderr: boom\n")
         );
+    }
+
+    #[test]
+    fn large_saved_results_use_the_plain_text_view() {
+        let root = tempfile::tempdir().unwrap();
+        let stdout = "中文日志\n".repeat(40_000);
+        assert!(stdout.len() > 128 * 1024);
+        let stored = tool_result_store::save(
+            root.path(),
+            "user-a",
+            "thread-a",
+            "workspace-a",
+            &json!({"ok": true, "data": {"results": [{"stdout": stdout, "stderr": ""}]}}),
+        )
+        .unwrap();
+        let view = saved_result_text_view(
+            root.path(),
+            "user-a",
+            "thread-a",
+            "workspace-a",
+            &stored.handle,
+            0,
+            100,
+        )
+        .expect("large result should have a text projection");
+        assert!(view["text"].as_str().unwrap().starts_with("中文日志\n"));
+        assert!(view["total_text_bytes"].as_u64().unwrap() > 128 * 1024);
+        assert!(view.get("content").is_none());
     }
 
     #[test]

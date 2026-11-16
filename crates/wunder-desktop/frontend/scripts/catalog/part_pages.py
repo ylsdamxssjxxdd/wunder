@@ -169,5 +169,6 @@ ENTRIES = [
     ("wm_restore", "还原", "Restore"),
     ("wm_status_running", "运行中 {} 线程", "{} running", ["count"]),
     ("wm_status_inquiry", "问询 {}", "Inquiry {}", ["count"]),
+    ("wm_status_starting", "正在启动", "Starting"),
     ("wm_status_idle", "空闲", "Idle"),
 ]

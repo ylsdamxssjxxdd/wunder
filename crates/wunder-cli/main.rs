@@ -15,6 +15,7 @@ mod render;
 mod runtime;
 mod session_header;
 mod slash_command;
+mod terminal_title;
 mod tool_display;
 mod tool_presentation;
 mod trajectory;
@@ -64,7 +65,9 @@ const CLI_MIN_MAX_ROUNDS: u32 = 8;
 /// Same ceiling 桌面版 puts on the shared model list.
 const CLI_MODEL_ENTRY_CAP: usize = 200;
 const CLI_CONTEXT_PROBE_TIMEOUT_S: u64 = 15;
-const CLI_DEFAULT_SESSION_TITLE: &str = "\u{65B0}\u{4F1A}\u{8BDD}";
+/// The placeholder a fresh thread is stored with; the first user message
+/// replaces it, and the window title reads it as "no name yet".
+pub(crate) const CLI_DEFAULT_SESSION_TITLE: &str = "\u{65B0}\u{4F1A}\u{8BDD}";
 const CLI_DEFAULT_SESSION_STATUS: &str = "active";
 /// One agent turn materialises a deep future chain (orchestrator, tools,
 /// durable writers). Debug builds keep every temporary, so the default process
@@ -489,6 +492,29 @@ pub(crate) async fn session_exists(runtime: &CliRuntime, session_id: &str) -> Re
     ensure_cli_session_record(runtime, &target_session, None).await
 }
 
+/// The thread's display name exactly as the store holds it. The first user
+/// message, `/rename` and `/compact` all write this one field, so every surface
+/// (window title, thread center, desktop) reads the same name instead of
+/// re-deriving one from the transcript.
+pub(crate) async fn session_title_of(
+    runtime: &CliRuntime,
+    session_id: &str,
+) -> Result<Option<String>> {
+    let target_session = session_id.trim().to_string();
+    if target_session.is_empty() {
+        return Ok(None);
+    }
+    let user_store = runtime.state.user_store.clone();
+    let user_id = runtime.user_id.clone();
+    tokio::task::spawn_blocking(move || {
+        user_store
+            .get_chat_session(&user_id, &target_session)
+            .map(|record| record.map(|record| record.title))
+    })
+    .await
+    .map_err(|err| anyhow!("session title query cancelled: {err}"))?
+}
+
 pub(crate) async fn load_session_history_entries(
     runtime: &CliRuntime,
     session_id: &str,
@@ -572,14 +598,14 @@ async fn ensure_cli_session_record(
     .map_err(|err| anyhow!("session metadata task cancelled: {err}"))?
 }
 
-fn should_auto_title(title: &str) -> bool {
+pub(crate) fn should_auto_title(title: &str) -> bool {
     let cleaned = title.trim();
     cleaned.is_empty()
         || cleaned == "\u{65B0}\u{4F1A}\u{8BDD}"
         || cleaned == "\u{672A}\u{547D}\u{540D}\u{4F1A}\u{8BDD}"
 }
 
-fn build_session_title(content: &str) -> Option<String> {
+pub(crate) fn build_session_title(content: &str) -> Option<String> {
     let cleaned = content.trim().replace('\n', " ");
     if cleaned.is_empty() {
         return None;

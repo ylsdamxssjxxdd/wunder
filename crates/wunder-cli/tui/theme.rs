@@ -68,10 +68,18 @@ pub(crate) fn accent_text() -> Style {
     degrade(Style::default().fg(accent_color()).add_modifier(Modifier::BOLD))
 }
 
-/// A tool or patch card's own name: the row's weight carries the identity, and
-/// the state lives in the leading bullet. Painting the whole title green made
-/// every finished card glow, which read as an alert rather than a result.
+/// A tool card's own name — the two-character verb in front of the target.
+/// Blue is the product's tool tint (the same blue that marks a running card's
+/// bullet), so a reader finds "读取 / 编辑 / 执行" by hue alone; the state still
+/// lives in the leading bullet, and the target next to it stays plain, which is
+/// what kept the whole title from reading as one loud alert.
 pub(crate) fn tool_title() -> Style {
+    degrade(Style::default().fg(accent_color()).add_modifier(Modifier::BOLD))
+}
+
+/// What the tool acted on: a path, a command, a query. Same weight as the name, no
+/// hue — the name carries the identity, the target carries the data.
+pub(crate) fn tool_subject() -> Style {
     degrade(Style::default().add_modifier(Modifier::BOLD))
 }
 

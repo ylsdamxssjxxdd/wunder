@@ -307,6 +307,46 @@ fn large_command_output_is_a_summary_with_saved_result_recovery() {
 }
 
 #[test]
+fn single_long_command_line_keeps_a_distinct_tail_preview() {
+    let stdout = format!(
+        "{}{}{}",
+        "早".repeat(5000),
+        "中".repeat(5000),
+        "尾".repeat(5000)
+    );
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "action": "execute_command",
+        "state": "completed",
+        "data": {"results": [{"command": "generate", "returncode": 0, "stdout": stdout, "stderr": ""}]}
+    }));
+    let observation = result.to_compact_payload("execute_command");
+    let summary = &observation["data"]["stdout_summary"];
+    assert!(summary["head"].as_str().unwrap().starts_with('早'));
+    let tail = summary["tail"].as_str().unwrap();
+    assert!(!tail.is_empty());
+    assert!(tail.ends_with('尾'));
+    assert!(!tail.contains('早'));
+}
+
+#[test]
+fn exited_command_session_preserves_an_explicit_null_exit_code() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "action": "command_session",
+        "state": "completed",
+        "data": {"status": "exited", "exit_code": null, "interrupted": true, "error": null}
+    }));
+    let observation = result.to_compact_payload("command_session");
+    assert!(observation["data"]
+        .as_object()
+        .unwrap()
+        .contains_key("exit_code"));
+    assert!(observation["data"]["exit_code"].is_null());
+    assert_eq!(observation["data"]["interrupted"], true);
+}
+
+#[test]
 fn ordinary_command_output_below_the_budget_stays_inline() {
     // The inline budget used to be 2 KiB, which folded ordinary `rg`/`git`
     // output and forced a handle round-trip. Keep daily-sized output verbatim.

@@ -55,7 +55,6 @@ const DEFAULT_COMMAND_TIMEOUT_S: f64 = 120.0;
 const MAX_COMMAND_TIMEOUT_S: f64 = 3600.0;
 /// 可交互进程的最长保留时间，避免挂死进程永久占用会话槽位。
 const INTERACTIVE_COMMAND_MAX_S: f64 = 3600.0;
-const SANDBOX_BLOCKING_WAIT_MARGIN_S: f64 = 15.0;
 
 /// Detect commands that only idle (e.g. `sleep 5`) without doing real work.
 fn is_bare_sleep_command(command: &str) -> bool {
@@ -1475,6 +1474,22 @@ pub(crate) async fn command_session_control(
         if let Some(broker) = broker {
             broker.terminate_task(context.user_id, context.session_id, session_id);
         }
+        if sandbox_backed
+            && !crate::sandbox::cancel_command_session(
+                context.config,
+                context.user_id,
+                context.session_id,
+                session_id,
+            )
+            .await
+        {
+            return Ok(build_failed_tool_result(
+                &i18n::t("tool.command_session.sandbox_unavailable"),
+                json!({ "command_session_id": session_id }),
+                ToolErrorMeta::new("TOOL_COMMAND_SESSION_UNAVAILABLE", None, true, Some(200)),
+                false,
+            ));
+        }
         stdin_note = Some(i18n::t("tool.command_session.interrupted"));
     }
     if sandbox_backed && (input.writes_stdin() || !managed) {
@@ -1529,9 +1544,21 @@ pub(crate) async fn command_session_control(
             return Ok(result);
         }
         if !managed {
-            return Ok(build_command_session_result(compact_sandbox_poll_result(
+            let mut data = compact_sandbox_poll_result(
                 result.get("data").cloned().unwrap_or_else(|| json!({})),
-            )));
+            );
+            if matches!(input, CommandSessionInput::Interrupt)
+                && data
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .is_some_and(|error| error.starts_with("command cancelled"))
+            {
+                if let Value::Object(ref mut map) = data {
+                    map.insert("error".to_string(), Value::Null);
+                    map.insert("interrupted".to_string(), Value::Bool(true));
+                }
+            }
+            return Ok(build_command_session_result(data));
         }
     }
     let Some(broker) = broker else {
@@ -1832,10 +1859,10 @@ async fn await_sandbox_command_exit(
     timeout_s: f64,
     tracker: Option<&CommandSessionTracker>,
 ) -> Option<(Value, u64)> {
-    let deadline = (timeout_s > 0.0).then(|| {
-        std::time::Instant::now()
-            + Duration::from_secs_f64(timeout_s + SANDBOX_BLOCKING_WAIT_MARGIN_S)
-    });
+    // HTTP 客户端已单独保留网络余量；这里只计用户请求的等待窗口，
+    // 否则任何较短的 yield_time_ms 都会被隐性放大到约 15 秒。
+    let deadline =
+        (timeout_s > 0.0).then(|| std::time::Instant::now() + Duration::from_secs_f64(timeout_s));
     let mut after_seq = 0u64;
     let mut stdout = CommandOutputCollector::new(STDOUT_CAPTURE_POLICY);
     let mut stderr = CommandOutputCollector::new(STDERR_CAPTURE_POLICY);

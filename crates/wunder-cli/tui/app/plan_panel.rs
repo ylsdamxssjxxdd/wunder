@@ -190,7 +190,7 @@ impl PlanLogEntry {
 
     fn header_text(&self, with_progress: bool) -> String {
         let title = if self.is_zh {
-            "已更新计划"
+            "计划"
         } else {
             "Updated Plan"
         };
@@ -213,13 +213,17 @@ impl PlanLogEntry {
     }
 
     fn header_line(&self) -> Line<'static> {
-        Line::from(vec![
+        let name = if self.is_zh { "计划" } else { "Updated Plan" };
+        let mut spans = vec![
             Span::styled("• ", theme::secondary_text()),
-            Span::styled(
-                self.header_text(true),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-        ])
+            Span::styled(name, theme::tool_title()),
+        ];
+        if let Some(rest) = self.header_text(true).strip_prefix(name) {
+            if !rest.is_empty() {
+                spans.push(Span::styled(rest.to_string(), theme::tool_subject()));
+            }
+        }
+        Line::from(spans)
     }
 
     fn explanation_line(&self, explanation: &str, width: u16) -> Line<'static> {

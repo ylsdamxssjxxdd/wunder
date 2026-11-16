@@ -1,6 +1,6 @@
 pub(crate) mod centered_picker;
 mod command_center;
-mod composer;
+pub(crate) mod composer;
 pub(crate) mod layout;
 mod modals;
 mod popup;

@@ -7057,3 +7057,71 @@ async fn a_drag_off_the_top_edge_copies_rows_from_screens_above() {
         "the copy reaches past one screen, got {marked}: {copied}"
     );
 }
+
+/// A draft that ends exactly on the composer's last column still has to be visible.
+///
+/// Regression: the band reserved rows from `lines.len()` alone, while `input_view` draws a
+/// caret whose column equals the width one row lower. At the wrap boundary that extra row
+/// did not exist, so the band scrolled away the very row the caret had just left and the
+/// draft looked empty until the next glyph widened the wrap.
+#[tokio::test]
+async fn the_composer_keeps_every_wrapped_row_at_the_wrap_boundary() {
+    let root = TempRoot::new("composer_wrap_boundary");
+    let mut app = fixture_app(root.path()).await;
+    // 100 columns: two content gutters plus the prompt glyph leave 94 for the draft, which
+    // is 47 full-width glyphs exactly.
+    for count in [45usize, 46, 47, 48, 49, 95] {
+        app.input = "一".repeat(count);
+        app.input_cursor = app.input.len();
+        app.forget_input_gesture();
+        let rows = draw_rows(&mut app, 100, 32);
+        let painted: usize = rows
+            .iter()
+            .map(|row| row.chars().filter(|ch| *ch == '一').count())
+            .sum();
+        assert_eq!(
+            painted, count,
+            "every glyph of a {count}-glyph draft stays on screen: {rows:#?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_window_is_named_after_the_thread_on_screen() {
+    let root = TempRoot::new("window_title");
+    let mut app = fixture_app(root.path()).await;
+
+    app.session_title = "配色观察".to_string();
+    assert_eq!(app.window_title(), "配色观察");
+
+    // A thread the store still calls "new session" has no name yet: the window
+    // wears the form name instead of repeating the placeholder everywhere.
+    app.session_title = crate::CLI_DEFAULT_SESSION_TITLE.to_string();
+    assert_eq!(
+        app.window_title(),
+        crate::session_header::brand_name(app.is_zh_language())
+    );
+
+    app.session_title = "   ".to_string();
+    assert_eq!(
+        app.window_title(),
+        crate::session_header::brand_name(app.is_zh_language())
+    );
+}
+
+#[tokio::test]
+async fn the_first_turn_names_the_window_but_a_rename_survives_it() {
+    let root = TempRoot::new("window_title_auto");
+    let mut app = fixture_app(root.path()).await;
+
+    app.session_title = crate::CLI_DEFAULT_SESSION_TITLE.to_string();
+    app.adopt_auto_session_title("记一下配色观察的结论顺便清理临时文件再跑一次");
+    assert_eq!(
+        app.session_title,
+        "记一下配色观察的结论顺便清理临时文件再跑..."
+    );
+
+    app.session_title = "手工命名".to_string();
+    app.adopt_auto_session_title("完全不同的第二句话");
+    assert_eq!(app.session_title, "手工命名", "a renamed thread keeps its name");
+}

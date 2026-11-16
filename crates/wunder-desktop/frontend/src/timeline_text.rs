@@ -16,27 +16,43 @@ pub const COMMAND_TOOL: &str = "执行命令";
 /// whichever name the event carried.
 pub fn tool_label(tool: &str) -> String {
     if is_command_tool(tool) {
-        return COMMAND_TOOL.into();
+        return "执行".into();
     }
+    // Two characters per name: the row already has an icon and a status bullet,
+    // and a four-character name pushed the path out of the first screen. The
+    // engine's Chinese canonical names are keys here too, because they are what
+    // most events actually carry.
     let mapped = match tool.trim() {
-        "read_file" | "read files" => "读取文件",
-        "write_file" => "写入文件",
-        "edit_file" | "edit_file2" | "text_editor" => "编辑文件",
-        "apply_patch" => "应用补丁",
-        "list_files" | "list_file" => "列出文件",
-        "glob" | "glob_files" | "文件名匹配" => "文件名匹配",
-        "search_content" | "search_files" => "搜索内容",
-        "web_search" | "web_search_tool" | "web search" | "websearch" | "网页搜索" => {
-            "网页搜索"
+        "读取文件" | "read_file" | "read files" => "读取",
+        "写入文件" | "write_file" => "写入",
+        "文本编辑" | "编辑文件" | "apply_patch" | "应用补丁" | "edit_file" | "edit_file2"
+        | "text_editor" | "text_edit" | "str_replace_editor" | "str_replace_based_edit_tool" => {
+            "编辑"
         }
-        "web_fetch" | "web_fetch_tool" | "web fetch" | "webfetch" | "网页抓取" => "网页抓取",
-        "command_session" | "write_stdin" | "write_command_stdin" => "命令交互",
-        "question_panel" | "ask_panel" => "问询面板",
-        "update_plan" | "plan_update" => "计划面板",
-        "read_image" | "view_image" => "读图",
-        "skill_call" | "skill_get" => "技能调用",
-        "schedule_task" => "定时任务",
-        "context_compaction" | "compact" => "上下文压缩",
+        "列出文件" | "list_files" | "list_file" => "列出",
+        "文件名匹配" | "glob" | "glob_files" => "匹配",
+        "搜索内容" | "search_content" | "search_files" => "搜索",
+        "网页搜索" | "web_search" | "web_search_tool" | "web search" | "websearch" => "联网",
+        "网页抓取" | "web_fetch" | "web_fetch_tool" | "web fetch" | "webfetch" => "抓取",
+        "命令会话" | "命令交互" | "command_session" | "write_stdin" | "write_command_stdin" => {
+            "续命令"
+        }
+        "问询面板" | "question_panel" | "ask_panel" => "问询",
+        "计划面板" | "update_plan" | "plan_update" => "计划",
+        "读图工具" | "读图" | "read_image" | "view_image" => "看图",
+        "技能调用" | "skill_call" | "skill_get" => "技能",
+        "定时任务" | "schedule_task" => "定时",
+        "上下文压缩" | "context_compaction" | "compact" => "压缩",
+        "子智能体控制" | "subagent_control" => "子代理",
+        "会话线程控制" | "线程控制" | "thread_control" | "session_thread" => "线程",
+        "记忆管理" | "memory_manager" => "记忆",
+        "浏览器" | "browser" => "浏览",
+        "桌面控制" | "desktop_control" | "desktop" => "桌面",
+        "goal" => "目标",
+        "语音生成" | "generate_speech" => "语音",
+        "声转文" | "transcribe_speech" => "转写",
+        "图像生成" | "绘图生成" | "generate_image" => "图像",
+        "视频生成" | "generate_video" => "视频",
         "" => "工具",
         other => other,
     };
@@ -48,17 +64,19 @@ pub fn tool_label(tool: &str) -> String {
 pub fn is_command_tool(tool: &str) -> bool {
     matches!(
         tool.trim(),
-        "execute_command" | "exec_command" | "run_command" | "shell" | "运行命令" | "执行命令"
+        "execute_command"
+            | "exec_command"
+            | "run_command"
+            | "shell"
+            | "运行命令"
+            | "执行命令"
+            | "执行"
     )
 }
 
 pub fn tool_label_for_entry(entry: &NativeWorkflowEntry) -> String {
     if is_command_tool(&entry.title) {
-        return if entry.state == "running" {
-            "正在执行".into()
-        } else {
-            "执行".into()
-        };
+        return "执行".into();
     }
     match entry.title.trim() {
         "command_session" | "write_stdin" | "write_command_stdin" | "命令会话" | "命令交互" => {
@@ -73,12 +91,12 @@ pub fn tool_label_for_entry(entry: &NativeWorkflowEntry) -> String {
 }
 
 pub fn thought_running() -> &'static str {
-    "正在思考…"
+    "思考"
 }
 
 /// The settled thinking label; the same verb the previous bubble used.
 pub fn thought_done() -> &'static str {
-    "已思考"
+    "思考"
 }
 
 pub fn thought_failed() -> &'static str {
@@ -270,6 +288,8 @@ pub fn is_patch_tool(tool: &str) -> bool {
             | "edit_file"
             | "edit_file2"
             | "文本编辑"
+            | "编辑"
+            | "编辑文件"
             | "text_edit"
             | "str_replace_editor"
             | "str_replace_based_edit_tool"
@@ -910,9 +930,9 @@ mod tests {
     fn running_activity_names_the_tool_without_a_prefix() {
         // The bar used to print 执行工具：执行命令; the tool name is its own verb
         // phrase, so the prefix only repeated it.
-        assert_eq!(tool_running("execute_command"), "执行命令");
-        assert_eq!(tool_running("执行命令"), "执行命令");
-        assert_eq!(tool_running("读取文件"), "读取文件");
+        assert_eq!(tool_running("execute_command"), "执行");
+        assert_eq!(tool_running("执行命令"), "执行");
+        assert_eq!(tool_running("读取文件"), "读取");
         assert!(!tool_running(COMMAND_TOOL).contains("执行工具"));
         // An unmapped name still reads as itself rather than an empty chip.
         assert_eq!(tool_running("fixture_tool"), "fixture_tool");
@@ -1084,7 +1104,7 @@ mod tests {
             "运行命令",
             "执行命令",
         ] {
-            assert_eq!(tool_label(alias), COMMAND_TOOL, "{alias}");
+            assert_eq!(tool_label(alias), "执行", "{alias}");
         }
     }
 
