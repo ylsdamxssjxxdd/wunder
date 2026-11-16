@@ -1001,3 +1001,29 @@ fn compact_command_result_for_model_passes_stderr_warning_through() {
     }));
     assert!(without_warning.get("warning").is_none());
 }
+
+#[test]
+fn compact_command_result_for_model_keeps_background_seq_for_after_seq_resume() {
+    // 后台首包的 seq 是模型续读游标；不带 seq 的普通结果不应凭空多出字段。
+    let running_entry = compact_command_result_for_model(&json!({
+        "command": "make -j8",
+        "command_index": 0,
+        "command_session_id": "cmd_demo",
+        "returncode": null,
+        "stdout": "compiling\n",
+        "stderr": "",
+        "running": true,
+        "seq": 7
+    }));
+    assert_eq!(running_entry["seq"], json!(7));
+    assert_eq!(running_entry["command_session_id"], json!("cmd_demo"));
+
+    let finished_entry = compact_command_result_for_model(&json!({
+        "command": "echo ok",
+        "command_index": 0,
+        "returncode": 0,
+        "stdout": "ok\n",
+        "stderr": ""
+    }));
+    assert!(finished_entry.get("seq").is_none());
+}

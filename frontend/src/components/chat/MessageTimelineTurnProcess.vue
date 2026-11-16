@@ -684,7 +684,10 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
       const entry = entryByItemId.get(String(slot.item?.item_id || ''));
       if (entry && !emittedTools.has(entry.key)) {
         emittedTools.add(entry.key);
-        rows.push({ kind: 'tool', key: `tool:${entry.key}`, entry });
+        // 行键直接就是条目身份：自动开合按条目 key 判定（见 timelineCommandFold），
+        // 这里再加前缀会让「运行中的执行命令」永远匹配不上。思考行同理用自己的
+        // `reasoning:` 身份，两类行不会撞键。
+        rows.push({ kind: 'tool', key: entry.key, entry });
       }
       continue;
     }

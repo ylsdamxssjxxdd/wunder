@@ -231,7 +231,7 @@ component ProcessEntryCard inherits Rectangle {
                     }
                 }
                 if root.entry.patch.length == 0 && !root.mobile : Rectangle {
-                    height: min(240px, detail.preferred-height + 16px);
+                    height: min(240px, detail-column.preferred-height + 16px);
                     background: Theme.panel; border-width: 1px;
                     border-color: Theme.border; border-radius: Theme.radius-sm;
                     private property <bool> follow-tail: true;
@@ -252,18 +252,22 @@ component ProcessEntryCard inherits Rectangle {
                         horizontal-scrollbar-policy: always-off;
                         vertical-scrollbar-policy: as-needed;
                         content-width: self.visible-width;
-                        // A ScrollView only infers its content size from *layout*
-                        // children. This one is a component, so without the explicit
-                        // height `content-height` collapsed to the viewport: the
-                        // scrollbar never appeared and a long output was clipped at
-                        // the 240px cap with no way to reach the rest of it. State
-                        // the height the way the transcript scroll does.
-                        content-height: max(self.visible-height, detail.preferred-height);
-                        detail := WorkflowDetail {
+                        // A ScrollView only infers its content size from
+                        // *layout* children. A bare component child left
+                        // `content-height` at the viewport, so the bar never
+                        // appeared and the rest of a long output stayed
+                        // unreachable. The wrapping text is measured by the
+                        // column once the width is known, which a direct child
+                        // never is: its preferred height came back for a width
+                        // it was not painted at.
+                        content-height: max(self.visible-height, detail-column.preferred-height);
+                        detail-column := VerticalLayout {
                             width: detail-scroll.visible-width;
-                            sections: root.entry.sections;
-                            fallback: root.entry.detail;
-                            copy(text) => { root.copy-text(text); }
+                            detail := WorkflowDetail {
+                                sections: root.entry.sections;
+                                fallback: root.entry.detail;
+                                copy(text) => { root.copy-text(text); }
+                            }
                         }
                         scrolled => {
                             parent.follow-tail = self.visible-height - self.content-height - self.content-y >= -24px;

@@ -2590,7 +2590,7 @@ fn remember_consumed_inquiry(state: &mut Shared, key: String) {
 /// execution identity.
 ///
 /// 只有答完的面板才会被取走。`explain_unanswered` 只决定「没答完时要不要出声」：
-/// 面板自带的提交键按它报一句「请先回答全部问题」，输入框发送只是把面板留在
+/// 面板自带的提交键按它报一句「请先回答任一问题」，输入框发送只是把面板留在
 /// 原处（用户直接打字就是他的回答，不必先点选）。两种情况都不会把一张没答完
 /// 的面板当成已回答取走——那会把等待回合的身份一起带进提交，运行时按「问询
 /// 已不再等待」拒掉整条消息。
@@ -8784,9 +8784,10 @@ mod tests {
         assert!(pending_inquiry(&state.durable_turns, "s", &state.consumed_inquiries).is_none());
     }
 
-    /// 面板自带的提交键仍然要求每题都答：它出声提醒，但同样不改动面板。
+    /// 面板自带的提交键在没有任何答案时出声提醒（答任一题即可提交），
+    /// 但同样不改动面板。
     #[test]
-    fn the_panel_submit_key_still_asks_for_every_answer() {
+    fn the_panel_submit_key_asks_for_an_answer() {
         let shared = Arc::new(Mutex::new(Shared::default()));
         {
             let mut state = shared.lock().unwrap();
@@ -8796,7 +8797,7 @@ mod tests {
         assert!(take_inquiry_answer(&shared, "s", true).is_none());
         let state = shared.lock().unwrap();
         assert!(state.inquiry.is_some());
-        assert_eq!(state.toast, "请先回答全部问题");
+        assert_eq!(state.toast, "请先回答任一问题");
     }
 
     #[test]
@@ -9087,7 +9088,7 @@ mod tests {
             project::LiveStep::Tool(tool) => tool,
             _ => panic!("tool step"),
         };
-        assert_eq!(tool.title, "运行命令");
+        assert_eq!(tool.title, "正在执行");
         assert_eq!(tool.tool_icon, "terminal");
         assert_eq!(tool.summary, "ls -la");
         assert_eq!(tool.state, "running");

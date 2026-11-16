@@ -299,6 +299,13 @@ impl AppState {
         } else {
             init_storage(&config)?
         };
+        // AppState 初始化的时间几乎全在这三块磁盘工作上：SQLite 打开+迁移、
+        // 会话索引库打开、技能扫描。慢盘上三者相差一个数量级，必须分开记，
+        // 否则只有一个 app_state_init 总数，无法判断该动哪一段。
+        startup_probe::point(
+            "storage_open_done",
+            app_state_start.elapsed().as_secs_f64() * 1000.0,
+        );
         let thread_store = {
             #[cfg(feature = "postgres-storage")]
             if let Some(pg) = postgres_storage {
@@ -324,7 +331,7 @@ impl AppState {
             }
         };
         startup_probe::point(
-            "init_storage_done",
+            "thread_store_done",
             app_state_start.elapsed().as_secs_f64() * 1000.0,
         );
         let workspace = Arc::new(WorkspaceManager::new(

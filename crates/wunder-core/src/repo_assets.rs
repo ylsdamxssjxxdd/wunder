@@ -76,6 +76,11 @@ pub fn looks_like_source_checkout(candidate: &Path) -> bool {
 }
 
 fn find_source_checkout_at_or_above(candidate: &Path) -> Option<PathBuf> {
+    // 起点不存在时直接放弃：安装版的 `CARGO_MANIFEST_DIR` 是编译机路径，
+    // 逐级 stat 上去在慢盘/杀软环境里是纯浪费，而且也不可能命中源码检出。
+    if !candidate.exists() {
+        return None;
+    }
     for path in candidate.ancestors() {
         let normalized = normalize_repo_root_candidate(path);
         if looks_like_source_checkout(&normalized) {

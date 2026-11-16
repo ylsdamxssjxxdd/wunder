@@ -597,6 +597,10 @@ pub(crate) fn compact_command_result_for_model(item: &Value) -> Value {
             .cloned()
             .unwrap_or(Value::Null),
     });
+    // 后台首包的 seq 是模型续读的游标（命令会话的 after_seq），必须透传。
+    if let Some(seq) = item.get("seq").filter(|value| !value.is_null()) {
+        compacted["seq"] = seq.clone();
+    }
     if let Some(warning) = item.get("warning").filter(|value| !value.is_null()) {
         compacted["warning"] = warning.clone();
     }

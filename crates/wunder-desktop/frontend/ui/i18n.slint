@@ -794,6 +794,7 @@ export global I18n {
     public pure function wm_status_running(count: string) -> string { return zh ? "运行中 " + count + " 线程" : "" + count + " running"; }
     public pure function wm_status_inquiry(count: string) -> string { return zh ? "问询 " + count + "" : "Inquiry " + count + ""; }
     out property <string> wm_status_idle: zh ? "空闲" : "Idle";
+    out property <string> wm_status_starting: zh ? "正在启动" : "Starting";
     out property <string> err_cannot: zh ? "无法{0}：{1}" : "Unable to {0}: {1}";
     out property <string> err_failed: zh ? "{0}失败：{1}" : "{0} failed: {1}";
     out property <string> st_error_prefix: zh ? "错误：{0}" : "Error: {0}";

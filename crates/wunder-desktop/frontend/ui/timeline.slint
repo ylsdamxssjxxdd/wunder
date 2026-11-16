@@ -736,19 +736,26 @@ component FoldEntry inherits Rectangle {
                 }
             }
             if root.data.kind != EntryKind.reason && root.data.detail != "" && !root.mobile : Rectangle {
-                height: min(240px, tool-body.preferred-height + 16px);
+                height: min(240px, tool-column.preferred-height + 16px);
                 border-radius: Theme.radius-sm; background: Theme.panel;
                 border-width: 1px; border-color: Theme.border;
-                ScrollView {
+                tool-scroll := ScrollView {
                     horizontal-scrollbar-policy: always-off; vertical-scrollbar-policy: as-needed;
                     x: 10px; y: 8px; width: parent.width - 20px; height: parent.height - 16px;
-                    content-height: max(self.visible-height, tool-body.preferred-height);
+                    // A ScrollView infers its content size from layout children
+                    // only. As a bare component child the body reported the
+                    // height it was measured at, not the one it painted at, so
+                    // the panel was cut short with no bar to reach the rest.
+                    content-height: max(self.visible-height, tool-column.preferred-height);
                     content-width: self.visible-width;
 
-                    tool-body := WorkflowDetail {
-                        sections: root.data.sections;
-                        fallback: root.data.detail;
-                        copy(text) => { root.copy-text(text); }
+                    tool-column := VerticalLayout {
+                        width: tool-scroll.visible-width;
+                        tool-body := WorkflowDetail {
+                            sections: root.data.sections;
+                            fallback: root.data.detail;
+                            copy(text) => { root.copy-text(text); }
+                        }
                     }
                 }
             }

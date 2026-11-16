@@ -7185,7 +7185,8 @@ mod turn_tests {
             .filter(|row| row.kind == crate::timeline::KIND_TOOL)
             .collect();
         assert_eq!(tools.len(), 1, "one invocation, one entry");
-        assert_eq!(tools[0].tool_name, "执行命令");
+        // The settled label is the verb alone; "正在执行" is the running one.
+        assert_eq!(tools[0].tool_name, "执行");
         assert_eq!(tools[0].status_kind, crate::timeline::STATUS_DONE);
         let bar = rows
             .iter()

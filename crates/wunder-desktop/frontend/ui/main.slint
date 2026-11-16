@@ -192,7 +192,7 @@ export component MainWindow inherits Window {
         ? I18n.wm_status_inquiry("" + root.title-inquiry-count)
         : root.title-running-count > 0
         ? I18n.wm_status_running("" + root.title-running-count)
-        : I18n.app_window_title + " · " + I18n.wm_status_idle;
+        : I18n.app_window_title + " · " + (root.startup-banner-open ? I18n.wm_status_starting : I18n.wm_status_idle);
     // Open as a compact workbench centered on the active monitor. The native
     // bootstrap fits it to the monitor work area after mapping and keeps the
     // chrome maximize button available. The preferred size is already the
@@ -302,6 +302,12 @@ export component MainWindow inherits Window {
     in-out property <bool> profile-ready: false;
     in-out property <bool> threads-ready: false;
     in-out property <string> startup-note: "";
+    // 启动横幅占自己的一行：之前它浮在工作台上，把侧栏第一行和会话占位文案
+    // 压掉一半，看起来像渲染错位而不是进度提示。
+    out property <bool> startup-banner-open: !(root.profile-ready && root.threads-ready);
+    // 不确定进度条的扫描位置 0..1。引擎初始化在老机器上要一秒以上，UI 线程在
+    // 横幅可见期间推进它，长时间等待至少是“还在动”而不是停在一句话上。
+    in-out property <float> startup-progress: 0.0;
     in-out property <bool> creating-session: false;
     in-out property <bool> agents-loading: false;
     in-out property <bool> tools-loading: false;
@@ -1185,27 +1191,38 @@ export component MainWindow inherits Window {
     // marker a fresh launch looked like a finished, empty workbench whose
     // threads refused to open, so the state now reads at the top of the window
     // until both shell pieces are present.
-    if !(root.profile-ready && root.threads-ready) : Rectangle {
+    if root.startup-banner-open : Rectangle {
         y: Theme.titlebar-height;
         width: parent.width;
         height: 26px;
-        z: 260;
+        // 低于 250：启动期间弹出对话框时由对话框盖住横幅，不与模态抢层级。
+        z: 240;
         background: Theme.accent-soft;
         clip: true;
         Text {
             x: 14px;
             width: parent.width - 28px;
-            height: parent.height;
+            height: parent.height - 2px;
             text: root.startup-note != "" ? root.startup-note : I18n.st_runtime_loading;
             color: Theme.accent-ink;
             font-size: Theme.font-xs;
             vertical-alignment: center;
             overflow: elide;
         }
+        // 不确定进度条：宽度约 22%，随 startup-progress 横向扫描。
+        Rectangle {
+            y: parent.height - 2px;
+            height: 2px;
+            width: parent.width * 0.22;
+            x: (parent.width - self.width) * root.startup-progress;
+            background: Theme.accent;
+            opacity: 0.5;
+        }
     }
     Rectangle {
-        y: Theme.titlebar-height;
-        width: parent.width; height: max(0px, parent.height - Theme.titlebar-height);
+        y: Theme.titlebar-height + (root.startup-banner-open ? 26px : 0px);
+        width: parent.width;
+        height: max(0px, parent.height - Theme.titlebar-height - (root.startup-banner-open ? 26px : 0px));
         HorizontalLayout {
             spacing: 0px;
             sidebar_view := Sidebar {

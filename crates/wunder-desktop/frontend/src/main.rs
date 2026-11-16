@@ -54,6 +54,7 @@ mod screenshot;
 mod settings_search;
 mod shutdown;
 mod single_instance;
+mod command_probe;
 mod smoke;
 mod subagent_detail;
 mod subagent_dock;
@@ -196,6 +197,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = select_weak;
         i_slint_core::text_selection::select_all();
     });
+    if first_argument.as_deref() == Some(std::ffi::OsStr::new("--command-fold-probe")) {
+        // One expanded command entry, so the capped detail panel can be looked
+        // at instead of reasoned about.
+        let directory = arguments
+            .next()
+            .ok_or("missing command-fold-probe output directory")?;
+        return command_probe::run(&app, std::path::PathBuf::from(directory));
+    }
     if first_argument.as_deref() == Some(std::ffi::OsStr::new("--timeline-probe")) {
         // §十二.2: measure the worst-case timeline on the real renderer without
         // depending on the rest of the smoke check.
@@ -311,6 +320,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 输入区底部的本机硬件状态网格。采样在独立线程，这里只装定时投影，
     // 因此放在窗口显示之前即可，首帧显示占位符、约一秒后落成真实读数。
     host_hud::install(&app);
+    install_startup_stage_notes(&app);
     app.show()?;
     startup_log("window_show_return", startup_boot);
     fit_and_center_main_window(&app);
@@ -550,6 +560,60 @@ fn engine_startup_point(name: &str, total_ms: f64) {
     if let Some(boot) = STARTUP_BOOT.get() {
         startup_log(&format!("stage={} stage_ms={:.1}", name, total_ms), *boot);
     }
+    if let Some(note) = startup_stage_note(name) {
+        publish_startup_stage(note);
+    }
+}
+
+/// 引擎里程碑对应的“接下来在做什么”，供启动横幅显示。老机器上引擎初始化要
+/// 1 秒以上，横幅一直停在同一句话会被读成卡死；有了进度，等待至少是可见的。
+fn startup_stage_note(stage: &str) -> Option<&'static str> {
+    match stage {
+        // 运行时初始化的粗粒度段：老机器上这几步各要几百毫秒到 1 秒。
+        "resolve_paths_and_user" => Some("正在准备运行环境…"),
+        "ensure_runtime_dirs" => Some("正在检查内置资源…"),
+        "load_desktop_settings" => Some("正在读取桌面设置…"),
+        "normalize_settings_and_save" => Some("正在整理桌面设置…"),
+        "prepare_config_paths" | "apply_environment" => Some("正在应用运行环境…"),
+        "config_store_update" => Some("正在读取配置文件…"),
+        "lsp_sync_with_config" => Some("正在启动代码服务…"),
+        "ensure_desktop_identity" => Some("正在确认本机身份…"),
+        "desktop_runtime_recovery" => Some("正在恢复上次运行…"),
+        "migrate_desktop_agent_approval_modes" | "migrate_local_workspaces" => {
+            Some("正在升级本地数据…")
+        }
+        // AppState 内部的细粒度点。
+        "new_begin" => Some("正在打开本地数据库…"),
+        "storage_open_done" => Some("正在打开本地数据库…"),
+        "thread_store_done" | "init_storage_done" => Some("正在读取会话索引…"),
+        // 以下几步在慢盘上各占几十到几百毫秒，横幅逐段推进而不是停在
+        // 同一句话，用户能看出是在走流程而不是卡住。
+        "workspace_lsp_done" => Some("正在准备本地工作区…"),
+        "monitor_done" => Some("正在接入运行监控…"),
+        "load_skills_done" => Some("正在装配本地服务…"),
+        "base_services_done" => Some("正在准备模型网关…"),
+        "gateway_done" => Some("正在准备智能体…"),
+        "orchestrator_done" => Some("正在准备任务调度…"),
+        "thread_runtime_done" => Some("正在接入消息渠道…"),
+        "channel_hub_done" => Some("正在恢复定时任务…"),
+        "new_done" => Some("正在清理上次运行…"),
+        "desktop:purge_thread_leases" | "desktop:settle_restarted_threads"
+        | "desktop:settle_orphaned_tasks" => Some("正在收尾上次运行…"),
+        _ => None,
+    }
+}
+
+/// 当前启动阶段：(版本号, 提示文案)。引擎在后台线程改，UI 线程按帧读取。
+static STARTUP_STAGE: std::sync::Mutex<(u64, &'static str)> =
+    std::sync::Mutex::new((0, ""));
+static STARTUP_STAGE_VERSION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+fn publish_startup_stage(note: &'static str) {
+    if let Ok(mut stage) = STARTUP_STAGE.lock() {
+        *stage = (stage.0.wrapping_add(1), note);
+    }
+    STARTUP_STAGE_VERSION.fetch_add(1, std::sync::atomic::Ordering::Release);
 }
 
 /// 启动日志只保留最近两次运行：老机器反复启动时不会长成无界文件。
@@ -602,6 +666,60 @@ fn startup_log(point: &str, boot: std::time::Instant) {
             let _ = writeln!(file, "{stamp} {line}");
         }
     }
+}
+
+/// 把引擎阶段提示投影到启动横幅：只在工作台就绪前每 100ms 看一次版本号，
+/// 就绪即停，不会覆盖后续文案。同一次 tick 里推进横幅底部的扫描条——引擎
+/// 某个阶段在老机器上停超过一秒时，光有一句话会被读成卡死。
+fn install_startup_stage_notes(app: &MainWindow) {
+    use slint::ComponentHandle;
+    use std::rc::Rc;
+    use std::sync::atomic::Ordering;
+
+    let weak = app.as_weak();
+    let timer = Rc::new(slint::Timer::default());
+    let timer_handle = Rc::clone(&timer);
+    let applied = Rc::new(std::sync::atomic::AtomicU64::new(0));
+    // 扫描条状态：位置 0..1，方向 +1/-1。往返而不是回卷，避免每次跳回左端。
+    let scan = Rc::new(std::cell::Cell::<(f32, f32)>::new((0.0, 1.0)));
+    timer.start(
+        slint::TimerMode::Repeated,
+        std::time::Duration::from_millis(100),
+        move || {
+            let Some(app) = weak.upgrade() else {
+                timer_handle.stop();
+                return;
+            };
+            if app.get_profile_ready() && app.get_threads_ready() {
+                timer_handle.stop();
+                return;
+            }
+            let (mut pos, dir) = scan.get();
+            pos += dir * 0.05;
+            let dir = if pos >= 1.0 {
+                pos = 1.0;
+                -1.0
+            } else if pos <= 0.0 {
+                pos = 0.0;
+                1.0
+            } else {
+                dir
+            };
+            scan.set((pos, dir));
+            app.set_startup_progress(pos);
+
+            let version = STARTUP_STAGE_VERSION.load(Ordering::Acquire);
+            if version == applied.load(Ordering::Acquire) {
+                return;
+            }
+            applied.store(version, Ordering::Release);
+            if let Ok(stage) = STARTUP_STAGE.lock() {
+                if !stage.1.is_empty() {
+                    app.set_startup_note(stage.1.into());
+                }
+            }
+        },
+    );
 }
 
 pub(crate) fn startup_point(point: &str) {

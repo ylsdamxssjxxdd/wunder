@@ -2314,6 +2314,9 @@ fn log_startup_segment(
     started: Instant,
     startup_boot: Instant,
 ) {
+    // 同一段耗时也交给壳进程注册的 sink：桌面版据此更新启动横幅并写入启动日志。
+    // 放在 enabled 判断之前，关掉本函数自己的日志也不影响横幅。
+    wunder_server::startup_probe::point(segment, startup_elapsed_ms(started));
     if !enabled {
         return;
     }

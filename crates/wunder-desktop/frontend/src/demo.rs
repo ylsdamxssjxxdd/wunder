@@ -590,7 +590,7 @@ fn demo_stats(
     ))
 }
 
-fn fixture_row(kind: i32, index: usize, text: &str) -> TimelineRow {
+pub(crate) fn fixture_row(kind: i32, index: usize, text: &str) -> TimelineRow {
     TimelineRow {
         user_round: if kind == crate::timeline::KIND_FOOTER {
             1

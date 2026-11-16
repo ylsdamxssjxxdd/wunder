@@ -87,6 +87,33 @@ export class ChatMockService {
     this.withheldProcessItemIds.add(`${turn.turn_id}:text-2`);
     return turn;
   }
+  /**
+   * 一场仍在跑执行命令的轮次：工作过程里的命令条目应当自己展开，让读者
+   * 直接看到实时输出；命令结束后再自己收起（与桌面版/安卓版同一口径）。
+   */
+  seedRunningCommandTurn() {
+    const turn = { turn_id: `fixture-turn-${++this.round}`, user_round: this.round,
+      content: 'Fixture command request', status: 'running' };
+    const args = { description: 'Fixture command', content: 'sleep 30' };
+    this.turns.push(turn);
+    this.commit('turn_upsert', turn);
+    this.item(turn, 'user', 'user_message', 'completed', { role: 'user', content: turn.content });
+    this.item(turn, 'text-1', 'assistant_message', 'completed', { role: 'assistant', model_round: 1,
+      content: '', finish_reason: 'tool_calls', process_seq: 1,
+      tool_calls: [{ id: 'fixture-command-call', function: { name: 'execute_command',
+        arguments: JSON.stringify(args) } }] });
+    this.item(turn, 'tool-1', 'tool_call', 'running', { model_round: 1, process_seq: 2,
+      tool: 'execute_command', tool_call_id: 'fixture-command-call', event_type: 'tool_call',
+      args });
+    return turn;
+  }
+  /** 命令跑完：同一条持久记录转为终态，工作过程应随之收回。 */
+  settleCommandTurn(turn: Row, output = 'Fixture output') {
+    this.item(turn, 'tool-1', 'tool_call', 'completed', { model_round: 1, process_seq: 2,
+      tool: 'execute_command', tool_call_id: 'fixture-command-call', event_type: 'tool_result',
+      args: { description: 'Fixture command', content: 'sleep 30' },
+      data: { status: 'exited', exit_code: 0, stdout: output } });
+  }
   seedPlanTurn() {
     const turn = { turn_id: `fixture-turn-${++this.round}`, user_round: this.round,
       content: 'Fixture plan request', status: 'running' };

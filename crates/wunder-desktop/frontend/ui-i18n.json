@@ -3999,6 +3999,11 @@
   "en": "Idle"
  },
  {
+  "key": "wm_status_starting",
+  "zh": "正在启动",
+  "en": "Starting"
+ },
+ {
   "key": "err_cannot",
   "zh": "无法{0}：{1}",
   "en": "Unable to {0}: {1}"
