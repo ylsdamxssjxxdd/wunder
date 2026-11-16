@@ -384,7 +384,11 @@ export const useCommandSessionStore = defineStore('commandSessions', {
       const existing = this.entries[normalized.commandSessionId];
       const existingSeq = existing?.seq ?? -1;
       const nextSeq = normalized.seq;
-      const preserveTerminalState = existing && nextSeq < existingSeq;
+      // 终态不可逆：发送流、 watcher 与重连快照可能乱序，迟到的 running
+      // 即使携带相同或更大的游标，也不能把已退出命令重新变成转圈。
+      const preserveTerminalState = existing && (
+        nextSeq < existingSeq || (existing.status !== 'running' && normalized.status === 'running')
+      );
       const next: CommandSessionRuntimeEntry = {
         ...(existing || defaultEntry(normalized.commandSessionId, normalized.sessionId)),
         ...(preserveTerminalState

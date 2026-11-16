@@ -1,8 +1,24 @@
 import type { RawToolRun } from './toolWorkflowRunModel';
+import type { CommandSessionRuntimeEntry } from '@/stores/commandSessions';
 import { extractWorkflowCallArgs } from './toolWorkflowCallDebug';
 import { extractToolResultDataObject, parseToolWorkflowResultObject } from './toolWorkflowResultPayload';
 
 export type CommandInteractionKind = 'execute' | 'write' | 'poll';
+export type CommandDisplayStatus = 'loading' | 'completed' | 'failed' | 'cancelled';
+
+export const resolveCommandDisplayStatus = (
+  fallback: CommandDisplayStatus,
+  commandSettled: boolean,
+  snapshot: CommandSessionRuntimeEntry | null
+): CommandDisplayStatus => {
+  if (!snapshot) return fallback;
+  if (snapshot.status === 'failed_to_start') return 'failed';
+  if (snapshot.status === 'running') return commandSettled ? fallback : 'loading';
+  if (snapshot.timedOut || snapshot.error) return 'failed';
+  if (snapshot.exitCode === 0) return 'completed';
+  if (snapshot.exitCode !== null) return 'failed';
+  return commandSettled ? fallback : 'failed';
+};
 
 const normalizeToolName = (run: RawToolRun): string =>
   String(run.toolRuntimeName || run.toolName || run.toolDisplayName || '').trim().toLowerCase();

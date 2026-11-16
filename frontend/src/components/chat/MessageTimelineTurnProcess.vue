@@ -84,7 +84,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, triggerRef, watch } from 'vue';
 
 import MessageMarkdownBody from './MessageMarkdownBody.vue';
-import { autoOpenCommandKeys, resolveEntryOpen } from './timelineCommandFold';
+import { resolveEntryOpen } from './timelineCommandFold';
 import MessageTimelineThinkingEntry from './MessageTimelineThinkingEntry.vue';
 import MessageTimelineToolEntry from './MessageTimelineToolEntry.vue';
 import { t } from '@/i18n';
@@ -176,8 +176,6 @@ const firstItemIndex = ref<number | null>(null);
 const lastItemIndex = ref<number | null>(null);
 const processItems = shallowRef<Array<Record<string, unknown>>>([]);
 const openKeys = ref(new Set<string>());
-/** 用户亲手点过开合的条目：此后不再自动跟随执行状态。 */
-const manualKeys = ref(new Set<string>());
 const processBodyRef = ref<HTMLElement | null>(null);
 const patchViews = new Map<string, ToolWorkflowPatchView | null>();
 const structuredViews = new Map<string, ToolWorkflowStructuredView | null>();
@@ -249,29 +247,14 @@ const toggle = (): void => {
 };
 
 const toggleKey = (key: string): void => {
-  // 点过就以用户为准：自动展开/收起不再改写这一条。
-  if (!manualKeys.value.has(key)) {
-    const manual = new Set(manualKeys.value);
-    manual.add(key);
-    manualKeys.value = manual;
-  }
   const next = new Set(openKeys.value);
   if (next.has(key)) next.delete(key);
   else next.add(key);
   openKeys.value = next;
 };
 
-/** 运行中的执行命令条目：不用点开就先露出实时输出。 */
-const autoOpenKeys = computed(() =>
-  autoOpenCommandKeys(rows.value.flatMap(row => (row.kind === 'tool' ? [row.entry] : []))));
-
 const isRowOpen = (key: string): boolean =>
-  resolveEntryOpen({
-    key,
-    manual: manualKeys.value,
-    open: openKeys.value,
-    auto: autoOpenKeys.value
-  });
+  resolveEntryOpen({ key, open: openKeys.value });
 
 const patchViewFor = (entry: TimelineToolEntry): ToolWorkflowPatchView | null => {
   if (!patchViews.has(entry.key)) patchViews.set(entry.key, buildTimelinePatchView(entry.run, t));
@@ -292,7 +275,16 @@ const rebuildRows = (): void => {
   const merged = new Map(processItems.value.map(item => [String(item.item_id), item]));
   if (!hasNewerItems.value) for (const item of props.processItems || []) {
     const previous = merged.get(String(item.item_id));
-    if (!previous || (previous.status === 'running' && item.status !== 'running')) merged.set(String(item.item_id), item);
+    if (!previous) {
+      merged.set(String(item.item_id), item);
+      continue;
+    }
+    const previousRevision = Number(previous.revision || 0);
+    const incomingRevision = Number(item.revision || 0);
+    const regressesToRunning = previous.status !== 'running' && item.status === 'running';
+    if (incomingRevision >= previousRevision && !regressesToRunning) {
+      merged.set(String(item.item_id), item);
+    }
   }
   const anchors = new Map<string, number>();
   const ordered = [...merged.values()].map(item => {
@@ -313,7 +305,6 @@ const rebuildRows = (): void => {
   lastItemIndex.value = itemIndex(processItems.value.at(-1));
   const keys = new Set(rows.value.map(row => row.key));
   openKeys.value = new Set([...openKeys.value].filter(key => keys.has(key) || key === currentReasoningRowKey.value));
-  manualKeys.value = new Set([...manualKeys.value].filter(key => keys.has(key) || key === currentReasoningRowKey.value));
   // Derived tool views are tied to a row revision. Drop them when a new page
   // arrives so neither an evicted row nor an outdated result stays cached.
   patchViews.clear();
@@ -515,7 +506,6 @@ const resetState = (): void => {
   firstItemIndex.value = null;
   lastItemIndex.value = null;
   openKeys.value = new Set();
-  manualKeys.value = new Set();
   fallbackReasoningKey.value = 'projected:0';
   // 展开态沿用（默认展开的行复位后仍铺开）时不要丢掉已挂载的滚动容器引用。
   if (!open.value) processBodyRef.value = null;

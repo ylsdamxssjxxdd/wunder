@@ -109,7 +109,7 @@
 import { computed, ref, watch } from 'vue';
 
 import MessageMarkdownBody from './MessageMarkdownBody.vue';
-import { autoOpenCommandKeys, resolveEntryOpen } from './timelineCommandFold';
+import { resolveEntryOpen } from './timelineCommandFold';
 import MessageTimelineThinkingEntry from './MessageTimelineThinkingEntry.vue';
 import MessageTimelineToolEntry from './MessageTimelineToolEntry.vue';
 import {
@@ -243,7 +243,11 @@ const processDurationLabel = useTurnDurationLabel(
   computed(() => (props.message || null) as Record<string, any> | null),
   computed(() => Boolean(props.streaming))
 );
-const toolEntryModel = computed(() => buildTimelineToolEntries(props.workflowItems, t));
+const toolEntryModel = computed(() => {
+  // 工具投影同样原地更新；订阅内容时钟，终态与退出码才能立即替换运行态。
+  void props.contentVersion;
+  return buildTimelineToolEntries(props.workflowItems, t);
+});
 const allToolEntries = computed(() => toolEntryModel.value.entries);
 const omittedRuns = computed(() => toolEntryModel.value.omittedRuns);
 
@@ -283,20 +287,10 @@ const processOpen = ref(props.defaultOpen);
 const activityOpenState = ref<Record<string, boolean>>({});
 const reasoningOpenKeys = ref<string[]>([]);
 const entryOpenKeys = ref<string[]>([]);
-/** 用户亲手点过开合的条目：此后不再自动跟随执行状态。 */
-const manualEntryKeys = ref<string[]>([]);
 const ENTRY_OPEN_LIMIT = MAX_OPEN_ENTRIES_PER_TURN;
 
-/** 运行中的执行命令条目：不用点开就先露出实时输出。 */
-const autoOpenEntryKeys = computed(() => autoOpenCommandKeys(visibleToolEntries.value));
-
 const isEntryOpen = (key: string): boolean =>
-  resolveEntryOpen({
-    key,
-    manual: manualEntryKeys.value,
-    open: entryOpenKeys.value,
-    auto: autoOpenEntryKeys.value
-  });
+  resolveEntryOpen({ key, open: entryOpenKeys.value });
 
 const activityTitle = (block: RenderActivityBlock): string =>
   block.toolCount > 0
@@ -507,10 +501,6 @@ const toggleReasoning = (id: string): void => {
 };
 
 const toggleEntry = (key: string): void => {
-  // 点过就以用户为准：自动展开/收起不再改写这一条。
-  if (!manualEntryKeys.value.includes(key)) {
-    manualEntryKeys.value = [...manualEntryKeys.value, key].slice(-ENTRY_OPEN_LIMIT);
-  }
   const next = new Set(entryOpenKeys.value);
   if (next.has(key)) {
     next.delete(key);
@@ -532,7 +522,6 @@ watch(
     // 行/运行身份变化时复位局部展开状态。
     reasoningOpenKeys.value = [];
     entryOpenKeys.value = [];
-    manualEntryKeys.value = [];
     activityOpenState.value = {};
     processOpen.value = Boolean(props.defaultOpen);
     entryRenderLimit.value = TIMELINE_ENTRY_RENDER_LIMIT;

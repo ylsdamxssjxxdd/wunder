@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-test('a running command entry opens itself and folds once it settles', async ({ page }) => {
+test('command entries stay manually folded and refresh terminal status through the content clock', async ({ page }) => {
   await page.goto('/__e2e/composer-b4');
   const result = await page.evaluate(async () => {
     const source = await (await fetch('/src/components/chat/MessageTimelineBlocks.vue')).text();
@@ -11,12 +11,14 @@ test('a running command entry opens itself and folds once it settles', async ({ 
     ]);
     const host = document.createElement('div');
     document.body.append(host);
-    const run = reactive({ status: 'running' });
-    const workflowItems = [{
-      id: 'fixture-call', eventType: 'tool_call', toolName: 'execute_command',
-      toolCallId: 'fixture-call', status: 'running',
-      detail: JSON.stringify({ args: { description: 'fixture title', content: 'fixture-command --wait' } })
-    }];
+    const state = reactive({
+      version: 0,
+      items: [{
+        id: 'fixture-call', eventType: 'tool_call', toolName: 'execute_command',
+        toolCallId: 'fixture-call', status: 'running',
+        detail: JSON.stringify({ args: { description: 'fixture title', content: 'fixture-command --wait' } })
+      }] as Array<Record<string, unknown>>
+    });
     const blocks = [
       { kind: 'activity', id: 'act-1', seq: 1, rows: [{ type: 'tool', itemId: 'fixture-call' }] },
       { kind: 'body', id: 'body-1', seq: 2, round: 1, text: 'final answer' }
@@ -24,7 +26,8 @@ test('a running command entry opens itself and folds once it settles', async ({ 
     const app = createApp({
       setup: () => () => h(Blocks, {
         blocks,
-        workflowItems: workflowItems.map((item) => ({ ...item, status: run.status })),
+        workflowItems: state.items,
+        contentVersion: state.version,
         identityKey: 'fixture-turn', defaultOpen: true, streaming: true
       })
     });
@@ -37,31 +40,40 @@ test('a running command entry opens itself and folds once it settles', async ({ 
         expanded: head?.getAttribute('aria-expanded'),
         output: host.querySelector('.tl-entry-output') !== null
       };
-      // One command session frame arrives while it runs: still open, no click.
-      run.status = 'running';
-      await nextTick(); await nextTick();
-      const stillOpen = host.querySelector('.tl-entry-head')?.getAttribute('aria-expanded');
-      // The command settles: the entry folds itself again.
-      run.status = 'completed';
+      head!.click();
+      await nextTick();
+      const readerOpened = head!.getAttribute('aria-expanded');
+
+      // Mutate the existing projection in place, just like the real runtime.
+      // Only the content clock tells the computed tool model to rebuild.
+      state.items[0].status = 'completed';
+      state.items.push({
+        id: 'fixture-result', eventType: 'tool_result', toolName: 'execute_command',
+        toolCallId: 'fixture-call', status: 'completed',
+        detail: JSON.stringify({ data: {
+          status: 'exited', exit_code: 0, stdout: 'Fixture output\n', stderr: 'Fixture warning\n', error: null
+        } })
+      });
+      state.version += 1;
       await nextTick(); await nextTick(); await nextTick();
       const settled = {
-        expanded: host.querySelector('.tl-entry-head')?.getAttribute('aria-expanded'),
-        output: host.querySelector('.tl-entry-output') !== null
+        expanded: head!.getAttribute('aria-expanded'),
+        output: host.querySelector('.tl-entry-output-body')?.textContent ?? '',
+        check: host.querySelectorAll('.tl-entry-status .fa-check').length,
+        cross: host.querySelectorAll('.tl-entry-status .fa-xmark').length,
+        spinning: host.querySelectorAll('.tl-entry-status .fa-spin').length
       };
-      // A reader who opened it keeps it open through the next settle frame.
-      host.querySelector<HTMLButtonElement>('.tl-entry-head')!.click();
-      await nextTick();
-      const readerOpened = host.querySelector('.tl-entry-head')?.getAttribute('aria-expanded');
-      return { running, stillOpen, settled, readerOpened };
+      return { running, readerOpened, settled };
     } finally {
       app.unmount();
       host.remove();
     }
   });
   expect(result).toEqual({
-    running: { head: true, expanded: 'true', output: true },
-    stillOpen: 'true',
-    settled: { expanded: 'false', output: false },
-    readerOpened: 'true'
+    running: { head: true, expanded: 'false', output: false },
+    readerOpened: 'true',
+    settled: {
+      expanded: 'true', output: 'Fixture output\n\nFixture warning\n', check: 1, cross: 0, spinning: 0
+    }
   });
 });

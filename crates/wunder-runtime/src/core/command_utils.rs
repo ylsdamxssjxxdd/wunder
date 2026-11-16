@@ -150,14 +150,12 @@ pub fn shell_display_name(shell: &ShellLaunch) -> String {
 
 /// Prefix POSIX commands with `set -o pipefail` so a failing middle stage of a
 /// pipeline propagates its exit code instead of being masked by the last
-/// command's success. Commands that already manage pipefail are kept as-is.
+/// command's success. The prelude is unconditional: looking for the word
+/// `pipefail` in the user's script made `$?` depend on comments, probes or a
+/// later `set +o pipefail`. An explicit setting in the script still wins.
 /// Android's mksh supports this option.
 fn posix_command_with_pipefail(command: &str) -> String {
-    if command.contains("pipefail") {
-        command.to_string()
-    } else {
-        format!("set -o pipefail; {command}")
-    }
+    format!("set -o pipefail; {command}")
 }
 
 /// Build a shell interpreter command for the resolved shell.
@@ -1885,15 +1883,43 @@ mod tests {
     }
 
     #[test]
-    fn posix_command_with_pipefail_injects_once() {
+    fn posix_command_with_pipefail_always_has_a_deterministic_prelude() {
         assert_eq!(
             posix_command_with_pipefail("echo ok | head"),
             "set -o pipefail; echo ok | head"
         );
         assert_eq!(
-            posix_command_with_pipefail("set -o pipefail; echo ok | head"),
-            "set -o pipefail; echo ok | head"
+            posix_command_with_pipefail("set +o pipefail; echo ok | head"),
+            "set -o pipefail; set +o pipefail; echo ok | head"
         );
+        assert_eq!(
+            posix_command_with_pipefail("echo pipefail; false | true"),
+            "set -o pipefail; echo pipefail; false | true"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn posix_pipe_status_is_stable_when_script_mentions_or_changes_pipefail() {
+        let output = build_shell_command("false | true; printf '%s' \"$?\"", Path::new("."))
+            .as_std_mut()
+            .output()
+            .expect("run default pipefail probe");
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "1");
+
+        let output = build_shell_command(
+            "set -o | grep pipefail; set +o pipefail; false | true; printf '%s' \"$?\"",
+            Path::new("."),
+        )
+        .as_std_mut()
+        .output()
+        .expect("run explicit pipefail probe");
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let option = stdout.lines().next().unwrap_or_default();
+        assert!(option.starts_with("pipefail") && option.ends_with("on"), "{stdout}");
+        assert!(stdout.ends_with('0'), "{stdout}");
     }
 
     fn command_args(command: &Command) -> Vec<String> {
@@ -1925,7 +1951,7 @@ mod tests {
         );
         assert_eq!(
             command_args(&prefixed),
-            vec!["-c", "set -o pipefail; echo ok | head"]
+            vec!["-c", "set -o pipefail; set -o pipefail; echo ok | head"]
         );
     }
 

@@ -518,6 +518,17 @@ pub(crate) struct IndexedFile {
     lowered: String,
 }
 
+/// One follow-up held for the moment the thread frees. The attachment payload is
+/// already converted, so a queued turn sends exactly what the composer had at
+/// the time it was typed instead of re-reading files an edit may have changed.
+#[derive(Debug, Clone)]
+struct QueuedPrompt {
+    prompt: String,
+    user_echo: String,
+    attachments: Option<Vec<wunder_server::schemas::AttachmentPayload>>,
+    inquiry_turn_id: Option<String>,
+}
+
 pub struct TuiApp {
     runtime: CliRuntime,
     global: GlobalArgs,
@@ -584,6 +595,12 @@ pub struct TuiApp {
     next_cell_id: u64,
     logs: Vec<LogEntry>,
     busy: bool,
+    /// Follow-ups the user typed while the turn on screen was still running,
+    /// oldest first. Codex keeps its own queue in the terminal pane instead of
+    /// asking the engine to hold the input, and so does this: sending the oldest
+    /// entry as soon as the thread frees keeps the running card's state intact
+    /// and gives the composer something exact to show while the user waits.
+    queued_prompts: VecDeque<QueuedPrompt>,
     /// The thread on screen belongs to an orchestration run that holds its write
     /// access. Reading, watching and copying stay available; only input is
     /// refused, and the engine's own reason is shown on the transcript.
@@ -837,6 +854,7 @@ impl TuiApp {
             next_cell_id: 1,
             logs: Vec::new(),
             busy: false,
+            queued_prompts: VecDeque::new(),
             watch_only_reason: None,
             should_quit: false,
             history: Vec::new(),
@@ -1350,13 +1368,15 @@ impl TuiApp {
 
         if self.thread_is_running(self.session_id.as_str()) {
             let elapsed_secs = self.running_elapsed_secs();
-            return format_busy_activity_line(
+            let mut line = format_busy_activity_line(
                 is_zh,
                 elapsed_secs,
                 self.stream_catchup_mode,
                 self.terminal_focused,
                 self.reasoning_in_progress,
             );
+            line.push_str(self.queued_prompt_suffix(is_zh).as_str());
+            return line;
         }
 
         String::new()
@@ -5509,6 +5529,13 @@ impl TuiApp {
                     self.move_cursor_word_right();
                     return Ok(());
                 }
+                // Alt+Up pulls the newest queued follow-up back into the draft
+                // (codex's edit_queued_message), so a message sent mid-turn can be
+                // corrected instead of cancelled.
+                KeyCode::Up => {
+                    self.edit_last_queued_prompt();
+                    return Ok(());
+                }
                 KeyCode::Backspace => {
                     self.delete_word_left();
                     return Ok(());
@@ -7262,12 +7289,23 @@ impl TuiApp {
             self.push_history(user_echo.trim());
         }
 
+        let request_attachments =
+            crate::attachments::to_request_attachments(&self.pending_attachments);
+        if let Err(err) = crate::input_guard::validate_request_text_input_size(
+            self.display_language.as_str(),
+            prompt.as_str(),
+            request_attachments.as_deref(),
+        ) {
+            self.push_log(LogKind::Error, err.to_string());
+            return Ok(());
+        }
+
+        // A follow-up typed mid-turn is not a mistake and is never dropped: hold
+        // it and send it the moment the turn on screen settles (codex's queued
+        // prompt). The running card's state is left exactly as it is, so the
+        // queue costs this turn nothing.
         if self.thread_is_running(self.session_id.as_str()) {
-            self.push_log(
-                LogKind::Error,
-                "assistant is still running, wait for completion before sending a new prompt"
-                    .to_string(),
-            );
+            self.enqueue_prompt(prompt, user_echo, request_attachments, inquiry_turn_id);
             return Ok(());
         }
 
@@ -7280,20 +7318,142 @@ impl TuiApp {
         self.turn_final_stop_reason = None;
         self.tool_phase_notice_emitted = false;
         self.clear_cloud_error_notice();
-        let request_attachments =
-            crate::attachments::to_request_attachments(&self.pending_attachments);
-        if let Err(err) = crate::input_guard::validate_request_text_input_size(
-            self.display_language.as_str(),
-            prompt.as_str(),
-            request_attachments.as_deref(),
-        ) {
-            self.push_log(LogKind::Error, err.to_string());
-            return Ok(());
-        }
         self.start_stream_request(prompt, user_echo, request_attachments, inquiry_turn_id)
             .await?;
         self.clear_pending_attachments();
         Ok(())
+    }
+
+    /// Hold one follow-up until the thread frees. The transcript says what is
+    /// waiting and where in line it stands, so the user never has to guess whether
+    /// the message was taken; the oldest entry leaves the queue on the next idle
+    /// tick, in the order it was typed.
+    fn enqueue_prompt(
+        &mut self,
+        prompt: String,
+        user_echo: String,
+        attachments: Option<Vec<wunder_server::schemas::AttachmentPayload>>,
+        inquiry_turn_id: Option<String>,
+    ) {
+        const MAX_QUEUED_PROMPTS: usize = 8;
+        let is_zh = self.is_zh_language();
+        if self.queued_prompts.len() >= MAX_QUEUED_PROMPTS {
+            self.push_log(
+                LogKind::Error,
+                if is_zh {
+                    format!("排队已达上限（{MAX_QUEUED_PROMPTS} 条），这条消息没有加入队列")
+                } else {
+                    format!(
+                        "queue is full ({MAX_QUEUED_PROMPTS} items); this message was not queued"
+                    )
+                },
+            );
+            return;
+        }
+        let position = self.queued_prompts.len() + 1;
+        let preview = queued_prompt_preview(prompt.as_str());
+        self.queued_prompts.push_back(QueuedPrompt {
+            prompt,
+            user_echo,
+            attachments,
+            inquiry_turn_id,
+        });
+        self.push_log(
+            LogKind::Info,
+            if is_zh {
+                format!("已排队 {position} 条：{preview} · 本轮结束后自动发送（Alt+↑ 取回）")
+            } else {
+                format!(
+                    "queued #{position}: {preview} · sends when this turn ends (alt+↑ to edit)"
+                )
+            },
+        );
+        self.request_redraw();
+    }
+
+    /// Alt+Up: pull the newest queued follow-up back into the composer, the way
+    /// codex's edit_queued_message does, so a message typed too early can be
+    /// changed instead of cancelled.
+    fn edit_last_queued_prompt(&mut self) {
+        let is_zh = self.is_zh_language();
+        let Some(last) = self.queued_prompts.pop_back() else {
+            return;
+        };
+        if !self.input.trim().is_empty() {
+            self.input.push('\n');
+        }
+        self.input.push_str(last.user_echo.as_str());
+        self.input_cursor = self.input.len();
+        self.forget_input_gesture();
+        let note = if last.attachments.is_some_and(|items| !items.is_empty()) {
+            if is_zh {
+                "已取回最后一条排队消息；附件需要重新添加"
+            } else {
+                "pulled back the last queued message; re-add its attachments"
+            }
+        } else if is_zh {
+            "已取回最后一条排队消息"
+        } else {
+            "pulled back the last queued message"
+        };
+        self.push_log(LogKind::Info, note.to_string());
+        self.request_redraw();
+    }
+
+    /// Send the oldest queued follow-up once nothing is running on this thread.
+    /// The idle tick calls this, so a turn that ends without a keystroke still
+    /// lets the queue advance.
+    pub async fn flush_queued_prompts(&mut self) {
+        if self.queued_prompts.is_empty() || self.thread_is_running(self.session_id.as_str()) {
+            return;
+        }
+        let Some(next) = self.queued_prompts.pop_front() else {
+            return;
+        };
+        let remaining = self.queued_prompts.len();
+        let is_zh = self.is_zh_language();
+        let preview = queued_prompt_preview(next.prompt.as_str());
+        self.push_log(
+            LogKind::Info,
+            if is_zh {
+                if remaining > 0 {
+                    format!("发送排队消息：{preview} · 还剩 {remaining} 条")
+                } else {
+                    format!("发送排队消息：{preview}")
+                }
+            } else if remaining > 0 {
+                format!("sending queued prompt: {preview} · {remaining} left")
+            } else {
+                format!("sending queued prompt: {preview}")
+            },
+        );
+        let result = self
+            .start_stream_request(
+                next.prompt,
+                next.user_echo,
+                next.attachments,
+                next.inquiry_turn_id,
+            )
+            .await;
+        if let Err(error) = result {
+            self.push_log(LogKind::Error, error.to_string());
+        }
+        self.request_redraw();
+    }
+
+    /// What the queue contributes to the busy row: one short clause, so the
+    /// reader can see that input was taken without a second panel.
+    fn queued_prompt_suffix(&self, is_zh: bool) -> String {
+        match self.queued_prompts.len() {
+            0 => String::new(),
+            count if is_zh => format!(" · 排队 {count} 条"),
+            count => format!(" · {count} queued"),
+        }
+    }
+
+    /// Whether the idle tick owes this thread a redraw for a queued follow-up.
+    pub fn has_queued_prompts(&self) -> bool {
+        !self.queued_prompts.is_empty()
     }
 
     async fn start_stream_request(
@@ -10034,7 +10194,7 @@ fn fold_reasoning_lines(lines: &mut Vec<Line<'static>>, is_zh: bool) {
         } else {
             "  + Show thinking (enter)".to_string()
         },
-        super::theme::accent_text(),
+        super::theme::tool_fold_hint(),
     )));
 }
 
@@ -10086,14 +10246,26 @@ fn reconcile_authoritative_text(current: &str, incoming: &str) -> AuthoritativeM
     AuthoritativeMerge::Replace
 }
 
+/// One short line naming a queued message: whitespace is flattened so a pasted
+/// paragraph still fits the transcript row it is announced on.
+fn queued_prompt_preview(prompt: &str) -> String {
+    const PREVIEW_CHARS: usize = 48;
+    let flat = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= PREVIEW_CHARS {
+        return flat;
+    }
+    let mut preview: String = flat.chars().take(PREVIEW_CHARS).collect();
+    preview.push('…');
+    preview
+}
+
 fn format_busy_activity_line(
     is_zh: bool,
     elapsed_secs: u64,
     stream_catchup_mode: bool,
     terminal_focused: bool,
     reasoning_active: bool,
-) -> String {
-    let elapsed = fmt_elapsed_compact(elapsed_secs);
+) -> String {    let elapsed = fmt_elapsed_compact(elapsed_secs);
     // The thinking text lives in the transcript card and nowhere else. The
     // status row only names the phase: echoing the last thought line here made
     // the same sentence appear twice and repaint on every reasoning token.
@@ -10209,5 +10381,7 @@ fn format_compact_tokens(tokens: i64) -> String {
 
 #[cfg(test)]
 pub(crate) mod snapshot_tests;
+#[cfg(test)]
+mod queue_tests;
 #[cfg(test)]
 mod tests;

@@ -83,6 +83,8 @@ export type TimelineToolEntry = {
   detailText: string;
   /** 命令类工具的退出码（其他工具为 null）。 */
   exitCode: number | null;
+  /** 命令本身已有终态；仅工具调用返回（长命令让渡）不等于命令结束。 */
+  commandSettled: boolean;
   /** 是否存在可展开内容。 */
   expandable: boolean;
   /** 上下文压缩视图（压缩条目专用）。 */
@@ -350,14 +352,49 @@ export const isCompactionRun = (run: RawToolRun): boolean =>
   isCompactionEventItem(run.outputItem) ||
   isCompactionEventItem(run.resultItem);
 
-const resolveRunStatus = (run: RawToolRun): TimelineEntryStatus => {
-  const candidates = [run.resultItem?.status, run.outputItem?.status, run.callItem?.status];
-  if (resolveCommandInteractionKind(run)) {
-    for (const candidate of candidates) {
-      if (!candidate) continue;
-      return normalizeTimelineStatus(candidate);
-    }
+type CommandRunState = {
+  status: TimelineEntryStatus;
+  settled: boolean;
+};
+
+const resolveCommandRunState = (run: RawToolRun): CommandRunState | null => {
+  if (!resolveCommandInteractionKind(run)) return null;
+  const resultStatus = normalizeTimelineStatus(run.resultItem?.status);
+  if (run.resultItem?.status && (resultStatus === 'failed' || resultStatus === 'cancelled')) {
+    return { status: resultStatus, settled: true };
   }
+  for (const item of [run.resultItem, run.outputItem]) {
+    const detail = parseDetailObject(item?.detail);
+    if (!detail) continue;
+    const data = asObject(detail.data) || detail;
+    const nested = asObject(data.result) || data;
+    const runtimeStatus = String(nested.status || data.status || '').trim().toLowerCase();
+    if (runtimeStatus === 'running') return { status: 'completed', settled: false };
+    const timedOut = nested.timed_out === true || nested.timedOut === true;
+    const interrupted = nested.interrupted === true;
+    const errorText = pickString(nested.error, nested.error_message, nested.errorMessage);
+    const exitCode = toOptionalInt(
+      nested.exit_code,
+      nested.exitCode,
+      nested.returncode,
+      nested.return_code,
+      nested.returnCode
+    );
+    const terminal = runtimeStatus === 'exited' || runtimeStatus === 'failed_to_start' ||
+      exitCode !== null || timedOut || interrupted || Boolean(errorText);
+    if (!terminal) continue;
+    const status = interrupted ? 'cancelled'
+      : timedOut || errorText || runtimeStatus === 'failed_to_start' || (exitCode !== null && exitCode !== 0)
+        ? 'failed' : 'completed';
+    return { status, settled: true };
+  }
+  if (run.resultItem?.status) return { status: resultStatus, settled: resultStatus !== 'loading' };
+  return null;
+};
+
+const resolveRunStatus = (run: RawToolRun, commandState = resolveCommandRunState(run)): TimelineEntryStatus => {
+  if (commandState) return commandState.status;
+  const candidates = [run.resultItem?.status, run.outputItem?.status, run.callItem?.status];
   const detailObjects = [
     parseDetailObject(run.resultItem?.detail),
     parseDetailObject(run.callItem?.detail)
@@ -740,6 +777,7 @@ const resolveCompactionEntry = (
     errorText: status === 'failed' ? display.summaryNote || display.resultSummary : '',
     detailText: display.resultBody || display.copyBody || '',
     exitCode: null,
+    commandSettled: false,
     expandable: Boolean(display.view) || Boolean(display.resultBody),
     compaction: display,
     run
@@ -755,8 +793,9 @@ export const buildTimelineToolEntry = (
   }
   const toolName = pickString(run.toolName, run.toolRuntimeName, run.toolDisplayName);
   const toolLabel = pickString(run.toolDisplayName, toolName, t('chat.workflow.toolUnknown'));
-  const status = resolveRunStatus(run);
   const commandInteraction = resolveCommandInteractionKind(run);
+  const commandState = resolveCommandRunState(run);
+  const status = resolveRunStatus(run, commandState);
   const collapsed = buildCollapsedToolWorkflowSummary(run, toolLabel);
   const targets = buildTargets(run);
   const errorText = status === 'failed' ? resolveRunErrorText(run) : '';
@@ -808,6 +847,7 @@ export const buildTimelineToolEntry = (
     errorText,
     detailText,
     exitCode,
+    commandSettled: commandState?.settled ?? false,
     expandable,
     compaction: null,
     run

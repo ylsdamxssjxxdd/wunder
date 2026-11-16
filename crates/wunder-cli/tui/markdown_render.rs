@@ -259,14 +259,16 @@ impl Default for MarkdownStyles {
             h4: Style::new().italic(),
             h5: Style::new().italic(),
             h6: Style::new().italic(),
-            code: Style::new().cyan(),
+            // Reading surfaces stay quiet: code, list numbers and quotes carry
+            // structure, not emphasis, so they step back from the answer text.
+            code: super::theme::code_text(),
             emphasis: Style::new().italic(),
             strong: Style::new().bold(),
             strikethrough: Style::new().crossed_out(),
-            ordered_list_marker: Style::new().cyan(),
+            ordered_list_marker: super::theme::secondary_text(),
             unordered_list_marker: Style::new(),
-            link: Style::new().cyan().underlined(),
-            blockquote: Style::new().green(),
+            link: super::theme::link_text(),
+            blockquote: super::theme::secondary_text().add_modifier(Modifier::ITALIC),
         }
     }
 }

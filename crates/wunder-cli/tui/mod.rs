@@ -131,7 +131,11 @@ async fn run_loop(
         tokio::select! {
             _ = feed_tick.tick() => {
                 app.ensure_durable_follow().await;
-                should_draw = app.durable_feed_pending();
+                // A follow-up typed mid-turn waits here, not in the engine: the
+                // first tick after the turn settles sends the oldest one, so a
+                // queue advances even when the user never touches the keyboard.
+                app.flush_queued_prompts().await;
+                should_draw = app.durable_feed_pending() || app.has_queued_prompts();
             }
             fill = recv_startup_fill(&mut startup_rx) => {
                 if let Some(fill) = fill {

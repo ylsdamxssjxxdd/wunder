@@ -322,21 +322,13 @@ impl GenericToolLogEntry {
 
     fn header_parts(&self) -> (&'static str, Style, Style) {
         match self.status {
-            GenericToolLogStatus::Pending => (
-                "•",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-                theme::accent_text(),
-            ),
+            GenericToolLogStatus::Pending => ("•", theme::tool_pending_marker(), theme::tool_title()),
             GenericToolLogStatus::Success => (
                 "•",
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
+                theme::tool_title(),
             ),
             GenericToolLogStatus::Failure => (
                 "•",
@@ -779,19 +771,15 @@ impl PatchLogEntry {
         match self.status {
             PatchLogStatus::Pending => (
                 "\u{2022}",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-                theme::accent_text(),
+                theme::tool_pending_marker(),
+                theme::tool_title(),
             ),
             PatchLogStatus::Success => (
                 "\u{2022}",
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
+                theme::tool_title(),
             ),
             PatchLogStatus::Failure => (
                 "\u{2718}",
@@ -1050,7 +1038,7 @@ pub(super) fn disclosure_line(
         } else {
             "  \u{2212} Show less".to_string()
         };
-        return Some(Line::from(Span::styled(text, theme::accent_text())));
+        return Some(Line::from(Span::styled(text, theme::tool_fold_hint())));
     }
     let (label, hint) = match disclosure {
         Disclosure::Generic => (
@@ -1084,7 +1072,7 @@ pub(super) fn disclosure_line(
             text.push_str(hint);
         }
     }
-    Some(Line::from(Span::styled(text, theme::accent_text())))
+    Some(Line::from(Span::styled(text, theme::tool_fold_hint())))
 }
 
 fn render_patch_diff_line(
@@ -1148,10 +1136,10 @@ const DIFF_GUTTER_WIDTH: usize = 5;
 
 fn patch_diff_header_style(kind: PatchDiffBlockKind) -> Style {
     match kind {
-        PatchDiffBlockKind::Add => theme::success_text().add_modifier(Modifier::BOLD),
+        PatchDiffBlockKind::Add => theme::success_text(),
         PatchDiffBlockKind::Delete => theme::danger_text(),
-        PatchDiffBlockKind::Rename => theme::brand_text().add_modifier(Modifier::BOLD),
-        PatchDiffBlockKind::Update => theme::accent_text(),
+        PatchDiffBlockKind::Rename => theme::tool_title(),
+        PatchDiffBlockKind::Update => theme::tool_title(),
     }
 }
 

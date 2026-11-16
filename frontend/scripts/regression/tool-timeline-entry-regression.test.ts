@@ -56,8 +56,37 @@ test('a durable command yield does not become a running entry again after reload
   const entry = buildTimelineToolEntry(run, t);
 
   assert.equal(entry.status, 'completed');
+  assert.equal(entry.commandSettled, false);
   assert.equal(entry.summary, 'fixture-command --wait');
   assert.equal(entry.detailText, 'partial output');
+});
+
+test('a zero-exit command stays successful when it writes stderr', () => {
+  const entry = buildTimelineToolEntry(baseRun({
+    callItem: callItem({ args: { content: 'fixture-command --warn' } }),
+    resultItem: callItem({
+      data: { status: 'exited', exit_code: 0, stdout: 'ready\n', stderr: 'warning\n', error: null }
+    }, { eventType: 'tool_result', status: 'completed' })
+  }), t);
+
+  assert.equal(entry.status, 'completed');
+  assert.equal(entry.commandSettled, true);
+  assert.equal(entry.exitCode, 0);
+  assert.equal(entry.errorText, '');
+  assert.match(entry.detailText, /warning/);
+});
+
+test('a completed tool invocation cannot hide a non-zero command exit', () => {
+  const entry = buildTimelineToolEntry(baseRun({
+    callItem: callItem({ args: { content: 'fixture-command --fail' } }),
+    resultItem: callItem({
+      data: { status: 'exited', exit_code: 3, stdout: 'expected failure\n', error: null }
+    }, { eventType: 'tool_result', status: 'completed' })
+  }), t);
+
+  assert.equal(entry.status, 'failed');
+  assert.equal(entry.commandSettled, true);
+  assert.equal(entry.exitCode, 3);
 });
 
 test('failed command keeps one error surface: duplicated stderr is dropped from the output body', () => {

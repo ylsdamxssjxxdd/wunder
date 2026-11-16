@@ -34,12 +34,68 @@ pub(crate) fn secondary_text() -> Style {
     Style::default().add_modifier(Modifier::DIM)
 }
 
+/// The interactive accent on a dark terminal. A saturated ANSI cyan shouts next
+/// to dim body text and reads as an error highlight once three cards carry it;
+/// Codex paints its controls with ChatGPT Blue 200 (#63A8F8), so the same tone
+/// keeps this surface quiet. Terminals that never advertise 256+ colors keep the
+/// ANSI cyan, which every palette defines.
+const ACCENT_RGB: (u8, u8, u8) = (99, 168, 248);
+
+fn rich_color_supported() -> bool {
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        let colorterm = std::env::var("COLORTERM").unwrap_or_default();
+        let term = std::env::var("TERM").unwrap_or_default();
+        let rich = colorterm.contains("truecolor")
+            || colorterm.contains("24bit")
+            || term.contains("truecolor")
+            || term.contains("direct")
+            || term.contains("256color");
+        rich
+    })
+}
+
+pub(crate) fn accent_color() -> Color {
+    if rich_color_supported() {
+        let (r, g, b) = ACCENT_RGB;
+        Color::Rgb(r, g, b)
+    } else {
+        Color::Cyan
+    }
+}
+
 pub(crate) fn accent_text() -> Style {
-    degrade(
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    )
+    degrade(Style::default().fg(accent_color()).add_modifier(Modifier::BOLD))
+}
+
+/// A tool or patch card's own name: the row's weight carries the identity, and
+/// the state lives in the leading bullet. Painting the whole title green made
+/// every finished card glow, which read as an alert rather than a result.
+pub(crate) fn tool_title() -> Style {
+    degrade(Style::default().add_modifier(Modifier::BOLD))
+}
+
+/// A running card's bullet, in the accent instead of a saturated cyan.
+pub(crate) fn tool_pending_marker() -> Style {
+    degrade(Style::default().fg(accent_color()).add_modifier(Modifier::BOLD))
+}
+
+/// The row that offers or closes a fold. Codex tints it only while the activity
+/// is focused; unfocused it stays dim, so an idle transcript carries no control
+/// that competes with the answer above it.
+pub(crate) fn tool_fold_hint() -> Style {
+    secondary_text()
+}
+
+/// Inline code and fenced blocks. A saturated cyan turned every snippet into a
+/// block of neon once a tool result carried one; this is the same blue family as
+/// the accent, stepped back far enough to stay a reading surface.
+pub(crate) fn code_text() -> Style {
+    if rich_color_supported() {
+        degrade(Style::default().fg(Color::Rgb(150, 176, 204)))
+    } else {
+        degrade(Style::default().add_modifier(Modifier::DIM))
+    }
 }
 
 pub(crate) fn success_text() -> Style {
@@ -49,7 +105,7 @@ pub(crate) fn success_text() -> Style {
 pub(crate) fn link_text() -> Style {
     degrade(
         Style::default()
-            .fg(Color::Cyan)
+            .fg(accent_color())
             .add_modifier(Modifier::BOLD)
             .add_modifier(Modifier::UNDERLINED),
     )
@@ -84,7 +140,7 @@ pub(crate) fn diff_hunk_prefix() -> Style {
 pub(crate) fn diff_hunk_text() -> Style {
     degrade(
         Style::default()
-            .fg(Color::Cyan)
+            .fg(accent_color())
             .bg(Color::Rgb(22, 30, 50))
             .add_modifier(Modifier::BOLD),
     )
@@ -155,7 +211,7 @@ pub(crate) fn popup_item() -> Style {
 pub(crate) fn popup_selected() -> Style {
     degrade(
         Style::default()
-            .fg(Color::Cyan)
+            .fg(accent_color())
             .bg(Color::Rgb(26, 42, 54))
             .add_modifier(Modifier::BOLD),
     )
@@ -164,7 +220,7 @@ pub(crate) fn popup_selected() -> Style {
 pub(crate) fn modal_selected() -> Style {
     degrade(
         Style::default()
-            .fg(Color::Cyan)
+            .fg(accent_color())
             .bg(Color::Rgb(26, 42, 54))
             .add_modifier(Modifier::BOLD),
     )
@@ -179,7 +235,7 @@ pub(crate) fn panel_surface() -> Style {
 pub(crate) fn picker_selected() -> Style {
     degrade(
         Style::default()
-            .fg(Color::Cyan)
+            .fg(accent_color())
             .bg(Color::Rgb(40, 74, 106))
             .add_modifier(Modifier::BOLD),
     )

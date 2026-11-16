@@ -121,6 +121,32 @@ pub(crate) fn save(
     })
 }
 
+/// Move an arbitrary byte offset back to the start of its UTF-8 scalar. Stored
+/// payloads are valid UTF-8, so a continuation byte has a leading byte within
+/// the preceding three positions. Returning the aligned offset keeps pagination
+/// unambiguous while allowing callers to estimate a tail window directly from
+/// `total_bytes` instead of probing for valid boundaries.
+fn align_utf8_offset(file: &mut File, mut offset: u64) -> Result<u64> {
+    while offset > 0 {
+        file.seek(SeekFrom::Start(HEADER_BYTES as u64 + offset))
+            .map_err(|error| io_failure("seek result", error))?;
+        let mut byte = [0_u8; 1];
+        if let Err(error) = file.read_exact(&mut byte) {
+            if error.kind() == io::ErrorKind::UnexpectedEof {
+                break;
+            }
+            return Err(io_failure("read result", error));
+        }
+        if byte[0] & 0b1100_0000 != 0b1000_0000 {
+            break;
+        }
+        offset -= 1;
+    }
+    file.seek(SeekFrom::Start(HEADER_BYTES as u64 + offset))
+        .map_err(|error| io_failure("seek result", error))?;
+    Ok(offset)
+}
+
 /// Read a bounded UTF-8 page or search literal text in a bounded scan window.
 /// Offsets address serialized payload bytes, never characters or header bytes.
 pub(crate) fn read(
@@ -149,8 +175,7 @@ pub(crate) fn read(
     if offset > header.bytes {
         bail!("tool result offset exceeds payload length");
     }
-    file.seek(SeekFrom::Start(HEADER_BYTES as u64 + offset))
-        .map_err(|error| io_failure("seek result", error))?;
+    let offset = align_utf8_offset(&mut file, offset)?;
     match query {
         Some(query) => search_page(file, handle, &header, offset, limit, query),
         None => read_page(file, handle, &header, offset, limit),
@@ -715,16 +740,17 @@ mod tests {
     }
 
     #[test]
-    fn offsets_are_utf8_byte_boundaries_and_payload_bounds_are_checked() {
+    fn arbitrary_offsets_align_to_utf8_and_payload_bounds_are_checked() {
         let root = tempfile::tempdir().unwrap();
         let value = json!({"text": "示例🧪"});
         let stored = save_fixture(root.path(), &value);
         let serialized = serde_json::to_string(&value).unwrap();
         let start = serialized.find('示').unwrap() as u64;
-        assert!(read_fixture(root.path(), &stored.handle, start + 1, 100)
-            .unwrap_err()
-            .to_string()
-            .contains("UTF-8 boundary"));
+        for unaligned in start + 1..start + '示'.len_utf8() as u64 {
+            let page = read_fixture(root.path(), &stored.handle, unaligned, 100).unwrap();
+            assert_eq!(page["offset"], start);
+            assert!(page["content"].as_str().unwrap().starts_with("示例🧪"));
+        }
         assert!(read_fixture(root.path(), &stored.handle, stored.bytes + 1, 100).is_err());
         let end = read_fixture(root.path(), &stored.handle, stored.bytes, 100).unwrap();
         assert_eq!(end["content"], "");

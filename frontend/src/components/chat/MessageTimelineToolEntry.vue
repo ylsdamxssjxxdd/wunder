@@ -120,6 +120,7 @@ import { buildToolResultPreview } from './toolWorkflowPreview';
 import { useCommandSessionStore } from '@/stores/commandSessions';
 import {
   commandSessionOutputPreview,
+  resolveCommandDisplayStatus,
   resolveCommandInteractionInput,
   resolveTimelineCommandSessionRef
 } from './toolTimelineCommandSession';
@@ -165,13 +166,11 @@ const commandToolLabel = computed(() => {
 const commandSummary = computed(() =>
   isCommand.value ? String(commandSession.value?.command || props.entry.summary || '') : ''
 );
-const displayStatus = computed(() => {
-  const command = commandSession.value;
-  if (!command) return props.entry.status;
-  if (command.status === 'running') return 'loading';
-  return command.status === 'failed_to_start' || command.timedOut || command.error ||
-    (command.exitCode !== null && command.exitCode !== 0) ? 'failed' : 'completed';
-});
+const displayStatus = computed(() => resolveCommandDisplayStatus(
+  props.entry.status,
+  props.entry.commandSettled,
+  commandSession.value
+));
 const displayExitCode = computed(() => commandSession.value?.exitCode ?? props.entry.exitCode);
 const tokenMetric = computed(() => formatTokenLabel(props.entry.metrics.tokens));
 const durationMetric = computed(() => formatDurationLabel(props.entry.metrics.durationMs));

@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { useCommandSessionStore } from '../../src/stores/commandSessions';
 import {
   commandSessionOutputPreview,
+  resolveCommandDisplayStatus,
   resolveCommandInteractionKind,
   resolveCommandRunOutput,
   resolveTimelineCommandSessionRef
@@ -27,6 +28,30 @@ test('live output survives duplicate send/watch delivery and snapshot replay', (
   assert.equal(store.getByToolCallId('call')?.stderrTail, 'warning\n');
   assert.equal(store.getById('command')?.outputTail, 'first\nsecond\nwarning\n');
   assert.equal(store.getById('command')?.status, 'exited');
+  store.upsertSnapshot('thread', { command_session_id: 'command', seq: 4, status: 'running' });
+  assert.equal(store.getById('command')?.status, 'exited');
+  assert.equal(store.getById('command')?.exitCode, 0);
+});
+
+test('command status uses exit code and a stale running snapshot cannot revive a settled result', () => {
+  setActivePinia(createPinia());
+  const store = useCommandSessionStore();
+  store.upsertSnapshot('thread', {
+    command_session_id: 'command', seq: 1, status: 'running', stderr_tail: 'warning\n'
+  });
+  const running = store.getById('command');
+  assert.equal(resolveCommandDisplayStatus('completed', false, running), 'loading');
+  assert.equal(resolveCommandDisplayStatus('completed', true, running), 'completed');
+  assert.equal(resolveCommandDisplayStatus('failed', true, running), 'failed');
+
+  store.upsertSnapshot('thread', {
+    command_session_id: 'command', seq: 2, status: 'exited', exit_code: 0, stderr_tail: 'warning\n'
+  });
+  assert.equal(resolveCommandDisplayStatus('completed', true, store.getById('command')), 'completed');
+  store.upsertSnapshot('thread', {
+    command_session_id: 'command', seq: 3, status: 'exited', exit_code: 3
+  });
+  assert.equal(resolveCommandDisplayStatus('completed', true, store.getById('command')), 'failed');
 });
 
 test('hydration and rendered output stay bounded while retaining the latest line', () => {
