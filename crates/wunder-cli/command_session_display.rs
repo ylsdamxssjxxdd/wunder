@@ -81,6 +81,10 @@ struct CommandSessionRecord {
     exit_code: Option<i64>,
     timed_out: bool,
     error: Option<String>,
+    interaction_input: Option<String>,
+    /// 已落到卡片里的最后一个输出序号：工具结果重放同一批增量时据此跳过，
+    /// 既不会丢早先的输出，也不会把同一段文字追加两遍。
+    last_seq: Option<u64>,
     duration_ms: Option<i64>,
     stdout: BoundedTextBuffer,
     stderr: BoundedTextBuffer,
@@ -100,6 +104,7 @@ impl CommandSessionRecord {
             exit_code: self.exit_code,
             timed_out: self.timed_out,
             error: self.error.clone(),
+            interaction_input: self.interaction_input.clone(),
             duration_ms: self.duration_ms,
             stdout: self.stdout.preview(),
             stderr: self.stderr.preview(),
@@ -127,6 +132,8 @@ pub(crate) struct CommandSessionView {
     pub(crate) exit_code: Option<i64>,
     pub(crate) timed_out: bool,
     pub(crate) error: Option<String>,
+    /// 最近一次调用写给进程的 stdin（命令会话只有写入时才有值）。
+    pub(crate) interaction_input: Option<String>,
     pub(crate) duration_ms: Option<i64>,
     pub(crate) stdout: String,
     pub(crate) stderr: String,
@@ -272,6 +279,9 @@ impl CommandSessionDisplayState {
             "pty" => record.pty.append(delta),
             _ => record.stdout.append(delta),
         }
+        if let Some(seq) = payload.get("seq").and_then(Value::as_u64) {
+            record.last_seq = Some(record.last_seq.map_or(seq, |last| last.max(seq)));
+        }
         Some(CommandSessionUpdate {
             view: record.view(),
             had_output_before: update.had_output_before,
@@ -364,11 +374,22 @@ impl CommandSessionDisplayState {
         if record.command.trim().is_empty() {
             merge_text_field(&mut record.command, payload, "command");
         }
-        if let Some(returncode) = number_field(item, "exit_code")
+        if let Some(exit_code) = number_field(item, "exit_code")
             .or_else(|| number_field(item, "returncode"))
             .or_else(|| nested_number_field(result, &["meta", "exit_code"]))
         {
-            record.exit_code = Some(returncode);
+            record.exit_code = Some(exit_code);
+        }
+        if let Some(timed_out) = item.get("timed_out").and_then(Value::as_bool) {
+            record.timed_out = timed_out;
+        }
+        if let Some(input) = item
+            .get("interaction_input")
+            .or_else(|| payload.get("interaction_input"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+        {
+            record.interaction_input = Some(input.to_string());
         }
         if let Some(duration_ms) = nested_number_field(result, &["meta", "duration_ms"]) {
             record.duration_ms = Some(duration_ms);
@@ -385,34 +406,40 @@ impl CommandSessionDisplayState {
         if let Some(error) = result
             .get("error")
             .and_then(Value::as_str)
+            .or_else(|| item.get("error").and_then(Value::as_str))
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
             record.error = Some(error.to_string());
         }
-        if let Some(stdout) = item.get("stdout").and_then(Value::as_str) {
-            if !stdout.is_empty() || record.stdout.is_empty() {
-                record.stdout.set_text(stdout);
+        // 工具结果只带回「自上次读取以来」的输出，而直播增量早已把同一段追加进卡片：
+        // 带 seq 的轮询窗口按序号判断是否已经见过，只在没见过时补增量，绝不整段覆盖，
+        // 否则卡片只剩最后一次轮询的窗口，早先的输出凭空消失；不带 seq 的完整捕获
+        // （一次执行的结果）仍以它为准整段替换。
+        let item_seq = item.get("seq").and_then(Value::as_u64);
+        let fresh_output = item_seq.map_or(true, |seq| record.last_seq.is_none_or(|last| seq > last));
+        if fresh_output {
+            let merge = |target: &mut BoundedTextBuffer, value: Option<&Value>| match item_seq {
+                Some(_) => append_tool_result_stream(target, value),
+                None => replace_tool_result_stream(target, value),
+            };
+            merge(&mut record.stdout, item.get("stdout"));
+            merge(&mut record.stderr, item.get("stderr"));
+            merge(&mut record.pty, item.get("pty"));
+            merge(&mut record.output, item.get("output"));
+            if record.output.is_empty() {
+                let stdout = record.stdout.preview();
+                let stderr = record.stderr.preview();
+                let output = [stdout, stderr]
+                    .into_iter()
+                    .filter(|part| !part.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                record.output.set_text(&output);
             }
-        }
-        if let Some(stderr) = item.get("stderr").and_then(Value::as_str) {
-            if !stderr.is_empty() || record.stderr.is_empty() {
-                record.stderr.set_text(stderr);
+            if let Some(seq) = item_seq {
+                record.last_seq = Some(record.last_seq.map_or(seq, |last| last.max(seq)));
             }
-        }
-        if let Some(output) = item.get("output").and_then(Value::as_str) {
-            if !output.is_empty() || record.output.is_empty() {
-                record.output.set_text(output);
-            }
-        } else if record.output.is_empty() {
-            let stdout = record.stdout.preview();
-            let stderr = record.stderr.preview();
-            let output = [stdout, stderr]
-                .into_iter()
-                .filter(|part| !part.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n");
-            record.output.set_text(&output);
         }
 
         Some(CommandSessionUpdate {
@@ -590,6 +617,35 @@ fn apply_status_fields(record: &mut CommandSessionRecord, payload: &Value) {
         .filter(|value| !value.is_empty())
     {
         record.error = Some(error.to_string());
+    }
+}
+
+/// 把工具结果里的一段输出接到卡片上。已经落在卡片末尾的同一段（模型按 seq 0
+/// 重读会把这一批再带一遍）不再追加，避免同一段文字出现两遍。
+fn append_tool_result_stream(target: &mut BoundedTextBuffer, value: Option<&Value>) {
+    let Some(text) = value.and_then(Value::as_str) else {
+        return;
+    };
+    if text.is_empty() {
+        return;
+    }
+    if target.is_empty() {
+        target.set_text(text);
+        return;
+    }
+    if target.preview().ends_with(text) {
+        return;
+    }
+    target.append(text);
+}
+
+/// 一次执行的完整捕获：以它为准整段替换直播攒下的内容（截断窗口不会和增量叠加）。
+fn replace_tool_result_stream(target: &mut BoundedTextBuffer, value: Option<&Value>) {
+    let Some(text) = value.and_then(Value::as_str) else {
+        return;
+    };
+    if !text.is_empty() || target.is_empty() {
+        target.set_text(text);
     }
 }
 

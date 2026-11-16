@@ -230,6 +230,7 @@ fn blank(kind: i32, id: String) -> TimelineRow {
         status_kind: STATUS_DONE,
         foldable: false,
         open: false,
+        open_manual: false,
         group_idx: NO_GROUP,
         group_open: false,
         process_idx: NO_PROCESS,
@@ -441,6 +442,8 @@ pub(crate) fn toggle_rows(model: &ModelRc<TimelineRow>, payload: i32) {
         _ => {
             let mut row = row;
             row.open = !row.open;
+            // 用户亲手点过这一行：命令工具行不再自动跟随执行状态开合。
+            row.open_manual = true;
             if let Some(rows) = model.as_any().downcast_ref::<VecModel<TimelineRow>>() {
                 crate::timeline_text::sync_process_child(rows, &row);
             }
@@ -744,7 +747,11 @@ impl Timeline {
                         }
                     }
                     entry.payload = previous.payload;
-                    entry.open = previous.open;
+                    // 用户在已加载页上点开的条目保持原样；自动开合不再覆盖它。
+                    if previous.manual {
+                        entry.manual = true;
+                        entry.open = previous.open;
+                    }
                 }
             }
             children.set_row_data(index, entry);
@@ -1385,6 +1392,34 @@ impl Timeline {
         offset: usize,
         text: &str,
     ) -> Result<bool, String> {
+        self.apply_reasoning_at(item_id, offset, text, false)
+    }
+
+    /// Apply one chunk from the ordered delta lane at the sender's offset.
+    ///
+    /// Both lanes carry the same chunk, and the tail always leaves first, so the
+    /// delta that follows is normally already on screen and must add nothing —
+    /// blind appending is what doubled a thought's first token. When a chunk
+    /// starts past what is shown, frames were lost on the way: the hole cannot
+    /// be invented here, but refusing the chunk would freeze the rest of the
+    /// thought, so it is appended as it came and the round's finished text
+    /// closes the gap.
+    pub fn apply_reasoning_delta(
+        &mut self,
+        item_id: &str,
+        offset: usize,
+        text: &str,
+    ) -> Result<bool, String> {
+        self.apply_reasoning_at(item_id, offset, text, true)
+    }
+
+    fn apply_reasoning_at(
+        &mut self,
+        item_id: &str,
+        offset: usize,
+        text: &str,
+        span_gap: bool,
+    ) -> Result<bool, String> {
         if item_id.is_empty() || text.is_empty() {
             return Ok(false);
         }
@@ -1410,10 +1445,15 @@ impl Timeline {
             (false, None) => 0,
         };
         let width = text.encode_utf16().count();
-        if offset > have || offset.saturating_add(width) <= have {
+        if offset > have && !span_gap {
             return Ok(false);
         }
-        let skip = have - offset;
+        // Everything this chunk carries is already on screen: the tail lane
+        // got here first, or the same frame was replayed.
+        if offset.saturating_add(width) <= have {
+            return Ok(false);
+        }
+        let skip = have.saturating_sub(offset);
         let mut units = 0usize;
         let mut delta = "";
         for (index, ch) in text.char_indices() {
@@ -1695,6 +1735,7 @@ impl Timeline {
             let status = status_kind(&entry.state);
             let icon = wunder_desktop::tool_icons::workflow_icon(&entry.title).to_string();
             let sections = crate::timeline_text::sections(&entry.sections);
+            let command = crate::timeline_text::is_command_tool(&entry.title);
             self.patch(index, |row| {
                 row.tool_name = label.as_str().into();
                 row.tool_icon = icon.as_str().into();
@@ -1718,6 +1759,11 @@ impl Timeline {
                 row.read_lines = entry.read_lines.as_str().into();
                 row.status_kind = status;
                 row.patch = cards.clone();
+                // 执行命令的输出逐行流入：运行中自动展开让用户看到进度，
+                // 结束后自动收起。用户亲手点过这一条后，一切以用户为准。
+                if command && !row.open_manual {
+                    row.open = status == STATUS_RUNNING;
+                }
             });
             // A settling result rewrites what the folded bar reads out, even
             // though the batch count stayed the same.
@@ -1753,6 +1799,7 @@ impl Timeline {
         let status = status_kind(&entry.state);
         let group = self.group;
         let sections = crate::timeline_text::sections(&entry.sections);
+        let command = crate::timeline_text::is_command_tool(&entry.title);
         self.patch(index, |row| {
             row.tool_name = label.as_str().into();
             row.tool_icon = icon.as_str().into();
@@ -1770,7 +1817,8 @@ impl Timeline {
             row.payload = index as i32;
             row.group_idx = group;
             row.group_open = self.batch_open_state();
-            row.open = false;
+            // 命令输出：一出现就展开（运行中实况），结束后再自动收起。
+            row.open = command && status == STATUS_RUNNING;
             row.foldable = true;
         });
         self.tools.push(ToolItem {
@@ -3339,6 +3387,54 @@ mod tests {
         assert_eq!(row.detail, "想了");
     }
 
+    /// tail 先上线、delta 随后到达时，同一段文本只能让思考长一次。
+    #[test]
+    fn a_reasoning_delta_that_repeats_its_tail_adds_nothing() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-root", "Fixture input");
+        timeline
+            .append_reasoning_item("fixture-exec:text-1", "想")
+            .unwrap();
+        // 同游标的 delta 后到：屏幕上已经有这一段了。
+        assert!(
+            !timeline
+                .apply_reasoning_delta("fixture-exec:text-1", 0, "想")
+                .unwrap(),
+            "已覆盖的一段不产生任何变化"
+        );
+        assert!(
+            timeline
+                .apply_reasoning_delta("fixture-exec:text-1", 1, "了")
+                .unwrap(),
+            "下一段照常接在后面"
+        );
+        timeline.flush();
+        let index = timeline.thinking.as_ref().unwrap().index;
+        let row = timeline.model.row_data(index).unwrap();
+        assert_eq!(row.detail, "想了");
+    }
+
+    /// delta 通道有序：它跨过一段屏幕上没有的文本，说明中间丢了帧。补不回那段，
+    /// 但也绝不能把后面的思考冻住——照常接上，轮末的完整文本会补齐。
+    #[test]
+    fn a_reasoning_delta_that_skips_a_lost_chunk_still_grows_the_thought() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-root", "Fixture input");
+        timeline
+            .append_reasoning_item("fixture-exec:text-1", "想")
+            .unwrap();
+        assert!(
+            timeline
+                .apply_reasoning_delta("fixture-exec:text-1", 2, "再看")
+                .unwrap(),
+            "丢了中间一段也不能停在这里"
+        );
+        timeline.flush();
+        let index = timeline.thinking.as_ref().unwrap().index;
+        let row = timeline.model.row_data(index).unwrap();
+        assert_eq!(row.detail, "想再看");
+    }
+
     /// delta 通道少了一段时，tail 用自己带的 offset 把缺的那段接上。
     #[test]
     fn a_reasoning_tail_fills_the_range_the_delta_lane_missed() {
@@ -3484,6 +3580,74 @@ mod tests {
         );
         timeline.finish(Settle::Failed);
         assert_eq!(children.row_data(1).unwrap().status_kind, STATUS_FAILED);
+    }
+
+    /// 执行命令的输出是逐行流入的：工作过程里这一条在运行中自动展开，结束后
+    /// 自动收起，用户不用先点开才知道命令在跑什么。
+    #[test]
+    fn a_command_entry_opens_while_running_and_folds_when_it_ends() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-root", "Fixture input");
+        let command = |state: &str| {
+            NativeWorkflowEntry::from_payload(
+                "fixture-call",
+                "execute_command",
+                "Fixture output".into(),
+                state,
+                &serde_json::json!({"args":{"command":"ls"}}),
+            )
+        };
+        timeline.upsert_tool(&command("running"));
+        let children = timeline
+            .model
+            .row_data(timeline.process_bar)
+            .unwrap()
+            .process_entries;
+        assert!(
+            children.row_data(0).unwrap().open,
+            "运行中直接铺开输出，不用先点一下"
+        );
+        timeline.upsert_tool(&command("completed"));
+        assert!(
+            !children.row_data(0).unwrap().open,
+            "结束后自动收起，工作过程保持紧凑"
+        );
+    }
+
+    /// 用户亲手点过这一条就等于接管了它的开合：之后的自动展开/收起不能再改。
+    #[test]
+    fn a_clicked_command_entry_keeps_the_readers_fold() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-root", "Fixture input");
+        let command = |state: &str| {
+            NativeWorkflowEntry::from_payload(
+                "fixture-call",
+                "execute_command",
+                "Fixture output".into(),
+                state,
+                &serde_json::json!({"args":{"command":"ls"}}),
+            )
+        };
+        timeline.upsert_tool(&command("running"));
+        let children = timeline
+            .model
+            .row_data(timeline.process_bar)
+            .unwrap()
+            .process_entries;
+        let token = children.row_data(0).unwrap().payload;
+        // 运行中收起来：这一条此后不再被自动打开。
+        timeline.toggle(token);
+        assert!(!children.row_data(0).unwrap().open);
+        timeline.upsert_tool(&command("completed"));
+        assert!(
+            !children.row_data(0).unwrap().open,
+            "用户的收起不该被结算帧改回展开"
+        );
+        // 反过来，用户点开的已结束命令也不会被下一次结算帧收回。
+        timeline.toggle(token);
+        assert!(children.row_data(0).unwrap().open);
+        timeline.upsert_tool(&command("failed"));
+        assert!(children.row_data(0).unwrap().open);
     }
 
     #[test]

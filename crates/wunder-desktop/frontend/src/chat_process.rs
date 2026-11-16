@@ -224,10 +224,12 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
 
 pub(crate) fn apply_page(row: &mut TimelineRow, page: NativeProcessPage, direction: i32) {
     let (page_first, page_last) = (page.first, page.last);
-    let previous: HashMap<String, bool> = row
+    // 上一轮里用户亲手点开/收起的条目：翻页、续读和尾部刷新都要沿用它。
+    // 自动开合（命令输出运行中展开、结束后收起）不算，它随新一页的状态重算。
+    let previous: HashMap<String, (bool, bool)> = row
         .process_entries
         .iter()
-        .map(|entry| (entry.id.to_string(), entry.open))
+        .map(|entry| (entry.id.to_string(), (entry.open, entry.manual)))
         .collect();
     let page_entries = project_page_entries(page.items);
 
@@ -275,7 +277,14 @@ pub(crate) fn apply_page(row: &mut TimelineRow, page: NativeProcessPage, directi
         // Negative payloads address a child in its own process, never an outer
         // timeline index. The bounded process slot makes this unambiguous.
         entry.payload = -1 - row.process_idx * PROCESS_SLOT - index as i32;
-        entry.open = previous.get(entry.id.as_str()).copied().unwrap_or(false);
+        // Only a manual choice survives a refresh; the auto state of a command
+        // entry is whatever its refreshed status says.
+        if let Some((open, manual)) = previous.get(entry.id.as_str()).copied() {
+            if manual {
+                entry.manual = true;
+                entry.open = open;
+            }
+        }
     }
     if let Some(model) = row
         .process_entries
@@ -420,6 +429,10 @@ fn project_page_entries(items: Vec<NativeProcessItem>) -> Vec<ProcessEntry> {
                 duration: tool.duration.into(),
                 round: i32::try_from(item.round).unwrap_or_default(),
                 status_kind: status,
+                // 命令输出是逐行流入的：历史页里仍在跑的这一条直接铺开输出，
+                // 跑完的保持收起（与实时投影同一口径，用户点过则以用户为准）。
+                open: crate::timeline_text::is_command_tool(&tool.title)
+                    && status == crate::timeline::STATUS_RUNNING,
                 ..Default::default()
             });
         }
@@ -472,13 +485,30 @@ pub fn toggle_entry(model: &impl Model<Data = TimelineRow>, payload: i32) {
     let token = -1 - payload;
     let process = token / PROCESS_SLOT;
     let index = (token % PROCESS_SLOT) as usize;
-    if let Some(bar) = model
+    let Some(bar) = model
         .iter()
         .find(|row| row.kind == crate::timeline::KIND_PROCESS && row.process_idx == process)
-    {
-        if let Some(mut entry) = bar.process_entries.row_data(index) {
-            entry.open = !entry.open;
-            bar.process_entries.set_row_data(index, entry);
+    else {
+        return;
+    };
+    let Some(mut entry) = bar.process_entries.row_data(index) else {
+        return;
+    };
+    entry.open = !entry.open;
+    // The click is the user's own decision: from now on neither a streamed
+    // result nor a page refresh may auto-open or auto-collapse this entry.
+    entry.manual = true;
+    let (id, open) = (entry.id.clone(), entry.open);
+    bar.process_entries.set_row_data(index, entry);
+    // A live entry is projected from its timeline row on every streamed frame.
+    // Carry the choice onto that row, or the next frame would overwrite it.
+    if let Some(rows) = model.as_any().downcast_ref::<VecModel<TimelineRow>>() {
+        if let Some(row_index) = rows.iter().position(|row| row.id == id) {
+            if let Some(mut source) = rows.row_data(row_index) {
+                source.open = open;
+                source.open_manual = true;
+                rows.set_row_data(row_index, source);
+            }
         }
     }
 }
@@ -552,6 +582,88 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].round, 3, "the thought names its own round");
         assert_eq!(entries[1].round, 4, "the call names the round it ran in");
+    }
+
+    /// 历史页里的执行命令：仍在跑的那条铺开输出，跑完的保持收起；用户点过
+    /// 之后翻页、刷新都沿用他的选择。
+    #[test]
+    fn page_entries_follow_command_output_unless_the_reader_clicked() {
+        let item = |id: &str, state: &str| NativeProcessItem {
+            id: id.into(),
+            item_index: 0,
+            state: state.into(),
+            reasoning: String::new(),
+            text: String::new(),
+            tool: Some(wunder_desktop::native::NativeWorkflowEntry {
+                id: id.into(),
+                state: state.into(),
+                title: "execute_command".into(),
+                preview: "fixture command".into(),
+                detail: String::new(),
+                tokens: String::new(),
+                duration: String::new(),
+                read_lines: String::new(),
+                command_output: "fixture output".into(),
+                command_meta: String::new(),
+                sections: Vec::new(),
+                patch_files: Vec::new(),
+                round: 1,
+            }),
+            tokens: String::new(),
+            duration: String::new(),
+            round: 1,
+        };
+        let mut row = TimelineRow {
+            kind: crate::timeline::KIND_PROCESS,
+            process_idx: 5,
+            process_entries: ModelRc::new(VecModel::<ProcessEntry>::default()),
+            ..Default::default()
+        };
+        apply_page(
+            &mut row,
+            NativeProcessPage {
+                items: vec![item("fixture-running", "running"), item("fixture-done", "completed")],
+                ..Default::default()
+            },
+            2,
+        );
+        assert!(
+            row.process_entries.row_data(0).unwrap().open,
+            "运行中的命令直接铺开输出"
+        );
+        assert!(
+            !row.process_entries.row_data(1).unwrap().open,
+            "跑完的命令保持收起"
+        );
+
+        // 读者点开已结束的那条，并在跑到一半的那条上收起。折叠回调经视图模型
+        // 到达，所以这里也走同一个入口。
+        let model = VecModel::from(vec![row.clone()]);
+        let done = row.process_entries.row_data(1).unwrap().payload;
+        toggle_entry(&model, done);
+        let running = row.process_entries.row_data(0).unwrap().payload;
+        toggle_entry(&model, running);
+        assert!(row.process_entries.row_data(1).unwrap().open);
+        assert!(!row.process_entries.row_data(0).unwrap().open);
+
+        // 结算后的刷新：跑完的那条不再自动收起（用户点开过），用户收起的那条
+        // 也不会被自动展开。
+        apply_page(
+            &mut row,
+            NativeProcessPage {
+                items: vec![item("fixture-running", "completed"), item("fixture-done", "completed")],
+                ..Default::default()
+            },
+            2,
+        );
+        assert!(
+            row.process_entries.row_data(1).unwrap().open,
+            "用户点开的条目在刷新后仍然展开"
+        );
+        assert!(
+            !row.process_entries.row_data(0).unwrap().open,
+            "用户收起的条目在刷新后仍然收起"
+        );
     }
 
     #[test]
@@ -728,10 +840,12 @@ mod tests {
             ..Default::default()
         };
         crate::timeline_text::merge_reasoning_tail(&row, live());
+        // 读者亲手点开过这一条：翻页、刷新都要沿用他的选择。
         row.process_entries.set_row_data(
             0,
             ProcessEntry {
                 open: true,
+                manual: true,
                 ..row.process_entries.row_data(0).unwrap()
             },
         );

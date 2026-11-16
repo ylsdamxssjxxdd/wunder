@@ -178,12 +178,6 @@ component ProcessEntryCard inherits Rectangle {
             }
 
         }
-        if !root.entry.open && root.entry.command-output != "" : Text {
-            x: 44px; width: parent.width - 68px;
-            text: root.entry.command-output;
-            color: Theme.muted; font-size: Theme.font-sm; font-family: Theme.font-mono;
-            wrap: word-wrap;
-        }
         // The fold is laid out from the start and only collapses its height.
         // A panel created on the expand tap measured wrapped text at its
         // unwrapped width, so the box stayed one line tall and command output

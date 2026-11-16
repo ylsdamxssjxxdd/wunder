@@ -3650,11 +3650,22 @@ fn project_turns_preserving(turns: &[NativeChatTurn], previous: &[RowData]) -> V
         .flat_map(|row| row.process_children.iter())
         .map(|child| (child.id.as_str(), child.open))
         .collect();
+    let child_manual: std::collections::HashMap<&str, bool> = previous
+        .iter()
+        .flat_map(|row| row.process_children.iter())
+        .map(|child| (child.id.as_str(), child.manual))
+        .collect();
     for row in &mut rows {
         if let Some(open) = opens.get(row.id.as_str()) {
             row.open = *open;
         }
         for child in &mut row.process_children {
+            // 用户点过的条目沿用他的选择；没点过的按最新状态重算（命令输出
+            // 运行中展开、结束后收起），不被上一次的自动状态粘住。
+            if !child_manual.get(child.id.as_str()).copied().unwrap_or(false) {
+                continue;
+            }
+            child.manual = true;
             if let Some(open) = child_opens.get(child.id.as_str()) {
                 child.open = *open;
             }
@@ -7994,11 +8005,23 @@ fn publish_live(shared: &Arc<Mutex<Shared>>, session: &str, stream_id: u64, live
                 .flat_map(|row| row.process_children.iter())
                 .map(|child| (child.id.as_str(), child.open))
                 .collect();
+            let child_manual: std::collections::HashMap<&str, bool> = state
+                .live_rows
+                .iter()
+                .flat_map(|row| row.process_children.iter())
+                .map(|child| (child.id.as_str(), child.manual))
+                .collect();
             for row in &mut rows {
                 if let Some(open) = opens.get(row.id.as_str()) {
                     row.open = *open;
                 }
                 for child in &mut row.process_children {
+                    // 只有用户亲手点过的条目沿用旧状态；命令输出的自动展开/
+                    // 收起每一帧都按最新执行状态重算。
+                    if !child_manual.get(child.id.as_str()).copied().unwrap_or(false) {
+                        continue;
+                    }
+                    child.manual = true;
                     if let Some(open) = child_opens.get(child.id.as_str()) {
                         child.open = *open;
                     }
@@ -8360,6 +8383,7 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                 live.push_tool(project::LiveTool {
                     id: entry.id,
                     title: label,
+                    command: project::is_command_tool(&entry.title),
                     tool_icon: icon,
                     summary: entry.preview,
                     state: entry.state,
@@ -8486,6 +8510,8 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                     live.push_tool(project::LiveTool {
                         id: entry.id,
                         title: label,
+                        // 命令会话（写入 stdin / 等待）不是执行命令本身。
+                        command: false,
                         tool_icon: "terminal".into(),
                         summary,
                         state: entry.state,
@@ -8524,6 +8550,7 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                 live.push_tool(project::LiveTool {
                     id,
                     title: "上下文压缩".into(),
+                    command: false,
                     tool_icon: "compress".into(),
                     summary: summary.to_owned(),
                     state: state.into(),

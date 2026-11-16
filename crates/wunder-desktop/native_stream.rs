@@ -407,16 +407,16 @@ async fn replay_queue(
 /// budget untouched: the ledger only ever asks a JSON object for two lengths.
 #[derive(Default)]
 struct TailLedger {
-    /// UTF-16 units already delivered, per `(item_id, field)`.
+    /// Furthest UTF-16 cursor either lane reached, per `(item_id, field)`.
     covered: std::collections::HashMap<(String, String), usize>,
 }
 
 impl TailLedger {
-    /// Count the text one forwarded delta added.
+    /// Raise the watermark to what this delta's own cursor reports.
     ///
     /// The runtime collapses every semantic delta into `thread_item_delta` and
     /// keeps the type in `source_event`; the item identity is
-    /// `turn_id}:text-model_round}`, the same key its tails use.
+    /// `{turn_id}:text-{model_round}`, the same key its tails use.
     fn observe_delta(&mut self, event: &str, data: &Value) {
         if event != "thread_item_delta" {
             return;
@@ -439,11 +439,21 @@ impl TailLedger {
             let Some(text) = payload[source].as_str().filter(|text| !text.is_empty()) else {
                 continue;
             };
+            // The frame carries the sender's own cursor, so the watermark is
+            // the furthest position either lane reached, never a running sum:
+            // summing counted a chunk a forwarded tail had already put on
+            // screen a second time and pushed the watermark past the text.
+            let start = payload["reasoning_offset"]
+                .as_u64()
+                .map(|offset| offset as usize);
             let entry = self
                 .covered
                 .entry((item.clone(), field.to_string()))
                 .or_insert(0);
-            *entry = entry.saturating_add(text.encode_utf16().count());
+            *entry = match start {
+                Some(start) => (*entry).max(start.saturating_add(text.encode_utf16().count())),
+                None => entry.saturating_add(text.encode_utf16().count()),
+            };
         }
     }
 
@@ -473,7 +483,10 @@ impl TailLedger {
         if *entry >= end {
             return true;
         }
-        *entry = end;
+        // A forwarded tail is now part of what the window shows, so it may only
+        // ever raise the watermark. Lowering it (or re-summing it later) would
+        // let a later repair be judged redundant while the text is missing.
+        *entry = (*entry).max(end);
         false
     }
 }
@@ -535,6 +548,25 @@ mod tests {
             ledger.tail_is_redundant(&ahead),
             "放行过的同一段再到达就该丢掉"
         );
+    }
+
+    /// 真实上线顺序是 tail 先、delta 后：放行过的 tail 不能被随后的同一条
+    /// delta 再记一次，否则水位越过屏幕上已有的文本，真正的补段会被当成重复丢掉。
+    #[test]
+    fn a_forwarded_tail_is_not_counted_twice_by_the_delta_behind_it() {
+        let mut ledger = TailLedger::default();
+        let first = json!({"data": {"item_id": "t1:text-1", "field": "reasoning", "offset": 0, "text": "想"}});
+        assert!(!ledger.tail_is_redundant(&first), "首段 tail 必须放行");
+        ledger.observe_delta(
+            "thread_item_delta",
+            &json!({"data": {
+                "source_event": "llm_output_delta", "turn_id": "t1", "model_round": 1,
+                "reasoning_offset": 0, "reasoning_delta": "想"
+            }}),
+        );
+        // 水位这时只是「想」这一段的长度；随后补上的下一段不该被当成重复。
+        let repair = json!({"data": {"item_id": "t1:text-1", "field": "reasoning", "offset": 1, "text": "了"}});
+        assert!(!ledger.tail_is_redundant(&repair), "水位不该越过缺失的那一段");
     }
 
     /// 正文与思考两条通道的水位互不干扰；没有 turn_id 的增量不参与记账。

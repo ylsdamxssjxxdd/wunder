@@ -86,14 +86,19 @@ export const resolveMarkdownWorkspacePath = ({
   }
 
   const safeOwner = normalizeWorkspaceOwnerId(ownerId);
-  const scopeId = String(workspaceScopeId || '').trim() || buildWorkspaceScopeId(safeOwner, containerId);
+  // 云端形态（服务端扁平布局）没有容器作用域，`__c__N` 公共路径无法落到
+  // 用户工作区，只会 404 并显示「该文件已被移除」；只有桌面本地形态才用
+  // 容器 id 参与路径。
+  const effectiveContainerId = desktopLocalMode ? containerId : null;
+  const scopeId =
+    String(workspaceScopeId || '').trim() || buildWorkspaceScopeId(safeOwner, effectiveContainerId);
   if (!scopeId) return '';
 
   const buildPublicPath = (relativePath: string) => {
     if (scopeId.includes('__a__')) {
       return buildWorkspacePublicPathFromScope(scopeId, relativePath);
     }
-    return buildWorkspacePublicPath(safeOwner, relativePath, containerId);
+    return buildWorkspacePublicPath(safeOwner, relativePath, effectiveContainerId);
   };
 
   // Prefer explicit Markdown paths, then bare relative workspace paths,

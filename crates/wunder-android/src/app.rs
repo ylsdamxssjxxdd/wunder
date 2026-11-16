@@ -57,6 +57,8 @@ pub fn build_preview() -> MobileWindow {
                 if let Some(entry) = row.process_entries.row_data(child) {
                     let mut entry = entry;
                     entry.open = !entry.open;
+                    // 用户亲手点过：此后自动开合不再改动这一条。
+                    entry.manual = true;
                     row.process_entries.set_row_data(child, entry);
                     model_for_toggle.set_row_data(bar, row);
                 }
@@ -1567,6 +1569,8 @@ fn wire_callbacks(
                     bar.open = !bar.open;
                 } else if let Some(child) = bar.process_children.get_mut((-index - 2) as usize) {
                     child.open = !child.open;
+                    // 用户亲手点过：此后自动开合不再改动这一条。
+                    child.manual = true;
                 } else {
                     return;
                 }
@@ -1586,6 +1590,8 @@ fn wire_callbacks(
                 return;
             };
             entry.open = !entry.open;
+            // 用户亲手点过：此后自动开合不再改动这一条。
+            entry.manual = true;
             state.patch_row = Some(bar);
             state.patch_rev = state.patch_rev.wrapping_add(1);
             return;

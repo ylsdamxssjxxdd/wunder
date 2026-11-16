@@ -353,19 +353,11 @@ enum CommandLogStatus {
     Completed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CommandInteraction {
-    Execute,
-    Wait,
-    Input,
-}
-
 #[derive(Debug, Clone)]
 pub(super) struct CommandLogEntry {
     status: CommandLogStatus,
     success: bool,
     command: String,
-    interaction: CommandInteraction,
     interaction_input: Option<String>,
     metrics: Option<String>,
     /// The exit code the footer states once the card is open. `None` while the process runs.
@@ -404,12 +396,9 @@ impl CommandLogEntry {
 
         if expanded {
             if let Some(input) = self.interaction_input.as_deref() {
-                let input = input
-                    .replace('\r', "\\r")
-                    .replace('\n', "\\n")
-                    .replace('\t', "\\t");
                 lines.extend(render_wrapped_tail_text(
-                    format!("stdin › {input}").as_str(),
+                    format!("stdin › {}", crate::render::summarize_interaction_input(input))
+                        .as_str(),
                     summary_style(),
                     body_first,
                     width,
@@ -529,26 +518,10 @@ impl CommandLogEntry {
         };
         let command = self.command.lines().next().unwrap_or_default().to_string();
         // The head names the tool and then what it ran, the way every other card does:
-        // a bare command line read as stray output rather than as a card.
-        let verb = match self.interaction {
-            CommandInteraction::Execute => {
-                crate::tool_presentation::present("执行命令").verb(self.is_zh)
-            }
-            CommandInteraction::Wait => {
-                if self.is_zh {
-                    "等待"
-                } else {
-                    "Waited for"
-                }
-            }
-            CommandInteraction::Input => {
-                if self.is_zh {
-                    "发送输入"
-                } else {
-                    "Interacted with"
-                }
-            }
-        };
+        // a bare command line read as stray output rather than as a card. One process is
+        // one card: waits and stdin writes land in this card's body instead of spawning
+        // a second head that repeats the same command.
+        let verb = crate::tool_presentation::present("执行命令").verb(self.is_zh);
         let mut spans = vec![
             icon,
             Span::styled(format!("{verb} "), command_style()),
@@ -1428,7 +1401,6 @@ pub(super) fn build_pending_command_log(args: &Value, is_zh: bool) -> Option<Spe
         is_zh,
         success: true,
         command,
-        interaction: CommandInteraction::Execute,
         interaction_input: None,
         metrics: None,
         exit_code: None,
@@ -1531,8 +1503,7 @@ pub(super) fn build_command_session_log(view: &CommandSessionView, is_zh: bool) 
         },
         success: !terminal || success,
         command,
-        interaction: CommandInteraction::Execute,
-        interaction_input: None,
+        interaction_input: view.interaction_input.clone(),
         metrics: (!metrics.is_empty()).then(|| metrics.join(", ")),
         exit_code: terminal.then_some(view.exit_code.unwrap_or(if success { 0 } else { 1 })),
         duration_ms: view.duration_ms,
@@ -1605,100 +1576,10 @@ pub(super) fn build_completed_command_log(payload: &Value, is_zh: bool) -> Optio
         status: CommandLogStatus::Completed,
         success,
         command,
-        interaction: CommandInteraction::Execute,
         interaction_input: None,
         metrics: None,
         exit_code: Some(returncode),
         duration_ms,
-        sections,
-        is_zh,
-    }))
-}
-
-pub(super) fn build_command_interaction_log(
-    payload: &Value,
-    is_zh: bool,
-) -> Option<SpecialLogEntry> {
-    let result = payload.get("result").unwrap_or(payload);
-    let data = result.get("data").unwrap_or(result);
-    let source = data
-        .get("results")
-        .and_then(Value::as_array)
-        .and_then(|items| items.first())
-        .unwrap_or(data);
-    let command = source
-        .get("command")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(if is_zh { "命令" } else { "command" })
-        .to_string();
-    let interaction_input = source
-        .get("interaction_input")
-        .or_else(|| data.get("interaction_input"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let interaction = if interaction_input
-        .as_deref()
-        .is_some_and(|value| !value.is_empty())
-    {
-        CommandInteraction::Input
-    } else {
-        CommandInteraction::Wait
-    };
-    let running = source
-        .get("status")
-        .or_else(|| data.get("status"))
-        .and_then(Value::as_str)
-        == Some("running");
-    let exit_code = value_as_i64(source.get("exit_code"));
-    let success = !running && exit_code.unwrap_or(0) == 0 && result["ok"].as_bool() != Some(false);
-    let output = source
-        .get("output")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .unwrap_or_else(|| {
-            ["pty", "stdout", "stderr"]
-                .into_iter()
-                .filter_map(|key| source.get(key).and_then(Value::as_str))
-                .filter(|value| !value.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n")
-        });
-    let mut sections = Vec::new();
-    if let Some(section) = build_output_section("output", output.as_str(), summary_style()) {
-        sections.push(section);
-    }
-    if let Some(error) = source
-        .get("error")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        if let Some(section) = build_output_section(
-            if is_zh { "错误" } else { "error" },
-            error,
-            Style::default().fg(Color::Red),
-        ) {
-            sections.push(section);
-        }
-    }
-    if !running && sections.is_empty() {
-        sections.push(empty_output_section(is_zh));
-    }
-    Some(SpecialLogEntry::Command(CommandLogEntry {
-        status: if running {
-            CommandLogStatus::Pending
-        } else {
-            CommandLogStatus::Completed
-        },
-        success,
-        command,
-        interaction,
-        interaction_input,
-        metrics: None,
-        exit_code: (!running).then_some(exit_code.unwrap_or(if success { 0 } else { 1 })),
-        duration_ms: value_as_i64(result.get("meta").and_then(|meta| meta.get("duration_ms"))),
         sections,
         is_zh,
     }))
@@ -2861,6 +2742,7 @@ mod tests {
             exit_code: None,
             timed_out: false,
             error: None,
+            interaction_input: None,
             duration_ms: None,
             stdout: "line 1\nline 2".to_string(),
             stderr: "warning".to_string(),
@@ -3524,7 +3406,6 @@ mod tests {
             status: CommandLogStatus::Completed,
             success: false,
             command: "echo first\necho second".to_string(),
-            interaction: CommandInteraction::Execute,
             interaction_input: None,
             metrics: None,
             exit_code: Some(1),
@@ -3584,7 +3465,6 @@ mod tests {
             status: CommandLogStatus::Completed,
             success: true,
             command: "ls".to_string(),
-            interaction: CommandInteraction::Execute,
             interaction_input: None,
             metrics: None,
             exit_code: None,
@@ -3635,7 +3515,6 @@ mod tests {
             status: CommandLogStatus::Completed,
             success: true,
             command: "ls".to_string(),
-            interaction: CommandInteraction::Execute,
             interaction_input: None,
             metrics: None,
             exit_code: None,
@@ -3673,7 +3552,6 @@ mod tests {
             status: CommandLogStatus::Completed,
             success: true,
             command: "ls".to_string(),
-            interaction: CommandInteraction::Execute,
             interaction_input: None,
             metrics: None,
             exit_code: None,
@@ -3801,47 +3679,89 @@ mod tests {
         }
     }
 
+    /// 一次执行加多次等待/写入只落在一张卡上：等待结果带回的输出与实时增量是同一批，
+    /// 归并后既不能再长出一张重复命令的卡，也不能把先前的输出换成最后一次窗口。
     #[test]
-    fn command_interaction_uses_original_command_and_chronological_output() {
-        let payload = serde_json::json!({
-            "result": {
-                "ok": true,
-                "data": {
-                    "command": "fixture-command --wait",
+    fn wait_and_stdin_results_merge_into_the_running_card() {
+        use crate::command_session_display::CommandSessionDisplayState;
+
+        let mut state = CommandSessionDisplayState::default();
+        state.register_tool_call(&serde_json::json!({
+            "tool_call_id": "call_1",
+            "args": { "content": "demo --wait" }
+        }));
+        state.register_start(&serde_json::json!({
+            "tool_call_id": "call_1",
+            "command_session_id": "cmd_1",
+            "command": "demo --wait"
+        }));
+        state.register_delta(&serde_json::json!({
+            "command_session_id": "cmd_1",
+            "stream": "stdout",
+            "delta": "question\n",
+            "seq": 1
+        }));
+
+        let waiting = state
+            .register_tool_result_all(&serde_json::json!({
+                "tool": "command_session",
+                "tool_call_id": "call_2",
+                "result": { "ok": true, "data": {
+                    "command_session_id": "cmd_1",
+                    "command": "demo --wait",
                     "status": "running",
                     "interaction_input": "yes\n",
-                    "output": "question\nanswer\n",
-                    "stdout": "question\nanswer\n",
-                    "stderr": ""
-                }
-            }
-        });
-        let SpecialLogEntry::Command(entry) =
-            build_command_interaction_log(&payload, false).expect("interaction")
-        else {
-            panic!("expected command interaction");
+                    "output": "question\n",
+                    "stdout": "question\n",
+                    "stderr": "",
+                    "seq": 1
+                } }
+            }))
+            .pop()
+            .expect("merged wait result");
+        assert_eq!(waiting.view.primary_id, "cmd_1");
+        assert_eq!(waiting.view.stdout, "question\n", "重放的增量不再追加一遍");
+        assert_eq!(waiting.view.interaction_input.as_deref(), Some("yes\n"));
+
+        let SpecialLogEntry::Command(entry) = build_command_session_log(&waiting.view, false) else {
+            panic!("expected command log");
         };
-        assert_eq!(entry.interaction, CommandInteraction::Input);
         assert_eq!(entry.status, CommandLogStatus::Pending);
-        let header = entry
-            .header_line()
-            .spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect::<String>();
-        assert!(header.contains("Interacted with fixture-command --wait"));
-        let expanded = entry
-            .render_lines_for_width(100, true)
-            .iter()
-            .map(|line| {
-                line.spans
-                    .iter()
-                    .map(|span| span.content.as_ref())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(expanded.contains("stdin › yes\\n"));
-        assert!(expanded.contains("question"));
+        let header = flat_command_lines(&entry, 100, false).join("\n");
+        assert!(
+            header.contains("Ran demo --wait"),
+            "一张卡只有一个头: {header}"
+        );
+        let expanded = flat_command_lines(&entry, 100, true).join("\n");
+        assert!(expanded.contains("stdin › yes\\n"), "{expanded}");
+        assert_eq!(expanded.matches("question").count(), 1, "{expanded}");
+
+        let exited = state
+            .register_tool_result_all(&serde_json::json!({
+                "tool": "command_session",
+                "tool_call_id": "call_3",
+                "result": { "ok": true, "data": {
+                    "command_session_id": "cmd_1",
+                    "command": "demo --wait",
+                    "status": "exited",
+                    "exit_code": 0,
+                    "output": "answer\n",
+                    "stdout": "answer\n",
+                    "stderr": "",
+                    "seq": 3
+                } }
+            }))
+            .pop()
+            .expect("merged exit result");
+        let SpecialLogEntry::Command(entry) = build_command_session_log(&exited.view, false) else {
+            panic!("expected command log");
+        };
+        assert_eq!(entry.status, CommandLogStatus::Completed);
+        assert_eq!(entry.exit_code, Some(0));
+        let expanded = flat_command_lines(&entry, 100, true).join("\n");
+        assert!(
+            expanded.contains("question") && expanded.contains("answer"),
+            "终态卡保留全过程输出: {expanded}"
+        );
     }
 }

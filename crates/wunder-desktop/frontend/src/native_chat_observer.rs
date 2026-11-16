@@ -1319,6 +1319,7 @@ fn blank_row(kind: i32, id: String) -> TimelineRow {
         status_kind: crate::timeline::STATUS_DONE,
         foldable: false,
         open: false,
+        open_manual: false,
         group_idx: crate::timeline::NO_GROUP,
         group_open: false,
         process_idx: crate::timeline::NO_PROCESS,

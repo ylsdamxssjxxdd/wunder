@@ -63,6 +63,9 @@ pub struct ProcessChildData {
     pub lines_read: String,
     pub status_kind: i32,
     pub open: bool,
+    /// 用户亲手点过这一条的展开/收起：此后自动开合（命令输出运行中展开、
+    /// 结束后收起）不再改动它。
+    pub manual: bool,
     pub payload: i32,
 }
 
@@ -179,6 +182,7 @@ impl RowData {
             child.duration.hash(&mut hasher);
             child.status_kind.hash(&mut hasher);
             child.open.hash(&mut hasher);
+            child.manual.hash(&mut hasher);
             child.payload.hash(&mut hasher);
         }
         hasher.finish()
@@ -256,6 +260,7 @@ impl RowData {
                         duration: child.duration.as_str().into(),
                         status_kind: child.status_kind,
                         open: child.open,
+                        manual: child.manual,
                         payload: child.payload,
                     }
                 })
@@ -313,6 +318,7 @@ fn blank(kind: i32, id: impl Into<SharedString>) -> TimelineRow {
         status_kind: STATUS_DONE,
         foldable: false,
         open: false,
+        open_manual: false,
         group_idx: -1,
         group_open: false,
         process_idx: -1,
@@ -648,8 +654,25 @@ fn action_label(action: &str) -> &'static str {
     }
 }
 
+/// 是否为执行命令（命令行）工具。命令输出逐行流入，工作过程里的这一条要在
+/// 运行中自动展开、结束后自动收起；其它工具保持默认收起。
+pub(crate) fn is_command_tool(tool: &str) -> bool {
+    matches!(
+        tool.trim(),
+        "execute_command" | "exec_command" | "run_command" | "shell" | "运行命令" | "执行命令"
+    )
+}
+
+/// 命令条目的展开口径：运行中展开看输出，结束后收起；用户亲手点过则由用户决定。
+pub(crate) fn command_open(tool: &str, status: i32) -> bool {
+    is_command_tool(tool) && status == STATUS_RUNNING
+}
+
 /// Align a raw tool id with 桌面版's Chinese row labels.
 pub(crate) fn tool_label(tool: &str) -> String {
+    if is_command_tool(tool) {
+        return "执行命令".into();
+    }
     let mapped = match tool.trim() {
         "read_file" | "read files" => "读取文件",
         "write_file" => "写入文件",
@@ -662,7 +685,6 @@ pub(crate) fn tool_label(tool: &str) -> String {
             "网页搜索"
         }
         "web_fetch" | "web_fetch_tool" | "web fetch" | "webfetch" | "网页抓取" => "网页抓取",
-        "execute_command" | "exec_command" | "run_command" | "shell" | "运行命令" => "执行命令",
         "command_session" | "write_stdin" | "write_command_stdin" => "命令交互",
         "question_panel" | "ask_panel" => "问询面板",
         "update_plan" | "plan_update" => "计划面板",
@@ -677,14 +699,14 @@ pub(crate) fn tool_label(tool: &str) -> String {
 }
 
 pub(crate) fn tool_label_for_entry(entry: &NativeWorkflowEntry) -> String {
+    if is_command_tool(&entry.title) {
+        return if entry.state == "running" {
+            "正在执行".into()
+        } else {
+            "执行".into()
+        };
+    }
     match entry.title.trim() {
-        "execute_command" | "exec_command" | "run_command" | "shell" | "运行命令" | "执行命令" => {
-            if entry.state == "running" {
-                "正在执行".into()
-            } else {
-                "执行".into()
-            }
-        }
         "command_session" | "write_stdin" | "write_command_stdin" | "命令会话" | "命令交互" => {
             if entry.command_meta.contains("stdin ›") {
                 "发送输入".into()
@@ -896,7 +918,8 @@ fn tool_child(turn_id: &str, entry: &NativeWorkflowEntry) -> ProcessChildData {
         duration: entry.duration.clone(),
         lines_read: entry.read_lines.clone(),
         status_kind: status_kind(&entry.state),
-        open: false,
+        // 执行命令这条：运行中铺开输出，跑完自动收起。
+        open: command_open(&entry.title, status_kind(&entry.state)),
         ..Default::default()
     }
 }
@@ -1218,6 +1241,10 @@ pub struct LiveReason {
 pub struct LiveTool {
     pub id: String,
     pub title: String,
+    /// 是否为执行命令（命令行）工具：运行中自动展开输出、结束后自动收起。
+    /// `title` 是可读标签，命令行与命令会话都会落成「执行/命令交互」一类
+    /// 文字，所以这里带上原始口径，投影不再回头猜。
+    pub command: bool,
     pub tool_icon: String,
     pub summary: String,
     pub state: String,
@@ -1468,7 +1495,8 @@ impl LiveTurn {
                     tokens: tool.tokens.clone(),
                     duration: tool.duration.clone(),
                     status_kind: status_kind(&tool.state),
-                    open: false,
+                    // 执行命令这条：运行中铺开输出，跑完自动收起。
+                    open: tool.command && status_kind(&tool.state) == STATUS_RUNNING,
                     payload: -2 - index as i32,
                     ..Default::default()
                 }),
@@ -1812,6 +1840,7 @@ mod tests {
         live.push_tool(LiveTool {
             id: "call-1".into(),
             title: "读取文件".into(),
+            command: false,
             tool_icon: "file-lines".into(),
             summary: "src/main.rs".into(),
             state: "completed".into(),
@@ -1841,6 +1870,7 @@ mod tests {
         live.push_tool(LiveTool {
             id: "call-1".into(),
             title: "执行命令".into(),
+            command: true,
             tool_icon: "terminal".into(),
             summary: "cargo test".into(),
             state: "running".into(),
@@ -1860,6 +1890,11 @@ mod tests {
             .expect("process bar");
         // The tool name is its own verb phrase, so no 正在执行工具… wrapper.
         assert_eq!(bar.summary, "执行命令");
+        // 执行命令的输出跑起来就先铺开，读者不用先点一下。
+        assert!(
+            bar.process_children[0].open,
+            "运行中的命令条目自动展开输出"
+        );
         // A settled call leaves the phase phrase in place.
         if let Some(tool) = live.tool_mut("call-1") {
             tool.state = "completed".into();
@@ -1870,6 +1905,10 @@ mod tests {
             .find(|row| row.kind == KIND_PROCESS)
             .expect("process bar");
         assert_eq!(bar.summary, "正在执行工具…");
+        assert!(
+            !bar.process_children[0].open,
+            "命令结束后自动收起"
+        );
     }
 
     #[test]
@@ -1882,6 +1921,7 @@ mod tests {
         live.push_tool(LiveTool {
             id: "call-1".into(),
             title: "读取文件".into(),
+            command: false,
             tool_icon: "file-lines".into(),
             summary: "src/main.rs".into(),
             state: "completed".into(),

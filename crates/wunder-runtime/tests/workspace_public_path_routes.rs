@@ -127,6 +127,10 @@ async fn login(context: &TestContext) -> String {
 /// (`<root>/<user>/workspace/temp/...`), which the sandbox sees as
 /// `/workspaces/<user>/workspace/temp/...`.
 fn seed_agent_workspace_file(context: &TestContext, relative: &str, content: &str) {
+    // Run the one-off cloud flatten migration before seeding: it merges files
+    // from the user root into `<user>/workspace`, which would otherwise relocate
+    // the fixture on the first request and make every case look like a 404.
+    let _ = context.state.workspace.ensure_user_root(&context.username);
     let scoped = context
         .state
         .workspace
@@ -194,4 +198,63 @@ async fn download_endpoint_resolves_public_workspace_path_with_workspace_segment
     let (status, bytes) = send_request(&context.app, Method::GET, &path, Some(&token), None).await;
     assert_eq!(status, StatusCode::OK, "download failed");
     assert_eq!(bytes, b"download me\n");
+}
+
+/// Chat markdown may cite a bare relative path such as
+/// `![](temp/test_cmd/pic.png)`. The cloud frontend turns it into a public path
+/// that omits the flat layout's `workspace` level, and older messages may still
+/// carry a stale `__c__N` scope. Both must resolve to the agent workspace file
+/// instead of a 404 that renders as "该文件已被移除".
+#[tokio::test]
+async fn download_endpoint_resolves_public_path_without_workspace_segment() {
+    let context = build_context("doc_download_bare_public").await;
+    let token = login(&context).await;
+    seed_agent_workspace_file(&context, "temp/测试图.png", "png-bytes\n");
+
+    let path = format!(
+        "/wunder/workspace/download?path=/workspaces/{}/temp/%E6%B5%8B%E8%AF%95%E5%9B%BE.png",
+        context.username
+    );
+    let (status, bytes) = send_request(&context.app, Method::GET, &path, Some(&token), None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "missing workspace segment 404: {bytes:?}"
+    );
+    assert_eq!(bytes, b"png-bytes\n");
+}
+
+#[tokio::test]
+async fn download_endpoint_resolves_stale_container_scoped_public_path() {
+    let context = build_context("doc_download_scoped_public").await;
+    let token = login(&context).await;
+    seed_agent_workspace_file(&context, "temp/stale.png", "png-bytes\n");
+
+    let path = format!(
+        "/wunder/workspace/download?path=/workspaces/{}__c__1/temp/stale.png",
+        context.username
+    );
+    let (status, bytes) = send_request(&context.app, Method::GET, &path, Some(&token), None).await;
+    assert_eq!(status, StatusCode::OK, "stale scoped path 404: {bytes:?}");
+    assert_eq!(bytes, b"png-bytes\n");
+}
+
+#[tokio::test]
+async fn content_endpoint_resolves_public_path_without_workspace_segment() {
+    let context = build_context("doc_content_bare_public").await;
+    let token = login(&context).await;
+    seed_agent_workspace_file(&context, "temp/plain.md", "plain content\n");
+
+    let path = format!(
+        "/wunder/workspace/content?path=/workspaces/{}/temp/plain.md&include_content=true",
+        context.username
+    );
+    let (status, bytes) = send_request(&context.app, Method::GET, &path, Some(&token), None).await;
+    let body: Value = serde_json::from_slice(&bytes).expect("content body");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "missing workspace segment 404: {body}"
+    );
+    assert_eq!(body["content"], "plain content\n");
 }

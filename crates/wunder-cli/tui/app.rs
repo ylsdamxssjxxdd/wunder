@@ -8808,10 +8808,6 @@ impl TuiApp {
                     for update in self.command_sessions.register_tool_result_all(payload) {
                         self.upsert_command_session_log(&update);
                     }
-                    if let Some(special) = build_command_interaction_log(payload, is_zh) {
-                        let text = special.summary_text();
-                        self.push_special_log(LogKind::Tool, text, special);
-                    }
                 } else if is_execute_command_tool_name(tool) {
                     let updates = self.command_sessions.register_tool_result_all(payload);
                     if !updates.is_empty() {

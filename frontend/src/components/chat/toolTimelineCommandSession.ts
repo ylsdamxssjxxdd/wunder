@@ -97,18 +97,3 @@ export const commandSessionOutputPreview = (text: string, limit = 4000): string 
   const head = Math.floor(limit / 3);
   return `${text.slice(0, head)}\n… (${text.length - limit} chars omitted)\n${text.slice(-(limit - head))}`;
 };
-
-export const commandSessionLivePreview = (text: string, maxLines = 4): string => {
-  const bounded = commandSessionOutputPreview(String(text || '').replace(/\r\n?/g, '\n'), 5000)
-    .replace(/\s+$/g, '');
-  if (!bounded) return '';
-  const lines = bounded.split('\n');
-  if (lines.length <= maxLines) return bounded;
-  const headCount = Math.max(1, Math.floor(maxLines / 2));
-  const tailCount = Math.max(1, maxLines - headCount);
-  return [
-    ...lines.slice(0, headCount),
-    `… +${lines.length - headCount - tailCount} lines`,
-    ...lines.slice(-tailCount)
-  ].join('\n');
-};

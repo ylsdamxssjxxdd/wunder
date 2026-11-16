@@ -256,8 +256,17 @@ impl StreamRenderer {
                         self.progress_result_line(&line, failed);
                     }
                 } else if crate::tool_presentation::is_command_session_tool_name(tool) {
-                    for line in format_command_interaction_result_lines(payload, self.is_zh) {
-                        self.progress_result_line(&line, failed);
+                    // 同一次执行只留一张卡：等待与写入的结果按命令会话归并，
+                    // 已经直播过的输出不再整段重放，只补卡片还没说过的话。
+                    let updates = self.command_sessions.register_tool_result_all(payload);
+                    if updates.is_empty() {
+                        for line in format_command_interaction_result_lines(payload, self.is_zh) {
+                            self.progress_result_line(&line, failed);
+                        }
+                    } else {
+                        for update in updates {
+                            self.render_command_session_terminal(&update, true);
+                        }
                     }
                 } else if is_execute_command_tool_name(tool) {
                     let updates = self.command_sessions.register_tool_result_all(payload);
@@ -662,7 +671,7 @@ fn extract_patch_preview_lines(patch: &str, max_entries: usize, is_zh: bool) -> 
     }
 }
 
-fn summarize_interaction_input(input: &str) -> String {
+pub(crate) fn summarize_interaction_input(input: &str) -> String {
     let sanitized = input
         .replace('\r', "\\r")
         .replace('\n', "\\n")

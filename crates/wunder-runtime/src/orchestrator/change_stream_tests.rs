@@ -503,6 +503,12 @@ async fn live_text_deltas_never_append_completed_history() {
             json!({"turn_id": turn, "model_round": 1, "reasoning_delta": "思考"}),
         )
         .await;
+    emitter
+        .emit(
+            "llm_output_delta",
+            json!({"turn_id": turn, "model_round": 1, "reasoning_delta": "了"}),
+        )
+        .await;
     emitter.finish().await;
     let mut deltas = Vec::new();
     let mut tails = Vec::new();
@@ -519,12 +525,18 @@ async fn live_text_deltas_never_append_completed_history() {
         }
     }
     assert_eq!(durable, 0);
-    assert_eq!(deltas.len(), 3);
+    assert_eq!(deltas.len(), 4);
     assert_eq!(deltas[0]["source_event"], "llm_output_delta");
     assert_eq!(deltas[0]["delta"], "hé😀");
     assert_eq!(deltas[1]["delta"], "世界");
     assert_eq!(deltas[2]["reasoning_delta"], "思考");
-    assert_eq!(tails.len(), 3);
+    // 思考增量的两条通道带同一个游标：tail 先上线，delta 后到，客户端据此按
+    // 位置落地而不是盲追加，否则一段文本会被写两遍。
+    assert_eq!(deltas[2]["reasoning_offset"], 0);
+    assert_eq!(deltas[3]["reasoning_offset"], 2);
+    // 正文不需要游标：轮末的 content 就是它的权威副本。
+    assert!(deltas[0].get("reasoning_offset").is_none());
+    assert_eq!(tails.len(), 4);
     assert_eq!(tails[0]["item_id"], json!(format!("{turn}:text-1")));
     assert_eq!(tails[0]["field"], "content");
     assert_eq!(tails[0]["offset"], 0);
@@ -536,6 +548,9 @@ async fn live_text_deltas_never_append_completed_history() {
     assert_eq!(tails[2]["field"], "reasoning");
     assert_eq!(tails[2]["offset"], 0);
     assert_eq!(tails[2]["text"], "思考");
+    assert_eq!(tails[3]["field"], "reasoning");
+    assert_eq!(tails[3]["offset"], 2);
+    assert_eq!(tails[3]["text"], "了");
     assert!(state
         .storage
         .get_thread_item("user-a", "session-a", &format!("{turn}:text-1"), true)

@@ -5479,7 +5479,11 @@ function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerCont
               normalized.includes('.');
           if (!pathLike)
               return match;
-          const publicPath = buildWorkspacePublicPath(ownerId, normalized, USER_CONTAINER_ID);
+          const publicPath = buildWorkspacePublicPath(
+              ownerId,
+              normalized,
+              ctx.desktopLocalMode.value ? USER_CONTAINER_ID : null
+          );
           if (!publicPath)
               return match;
           const label = decoded;

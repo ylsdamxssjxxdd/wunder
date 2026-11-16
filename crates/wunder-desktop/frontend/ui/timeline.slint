@@ -626,13 +626,6 @@ component FoldEntry inherits Rectangle {
                 }
             }
         }
-        if !root.data.open && root.data.command-output != "" : Text {
-            x: Theme.timeline-padding + TimelineMetrics.gutter;
-            width: parent.width - Theme.timeline-padding * 2 - TimelineMetrics.gutter;
-            text: root.data.command-output;
-            color: Theme.muted; font-size: Theme.font-sm; font-family: Theme.font-mono;
-            wrap: word-wrap;
-        }
         // The expanded payload clears the page margin and the gutter it hangs
         // from.
         if root.data.open : VerticalLayout {

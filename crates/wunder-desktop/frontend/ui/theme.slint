@@ -229,7 +229,11 @@ export struct ProcessEntry {
     // long tool-driven turn can be read round by round; 0 means the source row
     // carried no round envelope (fixtures, legacy adapters).
     round: int,
-    tokens: string, duration: string, status-kind: int, open: bool, payload: int
+    tokens: string, duration: string, status-kind: int, open: bool,
+    // 用户亲手点过这一条的展开/收起。置位后自动开合（命令输出运行中展开、
+    // 结束后收起）不再改动它，一切以用户的选择为准。
+    manual: bool,
+    payload: int
 }
 
 export struct TimelineRow {
@@ -277,6 +281,9 @@ export struct TimelineRow {
     status-kind: int,
     foldable: bool,
     open: bool,
+    // 用户亲手点过这一行的开合。命令工具行（执行命令）默认跟随执行状态自动
+    // 展开/收起；点过之后这一行不再被自动改动。
+    open-manual: bool,
     group-idx: int,
     group-open: bool,
     // The turn's work-process fold (§7.3 A): every row before the turn's newest

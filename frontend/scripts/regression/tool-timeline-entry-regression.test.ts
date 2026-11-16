@@ -44,6 +44,22 @@ const TRACEBACK = [
   "ValueError: 'codes' must be a 1D list or array"
 ].join('\n');
 
+test('a durable command yield does not become a running entry again after reload', () => {
+  const run = baseRun({
+    callItem: callItem({ args: { content: 'fixture-command --wait' } }, {
+      eventType: 'tool_call', status: 'running'
+    }),
+    resultItem: callItem({
+      data: { command_session_id: 'fixture-command', status: 'running', output: 'partial output' }
+    }, { eventType: 'tool_result', status: 'completed' })
+  });
+  const entry = buildTimelineToolEntry(run, t);
+
+  assert.equal(entry.status, 'completed');
+  assert.equal(entry.summary, 'fixture-command --wait');
+  assert.equal(entry.detailText, 'partial output');
+});
+
 test('failed command keeps one error surface: duplicated stderr is dropped from the output body', () => {
   const run = baseRun({
     callItem: callItem({ args: { content: 'python draw.py' } }),

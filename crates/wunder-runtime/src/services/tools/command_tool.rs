@@ -2589,6 +2589,22 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                 last.insert("running".to_string(), Value::Bool(true));
                 last.insert("stdout".to_string(), json!(snapshot.stdout_tail));
                 last.insert("stderr".to_string(), json!(snapshot.stderr_tail));
+                // 首包展示到 seq 为止的输出；模型游标同步推进，下一次会话轮询
+                // 只返回新增输出。否则整段内容会在第一次轮询时被重放一遍。
+                last.insert("seq".to_string(), json!(snapshot.seq));
+                let tail_truncated = snapshot.stdout_dropped_bytes > 0
+                    || snapshot.stderr_dropped_bytes > 0
+                    || snapshot.pty_dropped_bytes > 0;
+                if !tail_truncated {
+                    if let Some(broker) = context.command_sessions.as_ref() {
+                        broker.advance_model_cursor(
+                            context.user_id,
+                            context.session_id,
+                            &session_id,
+                            snapshot.seq,
+                        );
+                    }
+                }
             }
             return Ok(build_model_tool_success(
                 "execute_command",

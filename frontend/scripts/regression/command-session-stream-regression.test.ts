@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { createPinia, setActivePinia } from 'pinia';
 import { useCommandSessionStore } from '../../src/stores/commandSessions';
 import {
-  commandSessionLivePreview,
   commandSessionOutputPreview,
   resolveCommandInteractionKind,
   resolveCommandRunOutput,
@@ -73,7 +72,7 @@ test('timeline resolves a command poll and an execute result to the same live se
 });
 
 
-test('command preview and interaction copy follow the Codex command lifecycle', () => {
+test('command interaction copy follows the Codex command lifecycle', () => {
   const execute: RawToolRun = {
     key: 'execute-call', toolName: 'execute_command', toolRuntimeName: 'execute_command',
     toolDisplayName: '执行命令', toolFunctionName: 'execute_command', outputItem: null, resultItem: null,
@@ -89,7 +88,6 @@ test('command preview and interaction copy follow the Codex command lifecycle', 
   assert.equal(resolveCommandInteractionKind({
     ...write, callItem: { detail: JSON.stringify({ arguments: { command_session_id: 'command', chars: '' } }) }
   }), 'poll');
-  assert.equal(commandSessionLivePreview('one\ntwo\nthree\nfour\nfive\nsix'), 'one\ntwo\n… +2 lines\nfive\nsix');
 });
 
 test('command output extraction reads the first-class results array without JSON noise', () => {

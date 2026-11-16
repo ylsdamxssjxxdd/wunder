@@ -2108,8 +2108,8 @@
     "zh-CN": "命令交互"
   },
   "tool.spec.command_session.description": {
-    "en-US": "Continue a running command (write_stdin). Use the command_session_id returned by execute_command. Empty chars polls new output; non-empty chars writes those bytes to stdin. Both return status and new output after at most yield_time_ms. Keep using the same id until status is exited and exit_code is present; never rerun a command just to read its result. Send chars=\\u0003 to interrupt.",
-    "zh-CN": "继续运行中的命令（write_stdin）。使用执行命令返回的 command_session_id：chars 为空表示读取新增输出，非空表示把这些字符写入 stdin；两种方式都会在最迟 yield_time_ms 后返回状态和新增输出。复用同一 id，直到 status=exited 且拿到 exit_code；不要为了读取结果而重跑命令。chars=\\u0003 可中断命令。"
+    "en-US": "Continue a running command (command_session). Use the command_session_id returned by execute_command. Empty chars polls new output; non-empty chars writes those bytes to stdin; both return status and new output after at most yield_time_ms. Pass after_seq (the seq reported with output you already saw) to resume exactly where you left off, and wait_for=exit to block until the process exits. Keep using the same id until status is exited and exit_code is present; never rerun a command just to read its result. Send chars=\\u0003 to interrupt.",
+    "zh-CN": "继续运行中的命令（命令会话）。使用执行命令返回的 command_session_id：chars 为空表示读取新增输出，非空表示把这些字符写入 stdin；两者都在最迟 yield_time_ms 后返回状态与新增输出。传 after_seq（已看到输出对应的 seq）可精确续读后续输出，传 wait_for=exit 可阻塞到进程退出。复用同一 id，直到 status=exited 且拿到 exit_code；不要为了读取结果而重跑命令。chars=\\u0003 可中断命令。"
   },
   "tool.spec.command_session.args.id": {
     "en-US": "Running command session ID returned by execute_command.",
@@ -2122,6 +2122,14 @@
   "tool.spec.command_session.args.yield_time_ms": {
     "en-US": "Maximum wait for new output in milliseconds (default 1000, max 30000). Use 0 for an immediate read. Reaching the wait window does not stop the command.",
     "zh-CN": "等待新增输出的最长时间（毫秒），默认 1000，最大 30000；传 0 立即读取。等待到点不会终止命令。"
+  },
+  "tool.spec.command_session.args.after_seq": {
+    "en-US": "Sequence number you have already seen; only newer output is returned. Use it to resume after a truncated or partially shown chunk.",
+    "zh-CN": "已经看到的 seq；只返回它之后的新增输出。用于补读被截断或只展示了一部分的输出。"
+  },
+  "tool.spec.command_session.args.wait_for": {
+    "en-US": "Set to exit to block until the process exits (at most 30000 ms) instead of returning as soon as new output arrives.",
+    "zh-CN": "传 exit 表示阻塞到进程退出（最多 30000 毫秒）再返回，而不是一有新输出就返回。"
   },
   "tool.command_session.summary": {
     "en-US": "Command status and incremental output.",
@@ -2140,16 +2148,16 @@
     "zh-CN": "当前运行环境不支持命令会话。"
   },
   "tool.exec.background_next_step": {
-    "en-US": "The command is still running and output streams to the UI automatically. Call write_stdin with {\"command_session_id\":\"<id above>\",\"chars\":\"\"} to read new output. Increase yield_time_ms up to 30000 when waiting is useful. Reuse the same id until exit_code is present; do not rerun the command or sleep to wait.",
-    "zh-CN": "命令仍在运行，输出会自动推送到界面。用 write_stdin 传 {\"command_session_id\":\"<上面的 id>\",\"chars\":\"\"} 读取新增输出；需要多等一会儿可把 yield_time_ms 提高到最大 30000。复用同一 id 直到拿到 exit_code；不要重跑命令，也不要用 sleep 空等。"
+    "en-US": "The command is still running and output streams to the UI automatically. Call command_session with {\"command_session_id\":\"<id above>\",\"chars\":\"\"} to read new output. Increase yield_time_ms up to 30000 when waiting is useful, or pass wait_for=exit to block until it exits. Reuse the same id until exit_code is present; do not rerun the command or sleep to wait.",
+    "zh-CN": "命令仍在运行，输出会自动推送到界面。用命令会话传 {\"command_session_id\":\"<上面的 id>\",\"chars\":\"\"} 读取新增输出；需要多等一会儿可提高 yield_time_ms（最大 30000），或传 wait_for=exit 直接等到退出。复用同一 id 直到拿到 exit_code；不要重跑命令，也不要用 sleep 空等。"
   },
   "tool.command_session.keep_waiting": {
-    "en-US": "The command is still running. Call write_stdin again with the same command_session_id and empty chars to read new output. Reuse it until exit_code is present; never idle with sleep.",
-    "zh-CN": "命令仍在运行。继续用同一 command_session_id 调用 write_stdin，chars 留空即可读取新增输出；复用到拿到 exit_code，不要用 sleep 空等。"
+    "en-US": "The command is still running. Call command_session again with the same command_session_id and empty chars to read new output. Reuse it until exit_code is present; never idle with sleep.",
+    "zh-CN": "命令仍在运行。继续用同一 command_session_id 调用命令会话，chars 留空即可读取新增输出；复用到拿到 exit_code，不要用 sleep 空等。"
   },
   "tool.exec.sleep_not_allowed": {
-    "en-US": "Do not idle with a bare sleep command. execute_command returns a command_session_id for ongoing work; wait for output with write_stdin instead.",
-    "zh-CN": "不要用单独的 sleep 空等。执行命令会为未结束的工作返回 command_session_id，请用 write_stdin 等待新增输出。"
+    "en-US": "Do not idle with a bare sleep command. execute_command returns a command_session_id for ongoing work; wait for output with command_session instead.",
+    "zh-CN": "不要用单独的 sleep 空等。执行命令会为未结束的工作返回 command_session_id，请用命令会话等待新增输出。"
   },
   "tool.exec.non_zero_exit_note": {
     "en-US": "The command exited with a non-zero code. Exit codes are command semantics, not tool failures (grep no-match=1, pkill no-process=1, diff differences=1). Judge from stdout/stderr whether a fix is needed; do not retry blindly or mask with || true.",
@@ -2168,16 +2176,16 @@
     "zh-CN": "CLI 命令，content 不限制路径格式。"
   },
   "tool.spec.exec.args.yield_time_ms": {
-    "en-US": "Initial wait for output in milliseconds (default 10000, max 30000). Commands that finish sooner return immediately. If the command is still running, the result includes command_session_id; continue it with write_stdin. This is a wait window, not a kill timeout.",
-    "zh-CN": "首次等待输出的时间（毫秒），默认 10000，最大 30000；命令提前结束会立即返回。仍在运行时结果带 command_session_id，之后用 write_stdin 继续。该参数只控制等待窗口，不会到点杀死命令。"
+    "en-US": "Initial wait for output in milliseconds (default 10000, max 30000). Commands that finish sooner return immediately. If the command is still running, the result includes command_session_id and the current seq; continue it with command_session. This is a wait window, not a kill timeout.",
+    "zh-CN": "首次等待输出的时间（毫秒），默认 10000，最大 30000；命令提前结束会立即返回。仍在运行时结果带 command_session_id 与当前 seq，之后用命令会话继续。该参数只控制等待窗口，不会到点杀死命令。"
   },
   "tool.spec.exec.args.workdir": {
     "en-US": "Optional. Working directory relative to the current workspace only (no absolute paths).",
     "zh-CN": "可选，工作目录仅支持工作区内相对路径（不允许绝对路径）。"
   },
   "tool.spec.exec.description": {
-    "en-US": "Run a shell command in the workspace and stream its output. content is the command; workdir is a workspace-relative directory; description is a short user-facing action. The call waits up to yield_time_ms (default 10000) and returns immediately on exit. A still-running command returns command_session_id and partial output: continue the same process with write_stdin (empty chars to read, non-empty chars to write), never rerun it just to poll. A non-zero exit code is normal result data, not a tool failure. Large output is bounded and may be available as a paged tool-result handle. Never use a bare sleep command to idle-wait.",
-    "zh-CN": "在工作区执行 shell 命令并流式输出。content 是命令，workdir 是工作区内相对目录，description 是给用户看的简短动作。调用最多等待 yield_time_ms（默认 10000），命令提前退出会立即返回。仍在运行时返回 command_session_id 和已有输出：用 write_stdin 继续同一进程（chars 为空读取，非空写入），不要为了轮询而重跑。非 0 退出码是正常结果数据，不是工具失败。大输出会有界截断，并可能保存为可分页的结果句柄。不要用单独的 sleep 空等。"
+    "en-US": "Run a shell command in the workspace and stream its output. content is the command; workdir is a workspace-relative directory; description is a short user-facing action. The call waits up to yield_time_ms (default 10000) and returns immediately on exit. A still-running command returns command_session_id, the current seq and partial output: continue the same process with command_session (empty chars to read, non-empty chars to write, after_seq to resume, wait_for=exit to block), never rerun it just to poll. A non-zero exit code is normal result data, not a tool failure. Large output is bounded and may be available as a paged tool-result handle. Never use a bare sleep command to idle-wait.",
+    "zh-CN": "在工作区执行 shell 命令并流式输出。content 是命令，workdir 是工作区内相对目录，description 是给用户看的简短动作。调用最多等待 yield_time_ms（默认 10000），命令提前退出会立即返回。仍在运行时返回 command_session_id、当前 seq 和已有输出：用命令会话继续同一进程（chars 为空读取、非空写入，after_seq 续读，wait_for=exit 等到退出），不要为了轮询而重跑。非 0 退出码是正常结果数据，不是工具失败。大输出会有界截断，并可能保存为可分页的结果句柄。不要用单独的 sleep 空等。"
   },
   "tool.spec.exec.shell_bash": {
     "en-US": "Shell environment: POSIX bash. Write POSIX commands: pipes, &&, ;, grep, sed, awk, find, ssh, ls, cat, head, tail, tar, curl, etc. On Windows use /c/... or forward-slash C:/... paths (avoid backslashes) and invoke cmd as `cmd //c ...`. Output is UTF-8. Do not use cmd or PowerShell syntax (e.g. dir, type, copy, del, set, %VAR%).",

@@ -441,6 +441,14 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .min(0)
                     .max(30000)
                     .optional(),
+                super::schema::integer("after_seq")
+                    .desc(t("tool.spec.command_session.args.after_seq"))
+                    .min(0)
+                    .optional(),
+                super::schema::string("wait_for")
+                    .desc(t("tool.spec.command_session.args.wait_for"))
+                    .enums(vec!["exit"])
+                    .optional(),
             ]),
         },
         ToolSpec {
@@ -2841,17 +2849,22 @@ mod tests {
             .iter()
             .find(|spec| spec.name == "命令会话")
             .expect("Chinese command session spec");
-        assert!(zh_session.description.contains("write_stdin"));
+        assert!(zh_session.description.contains("命令会话"));
         assert!(zh_session.description.contains("chars 为空"));
         assert!(
             zh_session.input_schema["properties"]["chars"]["description"]
                 .as_str()
                 .is_some_and(|value| value.contains("stdin"))
         );
-        // 等待与输入共用一个窗口，不再暴露 action/after_seq/wait_for。
+        // 等待与输入共用一个窗口，不再暴露 action；续读游标与阻塞等待作为可选参数暴露。
         assert!(zh_session.input_schema["properties"]["action"].is_null());
-        assert!(zh_session.input_schema["properties"]["after_seq"].is_null());
-        assert!(zh_session.input_schema["properties"]["wait_for"].is_null());
+        assert!(zh_session.input_schema["properties"]["after_seq"].is_object());
+        assert!(zh_session.input_schema["properties"]["wait_for"].is_object());
+        assert!(
+            zh_session.input_schema["properties"]["wait_for"]["enum"]
+                .as_array()
+                .is_some_and(|values| values.iter().any(|value| value == "exit"))
+        );
         assert!(
             zh.iter()
                 .all(|spec| spec.name != "LSP查询" && spec.name != "节点调用")
@@ -2861,7 +2874,10 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == "命令会话")
             .expect("English command session spec");
-        assert!(en_session.description.contains("write_stdin"));
+        assert!(en_session.description.contains("command_session"));
+        assert!(en_session.description.contains("after_seq"));
+        assert!(en_session.input_schema["properties"]["after_seq"].is_object());
+        assert!(en_session.input_schema["properties"]["wait_for"].is_object());
         assert!(
             en_session.input_schema["properties"]["chars"]["description"]
                 .as_str()

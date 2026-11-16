@@ -1,7 +1,7 @@
 ---
 title: Execute Command
 summary: Arguments for `execute_command`, the blocking and background execution modes, polling and writing in a command session, output guards and budgets, and failure diagnosis.
-updated_at: 2026-11-12
+updated_at: 2026-11-16
 ---
 
 # Execute Command
@@ -12,17 +12,14 @@ updated_at: 2026-11-12
 
 Give the command to run, and you can also specify a working directory. Common arguments:
 
-- **Timeout** `timeout_s`: 120 seconds by default; pass 0 for no limit.
-- **Background** `run_in_background`: off by default, meaning the call blocks until the command finishes.
-- **Yield wait** `yield_time_ms`: used only together with background mode.
-- **Budget** `budget`: caps time, output bytes, and the maximum number of commands.
-- **Preview** `dry_run`: validates the plan without actually running it.
+- **Command** `content`: required, the command itself.
+- **Working directory** `workdir`: optional, a workspace-relative path.
+- **Wait window** `yield_time_ms`: 10000 by default, 50–30000. It only decides how long this call waits before handing control back; it is not a kill timeout.
+- **Action label** `description`: a short title shown in the UI.
 
 ## Blocking and background
 
-Execution blocks by default: one call waits until the command exits or the timeout is reached, then returns the full output at once; on timeout the process is killed and the partial output collected so far is returned.
-
-Set `run_in_background` only for long-running commands: after a brief wait, a command that is still running returns immediately, with a next-step hint in the result. Track a background command afterwards with the command session below; do not spin in an idle loop waiting for it.
+A call first waits up to `yield_time_ms`: a command that finishes sooner returns its full result (exit code, stdout, stderr) immediately; one that is still running at the deadline returns `command_session_id`, the current `seq` and the output so far, and keeps running. The deadline hands control back without killing the process, so long commands need no separate "background" flag.
 
 Only a bounded preview of the output is kept. Cancelling the current thread terminates the active commands of that thread and of its child threads.
 
@@ -30,13 +27,17 @@ Only a bounded preview of the output is kept. Cancelling the current thread term
 
 A long-lived background command session is managed by the `command_session` tool, which supports switching between foreground and background: a foreground call reads the current status and output directly, while switching to background leaves the command running.
 
-One call has exactly two intents, decided by `input`:
+One call has exactly three intents, decided by `chars`:
 
-- **Empty `input`** (or omitted): read back status plus new output only, returning within 250 ms by default — the cheap "take a look" call.
-- **Non-empty `input`**: write it to the session's stdin first; that call then waits for the command to exit within the same wait window (the `printf ... | cmd` semantics). Pass `wait_for=output` to return as soon as output appears. Sessions started without an interactive stdin reject the write, say it was not delivered, and suggest piping the input through the command itself (`printf '...' | cmd`).
-- **Ctrl-C `input`**: treated as an interrupt, i.e. terminate the command; works even when the session has no stdin.
+- **Empty `chars`** (or omitted): read back status plus new output only, waiting at most `yield_time_ms` (1000 ms by default) and returning immediately when new output arrives.
+- **Non-empty `chars`**: write those bytes to the session's stdin first, then read new output within the same wait window; include a newline when answering a line-based prompt. Sessions started without an interactive stdin reject the write, say it was not delivered, and suggest piping the input through the command itself (`printf '...' | cmd`).
+- **Ctrl-C `chars`**: treated as an interrupt, i.e. terminate the command; works even when the session has no stdin, and the result is marked `interrupted` with the output produced so far.
 
-`wait_for` defaults to `output` (return as soon as there is new output). Pass `wait_for=exit` to ignore intermediate output and block until the command exits or the wait window ends; the window is `yield_time_ms` (up to 60000, and 60000 is the default in that mode).
+Optional arguments:
+
+- **`yield_time_ms`**: wait ceiling for this call, 0–30000; pass 0 for an immediate read.
+- **`after_seq`**: return only output newer than that `seq`, for catching up on a chunk that was truncated or only partially shown.
+- **`wait_for=exit`**: ignore intermediate output and block until the process exits or the window ends (that mode defaults the window to 30000).
 
 An already-exited session is not an error: its final output and exit code are still returned. Decide completion from `status` and `exit_code` instead of re-running the command.
 

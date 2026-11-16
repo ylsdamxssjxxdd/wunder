@@ -1402,6 +1402,13 @@ fn normalize_public_workspace_relative_path(value: &str) -> Option<String> {
 /// `/workspaces/<user>/workspace/file`. Resolve it through the public-root
 /// mapping instead of treating `workspace/file` as relative to the current
 /// workspace, which would produce `workspace/workspace/file`.
+///
+/// References written by the model may omit that segment (`/workspaces/<user>/temp/x.png`)
+/// or still carry a scoped suffix the flat cloud layout no longer uses
+/// (`/workspaces/<user>__c__1/temp/x.png`). Both used to 404 and surface as
+/// 「该文件已被移除」, so when the strict mapping misses an existing file we retry
+/// with the same relative path against the user's agent workspace. Strict
+/// mapping still wins, so files kept beside the workspace root keep resolving.
 fn resolve_public_workspace_target(
     state: &AppState,
     workspace_id: &str,
@@ -1410,10 +1417,38 @@ fn resolve_public_workspace_target(
     let public_target = PathBuf::from(WORKSPACE_PUBLIC_PREFIX.trim_end_matches('/'))
         .join(&public_path.workspace_id)
         .join(&public_path.relative_path);
-    state
+    let mapped = state
         .workspace
         .map_public_path(workspace_id, &public_target)
-        .unwrap_or(public_target)
+        .unwrap_or(public_target);
+    if mapped.exists() || state.workspace.is_single_root() {
+        return mapped;
+    }
+    if !state.workspace.flatten_agent_scope_enabled() {
+        return mapped;
+    }
+    let plain_scope = plain_public_workspace_scope(&public_path.workspace_id)
+        .unwrap_or(&public_path.workspace_id);
+    match state
+        .workspace
+        .resolve_path(plain_scope, &public_path.relative_path)
+    {
+        Ok(candidate) if candidate.exists() => candidate,
+        _ => mapped,
+    }
+}
+
+/// Scoped suffixes that no longer map to a separate directory in the flat
+/// cloud layout; the workspace owner is the part before the marker.
+fn plain_public_workspace_scope(workspace_id: &str) -> Option<&str> {
+    for marker in ["__c__", "__a__", "__agent__", "__aw__"] {
+        if let Some((plain, _)) = workspace_id.split_once(marker) {
+            if !plain.is_empty() {
+                return Some(plain);
+            }
+        }
+    }
+    None
 }
 
 fn percent_decode_path(value: &str) -> String {

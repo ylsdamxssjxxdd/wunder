@@ -638,6 +638,7 @@ fn fixture_row(kind: i32, index: usize, text: &str) -> TimelineRow {
         status_kind: crate::timeline::STATUS_DONE,
         foldable: false,
         open: false,
+        open_manual: false,
         group_idx: crate::timeline::NO_GROUP,
         group_open: false,
         process_idx: crate::timeline::NO_PROCESS,

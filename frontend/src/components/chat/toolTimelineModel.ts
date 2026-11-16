@@ -352,6 +352,12 @@ export const isCompactionRun = (run: RawToolRun): boolean =>
 
 const resolveRunStatus = (run: RawToolRun): TimelineEntryStatus => {
   const candidates = [run.resultItem?.status, run.outputItem?.status, run.callItem?.status];
+  if (resolveCommandInteractionKind(run)) {
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      return normalizeTimelineStatus(candidate);
+    }
+  }
   const detailObjects = [
     parseDetailObject(run.resultItem?.detail),
     parseDetailObject(run.callItem?.detail)

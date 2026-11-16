@@ -433,7 +433,7 @@ test('a lone batch round opens its batch row when the caller marks it as the lat
 });
 
 
-test('command entries render Codex-style live output and settle in place', async ({ page }) => {
+test('command entries keep output folded until requested and settle in place', async ({ page }) => {
   await page.goto('/__e2e/composer-b4');
   const result = await page.evaluate(async () => {
     const [source, storeSource] = await Promise.all([
@@ -483,21 +483,25 @@ test('command entries render Codex-style live output and settle in place', async
       const initial = {
         running: ['Running', '正在执行', 'chat.timeline.commandRunning'].includes(initialLabel),
         command: host.textContent?.includes('fixture-command --wait') ?? false,
-        output: host.querySelector('.tl-entry-live-output')?.textContent === 'first\nsecond',
+        outputHidden: !(host.textContent?.includes('first\nsecond') ?? true),
         hidesDescription: !(host.textContent?.includes('fixture title') ?? true)
       };
       commands.appendDelta('fixture-thread', 'fixture-command', 'stderr', 'third\n', { seq: 3 });
       await nextTick();
-      const interleaved = host.querySelector('.tl-entry-live-output')?.textContent === 'first\nsecond\nthird';
+      const deltaHidden = !(host.textContent?.includes('third') ?? true);
       host.querySelector<HTMLButtonElement>('.tl-entry-head')!.click();
       await nextTick();
-      const expanded = host.querySelector('.tl-entry-output')?.textContent?.includes('fixture/work') ?? false;
+      const output = host.querySelector('.tl-entry-output')?.textContent || '';
+      const expanded = output.includes('fixture/work') && output.includes('first\nsecond\nthird');
       commands.upsertSnapshot('fixture-thread', {
         command_session_id: 'fixture-command', status: 'exited', exit_code: 0, seq: 4
       });
       await nextTick();
       const settledLabel = host.querySelector('.tl-entry-tool-label')?.textContent || '';
-      return { ...initial, interleaved, expanded,
+      host.querySelector<HTMLButtonElement>('.tl-entry-head')!.click();
+      await nextTick();
+      const refolded = !(host.textContent?.includes('first\nsecond') ?? true);
+      return { ...initial, deltaHidden, expanded, refolded,
         settled: ['Ran', '执行', 'chat.timeline.commandRan'].includes(settledLabel) };
     } finally {
       app.unmount();
@@ -505,7 +509,7 @@ test('command entries render Codex-style live output and settle in place', async
     }
   });
   expect(result).toEqual({
-    running: true, command: true, output: true, hidesDescription: true,
-    interleaved: true, expanded: true, settled: true
+    running: true, command: true, outputHidden: true, hidesDescription: true,
+    deltaHidden: true, expanded: true, refolded: true, settled: true
   });
 });

@@ -57,11 +57,6 @@
       </span>
     </component>
 
-    <pre
-      v-if="isCommand && !open && commandLivePreview"
-      class="tl-entry-live-output"
-    >{{ commandLivePreview }}</pre>
-
     <div v-if="interactive && open" class="tl-entry-body">
       <div v-if="entry.errorText" class="tl-entry-error" role="note">
         <div class="tl-entry-error-title">{{ t('chat.timeline.entryFailedTitle') }}</div>
@@ -124,7 +119,6 @@ import { parseToolWorkflowResultObject } from './toolWorkflowResultPayload';
 import { buildToolResultPreview } from './toolWorkflowPreview';
 import { useCommandSessionStore } from '@/stores/commandSessions';
 import {
-  commandSessionLivePreview,
   commandSessionOutputPreview,
   resolveCommandInteractionInput,
   resolveTimelineCommandSessionRef
@@ -218,9 +212,6 @@ const callPreview = computed(() => {
 const commandRawOutput = computed(() => String(
   commandSession.value?.outputTail || props.entry.detailText || commandSession.value?.error || ''
 ));
-const commandLivePreview = computed(() =>
-  isCommand.value ? commandSessionLivePreview(commandRawOutput.value) : ''
-);
 const interactionInput = computed(() => {
   if (props.entry.commandInteraction !== 'write') return '';
   const input = resolveCommandInteractionInput(props.entry.run)
@@ -453,18 +444,6 @@ button.tl-entry-head:focus-visible {
   font-variant-numeric: tabular-nums;
   line-height: 18px;
   white-space: nowrap;
-}
-
-.tl-entry-live-output {
-  margin: 2px 24px 7px 44px;
-  padding-left: 10px;
-  border-left: 1px solid var(--mz-timeline-line, #e2dfda);
-  color: var(--mz-text-muted, #8a8f99);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11.5px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 /* 展开内容左内边距保持 24px（沟槽 20px + 24px = 44px），不被分组沟槽挤压。 */

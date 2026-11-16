@@ -313,7 +313,14 @@ impl EventEmitter {
         // Chat additionally receives a stable item identity and an append
         // cursor, so it can render reasoning and answer text before the final
         // immutable assistant item is committed.
-        for tail_data in self.llm_output_tails(event_type, &data) {
+        //
+        // Both lanes carry the same chunk: the tail keeps its own offset for
+        // repair, and the delta is stamped with the very same offset so a
+        // client that reduces both can place the text by position instead of
+        // arrival order — the tail always leaves first, so blind appending
+        // would double the chunk.
+        let tails = self.llm_output_tails(event_type, &mut data);
+        for tail_data in tails {
             let tail_event = StreamEvent {
                 event: "thread_item_tail".into(),
                 data: enrich_event_payload(tail_data, Some(&self.session_id), timestamp),
@@ -493,9 +500,12 @@ impl EventEmitter {
     }
 
     /// Translate a provider delta into independent content/reasoning tail
-    /// frames. Browser strings use UTF-16 indices, so Rust byte lengths and
-    /// scalar counts are both wrong for a supplementary Unicode character.
-    fn llm_output_tails(&self, event_type: &str, data: &Value) -> Vec<Value> {
+    /// frames, and stamp the reasoning chunk with the same UTF-16 cursor its
+    /// tail carries. The tail leaves first, so a client that reduces both
+    /// lanes can place the text by position and a chunk can never be doubled.
+    /// Browser strings use UTF-16 indices, so Rust byte lengths and scalar
+    /// counts are both wrong for a supplementary Unicode character.
+    fn llm_output_tails(&self, event_type: &str, data: &mut Value) -> Vec<Value> {
         if event_type != "llm_output_delta" {
             return Vec::new();
         }
@@ -510,17 +520,31 @@ impl EventEmitter {
         let item_id = format!("{turn_id}:text-{model_round}");
         let mut offsets = self.tail_offsets.lock();
         let mut tails = Vec::with_capacity(2);
-        for (source, field) in [("delta", "content"), ("reasoning_delta", "reasoning")] {
+        for (source, field, cursor) in [
+            ("delta", "content", None),
+            ("reasoning_delta", "reasoning", Some("reasoning_offset")),
+        ] {
             let Some(text) = data
                 .get(source)
                 .and_then(Value::as_str)
                 .filter(|text| !text.is_empty())
+                .map(str::to_owned)
             else {
                 continue;
             };
             let key = (item_id.clone(), field.to_string());
             let offset = offsets.get(&key).copied().unwrap_or(0);
             offsets.insert(key, offset.saturating_add(text.encode_utf16().count()));
+            // The cursor is the same value the tail carries. A client that
+            // reduces both lanes then places the text by position, so the
+            // tail leaving first (it always does) can never double a chunk.
+            // Only reasoning gets one: the answer's own end-of-round
+            // `content` is the authority, so a tail for it stays a duplicate.
+            if let Some(cursor) = cursor {
+                if let Some(map) = data.as_object_mut() {
+                    map.insert(cursor.into(), json!(offset));
+                }
+            }
             // No assistant message has been committed while it is streaming;
             // the first durable item will replace the transient tail.
             tails.push(json!({

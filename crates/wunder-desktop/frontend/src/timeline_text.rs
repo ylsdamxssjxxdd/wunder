@@ -15,6 +15,9 @@ pub const COMMAND_TOOL: &str = "执行命令";
 /// Chinese; this maps the English aliases so the timeline reads the same
 /// whichever name the event carried.
 pub fn tool_label(tool: &str) -> String {
+    if is_command_tool(tool) {
+        return COMMAND_TOOL.into();
+    }
     let mapped = match tool.trim() {
         "read_file" | "read files" => "读取文件",
         "write_file" => "写入文件",
@@ -27,9 +30,6 @@ pub fn tool_label(tool: &str) -> String {
             "网页搜索"
         }
         "web_fetch" | "web_fetch_tool" | "web fetch" | "webfetch" | "网页抓取" => "网页抓取",
-        "execute_command" | "exec_command" | "run_command" | "shell" | "运行命令" => {
-            COMMAND_TOOL
-        }
         "command_session" | "write_stdin" | "write_command_stdin" => "命令交互",
         "question_panel" | "ask_panel" => "问询面板",
         "update_plan" | "plan_update" => "计划面板",
@@ -43,15 +43,24 @@ pub fn tool_label(tool: &str) -> String {
     mapped.chars().take(64).collect()
 }
 
+/// 是否为执行命令（命令行）工具。命令输出是逐行流入的，工作过程里的这一条
+/// 要在运行中自动展开、结束后自动收起；其它工具保持默认收起，等用户点开。
+pub fn is_command_tool(tool: &str) -> bool {
+    matches!(
+        tool.trim(),
+        "execute_command" | "exec_command" | "run_command" | "shell" | "运行命令" | "执行命令"
+    )
+}
+
 pub fn tool_label_for_entry(entry: &NativeWorkflowEntry) -> String {
+    if is_command_tool(&entry.title) {
+        return if entry.state == "running" {
+            "正在执行".into()
+        } else {
+            "执行".into()
+        };
+    }
     match entry.title.trim() {
-        "execute_command" | "exec_command" | "run_command" | "shell" | "运行命令" | "执行命令" => {
-            if entry.state == "running" {
-                "正在执行".into()
-            } else {
-                "执行".into()
-            }
-        }
         "command_session" | "write_stdin" | "write_command_stdin" | "命令会话" | "命令交互" => {
             if entry.command_meta.contains("stdin ›") {
                 "发送输入".into()
@@ -451,6 +460,7 @@ pub fn process_entry_for(row: &TimelineRow, narrow: bool) -> ProcessEntry {
         duration: row.duration.clone(),
         status_kind: row.status_kind,
         open: row.open,
+        manual: row.open_manual,
         payload: row.payload,
     }
 }

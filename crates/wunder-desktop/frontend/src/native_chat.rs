@@ -5240,6 +5240,32 @@ fn drive_turn(
     done
 }
 
+/// Feed one reasoning chunk to the timeline, by position when the sender
+/// addressed it.
+///
+/// The runtime publishes every chunk on two lanes, and the offset-addressed
+/// tail always leaves first. Blind appending therefore wrote the chunk that the
+/// tail had just applied a second time — the duplicated first token a thought
+/// showed for as long as the round ran. Applying both lanes at the same cursor
+/// makes the second arrival a no-op instead. A chunk without a cursor (an older
+/// or replayed frame) keeps the plain append it always had.
+fn apply_reasoning_chunk(
+    timeline: &mut crate::timeline::Timeline,
+    item_id: &str,
+    data: &Value,
+    text: &str,
+) -> Result<bool, String> {
+    match data["reasoning_offset"].as_u64() {
+        Some(offset) if !item_id.is_empty() => {
+            timeline.apply_reasoning_delta(item_id, offset as usize, text)
+        }
+        _ => {
+            timeline.append_reasoning_item(item_id, text)?;
+            Ok(true)
+        }
+    }
+}
+
 /// Reduce one runtime event into the live turn. `output` carries the turn's
 /// statistics and identity, `timeline` the rows; they are passed separately so
 /// a single call holds one mutable borrow of each.
@@ -5389,7 +5415,7 @@ fn apply_event(
                 .as_str()
                 .or_else(|| data["reasoning_delta"].as_str())
             {
-                timeline.append_reasoning_item(&reasoning_item, delta)?;
+                apply_reasoning_chunk(timeline, &reasoning_item, data, delta)?;
                 active.set_state("正在思考…", Phase::Running);
                 return Ok(true);
             }
@@ -5458,7 +5484,7 @@ fn apply_event(
                 .as_str()
                 .filter(|value| !value.is_empty())
             {
-                timeline.append_reasoning_item(&reasoning_item, reasoning)?;
+                apply_reasoning_chunk(timeline, &reasoning_item, data, reasoning)?;
                 active.set_state("正在思考…", Phase::Running);
                 changed = true;
             }
@@ -6625,6 +6651,49 @@ mod turn_tests {
             .find(|row| row.kind == crate::timeline::KIND_REASON)
             .expect("思考行");
         assert_eq!(row.detail, "想了再动手");
+    }
+
+    /// 运行时的真实上线顺序是 tail 先、delta 后，两条带着同一段文本和同一个
+    /// 游标。同一段文本只能让思考长一次：否则思考条目一出现，最前面的 token
+    /// 就是重复的，要等轮末的完整文本才对。
+    #[test]
+    fn a_tail_that_leaves_first_never_doubles_the_first_token() {
+        let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
+        let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
+        let mut live = timeline.borrow_mut();
+        live.begin_turn("fixture-root", "Fixture input");
+        for (offset, text) in [(0, "想"), (1, "了")] {
+            // 修复通道先到，按 offset 落地。
+            apply_event(
+                &mut output,
+                &mut live,
+                &serde_json::json!({
+                    "event":"thread_item_tail", "data":{"session_id":"fixture-session", "data":{
+                        "item_id":"fixture-exec:text-1", "field":"reasoning", "offset":offset, "text":text
+                    }}
+                }),
+            )
+            .unwrap();
+            // 同一段的 delta 随后到达，带着同一个游标。
+            apply_event(
+                &mut output,
+                &mut live,
+                &serde_json::json!({
+                    "event":"thread_item_delta", "data":{"session_id":"fixture-session", "data":{
+                        "source_event":"llm_output_delta", "turn_id":"fixture-exec", "model_round":1,
+                        "reasoning_offset":offset, "reasoning_delta":text
+                    }}
+                }),
+            )
+            .unwrap();
+            live.flush();
+        }
+        let row = live
+            .model()
+            .iter()
+            .find(|row| row.kind == crate::timeline::KIND_REASON)
+            .expect("思考行");
+        assert_eq!(row.detail, "想了");
     }
 
     #[test]

@@ -691,6 +691,35 @@ impl CommandSessionBroker {
         }
     }
 
+    /// 首包已经把「此刻为止的输出」交给模型时调用：把模型游标推进到 `seq`。
+    /// 下一次轮询只返回这之后的新输出，不会把首包内容重放一遍。
+    /// 首包被环形缓冲截断时应跳过：保持游标不动，让模型仍能从更早的 delta 补读。
+    pub(crate) fn advance_model_cursor(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        command_session_id: &str,
+        seq: u64,
+    ) -> bool {
+        let Some(record) = self
+            .sessions
+            .get(command_session_id)
+            .map(|entry| Arc::clone(entry.value()))
+        else {
+            return false;
+        };
+        let mut record = record.lock();
+        if record.user_id != user_id || record.session_id != session_id {
+            return false;
+        }
+        let target = seq.min(record.seq);
+        if target <= record.model_cursor {
+            return false;
+        }
+        record.model_cursor = target;
+        true
+    }
+
     pub(crate) fn terminate_scope(&self, user_id: &str, session_id: &str) -> usize {
         let ids = self
             .sessions
@@ -1105,6 +1134,46 @@ mod tests {
         assert_eq!(empty["stdout"], "");
         assert_eq!(empty["stderr"], "");
         assert_eq!(broker.snapshot("cmd_test").unwrap().stdout_tail, "first\n");
+    }
+
+    #[tokio::test]
+    async fn advancing_model_cursor_prevents_first_poll_replay() {
+        let broker = CommandSessionBroker::new();
+        broker.start_session(build_start_spec());
+        broker.append_delta("cmd_test", CommandSessionStream::Stdout, b"boot\n");
+        // 首包已把 seq=1 的输出交给模型：推进游标后不再重放。
+        assert!(broker.advance_model_cursor("user_a", "sess_1", "cmd_test", 1));
+        broker.append_delta("cmd_test", CommandSessionStream::Stdout, b"next\n");
+        let poll = broker
+            .poll(
+                "user_a",
+                "sess_1",
+                "cmd_test",
+                None,
+                std::time::Duration::ZERO,
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(poll["stdout"], "next\n");
+        assert_eq!(poll["seq"], 2);
+        // 越界推进只到当前 seq，重复推进幂等，跨作用域必须被拒绝。
+        assert!(!broker.advance_model_cursor("user_a", "sess_1", "cmd_test", 99));
+        assert!(!broker.advance_model_cursor("user_b", "sess_1", "cmd_test", 2));
+        assert!(!broker.advance_model_cursor("user_a", "sess_2", "cmd_test", 2));
+        // 显式 after_seq 仍然可以重放历史，供补读被截断的中间段。
+        let replay = broker
+            .poll(
+                "user_a",
+                "sess_1",
+                "cmd_test",
+                Some(0),
+                std::time::Duration::ZERO,
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(replay["stdout"], "boot\nnext\n");
     }
 
     #[tokio::test]
