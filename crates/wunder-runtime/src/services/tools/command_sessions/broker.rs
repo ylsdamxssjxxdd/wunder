@@ -321,6 +321,15 @@ impl CommandProcessHandle {
         Ok(CommandStdinWrite::Written)
     }
 
+    pub(crate) async fn close_stdin(&self) -> CommandStdinWrite {
+        let closed = self.stdin.lock().await.take().is_some();
+        if closed {
+            CommandStdinWrite::Written
+        } else {
+            CommandStdinWrite::StdinClosed
+        }
+    }
+
     pub(crate) fn cancel(&self) {
         self.cancel.cancel();
     }
@@ -618,6 +627,28 @@ impl CommandSessionBroker {
             return Ok(CommandStdinWrite::SessionExited);
         };
         process.write_stdin(input).await
+    }
+
+    pub(crate) async fn close_stdin(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        command_session_id: &str,
+    ) -> Result<CommandStdinWrite, String> {
+        let snapshot = self
+            .snapshot_for_scope(user_id, session_id, command_session_id)
+            .ok_or_else(|| "unknown command session".to_string())?;
+        if snapshot.status != CommandSessionStatus::Running {
+            return Ok(CommandStdinWrite::SessionExited);
+        }
+        let Some(process) = self
+            .processes
+            .get(command_session_id)
+            .map(|entry| Arc::clone(entry.value()))
+        else {
+            return Ok(CommandStdinWrite::SessionExited);
+        };
+        Ok(process.close_stdin().await)
     }
 
     pub(crate) async fn poll(

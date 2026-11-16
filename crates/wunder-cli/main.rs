@@ -492,6 +492,16 @@ pub(crate) async fn session_exists(runtime: &CliRuntime, session_id: &str) -> Re
     ensure_cli_session_record(runtime, &target_session, None).await
 }
 
+/// The write fence another instance holds. It travels as an anyhow message
+/// because the lease verdict crosses storage, runtime and UI layers; the
+/// marker is the one stable part, and callers answer it with a notice instead
+/// of an error that would end the session.
+pub(crate) const THREAD_IN_USE_MARKER: &str = "THREAD_IN_USE";
+
+pub(crate) fn thread_in_use(error: &anyhow::Error) -> bool {
+    error.to_string().contains(THREAD_IN_USE_MARKER)
+}
+
 /// The thread's display name exactly as the store holds it. The first user
 /// message, `/rename` and `/compact` all write this one field, so every surface
 /// (window title, thread center, desktop) reads the same name instead of

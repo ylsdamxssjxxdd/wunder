@@ -36,7 +36,7 @@ use crate::services::tools::command_options::{
 };
 use crate::services::tools::command_output_guard::{
     derive_capture_policies, render_command_output, CommandOutputCapture, CommandOutputCaptureMeta,
-    CommandOutputCollector, CommandOutputPolicy,
+    CommandOutputCollector, CommandOutputPolicy, STDERR_CAPTURE_POLICY, STDOUT_CAPTURE_POLICY,
 };
 use crate::services::tools::tool_error::{
     build_execute_command_failure_data, build_execute_command_failure_message, with_error_meta,
@@ -138,6 +138,7 @@ struct SandboxCommandSessionSnapshot {
     stdout: String,
     stderr: String,
     dropped: bool,
+    output_truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -159,6 +160,8 @@ struct SandboxCommandSessionState {
     expires_at: Option<Instant>,
     pending_stdout: Vec<u8>,
     pending_stderr: Vec<u8>,
+    stdout_capture: CommandOutputCollector,
+    stderr_capture: CommandOutputCollector,
 }
 
 struct SandboxCommandSession {
@@ -205,21 +208,23 @@ fn decode_session_stream(pending: &mut Vec<u8>, chunk: &[u8], flush: bool) -> St
 impl SandboxCommandSession {
     fn snapshot(&self, after_seq: u64, include_snapshot: bool) -> SandboxCommandSessionSnapshot {
         let state = self.state.lock();
-        let mut stdout = String::new();
-        let mut stderr = String::new();
-        let mut deltas = Vec::new();
-        for item in &state.deltas {
-            if include_snapshot {
-                if item.stream == "stderr" {
-                    stderr.push_str(&item.delta);
-                } else {
-                    stdout.push_str(&item.delta);
-                }
-            }
-            if item.seq > after_seq {
-                deltas.push(item.clone());
-            }
-        }
+        let stdout_capture = state.stdout_capture.clone().finish();
+        let stderr_capture = state.stderr_capture.clone().finish();
+        let output_truncated = stdout_capture.meta.truncated || stderr_capture.meta.truncated;
+        let (stdout, stderr) = if include_snapshot {
+            (
+                render_command_output(&stdout_capture, crate::tools::decode_command_output),
+                render_command_output(&stderr_capture, crate::tools::decode_command_output),
+            )
+        } else {
+            (String::new(), String::new())
+        };
+        let deltas = state
+            .deltas
+            .iter()
+            .filter(|item| item.seq > after_seq)
+            .cloned()
+            .collect();
         SandboxCommandSessionSnapshot {
             command_session_id: String::new(),
             status: if state.running { "running" } else { "exited" },
@@ -231,6 +236,7 @@ impl SandboxCommandSession {
             stdout,
             stderr,
             dropped: after_seq.saturating_add(1) < state.first_seq,
+            output_truncated,
         }
     }
 
@@ -251,6 +257,11 @@ impl SandboxCommandSession {
         };
         if delta.is_empty() {
             return;
+        }
+        if stream == "stderr" {
+            state.stderr_capture.push_chunk(delta.as_bytes());
+        } else {
+            state.stdout_capture.push_chunk(delta.as_bytes());
         }
         state.seq = state.seq.saturating_add(1);
         let seq = state.seq;
@@ -745,15 +756,19 @@ async fn poll_command_session_inner(
         return json!({"ok": false, "error": "unknown command session"});
     };
     if write_stdin && !request.input.is_empty() {
-        if request.input == "\x03" {
-            session.cancel.cancel();
-        } else {
-            let mut stdin = session.stdin.lock().await;
-            let Some(stdin) = stdin.as_mut() else {
-                return json!({"ok": false, "error": "command stdin is unavailable"});
-            };
-            if let Err(error) = stdin.write_all(request.input.as_bytes()).await {
-                return json!({"ok": false, "error": format!("failed to write command stdin: {error}")});
+        match request.input.as_str() {
+            "\x03" | "\\x03" | "\\u0003" | "\\u{0003}" => session.cancel.cancel(),
+            "\x04" | "\\x04" | "\\u0004" | "\\u{0004}" => {
+                session.stdin.lock().await.take();
+            }
+            _ => {
+                let mut stdin = session.stdin.lock().await;
+                let Some(stdin) = stdin.as_mut() else {
+                    return json!({"ok": false, "error": "command stdin is unavailable"});
+                };
+                if let Err(error) = stdin.write_all(request.input.as_bytes()).await {
+                    return json!({"ok": false, "error": format!("failed to write command stdin: {error}")});
+                }
             }
         }
     }
@@ -925,6 +940,8 @@ async fn launch_command_session_inner(request: SandboxToolRequest) -> Value {
             expires_at: None,
             pending_stdout: Vec::new(),
             pending_stderr: Vec::new(),
+            stdout_capture: CommandOutputCollector::new(STDOUT_CAPTURE_POLICY),
+            stderr_capture: CommandOutputCollector::new(STDERR_CAPTURE_POLICY),
         }),
     });
     command_sessions()

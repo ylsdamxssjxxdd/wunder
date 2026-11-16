@@ -115,6 +115,7 @@ impl CommandOutputCapture {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct CommandOutputCollector {
     policy: CommandOutputPolicy,
     total_bytes: usize,

@@ -1,5 +1,5 @@
 use super::*;
-use crate::services::tools::command_output_guard::STDOUT_CAPTURE_POLICY;
+use crate::services::tools::command_output_guard::{STDERR_CAPTURE_POLICY, STDOUT_CAPTURE_POLICY};
 #[cfg(unix)]
 use futures::StreamExt;
 
@@ -24,6 +24,8 @@ async fn command_poll_exit_wait_does_not_return_on_output_and_snapshots_are_opti
             expires_at: None,
             pending_stdout: Vec::new(),
             pending_stderr: Vec::new(),
+            stdout_capture: CommandOutputCollector::new(STDOUT_CAPTURE_POLICY),
+            stderr_capture: CommandOutputCollector::new(STDERR_CAPTURE_POLICY),
         }),
     });
     command_sessions()
@@ -445,7 +447,7 @@ async fn etx_stdin_cancels_background_command_and_preserves_null_exit_code() {
         .post(format!("http://{address}/sandboxes/command-sessions/stdin"))
         .json(&json!({
             "user_id": "user_etx", "session_id": "thread_etx",
-            "command_session_id": id, "input": "\u{3}",
+            "command_session_id": id, "input": "\\x03",
             "yield_time_ms": 1000, "wait_for_exit": true
         }))
         .send()
@@ -461,5 +463,127 @@ async fn etx_stdin_cancels_background_command_and_preserves_null_exit_code() {
     );
     assert!(interrupted.pointer("/data/exit_code").is_some());
     assert!(interrupted.pointer("/data/exit_code").unwrap().is_null());
+    server.abort();
+}
+
+#[tokio::test]
+async fn large_session_snapshot_preserves_prefix_after_delta_eviction() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, build_router()).await.unwrap() });
+    let client = reqwest::Client::new();
+    let launch = client
+        .post(format!(
+            "http://{address}/sandboxes/command-sessions/launch"
+        ))
+        .json(&json!({
+            "user_id": "user_large", "session_id": "thread_large",
+            "workspace_root": "/", "container_root": "/", "allow_commands": ["*"],
+            "args": {
+                "content": "env -u PYTHONHOME -u PYTHONPATH python3 -c \"print('PREFIX300|START_MARK_ASCII|' + 'x'*3000000 + '|TAIL_MARK')\"",
+                "yield_time_ms": 50
+            }
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(launch.get("ok").and_then(Value::as_bool), Some(true));
+    let id = launch
+        .pointer("/data/command_session_id")
+        .and_then(Value::as_str)
+        .unwrap();
+    let result = client
+        .post(format!("http://{address}/sandboxes/command-sessions/poll"))
+        .json(&json!({
+            "user_id": "user_large", "session_id": "thread_large",
+            "command_session_id": id, "after_seq": 0,
+            "yield_time_ms": 5000, "wait_for_exit": true, "include_snapshot": true
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(result.get("ok").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        result
+            .pointer("/data/output_truncated")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    let stdout = result
+        .pointer("/data/stdout")
+        .and_then(Value::as_str)
+        .unwrap();
+    assert!(
+        stdout.starts_with("PREFIX300|START_MARK_ASCII|"),
+        "{:.80}",
+        stdout
+    );
+    assert!(stdout.ends_with("|TAIL_MARK\n"), "{:.80}", stdout);
+    assert!(stdout.contains("truncated command output"));
+    server.abort();
+}
+
+#[tokio::test]
+async fn eot_stdin_closes_the_writer_and_read_receives_eof() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, build_router()).await.unwrap() });
+    let client = reqwest::Client::new();
+    let launch = client
+        .post(format!(
+            "http://{address}/sandboxes/command-sessions/launch"
+        ))
+        .json(&json!({
+            "user_id": "user_eot", "session_id": "thread_eot",
+            "workspace_root": "/", "container_root": "/", "allow_commands": ["*"],
+            "args": {
+                "content": "env -u PYTHONHOME -u PYTHONPATH python3 -u -c \"import sys; print('ready', flush=True); data=sys.stdin.read(); print('eof='+str(len(data)), flush=True)\"",
+                "yield_time_ms": 50
+            }
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(launch.get("ok").and_then(Value::as_bool), Some(true));
+    let id = launch
+        .pointer("/data/command_session_id")
+        .and_then(Value::as_str)
+        .unwrap();
+    let result = client
+        .post(format!("http://{address}/sandboxes/command-sessions/stdin"))
+        .json(&json!({
+            "user_id": "user_eot", "session_id": "thread_eot",
+            "command_session_id": id, "input": "\\x04",
+            "yield_time_ms": 1000, "wait_for_exit": true, "include_snapshot": true
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(result.get("ok").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        result.pointer("/data/status").and_then(Value::as_str),
+        Some("exited")
+    );
+    assert_eq!(
+        result.pointer("/data/exit_code").and_then(Value::as_i64),
+        Some(0),
+        "{result}"
+    );
+    assert!(result
+        .pointer("/data/stdout")
+        .and_then(Value::as_str)
+        .is_some_and(|stdout| stdout.contains("eof=0")));
     server.abort();
 }

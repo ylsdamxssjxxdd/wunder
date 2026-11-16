@@ -6,6 +6,21 @@ The `-1.18` source copies are pinned to Slint 1.18.0 (declared in
 
 ## Slint 1.18.0 port notes
 
+- Touch panning no longer waits behind the `Flickable` press delay. A touch press
+  used to return `DelayForwarding(FORWARD_DELAY)` (100 ms), which also stopped the
+  press from reaching any nested scroller: a wide table inside the transcript
+  never saw the press, so its horizontal drag was dead until the delay expired
+  and the finger pressed again. `items/flickable.rs` now forwards the touch press
+  immediately (`ForwardAndInterceptGrab`, without marking the view as capturing,
+  so taps and long-press selection still get their release) and takes the gesture
+  on the first move whose dominant axis it can pan. The dominant-axis test also
+  replaces the old "either axis over 8 px" rule that let the vertical transcript
+  swallow a mostly-horizontal swipe, and the decision now uses the distance since
+  the press rather than a single frame. Tracked by a probe that dispatches
+  `InternalEvent::Touch` through the testing backend: before, a horizontal swipe
+  over a nested wide Flickable left its content at 0; after, it follows the finger
+  while a vertical swipe scrolls only the outer view.
+
 Ported from the 1.17.1 patch set with these upstream changes:
 
 - The text stack moved from fontique/parley 0.10 to 0.11 (`unstable-fontique-011`

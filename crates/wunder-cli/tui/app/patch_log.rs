@@ -14,8 +14,8 @@ use crate::patch_diff::{
 };
 use crate::tool_display::summarize_tool_result;
 use crate::tool_presentation::{
-    ToolAccess, ToolPresentation, is_mcp_tool_name, is_subagent_tool, mcp_invocation_label,
-    present, present_subagent_action, target_argument,
+    ToolAccess, ToolPresentation, is_mcp_tool_name, mcp_invocation_label, present_for_call,
+    target_argument,
 };
 use crate::tui::activity_indicator;
 use crate::tui::theme;
@@ -1693,15 +1693,11 @@ pub(super) fn build_pending_tool_log(
     })
 }
 
-/// The sub-agent control tool is one tool with many meanings; its action decides
-/// the verb. Every other tool keeps the name-driven classifier.
+/// The verb a card reads before its name: the tool's own action when it has one
+/// (sub-agent action, command-session input), else the name-driven classifier. One
+/// resolver, so a pending card and its settled replacement never disagree.
 fn resolve_presentation(tool_name: &str, args: &Value) -> ToolPresentation {
-    if is_subagent_tool(tool_name) {
-        if let Some(presentation) = present_subagent_action(args) {
-            return presentation;
-        }
-    }
-    present(tool_name)
+    present_for_call(tool_name, args)
 }
 
 pub(super) fn build_completed_tool_log(
@@ -1772,7 +1768,7 @@ pub(super) fn build_completed_tool_log(
         None
     };
 
-    let presentation = inherited.unwrap_or_else(|| present(tool_name));
+    let presentation = inherited.unwrap_or_else(|| present_for_call(tool_name, args));
     let arguments = if presentation.access == ToolAccess::Delegate {
         (!args.is_null())
             .then(|| compact_json(args))
@@ -2488,6 +2484,46 @@ fn value_as_i64(value: Option<&Value>) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 命令会话一张卡两个词：读输出是「等待」，写 stdin 是「发送输入」。词来自引擎的
+    /// 词表，命令行、桌面版、安卓版与云端版同一份；结算后也不换成第二个名字。
+    #[test]
+    fn a_command_session_card_reads_as_waiting_or_sending_input() {
+        let SpecialLogEntry::Tool(poll) = build_pending_tool_log(
+            "命令会话",
+            &serde_json::json!({ "command_session_id": "s-1" }),
+            true,
+        ) else {
+            panic!("expected tool log");
+        };
+        assert_eq!(poll.header_text(), "等待");
+
+        let SpecialLogEntry::Tool(write) = build_pending_tool_log(
+            "write_stdin",
+            &serde_json::json!({ "command_session_id": "s-1", "chars": "y\n" }),
+            true,
+        ) else {
+            panic!("expected tool log");
+        };
+        assert_eq!(write.header_text(), "发送输入");
+
+        let SpecialLogEntry::Tool(done) = build_completed_tool_log(
+            "命令会话",
+            &serde_json::json!({
+                "args": { "chars": "y\n" },
+                "result": { "ok": true, "data": { "status": "running" } }
+            }),
+            true,
+            None,
+        ) else {
+            panic!("expected tool log");
+        };
+        assert_eq!(
+            done.header_text(),
+            "发送输入",
+            "the settled card keeps the word its call earned"
+        );
+    }
 
     #[test]
     fn pending_patch_log_collects_preview_rows() {

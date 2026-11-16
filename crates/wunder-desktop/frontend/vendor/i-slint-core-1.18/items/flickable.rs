@@ -723,6 +723,19 @@ impl FlickableData {
 
                 if inner.capture_events.is_some() {
                     InputEventFilterResult::Intercept
+                } else if event.is_from_touch() {
+                    // Touch has no hover phase, so holding the press back for
+                    // FORWARD_DELAY costs the first ~100 ms of every swipe. Worse,
+                    // a nested scroller (a wide table inside the transcript) never
+                    // sees that press at all, so it cannot claim a horizontal drag
+                    // until the delay expires and the finger gets pressed again.
+                    // Forward the press right away so every level records it, and
+                    // take the gesture on the first move whose dominant axis this
+                    // view can pan. Unlike the delayed path the press does not mark
+                    // this view as capturing: an untouched press still delivers its
+                    // release to the child it landed on (link taps, long-press
+                    // selection).
+                    InputEventFilterResult::ForwardAndInterceptGrab
                 } else {
                     InputEventFilterResult::DelayForwarding(FORWARD_DELAY.as_millis() as _)
                 }
@@ -741,7 +754,19 @@ impl FlickableData {
                         |(pressed_time, pressed_mouse_position)| {
                             let mouse_delta = *position - pressed_mouse_position;
 
-                            crate::animations::current_tick() - pressed_time <= DURATION_THRESHOLD
+                            // A touch press is no longer held back, so the drag can
+                            // start at any time after it. The one gesture that must
+                            // keep the pointer is a long-press text selection, which
+                            // is tracked globally and only arms after the press
+                            // delay.
+                            let window_open = if event.is_from_touch() {
+                                !crate::text_selection::dragging()
+                            } else {
+                                crate::animations::current_tick() - pressed_time
+                                    <= DURATION_THRESHOLD
+                            };
+
+                            window_open
                                 && self.should_capture_mouse_direction(mouse_delta, flick, flick_rc)
                         },
                     );
@@ -822,13 +847,19 @@ impl FlickableData {
         let content_width = flick.content_width();
         let content_height = flick.content_height();
         let zero = LogicalLength::zero();
+        let horizontal = content_width > flickable_width || flick.content_x() != zero;
+        let vertical = content_height > flickable_height || flick.content_y() != zero;
 
-        // We should capture the mouse movement, if the flickable can move in this
-        // axis, and the mouse has moved more than the threshold in this axis.
-        ((content_width > flickable_width || flick.content_x() != zero)
-            && abs(mouse_delta.x_length()) > DISTANCE_THRESHOLD)
-            || ((content_height > flickable_height || flick.content_y() != zero)
-                && abs(mouse_delta.y_length()) > DISTANCE_THRESHOLD)
+        // Judge the gesture by its dominant axis instead of testing both axes
+        // independently. A horizontal swipe on a phone always drifts a few pixels
+        // vertically; the vertical view used to match that drift first and swallow
+        // the drag before the nested horizontal scroller (a wide table) could take
+        // it, while the reverse never happened because the first view to match won.
+        if abs(mouse_delta.x_length()) > abs(mouse_delta.y_length()) {
+            horizontal && abs(mouse_delta.x_length()) > DISTANCE_THRESHOLD
+        } else {
+            vertical && abs(mouse_delta.y_length()) > DISTANCE_THRESHOLD
+        }
     }
 
     /// Whether the flickable has any content to pan in either direction, regardless of mouse movement.
@@ -856,7 +887,14 @@ impl FlickableData {
         let mut inner = self.inner.borrow_mut();
         match event {
             MouseEvent::Pressed { .. } => {
-                inner.capture_events = Some(CaptureEvents::MouseOrTouchScreen);
+                // A touch press only arms the pan. Capturing here would make the
+                // release intercept below swallow the tap, so the child that
+                // received the press would never see its release (link taps and
+                // long-press selection live on that release). The capture starts
+                // on the first move that actually pans.
+                if !event.is_from_touch() {
+                    inner.capture_events = Some(CaptureEvents::MouseOrTouchScreen);
+                }
                 InputEventResult::GrabMouse
             }
             MouseEvent::Exit | MouseEvent::Released { .. } => {
@@ -887,15 +925,19 @@ impl FlickableData {
                 // So to correctly calculate the mouse delta, we need to use the position of
                 // the mouse in the flickables coordinate system and never the content coordinate
                 // system.
-                if let Some((_pressed_time, _pressed_mouse_position)) = inner.pressed_mouse_state {
+                if let Some((_pressed_time, pressed_mouse_position)) = inner.pressed_mouse_state {
                     let mouse_delta = *position - inner.last_mouse_position;
+                    // The decision uses the distance travelled since the press:
+                    // a single frame of vertical jitter must not hand a horizontal
+                    // swipe to the vertical view, nor give up the grab.
+                    let total_delta = *position - pressed_mouse_position;
                     inner.velocity_rb.push(crate::animations::current_tick(), mouse_delta);
 
                     let is_capturing = inner
                         .capture_events
                         .is_some_and(|f| f == CaptureEvents::MouseOrTouchScreen);
                     if is_capturing
-                        || self.should_capture_mouse_direction(mouse_delta, flick, flick_rc)
+                        || self.should_capture_mouse_direction(total_delta, flick, flick_rc)
                     {
                         // The drag event is meant to move the content, set it to the new position
                         // and start capturing mouse events.
@@ -940,8 +982,8 @@ impl FlickableData {
                         inner.capture_events = Some(CaptureEvents::MouseOrTouchScreen);
 
                         InputEventResult::GrabMouse
-                    } else if abs(mouse_delta.x_length()) > DISTANCE_THRESHOLD
-                        || abs(mouse_delta.y_length()) > DISTANCE_THRESHOLD
+                    } else if abs(total_delta.x_length()) > DISTANCE_THRESHOLD
+                        || abs(total_delta.y_length()) > DISTANCE_THRESHOLD
                     {
                         // drag in a unsupported direction gives up the grab
                         InputEventResult::EventIgnored

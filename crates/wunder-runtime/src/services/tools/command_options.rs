@@ -35,6 +35,8 @@ pub(crate) enum CommandSessionInput<'a> {
     Poll,
     /// Ctrl-C：任何会话（包括没有 stdin 的）都可以中断。
     Interrupt,
+    /// Ctrl-D / EOT：关闭 stdin 写端，让读取方收到 EOF。
+    Eof,
     /// 写入 stdin 后再读取输出。
     Text(&'a str),
 }
@@ -42,6 +44,10 @@ pub(crate) enum CommandSessionInput<'a> {
 impl CommandSessionInput<'_> {
     pub(crate) fn writes_stdin(self) -> bool {
         matches!(self, Self::Text(_))
+    }
+
+    pub(crate) fn uses_stdin_control(self) -> bool {
+        matches!(self, Self::Text(_) | Self::Eof)
     }
 }
 
@@ -54,8 +60,9 @@ pub(crate) fn parse_command_session_input(args: &Value) -> CommandSessionInput<'
         .unwrap_or("");
     match input {
         "" => CommandSessionInput::Poll,
-        // Ctrl-C / ETX：非 tty 会话也支持，语义是终止这条命令。
-        "\x03" => CommandSessionInput::Interrupt,
+        // Accept both decoded control bytes and their literal JSON/Rust spellings.
+        "\x03" | "\\x03" | "\\u0003" | "\\u{0003}" => CommandSessionInput::Interrupt,
+        "\x04" | "\\x04" | "\\u0004" | "\\u{0004}" => CommandSessionInput::Eof,
         text => CommandSessionInput::Text(text),
     }
 }
@@ -259,6 +266,19 @@ mod tests {
             parse_command_session_input(&json!({"input": "\x03"})),
             CommandSessionInput::Interrupt
         );
+        assert_eq!(
+            parse_command_session_input(&json!({"chars": "\\x03"})),
+            CommandSessionInput::Interrupt
+        );
+        assert_eq!(
+            parse_command_session_input(&json!({"chars": "\\u0003"})),
+            CommandSessionInput::Interrupt
+        );
+        assert_eq!(
+            parse_command_session_input(&json!({"chars": "\\x04"})),
+            CommandSessionInput::Eof
+        );
+        assert!(parse_command_session_input(&json!({"chars": "\\u0004"})).uses_stdin_control());
         assert!(parse_command_session_input(&json!({"input": "ls\n"})).writes_stdin());
         assert!(parse_command_session_input(&json!({"chars": "y\n"})).writes_stdin());
         assert_eq!(

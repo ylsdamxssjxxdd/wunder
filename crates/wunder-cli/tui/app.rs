@@ -132,6 +132,31 @@ pub(crate) fn read_only_refusal(is_zh: bool, reason: &str) -> String {
     }
 }
 
+/// The lease is a write fence: a thread already open in another instance cannot
+/// be taken over, and saying so is the whole answer. `swapped` marks the startup
+/// case, where this terminal moves to a fresh thread instead of exiting.
+pub(crate) fn thread_busy_notice(is_zh: bool, session_id: &str, swapped: bool) -> String {
+    let mut text = if is_zh {
+        format!("无法打开线程 {session_id}：它正被桌面版或其他命令行实例打开。")
+    } else {
+        format!(
+            "cannot open thread {session_id}: it is open in the desktop or another CLI instance."
+        )
+    };
+    text.push_str(if is_zh {
+        if swapped {
+            "已在新线程中启动；关闭占用它的实例后用 /resume 重新打开该线程。"
+        } else {
+            "关闭占用它的实例后再试。"
+        }
+    } else if swapped {
+        " Started a fresh thread; close that instance and use /resume to reopen it."
+    } else {
+        " Close it and try again."
+    });
+    text
+}
+
 pub(crate) fn read_only_placeholder(is_zh: bool) -> &'static str {
     if is_zh {
         "⊘ 只读监视：该线程的写入权由蜂群运行持有"
@@ -976,7 +1001,22 @@ impl TuiApp {
             pending_clipboard_write: None,
             pending_shell_results: Vec::new(),
         };
-        app.acquire_thread_lease(&session_id).await?;
+        // A thread open in the desktop (or another 命令行) keeps its write fence,
+        // so this instance starts on a fresh thread instead of exiting. The
+        // notice is queued until the banner is painted, so it reads as an answer
+        // to the request rather than as output above the welcome.
+        let mut startup_notice = None;
+        if let Err(error) = app.acquire_thread_lease(session_id.as_str()).await {
+            if !crate::thread_in_use(&error) {
+                return Err(error);
+            }
+            app.adopt_fresh_thread_after_busy().await?;
+            startup_notice = Some(thread_busy_notice(
+                app.is_zh_language(),
+                session_id.as_str(),
+                true,
+            ));
+        }
         app.refresh_session_title().await;
         app.load_persisted_history();
         app.load_popup_recents();
@@ -1025,6 +1065,9 @@ impl TuiApp {
             brand_summary.clone(),
             build_welcome_banner_log(brand_summary, banner),
         );
+        if let Some(notice) = startup_notice {
+            app.push_log(LogKind::Error, notice);
+        }
         if !app.pending_attachments.is_empty() {
             app.push_log(
                 LogKind::Info,
@@ -1082,6 +1125,59 @@ impl TuiApp {
                 "THREAD_IN_USE: 线程正在由其他桌面版或命令行实例打开，关闭占用实例后重试"
             )),
         }
+    }
+
+    /// The requested thread belongs to another instance, so this process opens
+    /// one it can own instead: a brand-new id is always writable, and the caller
+    /// explains the swap. Ending the terminal would lose the user's whole
+    /// session over a thread they can reopen in a moment.
+    async fn adopt_fresh_thread_after_busy(&mut self) -> Result<()> {
+        let fresh = uuid::Uuid::new_v4().simple().to_string();
+        self.acquire_thread_lease(fresh.as_str()).await?;
+        self.session_id = fresh;
+        self.session_title = crate::CLI_DEFAULT_SESSION_TITLE.to_string();
+        self.watch_only_reason = None;
+        self.thread_registry.activate(self.session_id.as_str());
+        Ok(())
+    }
+
+    /// The send-path fence. A lapsed lease (this process slept past the TTL, or
+    /// the thread moved to another instance) is re-taken once; a thread that
+    /// really belongs to someone else is reported and the caller keeps the
+    /// draft, because no message may be lost to a lease verdict.
+    async fn hold_thread_lease_for_send(&mut self) -> Result<bool> {
+        match self.validate_thread_lease_async().await {
+            Ok(()) => return Ok(true),
+            Err(error) if !crate::thread_in_use(&error) => return Err(error),
+            Err(_) => {}
+        }
+        let session_id = self.session_id.clone();
+        match self.acquire_thread_lease(session_id.as_str()).await {
+            Ok(()) => Ok(true),
+            Err(error) if crate::thread_in_use(&error) => {
+                self.push_thread_busy_notice(session_id.as_str());
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// A refused send hands the typed line back: the composer is empty by the
+    /// time the fence is checked, and the text belongs to the user, not to the
+    /// attempt that could not be made.
+    fn restore_draft(&mut self, line: String) {
+        if line.trim().is_empty() || !self.input.trim().is_empty() {
+            return;
+        }
+        self.input = line;
+        self.input_cursor = self.input.len();
+    }
+
+    /// Report a thread another instance owns and leave the thread on screen
+    /// exactly as it is.
+    fn push_thread_busy_notice(&mut self, session_id: &str) {
+        let notice = thread_busy_notice(self.is_zh_language(), session_id, false);
+        self.push_log(LogKind::Error, notice);
     }
 
     /// Switch-path release, awaited so the previous thread is freed in order.
@@ -6429,7 +6525,16 @@ impl TuiApp {
         // checks have completed. If another instance owns it, the current
         // thread remains untouched and no lease is leaked on a read error.
         let previous_lease_token = self.open_lease_token;
-        self.acquire_thread_lease(session_id).await?;
+        if let Err(error) = self.acquire_thread_lease(session_id).await {
+            if !crate::thread_in_use(&error) {
+                return Err(error);
+            }
+            // Another instance owns this thread. The thread on screen keeps its
+            // lease and its content; the user gets the reason instead of an
+            // exit code.
+            self.push_thread_busy_notice(session_id);
+            return Ok(());
+        }
         let history = if cached_index.is_none() {
             match crate::load_session_history_entries(&self.runtime, session_id, 0).await {
                 Ok(history) => Some(history),
@@ -7329,7 +7434,10 @@ impl TuiApp {
     }
 
     pub async fn submit_line(&mut self, line: String) -> Result<()> {
-        self.validate_thread_lease_async().await?;
+        if !self.hold_thread_lease_for_send().await? {
+            self.restore_draft(line);
+            return Ok(());
+        }
         self.flush_pending_paste();
         self.sync_attachment_placeholders();
         let visible_line = line.trim_end().to_string();
@@ -8977,14 +9085,11 @@ impl TuiApp {
                 }
             }
             "llm_output" => {
-                if payload_has_tool_calls(payload) {
-                    self.emit_tool_phase_notice();
-                    self.active_assistant = None;
-                    self.active_reasoning = None;
-                    self.stream_tool_markup_open = false;
-                    return;
-                }
-
+                // A tool round still carries the assistant's spoken preamble — the
+                // sentence that says what it is about to do. Land it with the same
+                // rules as a final answer *before* the tool phase retires the stream:
+                // a provider that answers in one piece (no deltas at all) otherwise
+                // loses that sentence completely, leaving only thoughts and tools.
                 if let Some(reasoning) = payload.get("reasoning").and_then(Value::as_str) {
                     let cleaned_reasoning = sanitize_reasoning_text(reasoning);
                     if !cleaned_reasoning.is_empty() {
@@ -9006,6 +9111,15 @@ impl TuiApp {
                 }
 
                 self.stream_tool_markup_open = false;
+
+                if payload_has_tool_calls(payload) {
+                    // The tool phase owns the transcript from here on; the preamble
+                    // above keeps its own card instead of being reset with the stream.
+                    self.emit_tool_phase_notice();
+                    self.active_assistant = None;
+                    self.active_reasoning = None;
+                    self.stream_tool_markup_open = false;
+                }
             }
             "progress" => {
                 // Skip progress events in tool-only workflow rendering.

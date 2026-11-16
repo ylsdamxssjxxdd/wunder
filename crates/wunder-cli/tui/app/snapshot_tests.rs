@@ -173,6 +173,58 @@ fn ctrl(code: KeyCode) -> KeyEvent {
 }
 
 #[tokio::test]
+async fn tool_round_preamble_survives_an_answer_that_arrives_in_one_piece() {
+    let root = TempRoot::new("preamble_single_shot");
+    let mut app = fixture_app(root.path()).await;
+    app.logs.clear();
+    app.active_stream_sessions.insert(app.session_id.clone());
+    feed_stream_event(&mut app, "llm_request", json!({}), 1);
+    // No delta frames for this round: the provider answered in one piece and the
+    // round ends with a tool call. The spoken preamble is the only place the
+    // reader learns what the call is for, so it must not be dropped with the stream.
+    feed_stream_event(
+        &mut app,
+        "llm_output",
+        json!({
+            "content": "I'll locate the resume path first.",
+            "tool_calls": [{"id": "c1", "name": "执行命令", "args": "{}"}]
+        }),
+        2,
+    );
+    assert_eq!(assistant_texts(&app), vec!["I'll locate the resume path first."]);
+}
+
+#[tokio::test]
+async fn tool_round_preamble_streams_once_without_being_repeated_by_the_full_frame() {
+    let root = TempRoot::new("preamble_streamed");
+    let mut app = fixture_app(root.path()).await;
+    app.logs.clear();
+    app.active_stream_sessions.insert(app.session_id.clone());
+    feed_stream_event(&mut app, "llm_request", json!({}), 1);
+    for (seq, delta) in [(2, "I'll locate "), (3, "the resume path first.")] {
+        feed_stream_event(&mut app, "llm_output_delta", json!({"delta": delta}), seq);
+    }
+    feed_stream_event(
+        &mut app,
+        "llm_output",
+        json!({
+            "content": "I'll locate the resume path first.",
+            "tool_calls": [{"id": "c1", "name": "执行命令", "args": "{}"}]
+        }),
+        4,
+    );
+    assert_eq!(assistant_texts(&app), vec!["I'll locate the resume path first."]);
+}
+
+fn assistant_texts(app: &TuiApp) -> Vec<&str> {
+    app.logs
+        .iter()
+        .filter(|entry| matches!(entry.kind, LogKind::Assistant))
+        .map(|entry| entry.text.as_str())
+        .collect()
+}
+
+#[tokio::test]
 async fn resume_restores_tool_cards_from_durable_history() {
     let root = TempRoot::new("resume_tool_cards");
     let mut app = fixture_app(root.path()).await;
@@ -7262,4 +7314,84 @@ async fn the_first_turn_names_the_window_but_a_rename_survives_it() {
     app.session_title = "手工命名".to_string();
     app.adopt_auto_session_title("完全不同的第二句话");
     assert_eq!(app.session_title, "手工命名", "a renamed thread keeps its name");
+}
+
+#[tokio::test]
+async fn a_thread_the_desktop_holds_opens_a_fresh_one_with_a_notice() {
+    let root = TempRoot::new("lease_busy_startup");
+    let global = Cli::parse_from([
+        "wunder-cli",
+        "--lang",
+        "en-US",
+        "--user",
+        "snapshot_user",
+        "--temp-root",
+        root.path().to_string_lossy().as_ref(),
+    ])
+    .global;
+    let runtime = fixture_runtime(root.path());
+    // The desktop is holding this thread's write fence.
+    runtime
+        .state
+        .storage
+        .try_acquire_thread_open_lease(
+            "desktop-held",
+            "snapshot_user",
+            "desktop-instance",
+            "desktop",
+            30.0,
+        )
+        .expect("desktop lease");
+    let (requester, _notifications) = spawn_frame_scheduler();
+    let app = TuiApp::new(
+        runtime,
+        global,
+        Some("desktop-held".to_string()),
+        requester,
+    )
+    .await
+    .expect("the terminal opens instead of exiting");
+
+    assert_ne!(app.session_id, "desktop-held", "it opened a thread it owns");
+    let notice = app
+        .logs
+        .iter()
+        .find(|entry| entry.text.contains("desktop-held"))
+        .expect("a notice explains the swap");
+    assert_eq!(notice.kind, LogKind::Error);
+    assert!(
+        notice.text.contains("/resume"),
+        "the notice says how to get the thread back: {:?}",
+        notice.text
+    );
+}
+
+#[tokio::test]
+async fn switching_to_a_thread_the_desktop_holds_reports_instead_of_exiting() {
+    let root = TempRoot::new("lease_busy_switch");
+    let mut app = fixture_app(root.path()).await;
+    let visible = app.session_id.clone();
+    app.runtime
+        .state
+        .storage
+        .try_acquire_thread_open_lease(
+            "desktop-held",
+            "snapshot_user",
+            "desktop-instance",
+            "desktop",
+            30.0,
+        )
+        .expect("desktop lease");
+
+    app.switch_to_existing_session("desktop-held")
+        .await
+        .expect("a busy thread is an answer, not a failure");
+
+    assert_eq!(app.session_id, visible, "the thread on screen stays");
+    assert!(
+        app.logs
+            .iter()
+            .any(|entry| entry.kind == LogKind::Error && entry.text.contains("desktop-held")),
+        "the refusal is reported"
+    );
 }

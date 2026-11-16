@@ -176,8 +176,8 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "命令会话",
-        brief_en: "Continue a running command (command_session). command_session_id comes from execute_command. Empty chars polls new output; non-empty chars writes stdin. Both wait up to yield_time_ms (default 1000, max 30000) and return status plus new output; pass after_seq to resume from a known seq and wait_for=exit to block until the process exits. Reuse the same id until exit_code is present.",
-        brief_zh: "继续运行中的命令（命令会话）：command_session_id 来自执行命令。chars 为空读取新增输出，非空写入 stdin；两者都在 yield_time_ms（默认 1000，最大 30000）内等待并返回状态与新增输出；可传 after_seq 从已知 seq 续读，传 wait_for=exit 直接等到进程退出。复用同一 id，直到拿到 exit_code。",
+        brief_en: "Continue a running command (command_session). command_session_id comes from execute_command. Empty chars polls new output; non-empty chars writes stdin. Both wait up to yield_time_ms (default 1000, max 30000) and return status plus new output; pass after_seq to resume from a known seq and wait_for=exit to block until the process exits. Reuse the same id until exit_code is present. chars=\\u0003 interrupts; chars=\\u0004 closes stdin for EOF.",
+        brief_zh: "继续运行中的命令（命令会话）：command_session_id 来自执行命令。chars 为空读取新增输出，非空写入 stdin；两者都在 yield_time_ms（默认 1000，最大 30000）内等待并返回状态与新增输出；可传 after_seq 从已知 seq 续读，传 wait_for=exit 直接等到进程退出。复用同一 id，直到拿到 exit_code。chars=\\u0003 中断，chars=\\u0004 关闭 stdin 并产生 EOF。",
         drop_actions: &[],
         drop_fields: &[],
     },

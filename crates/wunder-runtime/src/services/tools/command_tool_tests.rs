@@ -421,6 +421,21 @@ fn model_sandbox_poll_contains_each_output_once() {
     assert!(exited["data"]["exit_note"].as_str().is_some());
 }
 
+#[test]
+fn dropped_sandbox_poll_preserves_bounded_snapshot_instead_of_rebuilding_a_partial_head() {
+    let result = compact_sandbox_poll_result(json!({
+        "status": "exited", "dropped": true,
+        "stdout": "PREFIX300|START_MARK_ASCII|\n...(truncated)...\n|TAIL_MARK\n",
+        "stderr": "",
+        "deltas": [{"seq": 400, "stream": "stdout", "delta": "|TAIL_MARK\n"}]
+    }));
+    assert!(result["stdout"]
+        .as_str()
+        .unwrap()
+        .starts_with("PREFIX300|START_MARK_ASCII|"));
+    assert_eq!(result["output_truncated"], true);
+}
+
 /// Exercise real sandbox pipes + HTTP + runtime observer + model exit wait.
 /// The model does not poll to drive output delivery.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -637,6 +652,42 @@ async fn sandbox_background_output_streams_independently_and_polls_incrementally
         .await
         .unwrap()
         .unwrap();
+
+    let large_launch = http
+        .post(format!(
+            "http://{address}/sandboxes/command-sessions/launch"
+        ))
+        .json(&json!({
+            "user_id": "user", "session_id": "thread", "workspace_root": "/",
+            "container_root": "/", "allow_commands": ["*"],
+            "args": {
+                "content": "env -u PYTHONHOME -u PYTHONPATH python3 -c \"print('PREFIX300|START_MARK_ASCII|' + 'x'*300000 + '|TAIL_MARK')\"",
+                "yield_time_ms": 50
+            }
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    let large_id = large_launch["data"]["command_session_id"].as_str().unwrap();
+    let (large, _) = await_sandbox_command_exit(&context, large_id, 5.0, None)
+        .await
+        .unwrap();
+    let large_stdout = large["stdout"].as_str().unwrap();
+    assert!(
+        large_stdout.starts_with("PREFIX300|START_MARK_ASCII|"),
+        "{:.80}",
+        large_stdout
+    );
+    assert!(
+        large_stdout.ends_with("|TAIL_MARK\n"),
+        "{:.80}",
+        large_stdout
+    );
+    assert!(large_stdout.contains("truncated command output"));
+    assert_eq!(large["output_truncated"], true);
 
     let (foreground, _after_seq) = await_sandbox_command_exit(&context, &id, 10.0, None)
         .await

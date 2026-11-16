@@ -8,8 +8,8 @@ use super::{
     },
     command_output_guard::{
         CommandOutputCapture, CommandOutputCaptureMeta, CommandOutputCollector,
-        CommandOutputPolicy, DEFAULT_CAPTURE_TOTAL_BYTES, STDERR_CAPTURE_POLICY,
-        STDOUT_CAPTURE_POLICY, derive_capture_policies, render_command_output,
+        CommandOutputPolicy, DEFAULT_CAPTURE_TOTAL_BYTES, derive_capture_policies,
+        render_command_output,
     },
     command_sessions::{
         CommandProcessHandle, CommandSessionLaunchMode, CommandSessionStream,
@@ -1492,7 +1492,7 @@ pub(crate) async fn command_session_control(
         }
         stdin_note = Some(i18n::t("tool.command_session.interrupted"));
     }
-    if sandbox_backed && (input.writes_stdin() || !managed) {
+    if sandbox_backed && (input.uses_stdin_control() || !managed) {
         let Some(result) = crate::sandbox::control_command_session(
             context.config,
             context.user_id,
@@ -1500,15 +1500,16 @@ pub(crate) async fn command_session_control(
             session_id,
             match input {
                 CommandSessionInput::Text(text) => text,
+                CommandSessionInput::Eof => "\x04",
                 _ => "",
             },
             crate::sandbox::CommandSessionPollOptions {
                 after_seq: if managed { 0 } else { after_seq.unwrap_or(0) },
                 yield_time_ms: if managed { 0 } else { yield_time_ms },
                 wait_for_exit,
-                include_snapshot: false,
+                include_snapshot: !managed,
             },
-            input.writes_stdin(),
+            input.uses_stdin_control(),
         )
         .await
         else {
@@ -1569,48 +1570,58 @@ pub(crate) async fn command_session_control(
             false,
         ));
     };
-    if let CommandSessionInput::Text(text) = input {
-        if !sandbox_backed {
-            match broker
-                .write_stdin(
-                    context.user_id,
-                    context.session_id,
-                    session_id,
-                    text.as_bytes(),
-                )
-                .await
-                .map_err(|error| anyhow!(error))?
-            {
-                CommandStdinWrite::Written => {}
-                CommandStdinWrite::StdinClosed => {
-                    // 输入没进去，但会话还在跑：把当前状态一并带回去，模型
-                    // 不必再花一次调用去确认它是否还活着。
-                    let data = broker
-                        .poll(
-                            context.user_id,
-                            context.session_id,
-                            session_id,
-                            after_seq,
-                            Duration::ZERO,
-                            false,
-                        )
-                        .await
-                        .map_err(|error| anyhow!(error))?;
-                    return Ok(build_failed_tool_result(
-                        &i18n::t("tool.command_session.stdin_closed"),
-                        with_stdin_note(data, i18n::t("tool.command_session.stdin_closed_hint")),
-                        ToolErrorMeta::new(
-                            "TOOL_COMMAND_STDIN_CLOSED",
-                            Some(i18n::t("tool.command_session.stdin_closed_hint")),
-                            false,
-                            None,
-                        ),
+    if matches!(
+        input,
+        CommandSessionInput::Text(_) | CommandSessionInput::Eof
+    ) && !sandbox_backed
+    {
+        let operation = match input {
+            CommandSessionInput::Text(text) => {
+                broker
+                    .write_stdin(
+                        context.user_id,
+                        context.session_id,
+                        session_id,
+                        text.as_bytes(),
+                    )
+                    .await
+            }
+            CommandSessionInput::Eof => {
+                broker
+                    .close_stdin(context.user_id, context.session_id, session_id)
+                    .await
+            }
+            _ => unreachable!(),
+        }
+        .map_err(|error| anyhow!(error))?;
+        match operation {
+            CommandStdinWrite::Written => {}
+            CommandStdinWrite::StdinClosed => {
+                let data = broker
+                    .poll(
+                        context.user_id,
+                        context.session_id,
+                        session_id,
+                        after_seq,
+                        Duration::ZERO,
                         false,
-                    ));
-                }
-                CommandStdinWrite::SessionExited => {
-                    stdin_note = Some(i18n::t("tool.command_session.stdin_after_exit"));
-                }
+                    )
+                    .await
+                    .map_err(|error| anyhow!(error))?;
+                return Ok(build_failed_tool_result(
+                    &i18n::t("tool.command_session.stdin_closed"),
+                    with_stdin_note(data, i18n::t("tool.command_session.stdin_closed_hint")),
+                    ToolErrorMeta::new(
+                        "TOOL_COMMAND_STDIN_CLOSED",
+                        Some(i18n::t("tool.command_session.stdin_closed_hint")),
+                        false,
+                        None,
+                    ),
+                    false,
+                ));
+            }
+            CommandStdinWrite::SessionExited => {
+                stdin_note = Some(i18n::t("tool.command_session.stdin_after_exit"));
             }
         }
     }
@@ -1735,25 +1746,32 @@ fn build_command_session_result(mut data: Value) -> Value {
 /// broker/UI; do not send both the delta array and its text to the model.
 fn compact_sandbox_poll_result(mut data: Value) -> Value {
     if let Value::Object(ref mut map) = data {
+        let dropped = map.get("dropped").and_then(Value::as_bool) == Some(true);
         let deltas = map.remove("deltas");
         let mut stdout = String::new();
         let mut stderr = String::new();
-        for delta in deltas
-            .as_ref()
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            if let Some(text) = delta.get("delta").and_then(Value::as_str) {
-                if delta.get("stream").and_then(Value::as_str) == Some("stderr") {
-                    stderr.push_str(text);
-                } else {
-                    stdout.push_str(text);
+        if !dropped {
+            for delta in deltas
+                .as_ref()
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(text) = delta.get("delta").and_then(Value::as_str) {
+                    if delta.get("stream").and_then(Value::as_str) == Some("stderr") {
+                        stderr.push_str(text);
+                    } else {
+                        stdout.push_str(text);
+                    }
                 }
             }
         }
-        map.insert("stdout".into(), Value::String(stdout));
-        map.insert("stderr".into(), Value::String(stderr));
+        if dropped {
+            map.insert("output_truncated".into(), Value::Bool(true));
+        } else {
+            map.insert("stdout".into(), Value::String(stdout));
+            map.insert("stderr".into(), Value::String(stderr));
+        }
     }
     data
 }
@@ -1864,8 +1882,6 @@ async fn await_sandbox_command_exit(
     let deadline =
         (timeout_s > 0.0).then(|| std::time::Instant::now() + Duration::from_secs_f64(timeout_s));
     let mut after_seq = 0u64;
-    let mut stdout = CommandOutputCollector::new(STDOUT_CAPTURE_POLICY);
-    let mut stderr = CommandOutputCollector::new(STDERR_CAPTURE_POLICY);
     let mut dropped = false;
     loop {
         let yield_time_ms = deadline
@@ -1885,6 +1901,7 @@ async fn await_sandbox_command_exit(
             crate::sandbox::CommandSessionPollOptions {
                 after_seq,
                 yield_time_ms,
+                include_snapshot: true,
                 ..Default::default()
             },
             false,
@@ -1894,7 +1911,9 @@ async fn await_sandbox_command_exit(
             return None;
         }
         let mut data = result.get("data")?.clone();
-        collect_sandbox_output(&data, after_seq, tracker, &mut stdout, &mut stderr);
+        if let Some(tracker) = tracker {
+            emit_sandbox_output(tracker, &data, after_seq);
+        }
         dropped |= data
             .get("dropped")
             .and_then(Value::as_bool)
@@ -1906,22 +1925,18 @@ async fn await_sandbox_command_exit(
         if running && !deadline_exceeded {
             continue;
         }
-        let stdout = stdout.finish();
-        let stderr = stderr.finish();
+        let stdout = data.get("stdout").cloned().unwrap_or_else(|| json!(""));
+        let stderr = data.get("stderr").cloned().unwrap_or_else(|| json!(""));
+        let output_truncated = dropped
+            || data
+                .get("output_truncated")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
         if let Value::Object(ref mut map) = data {
             map.remove("deltas");
-            map.insert(
-                "stdout".into(),
-                json!(render_command_output(&stdout, decode_command_output)),
-            );
-            map.insert(
-                "stderr".into(),
-                json!(render_command_output(&stderr, decode_command_output)),
-            );
-            map.insert(
-                "output_truncated".into(),
-                json!(dropped || stdout.meta.truncated || stderr.meta.truncated),
-            );
+            map.insert("stdout".into(), stdout);
+            map.insert("stderr".into(), stderr);
+            map.insert("output_truncated".into(), json!(output_truncated));
             map.insert("dropped".into(), json!(dropped));
             if running {
                 map.insert("status".into(), json!("running"));
@@ -1948,35 +1963,6 @@ async fn await_sandbox_command_exit(
             );
         }
         return Some((data, after_seq));
-    }
-}
-
-fn collect_sandbox_output(
-    data: &Value,
-    after_seq: u64,
-    tracker: Option<&CommandSessionTracker>,
-    stdout: &mut CommandOutputCollector,
-    stderr: &mut CommandOutputCollector,
-) {
-    if let Some(tracker) = tracker {
-        emit_sandbox_output(tracker, data, after_seq);
-    }
-    for delta in data
-        .get("deltas")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        if delta.get("seq").and_then(Value::as_u64).unwrap_or(0) <= after_seq {
-            continue;
-        }
-        if let Some(text) = delta.get("delta").and_then(Value::as_str) {
-            if delta.get("stream").and_then(Value::as_str) == Some("stderr") {
-                stderr.push_chunk(text.as_bytes());
-            } else {
-                stdout.push_chunk(text.as_bytes());
-            }
-        }
     }
 }
 

@@ -696,7 +696,7 @@ pub(crate) fn tool_label(tool: &str) -> String {
         "网页搜索" | "web_search" | "web_search_tool" | "web search" | "websearch" => "联网",
         "网页抓取" | "web_fetch" | "web_fetch_tool" | "web fetch" | "webfetch" => "抓取",
         "命令会话" | "命令交互" | "command_session" | "write_stdin" | "write_command_stdin" => {
-            "续命令"
+            wunder_desktop::tool_verbs::command_session_verb(false).0
         }
         "问询面板" | "question_panel" | "ask_panel" => "问询",
         "计划面板" | "update_plan" | "plan_update" => "计划",
@@ -723,16 +723,15 @@ pub(crate) fn tool_label_for_entry(entry: &NativeWorkflowEntry) -> String {
     if is_command_tool(&entry.title) {
         return "执行".into();
     }
-    match entry.title.trim() {
-        "command_session" | "write_stdin" | "write_command_stdin" | "命令会话" | "命令交互" => {
-            if entry.command_meta.contains("stdin ›") {
-                "发送输入".into()
-            } else {
-                "等待".into()
-            }
-        }
-        _ => tool_label(&entry.title),
+    // 命令会话一个工具两种动作：等新输出是「等待」，写 stdin 是「发送输入」。词表在
+    // 引擎里（`tool_verbs`），与桌面版、命令行、云端版同一份。
+    if wunder_desktop::tool_verbs::is_command_session_tool(&entry.title) {
+        let (label, _) = wunder_desktop::tool_verbs::command_session_verb(
+            entry.command_meta.contains("stdin ›"),
+        );
+        return label.to_string();
     }
+    tool_label(&entry.title)
 }
 
 /// Icon key resolved by the shared `ToolIcons` global. This mirrors the common

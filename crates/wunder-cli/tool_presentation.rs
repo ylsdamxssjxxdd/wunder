@@ -18,7 +18,10 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use serde_json::Value;
-use wunder_server::tools::{builtin_aliases, is_browser_group_name, is_browser_tool_name};
+use wunder_server::tools::{
+    builtin_aliases, is_browser_group_name, is_browser_tool_name, is_command_session_tool,
+    command_session_verb, command_session_writes_stdin,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ToolAccess {
@@ -341,6 +344,25 @@ pub(crate) fn present(tool_name: &str) -> ToolPresentation {
     unknown_named(canonical)
 }
 
+/// The verb for one concrete call: names whose action lives in the arguments read
+/// them, everything else keeps the name-driven classifier. One tool, two sentences —
+/// `等待` when it polls the stream, `发送输入` when it writes stdin — and both come
+/// from the engine's word table so the four forms cannot drift apart.
+pub(crate) fn present_for_call(tool_name: &str, args: &Value) -> ToolPresentation {
+    if is_subagent_tool(tool_name) {
+        if let Some(presentation) = present_subagent_action(args) {
+            return presentation;
+        }
+    }
+    // The engine resolves aliases before emitting an event; a replayed row can still
+    // carry the raw spelling, so both are checked.
+    if is_command_session_tool(tool_name) || is_command_session_tool(canonical_ref(tool_name)) {
+        let (zh, en) = command_session_verb(command_session_writes_stdin(args));
+        return call(ToolAccess::Execute, zh, en);
+    }
+    present(tool_name)
+}
+
 /// One entry per canonical name the runtime dispatch list knows, plus the aliases and
 /// display names that can still arrive from history. Catalog display names arrive
 /// already localized, so both spellings are keys here.
@@ -366,7 +388,12 @@ fn classify(name: &str) -> Option<ToolPresentation> {
         CANONICAL_PATCH => call(ToolAccess::Mutate, "编辑", "Edit"),
         // Processes and the machine.
         CANONICAL_COMMAND => call(ToolAccess::Execute, "执行", "Ran"),
-        CANONICAL_COMMAND_SESSION => call(ToolAccess::Execute, "续命令", "Continued"),
+        // 命令会话有两种动作：等新输出与写 stdin。名字不变，词由参数决定，见
+        // `present_for_call`；没有参数可读时按最常见的轮询算。
+        CANONICAL_COMMAND_SESSION => {
+            let (zh, en) = command_session_verb(false);
+            call(ToolAccess::Execute, zh, en)
+        }
         // Browser: the aggregate entry and its one model-facing `browser` action tool.
         other if is_browser_group_name(other) || is_browser_tool_name(other) => {
             call(ToolAccess::Execute, "浏览", "Browse")
@@ -430,7 +457,7 @@ mod tests {
         ("写入文件", ToolAccess::Mutate, "写入", "Write"),
         ("文本编辑", ToolAccess::Mutate, "编辑", "Edit"),
         ("执行命令", ToolAccess::Execute, "执行", "Ran"),
-        ("命令会话", ToolAccess::Execute, "续命令", "Continued"),
+        ("命令会话", ToolAccess::Execute, "等待", "Wait"),
         ("浏览器", ToolAccess::Execute, "浏览", "Browse"),
         ("桌面控制", ToolAccess::Execute, "桌面", "Desktop"),
         ("技能调用", ToolAccess::Delegate, "技能", "Run skill"),
@@ -455,6 +482,32 @@ mod tests {
             assert_eq!(presentation.verb(true), *zh, "{name} zh verb");
             assert_eq!(presentation.verb(false), *en, "{name} en verb");
         }
+    }
+
+    /// 命令会话一个工具两种动作：等新输出是「等待」，写 stdin 是「发送输入」。词来自
+    /// 引擎的词表，四端同一份；参数缺失或 `chars` 为空时按最常见的轮询算。
+    #[test]
+    fn a_command_session_reads_as_waiting_or_sending_input() {
+        let poll = present_for_call(
+            "命令会话",
+            &serde_json::json!({ "command_session_id": "x" }),
+        );
+        assert_eq!(poll.access, ToolAccess::Execute);
+        assert_eq!(poll.verb(true), "等待");
+        assert_eq!(poll.verb(false), "Wait");
+
+        let alias = present_for_call("write_stdin", &serde_json::json!({ "chars": "" }));
+        assert_eq!(alias.verb(true), "等待", "an empty write is a poll");
+
+        let write = present_for_call("write_stdin", &serde_json::json!({ "chars": "y\n" }));
+        assert_eq!(write.verb(true), "发送输入");
+        assert_eq!(write.verb(false), "Send input");
+
+        // 名字之外的调用仍是名字驱动，不会被这套参数口径影响。
+        assert_eq!(
+            present_for_call("读取文件", &serde_json::json!({ "chars": "y" })).verb(true),
+            "读取"
+        );
     }
 
     #[test]

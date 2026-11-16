@@ -59,6 +59,7 @@ mod str_replace_editor_tool;
 mod subagent_control;
 mod thread_control_tool;
 pub(crate) mod tool_error;
+pub mod tool_verbs;
 mod user_tool_dispatch;
 #[cfg(any(feature = "web-fetch", test))]
 mod web_fetch_provider;
@@ -146,6 +147,10 @@ pub use specification::{
     ToolSpecification, TOOL_CATALOG_VERSION,
 };
 pub(crate) use thread_control_tool::execute_thread_control_tool;
+pub use tool_verbs::{
+    command_session_verb, command_session_writes_stdin, is_command_session_tool,
+    COMMAND_SESSION_TOOL,
+};
 pub(crate) use user_tool_dispatch::{execute_mcp_tool, execute_user_tool, is_mcp_tool_name};
 
 pub(crate) use crate::i18n;

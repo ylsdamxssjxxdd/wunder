@@ -2108,16 +2108,16 @@
     "zh-CN": "命令交互"
   },
   "tool.spec.command_session.description": {
-    "en-US": "Continue a running command (command_session). Use the command_session_id returned by execute_command. Empty chars polls new output; non-empty chars writes those bytes to stdin; both return status and new output after at most yield_time_ms. Pass after_seq (the seq reported with output you already saw) to resume exactly where you left off, and wait_for=exit to block until the process exits. Keep using the same id until status is exited and exit_code is present; never rerun a command just to read its result. Send chars=\\u0003 to interrupt.",
-    "zh-CN": "继续运行中的命令（命令会话）。使用执行命令返回的 command_session_id：chars 为空表示读取新增输出，非空表示把这些字符写入 stdin；两者都在最迟 yield_time_ms 后返回状态与新增输出。传 after_seq（已看到输出对应的 seq）可精确续读后续输出，传 wait_for=exit 可阻塞到进程退出。复用同一 id，直到 status=exited 且拿到 exit_code；不要为了读取结果而重跑命令。chars=\\u0003 可中断命令。"
+    "en-US": "Continue a running command (command_session). Use the command_session_id returned by execute_command. Empty chars polls new output; non-empty chars writes those bytes to stdin; both return status and new output after at most yield_time_ms. Pass after_seq (the seq reported with output you already saw) to resume exactly where you left off, and wait_for=exit to block until the process exits. Keep using the same id until status is exited and exit_code is present; never rerun a command just to read its result. Send chars=\\u0003 to interrupt and chars=\\u0004 to close stdin for EOF.",
+    "zh-CN": "继续运行中的命令（命令会话）。使用执行命令返回的 command_session_id：chars 为空表示读取新增输出，非空表示把这些字符写入 stdin；两者都在最迟 yield_time_ms 后返回状态与新增输出。传 after_seq（已看到输出对应的 seq）可精确续读后续输出，传 wait_for=exit 可阻塞到进程退出。复用同一 id，直到 status=exited 且拿到 exit_code；不要为了读取结果而重跑命令。chars=\\u0003 可中断命令，chars=\\u0004 可关闭 stdin 并产生 EOF。"
   },
   "tool.spec.command_session.args.id": {
     "en-US": "Running command session ID returned by execute_command.",
     "zh-CN": "执行命令返回的 command_session_id，标识要继续的同一条命令。"
   },
   "tool.spec.command_session.args.input": {
-    "en-US": "Characters to write to stdin. Omit or use an empty string to poll without writing. Include a newline when answering a line-based prompt. Use \\u0003 to interrupt.",
-    "zh-CN": "写入 stdin 的字符；省略或空字符串表示只读取新增输出。回答逐行提示时要包含换行符；传 \\u0003 表示中断。"
+    "en-US": "Characters to write to stdin. Omit or use an empty string to poll without writing. Include a newline when answering a line-based prompt. Use \\u0003 to interrupt and \\u0004 to close stdin for EOF.",
+    "zh-CN": "写入 stdin 的字符；省略或空字符串表示只读取新增输出。回答逐行提示时要包含换行符；传 \\u0003 表示中断，传 \\u0004 表示关闭 stdin 并产生 EOF。"
   },
   "tool.spec.command_session.args.yield_time_ms": {
     "en-US": "Maximum wait for new output in milliseconds (default 1000, max 30000). Use 0 for an immediate read. Reaching the wait window does not stop the command.",
