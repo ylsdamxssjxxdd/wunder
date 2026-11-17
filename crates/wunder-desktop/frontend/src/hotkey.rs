@@ -45,7 +45,6 @@ pub fn install(handler: impl Fn() + Send + 'static) {
 }
 
 #[cfg(windows)]
-#[allow(dead_code)] // Windows 退出统一走 TerminateProcess 进程边界，热键队列随进程回收。
 pub fn stop() {
     use windows_sys::Win32::UI::WindowsAndMessaging::{PostThreadMessageW, WM_QUIT};
     STOP_REQUESTED.store(true, Ordering::Release);

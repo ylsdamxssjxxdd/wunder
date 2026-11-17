@@ -298,12 +298,22 @@ export component ToolProcess inherits Rectangle {
     callback show-context-menu(length, length, bool);
     callback copy-text(string);
     callback open-resource(string);
+    // The transcript hands down a share of its own height, and a window the
+    // system has minimized can report a degenerate one (Windows answers a
+    // minimize with a 0×0 resize). A non-positive limit is never a real
+    // request: folding it into the height collapsed the whole step list to
+    // zero, so the bar stayed on screen while every click only toggled an
+    // empty box, and nothing re-measured it until the transcript was rebuilt
+    // (switching threads). Fall back to the theme cap instead.
+    private property <length> limit: root.viewport-limit > 0px
+        ? root.viewport-limit
+        : Theme.workflow-height;
     // Grow naturally for a few entries; long processes keep one bounded
     // viewport. The list owns wheel/touch scrolling: nothing below writes
     // `content-y` while a gesture is in flight.
     height: root.mobile
         ? page-top.height + mobile-list.preferred-height
-        : min(root.viewport-limit, root.viewport-height + page-top.height);
+        : min(root.limit, root.viewport-height + page-top.height);
     Timer {
         interval: 33ms;
         running: !root.mobile && root.active && !root.paged && !root.loading && !root.failed;
@@ -320,7 +330,11 @@ export component ToolProcess inherits Rectangle {
     // Seeded from the entry count, then updated from the measured content in
     // `changed measured-height`: a declarative binding back into the height
     // would close a layout loop through the list's own viewport.
-    private property <length> viewport-height: min(root.viewport-limit, max(26px, root.entries.length * 26px));
+    // The cap is applied where the height is consumed, never cached here: a
+    // transient limit used to be baked into this property and, because the
+    // measurement only changes when the content does, a degenerate one stuck
+    // for the rest of the session.
+    private property <length> viewport-height: max(26px, root.entries.length * 26px);
     /// Viewport height in whole steps of one step row. A thinking row that
     /// grows a wrapped line at a time used to resize the fold on every frame,
     /// which the reader saw as the whole process bouncing while it streamed.
@@ -328,7 +342,7 @@ export component ToolProcess inherits Rectangle {
     /// capped the value does not move at all.
     function steady-height(measured: length) -> length {
         let rows = ceil(measured / 26px);
-        return min(root.viewport-limit, max(26px, rows * 26px));
+        return max(26px, rows * 26px);
     }
     // Follow the newest step only while the reader already sits at the tail.
     // Scrolling up hands the position to the reader until they return to it.
@@ -346,7 +360,12 @@ export component ToolProcess inherits Rectangle {
     // page exactly once instead of once per scroll notification.
     private property <length> last-content-y: 0px;
     changed measured-height => {
-        root.viewport-height = root.steady-height(root.measured-height);
+        // A zero measurement means the list was not laid out (hidden or
+        // collapsed window), not that the fold has no content: keep the last
+        // real one instead of caching the degenerate value.
+        if root.measured-height > 0px {
+            root.viewport-height = root.steady-height(root.measured-height);
+        }
         // A streaming entry grows taller without adding a row: neither `count`
         // nor `revision` moves, so re-arm the tail follow here or the new text
         // sinks below the capped viewport until the reader scrolls by hand.

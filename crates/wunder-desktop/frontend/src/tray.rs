@@ -77,7 +77,6 @@ pub fn install(app: &MainWindow) {
     });
 }
 
-#[allow(dead_code)] // Windows 退出统一走 TerminateProcess 进程边界，托盘图标由 OS 回收，无需显式注销。
 pub fn uninstall() {
     hide_notice();
     TRAY.with(|slot| {

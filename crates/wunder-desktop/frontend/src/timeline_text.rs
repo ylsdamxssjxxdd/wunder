@@ -719,6 +719,19 @@ pub fn restore_folds(rows: &mut [TimelineRow], previous: &VecModel<TimelineRow>)
         })
         .map(|row| (row.id.clone(), row))
         .collect();
+    // A live work process is keyed by the id the turn was opened with, while
+    // the durable snapshot keys the same fold by the runtime's turn root. The
+    // id therefore changes hands once per turn, and an id-only lookup dropped
+    // the reader's choice exactly there: the fold collapsed itself when the
+    // turn settled (or when the window came back and the snapshot took over).
+    // The root is the durable identity of that same fold, so fall back to it.
+    let old_by_root: std::collections::HashMap<_, _> = previous
+        .iter()
+        .filter(|row| {
+            row.kind == crate::timeline::KIND_PROCESS && !row.process_root.is_empty()
+        })
+        .map(|row| (row.process_root.clone(), row))
+        .collect();
     for row in rows.iter_mut() {
         if let Some(previous) = old.get(&row.id) {
             row.open = previous.open;
@@ -758,6 +771,14 @@ pub fn restore_folds(rows: &mut [TimelineRow], previous: &VecModel<TimelineRow>)
                 if previous.process_root.is_empty() && !row.process_root.is_empty() {
                     row.process_loading = false;
                 }
+            }
+        } else if row.kind == crate::timeline::KIND_PROCESS && !row.process_root.is_empty() {
+            // The same fold under its durable identity: carry the reader's
+            // choice only. The previous row's entries belong to the other key
+            // and stay with it; the page this row requests supplies its own.
+            let open = old_by_root.get(&row.process_root).map(|previous| previous.open);
+            if let Some(open) = open {
+                row.open = open;
             }
         }
     }
@@ -922,6 +943,46 @@ fn is_same_target(target: &str, summary: &str) -> bool {
 mod tests {
     use super::*;
     use slint::Model;
+
+    #[test]
+    fn a_process_fold_keeps_its_choice_across_the_durable_identity() {
+        // The live bar is keyed by the id the turn was opened with; the durable
+        // projection keys the same fold by the runtime root. An id-only restore
+        // dropped the reader's "expanded" there and the snapshot's default
+        // closed the fold again on the next refresh.
+        let live = TimelineRow {
+            id: "process-client-request".into(),
+            kind: crate::timeline::KIND_PROCESS,
+            process_root: "root-1".into(),
+            process_idx: 1,
+            open: true,
+            ..Default::default()
+        };
+        let previous = VecModel::from(vec![live]);
+        let mut durable = vec![TimelineRow {
+            id: "process-root-1".into(),
+            kind: crate::timeline::KIND_PROCESS,
+            process_root: "root-1".into(),
+            process_idx: 4,
+            open: false,
+            ..Default::default()
+        }];
+        restore_folds(&mut durable, &previous);
+        assert!(durable[0].open, "the expanded fold stays expanded");
+        // A different turn is a different fold: its own default stands.
+        let mut other = vec![TimelineRow {
+            id: "process-root-2".into(),
+            kind: crate::timeline::KIND_PROCESS,
+            process_root: "root-2".into(),
+            process_idx: 5,
+            ..Default::default()
+        }];
+        restore_folds(&mut other, &previous);
+        assert!(!other[0].open);
+        // The durable snapshot requests a fresh page instead of carrying live
+        // payloads whose actions address another process slot.
+        assert_eq!(durable[0].process_entries.row_count(), 0);
+    }
 
     #[test]
     fn running_activity_names_the_tool_without_a_prefix() {
