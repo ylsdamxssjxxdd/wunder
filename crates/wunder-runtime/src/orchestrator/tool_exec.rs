@@ -1,4 +1,4 @@
-use super::context::{MODEL_CONTEXT_INTERNAL_META_TYPE, normalize_model_context_message};
+use super::context::{normalize_model_context_message, MODEL_CONTEXT_INTERNAL_META_TYPE};
 use super::*;
 
 pub(super) const TOOL_TIMEOUT_ERROR: &str = "tool_timeout";
@@ -1736,12 +1736,10 @@ mod tests {
             "artifacts/frame.png"
         );
         assert_eq!(result.meta.as_ref().unwrap()["exit_code"], 9);
-        assert!(
-            result.data["recovery_hint"]
-                .as_str()
-                .unwrap()
-                .contains("not stored")
-        );
+        assert!(result.data["recovery_hint"]
+            .as_str()
+            .unwrap()
+            .contains("not stored"));
     }
 
     #[test]

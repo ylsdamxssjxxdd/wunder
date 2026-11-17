@@ -1027,6 +1027,7 @@ export component MainWindow inherits Window {
     // offset, draft) in, the draft to show (or the unchanged one) back.
     callback recall-history(int, int, int, string) -> DraftRecall;
     callback capture-screenshot();
+    callback paste-image() -> bool;
     callback record-voice();
     callback remove-attachment(int);
     callback select-conversation(int);
@@ -1571,6 +1572,7 @@ export component MainWindow inherits Window {
                             recording: root.recording; transcribing: root.transcribing; recording-elapsed: root.recording-elapsed; recording-pulse: root.recording-pulse;
                             send => { root.send-message(); }
                             screenshot() => { root.capture-screenshot(); }
+                            paste-image() => { return root.paste-image(); }
                             file-drop(event) => { root.composer-file-drop(event); }
                             record-voice => { root.record-voice(); }
                             remove-attachment(index) => { root.remove-attachment(index); }

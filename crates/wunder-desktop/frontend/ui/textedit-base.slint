@@ -41,6 +41,7 @@ export component TextEditBase inherits Rectangle {
     in property <brush> placeholder-color;
 
     callback edited(text: string);
+    callback paste-image() -> bool;
     callback key-pressed(event: KeyEvent) -> EventResult;
     callback key-released(event: KeyEvent) -> EventResult;
 
@@ -101,7 +102,9 @@ export component TextEditBase inherits Rectangle {
                 enabled: !root.read-only && root.enabled;
                 title: @tr("Paste");
                 activated => {
-                    text-input.paste();
+                    if !root.paste-image() {
+                        text-input.paste();
+                    }
                 }
             }
 

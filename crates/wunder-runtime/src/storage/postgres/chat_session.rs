@@ -404,21 +404,20 @@ impl PostgresChatSessionStorage for PostgresStorage {
         }
 
         if work_catalog {
-            // Channel conversations have ordinary root chat-session rows too,
-            // but they belong to the channel inbox rather than the user's
-            // work-thread strip. Exclude them before pagination.
-            conditions.push("(COALESCE(parent_session_id, '') = '' OR COALESCE(spawned_by, '') NOT IN ('model', 'subagent_control')) AND NOT EXISTS (SELECT 1 FROM channel_sessions AS channel_session WHERE channel_session.session_id = chat_sessions.session_id AND channel_session.user_id = chat_sessions.user_id)".to_string());
+            // The catalogue lists only threads the user opened: channel
+            // conversations, model/subagent children and cron traces stay out.
+            // The workspace badge counts with the very same predicate, so the
+            // number next to a workspace always matches its tree.
+            conditions
+                .push(crate::storage::chat_visibility::WORK_THREAD_VISIBLE_SQL.to_string());
+        } else {
+            // Scheduled run threads are execution traces, never user threads.
+            conditions.push("COALESCE(spawned_by, '') <> 'cron'".to_string());
         }
         let where_clause = if conditions.is_empty() {
             String::new()
         } else {
             format!(" WHERE {}", conditions.join(" AND "))
-        };
-        // Scheduled run threads are execution traces, never user threads.
-        let where_clause = if where_clause.is_empty() {
-            " WHERE COALESCE(spawned_by, '') <> 'cron'".to_string()
-        } else {
-            format!("{where_clause} AND COALESCE(spawned_by, '') <> 'cron'")
         };
         let count_sql = format!("SELECT COUNT(*) FROM chat_sessions{where_clause}");
         let params_ref: Vec<&(dyn ToSql + Sync)> =
@@ -528,13 +527,18 @@ impl PostgresChatSessionStorage for PostgresStorage {
             return Ok(Vec::new());
         }
         let mut conn = self.conn()?;
-        let rows = conn.query(
+        // Same visibility predicate as the work catalogue: a workspace badge
+        // must never count a child thread, cron trace or channel conversation
+        // that the tree cannot show.
+        let sql = format!(
             "SELECT workspace_id, COUNT(*) FROM chat_sessions \
              WHERE user_id = $1 AND (status IS NULL OR status = '' OR status = 'active') \
              AND workspace_id IS NOT NULL AND workspace_id != '' \
+             AND {} \
              GROUP BY workspace_id",
-            &[&cleaned_user],
-        )?;
+            crate::storage::chat_visibility::WORK_THREAD_VISIBLE_SQL
+        );
+        let rows = conn.query(&sql, &[&cleaned_user])?;
         Ok(rows
             .iter()
             .map(|row| (row.get::<_, String>(0), row.get::<_, i64>(1)))

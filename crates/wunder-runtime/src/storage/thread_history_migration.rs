@@ -451,7 +451,11 @@ mod tests {
             .unwrap();
         };
         insert("tool_result", 0, json!({"payload":{"tool":"执行命令"}}));
-        insert("tool_result", 0, json!({"payload":{"kind":"tool","content":"sample"}}));
+        insert(
+            "tool_result",
+            0,
+            json!({"payload":{"kind":"tool","content":"sample"}}),
+        );
         insert("assistant_message", 1, json!({}));
         backfill_tool_message_context(&conn).unwrap();
         let flags: Vec<(String, i64)> = conn

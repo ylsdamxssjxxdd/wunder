@@ -5,6 +5,9 @@ use std::sync::OnceLock;
 
 use super::app::LogKind;
 
+pub(crate) const STATUS_DOT: &str = "●";
+pub(crate) const STATUS_PREFIX: &str = "● ";
+
 /// `NO_COLOR` is the de-facto switch for "this terminal cannot carry meaning in
 /// hue". Read once so no frame pays for the lookup.
 fn colorless() -> bool {

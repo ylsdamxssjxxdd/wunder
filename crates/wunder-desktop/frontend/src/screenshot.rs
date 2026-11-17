@@ -4,16 +4,12 @@
 //! frame is retained only while the selector is open; confirmation adds the
 //! result to the composer as a native chat attachment.
 
-use crate::{screen_capture, ChatAttachment, MainWindow, ScreenshotOverlay};
-use base64::Engine;
-use slint::{ComponentHandle, Model, ModelRc, VecModel};
+use crate::{image_attachment, screen_capture, MainWindow, ScreenshotOverlay};
+use slint::ComponentHandle;
 use std::{
     cell::RefCell,
     sync::atomic::{AtomicBool, Ordering},
 };
-
-const MAX_PNG_BYTES: usize = 8 * 1024 * 1024;
-const MAX_PENDING_ATTACHMENTS: usize = 4;
 
 static CAPTURE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
@@ -588,7 +584,7 @@ fn dump_frame_png(frame: &screen_capture::ScreenCapture, name: &str) {
         pixel[3] = 0xff;
     }
     let path = std::env::temp_dir().join(name);
-    match encode_png(frame.width, frame.height, &rgba)
+    match image_attachment::encode_png(frame.width, frame.height, &rgba)
         .and_then(|png| std::fs::write(&path, png).map_err(|error| error.to_string()))
     {
         Ok(()) => println!("probe: saved {}", path.display()),
@@ -771,19 +767,7 @@ fn finish_selection(app: slint::Weak<MainWindow>, x: i32, y: i32, width: i32, he
 }
 
 fn add_attachment(app: &slint::Weak<MainWindow>, name: String, data_url: String, kind: &str) {
-    let Some(app) = app.upgrade() else { return };
-    let mut attachments = app.get_pending_attachments().iter().collect::<Vec<_>>();
-    if attachments.len() >= MAX_PENDING_ATTACHMENTS {
-        app.set_status(format!("最多可附加 {MAX_PENDING_ATTACHMENTS} 张截图，请先移除一张").into());
-        return;
-    }
-    attachments.push(ChatAttachment {
-        name: name.into(),
-        mime_type: "image/png".into(),
-        data_url: data_url.into(),
-    });
-    app.set_pending_attachments(ModelRc::new(VecModel::from(attachments)));
-    app.set_status(format!("{kind}已放入输入区，发送即可交给模型").into());
+    image_attachment::add(app, name, data_url, kind);
 }
 
 fn hide_selector() {
@@ -819,44 +803,7 @@ fn crop(
 }
 
 fn save_attachment(width: u32, height: u32, rgba: &[u8]) -> Result<(String, String), String> {
-    let png = encode_png(width, height, rgba)?;
-    if png.len() > MAX_PNG_BYTES {
-        return Err("截图压缩后超过 8 MiB，未放入输入区".into());
-    }
-    let directory = std::env::temp_dir().join("wunder-screenshots");
-    std::fs::create_dir_all(&directory).map_err(|error| format!("无法创建截图目录：{error}"))?;
-    let name = format!("wunder-screenshot-{}.png", timestamp());
-    std::fs::write(directory.join(&name), &png)
-        .map_err(|error| format!("无法保存截图：{error}"))?;
-    let data_url = format!(
-        "data:image/png;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(png)
-    );
-    Ok((name, data_url))
-}
-
-fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::new();
-    let mut encoder = png::Encoder::new(&mut bytes, width, height);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    let mut writer = encoder
-        .write_header()
-        .map_err(|error| format!("PNG 头写入失败：{error}"))?;
-    writer
-        .write_image_data(rgba)
-        .map_err(|error| format!("PNG 编码失败：{error}"))?;
-    writer
-        .finish()
-        .map_err(|error| format!("PNG 收尾失败：{error}"))?;
-    Ok(bytes)
-}
-
-fn timestamp() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|value| value.as_millis())
-        .unwrap_or_default()
+    image_attachment::save(width, height, rgba, "wunder-screenshot")
 }
 
 fn report(app: &slint::Weak<MainWindow>, message: String) {

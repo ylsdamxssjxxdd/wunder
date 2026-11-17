@@ -21,7 +21,12 @@ const TOOL_RULES: &[(&[&str], &str)] = &[
         "computer-mouse",
     ),
     (
-        &["手机控制", "phone_control", "phone control", "mobile_control"],
+        &[
+            "手机控制",
+            "phone_control",
+            "phone control",
+            "mobile_control",
+        ],
         "smartphone",
     ),
     (
@@ -215,7 +220,12 @@ const ABILITY_RULES: &[(&[&str], &str, &str)] = &[
     ),
     (&["桌面控制"], "computer-mouse", "general"),
     (
-        &["手机控制", "phone_control", "phone control", "mobile_control"],
+        &[
+            "手机控制",
+            "phone_control",
+            "phone control",
+            "mobile_control",
+        ],
         "smartphone",
         "general",
     ),

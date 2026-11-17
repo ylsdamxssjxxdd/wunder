@@ -111,32 +111,51 @@ fn unchanged_content_notice(unchanged: bool, fingerprint: &Option<ImageFingerpri
 /// 对齐 codex `image_resize_notice`：入模视图被缩小后明确告知模型，避免它
 /// 以为自己看的是原始像素，需要精确细节时用 crop / scale 取局部。
 fn image_resize_notice(view: &MediaViewDims) -> String {
-    if !view.downscaled() {
+    image_resize_notice_relative(view, (view.source_width, view.source_height))
+}
+
+fn view_downscale_factor(view: &MediaViewDims, reference: (u32, u32)) -> Option<f64> {
+    (view.width < reference.0 || view.height < reference.1).then(|| {
+        (f64::from(reference.0) / f64::from(view.width.max(1)))
+            .max(f64::from(reference.1) / f64::from(view.height.max(1)))
+    })
+}
+
+fn image_resize_notice_relative(view: &MediaViewDims, reference: (u32, u32)) -> String {
+    let Some(factor) = view_downscale_factor(view, reference) else {
         return String::new();
-    }
+    };
     let mut notice = format!(
-        " Image was downscaled from {}x{} to {}x{} pixels for model input.",
-        view.source_width, view.source_height, view.width, view.height
+        " Image view was downscaled from {}x{} to {}x{} pixels for model input.",
+        reference.0, reference.1, view.width, view.height
     );
-    if view.fine_detail_loss() {
+    if factor > 2.0 {
         notice.push_str(
             " Small text, tables, and 1px lines are unreliable at this reduction; crop the original-resolution region before judging fine detail.",
         );
     } else {
-        notice.push_str(" Use crop or scale to inspect fine detail.");
+        notice
+            .push_str(" Fine detail may still be lost; use crop or scale for a closer inspection.");
     }
     notice
 }
 
 fn image_view_data(view: &MediaViewDims) -> Value {
+    image_view_data_relative(view, (view.source_width, view.source_height))
+}
+
+fn image_view_data_relative(view: &MediaViewDims, reference: (u32, u32)) -> Value {
+    let factor = view_downscale_factor(view, reference);
     json!({
         "source_width": view.source_width,
         "source_height": view.source_height,
+        "reference_width": reference.0,
+        "reference_height": reference.1,
         "width": view.width,
         "height": view.height,
-        "downscaled": view.downscaled(),
-        "downscale_factor": view.downscale_factor(),
-        "fine_detail_loss": view.fine_detail_loss(),
+        "downscaled": factor.is_some(),
+        "downscale_factor": factor,
+        "fine_detail_loss": factor.is_some_and(|factor| factor > 2.0),
     })
 }
 
@@ -345,12 +364,15 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
             width: view.view_width,
             height: view.view_height,
         };
+        let view_reference = crop
+            .map(|crop| (crop.width, crop.height))
+            .unwrap_or((view.source_width, view.source_height));
         let mut data = json!({
             "path": raw_path,
             "resolved_path": resolved.to_string_lossy().to_string(),
             "media_kind": media_kind,
             "size_bytes": metadata.len(),
-            "view": image_view_data(&view_dims),
+            "view": image_view_data_relative(&view_dims, view_reference),
             "result": {
                 "kind": "image",
                 "frame_count": attachments.len(),
@@ -374,7 +396,7 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
             format!(
                 "Prepared visual media {} for model inspection.{}{}",
                 raw_path,
-                image_resize_notice(&view_dims),
+                image_resize_notice_relative(&view_dims, view_reference),
                 unchanged_content_notice(unchanged, &fingerprint)
             )
         };
@@ -601,11 +623,23 @@ fn persistent_image_view_texts(data: &Value) -> Vec<String> {
             ));
         }
     }
-    let view = data.get("view").or_else(|| data.get("result")?.get("view"));
-    if let Some(view) = view.filter(|value| value.is_object()) {
-        if let Ok(view) = serde_json::from_value::<MediaViewDims>(view.clone()) {
-            if view.downscaled() {
-                let key = if view.fine_detail_loss() {
+    let view_data = data.get("view").or_else(|| data.get("result")?.get("view"));
+    if let Some(view_data) = view_data.filter(|value| value.is_object()) {
+        if let Ok(view) = serde_json::from_value::<MediaViewDims>(view_data.clone()) {
+            let reference = (
+                view_data
+                    .get("reference_width")
+                    .and_then(Value::as_u64)
+                    .map(|value| value as u32)
+                    .unwrap_or(view.source_width),
+                view_data
+                    .get("reference_height")
+                    .and_then(Value::as_u64)
+                    .map(|value| value as u32)
+                    .unwrap_or(view.source_height),
+            );
+            if let Some(factor) = view_downscale_factor(&view, reference) {
+                let key = if factor > 2.0 {
                     "tool.read_image.followup_resize_detail"
                 } else {
                     "tool.read_image.followup_resize"
@@ -613,14 +647,11 @@ fn persistent_image_view_texts(data: &Value) -> Vec<String> {
                 texts.push(crate::i18n::t_with_params(
                     key,
                     &std::collections::HashMap::from([
-                        ("source_width".to_string(), view.source_width.to_string()),
-                        ("source_height".to_string(), view.source_height.to_string()),
+                        ("reference_width".to_string(), reference.0.to_string()),
+                        ("reference_height".to_string(), reference.1.to_string()),
                         ("width".to_string(), view.width.to_string()),
                         ("height".to_string(), view.height.to_string()),
-                        (
-                            "factor".to_string(),
-                            format!("{:.2}", view.downscale_factor().unwrap_or(1.0)),
-                        ),
+                        ("factor".to_string(), format!("{factor:.2}")),
                     ]),
                 ));
             }
@@ -764,8 +795,6 @@ mod tests {
             width: 71,
             height: 2048,
         };
-        assert!(severe.downscale_factor().expect("factor") > 2.0);
-        assert!(severe.fine_detail_loss());
         let notice = image_resize_notice(&severe);
         assert!(
             notice.contains("Small text, tables, and 1px lines"),
@@ -773,6 +802,33 @@ mod tests {
         );
         let data = image_view_data(&severe);
         assert_eq!(data["downscaled"], json!(true));
+        assert_eq!(data["fine_detail_loss"], json!(true));
+
+        let cropped = MediaViewDims {
+            source_width: 4000,
+            source_height: 3000,
+            width: 700,
+            height: 50,
+        };
+        assert_eq!(image_resize_notice_relative(&cropped, (700, 50)), "");
+        let data = image_view_data_relative(&cropped, (700, 50));
+        assert_eq!(data["downscaled"], json!(false));
+        assert_eq!(data["downscale_factor"], Value::Null);
+        assert_eq!(data["fine_detail_loss"], json!(false));
+
+        let enlarged = MediaViewDims {
+            width: 16,
+            height: 16,
+            ..cropped
+        };
+        assert_eq!(image_resize_notice_relative(&enlarged, (1, 1)), "");
+        let reduced = MediaViewDims {
+            width: 70,
+            height: 5,
+            ..cropped
+        };
+        let data = image_view_data_relative(&reduced, (700, 50));
+        assert_eq!(data["downscale_factor"], json!(10.0));
         assert_eq!(data["fine_detail_loss"], json!(true));
     }
     use crate::config::Config;

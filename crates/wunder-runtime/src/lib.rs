@@ -14,9 +14,9 @@ mod services;
 pub use services::archive_extract;
 pub use services::companions;
 pub use services::memory_fragments;
+pub use services::read_image_display;
 pub use services::thread_log::export_stream as export_thread_log_stream;
 pub use services::thread_log::hydrate_active_text as hydrate_thread_item_text;
-pub use services::read_image_display;
 pub use services::tool_result_display;
 pub use services::tools::command_sessions::{CommandTaskDetail, CommandTaskView};
 pub mod storage;
@@ -54,9 +54,8 @@ pub use services::{
     admin_skills, agent_management, attachment, browser, cloud, cron, cron_schedule,
     default_agent_protocol, default_tool_profile, desktop_lan, doc2md, drawio, goal, history,
     interlink, knowledge, llm, local_tool_defaults, mcp, memory, multimodal_models, onlyoffice,
-    org_units, presence,
-    prompting, ragflow_knowledge, runtime, skills, tools, user_access, user_leveling,
-    user_prompt_templates, user_store, user_tools, user_world, vector_knowledge, virtual_llm,
-    workspace,
+    org_units, presence, prompting, ragflow_knowledge, runtime, skills, tools, user_access,
+    user_leveling, user_prompt_templates, user_store, user_tools, user_world, vector_knowledge,
+    virtual_llm, workspace,
 };
 pub use wunder_core as stable_core;

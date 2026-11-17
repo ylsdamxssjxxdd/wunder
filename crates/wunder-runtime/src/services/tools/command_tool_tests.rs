@@ -120,12 +120,10 @@ async fn local_command_timeout_preserves_side_effect_and_requires_verification()
         "stdout": "step 1 done\n"
     }));
     assert_eq!(progressed["data"]["execution_outcome"], "likely_applied");
-    assert!(
-        progressed["data"]["next_step_hint"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("副作用")
-    );
+    assert!(progressed["data"]["next_step_hint"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("副作用"));
 }
 
 #[tokio::test]
@@ -211,11 +209,9 @@ async fn foreground_command_can_be_terminated_from_the_task_panel() {
     let stderr = result["data"]["stderr"].as_str().unwrap_or("");
     assert!(stderr.contains("command cancelled"), "{result}");
     // 会话已收尾，面板不再列出这条任务。
-    assert!(
-        broker
-            .running_tasks("fixture-user", "fixture-thread")
-            .is_empty()
-    );
+    assert!(broker
+        .running_tasks("fixture-user", "fixture-thread")
+        .is_empty());
 }
 
 /// 后台会话的 stdin 是真管道：喂进去的内容命令能收到；会话退出后再喂，
@@ -1139,12 +1135,10 @@ async fn sigpipe_exit_is_reported_as_truncated_output_not_failure() {
         json!(true),
         "{result}"
     );
-    assert!(
-        result["data"]["results"][0]["warning"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("SIGPIPE")
-    );
+    assert!(result["data"]["results"][0]["warning"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("SIGPIPE"));
 }
 
 #[test]

@@ -1,15 +1,14 @@
 use super::{
-    ToolContext, ToolEventEmitter, apply_patch_tool, build_model_tool_success,
-    build_model_tool_success_with_hint,
+    apply_patch_tool, build_model_tool_success, build_model_tool_success_with_hint,
     command_options::{
-        CommandSessionInput, DEFAULT_COMMAND_YIELD_MS, MAX_COMMAND_SESSION_POLL_MS,
         apply_time_budget_secs, parse_command_budget, parse_command_session_input,
-        parse_command_session_wait, parse_command_yield_time, parse_dry_run,
+        parse_command_session_wait, parse_command_yield_time, parse_dry_run, CommandSessionInput,
+        DEFAULT_COMMAND_YIELD_MS, MAX_COMMAND_SESSION_POLL_MS,
     },
     command_output_guard::{
-        CommandOutputCapture, CommandOutputCaptureMeta, CommandOutputCollector,
-        CommandOutputPolicy, DEFAULT_CAPTURE_TOTAL_BYTES, derive_capture_policies,
-        render_command_output,
+        derive_capture_policies, render_command_output, CommandOutputCapture,
+        CommandOutputCaptureMeta, CommandOutputCollector, CommandOutputPolicy,
+        DEFAULT_CAPTURE_TOTAL_BYTES,
     },
     command_sessions::{
         CommandProcessHandle, CommandSessionLaunchMode, CommandSessionStream,
@@ -17,20 +16,21 @@ use super::{
     },
     execute_in_sandbox, recover_tool_args_value, resolve_tool_name,
     tool_error::{
-        ToolErrorMeta, build_execute_command_failure_data, build_execute_command_failure_message,
-        build_failed_tool_result, command_timeout_outcome, tool_timeout_meta,
+        build_execute_command_failure_data, build_execute_command_failure_message,
+        build_failed_tool_result, command_timeout_outcome, tool_timeout_meta, ToolErrorMeta,
     },
+    ToolContext, ToolEventEmitter,
 };
 use crate::command_utils;
 use crate::config::Config;
 use crate::core::long_task;
-use crate::core::process_tree::{PIPE_EOF_GRACE, ProcessTree};
+use crate::core::process_tree::{ProcessTree, PIPE_EOF_GRACE};
 use crate::core::python_runtime;
 use crate::i18n;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 #[cfg(windows)]
 use encoding_rs::GBK;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::process::Stdio;
@@ -111,7 +111,11 @@ pub(crate) fn extract_direct_patch_from_command(content: &str) -> Option<String>
 
 fn resolve_stream_chunk_size(config: &Config) -> usize {
     let size = config.server.stream_chunk_size;
-    if size == 0 { 1024 } else { size }
+    if size == 0 {
+        1024
+    } else {
+        size
+    }
 }
 
 fn safe_chunk_boundary(text: &str, max_bytes: usize) -> usize {
@@ -1460,7 +1464,10 @@ pub(crate) async fn command_session_control(
     // 普通写入与轮询只等待新增输出；中断和 EOF 首次调用就等待会话收尾，
     // 避免 EOT 已关闭 stdin、调用方却先看到 running 而误以为必须再发一次。
     let wait_for_exit = wait.wait_for_exit
-        || matches!(input, CommandSessionInput::Interrupt | CommandSessionInput::Eof);
+        || matches!(
+            input,
+            CommandSessionInput::Interrupt | CommandSessionInput::Eof
+        );
     let after_seq = args.get("after_seq").and_then(Value::as_u64);
     let broker = context.command_sessions.as_ref();
     let managed = broker.is_some_and(|broker| {

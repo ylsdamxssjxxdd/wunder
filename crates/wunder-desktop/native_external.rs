@@ -1,7 +1,7 @@
 //! Browser navigation for native settings. No web renderer runs in the UI process.
 
 use super::NativeDesktop;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use url::Url;
 
 impl NativeDesktop {

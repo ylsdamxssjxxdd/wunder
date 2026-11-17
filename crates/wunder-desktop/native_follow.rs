@@ -1,11 +1,11 @@
 //! Subscribe to background executions by durable cursor, scoped to one user turn.
-use super::{NativeChatEvent, cancel_chat};
-use anyhow::{Result, anyhow, ensure};
-use serde_json::{Value, json};
+use super::{cancel_chat, NativeChatEvent};
+use anyhow::{anyhow, ensure, Result};
+use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use wunder_server::{ThreadChangeFrame, blocking, state::AppState, watch_thread_changes};
+use wunder_server::{blocking, state::AppState, watch_thread_changes, ThreadChangeFrame};
 
 #[derive(Default)]
 struct Projection {
@@ -885,16 +885,14 @@ mod tests {
         assert_eq!(projection.reasoning, "Recovered thought 🐣");
         assert_eq!(projection.text, "Recovered reply");
         assert_eq!(projection.cursor, 20);
-        assert!(
-            events
-                .iter()
-                .any(|event| event["event"] == "reasoning_delta"
-                    && event["data"]["delta"] == "Recovered thought 🐣")
-        );
-        assert!(
-            events.iter().any(|event| event["event"] == "llm_output"
-                && event["data"]["content"] == "Recovered reply")
-        );
+        assert!(events
+            .iter()
+            .any(|event| event["event"] == "reasoning_delta"
+                && event["data"]["delta"] == "Recovered thought 🐣"));
+        assert!(events
+            .iter()
+            .any(|event| event["event"] == "llm_output"
+                && event["data"]["content"] == "Recovered reply"));
         assert!(projection.settled(false));
     }
 
@@ -910,11 +908,9 @@ mod tests {
             "items":[{"turn_id":"fixture-child","item_id":"fixture-child:text-1","kind":"assistant_message","revision":1,"payload":{"content":"Recovered partial","model_round":1}}]})).unwrap();
         assert_eq!(p.cursor, 40);
         assert_eq!(p.text, "Recovered partial");
-        assert!(
-            events
-                .iter()
-                .any(|event| event["data"]["content"] == "Recovered partial")
-        );
+        assert!(events
+            .iter()
+            .any(|event| event["data"]["content"] == "Recovered partial"));
         assert!(!p.settled(false));
         p.apply(&json!({"cursor":41,"change_type":"turn_upsert","turn_id":"fixture-child","payload":{"root_turn_id":"fixture-root","status":"cancelled"}})).unwrap();
         assert!(p.settled(true));
@@ -1109,12 +1105,10 @@ mod tests {
                 .count(),
             120
         );
-        assert!(
-            events
-                .iter()
-                .filter_map(|event| event["data"]["item_id"].as_str())
-                .all(|id| !id.starts_with("fixture-root-tool"))
-        );
+        assert!(events
+            .iter()
+            .filter_map(|event| event["data"]["item_id"].as_str())
+            .all(|id| !id.starts_with("fixture-root-tool")));
         let answer = events
             .iter()
             .position(|event| event["event"] == "llm_output")
@@ -1214,19 +1208,17 @@ mod tests {
                 .await
                 .is_err()
         );
-        assert!(
-            state
-                .storage
-                .update_thread_turn(
-                    "fixture-user",
-                    "fixture-thread",
-                    &root,
-                    "cancelled",
-                    "",
-                    &json!({"stop_reason":"fixture-stop"})
-                )
-                .unwrap()
-        );
+        assert!(state
+            .storage
+            .update_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                &root,
+                "cancelled",
+                "",
+                &json!({"stop_reason":"fixture-stop"})
+            )
+            .unwrap());
         state
             .kernel
             .orchestrator

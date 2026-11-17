@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::time::Duration;
 
 pub(crate) const DEFAULT_COMMAND_YIELD_MS: u64 = 10_000;

@@ -54,31 +54,14 @@ pub struct ChatMediaUpload {
     pub bytes: Vec<u8>,
 }
 
-/// 入模视图与源图的尺寸关系，对齐 codex 的 `image_resize_notice`：让模型知道
-/// 自己看到的是缩略版，需要精确像素时用 crop/scale 取局部。
+/// 入模视图的原图尺寸与实际像素。裁剪场景的缩放基准是裁剪区而非原图，
+/// 因此缩放判断由读图工具结合实际 reference 尺寸计算。
 #[derive(Debug, Clone, Copy, Serialize, serde::Deserialize)]
 pub struct MediaViewDims {
     pub source_width: u32,
     pub source_height: u32,
     pub width: u32,
     pub height: u32,
-}
-
-impl MediaViewDims {
-    pub fn downscaled(&self) -> bool {
-        self.width < self.source_width || self.height < self.source_height
-    }
-
-    pub fn downscale_factor(&self) -> Option<f64> {
-        self.downscaled().then(|| {
-            (f64::from(self.source_width) / f64::from(self.width.max(1)))
-                .max(f64::from(self.source_height) / f64::from(self.height.max(1)))
-        })
-    }
-
-    pub fn fine_detail_loss(&self) -> bool {
-        self.downscale_factor().is_some_and(|factor| factor > 2.0)
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2071,8 +2054,8 @@ fn render_image_pair(left_bytes: &[u8], right_bytes: &[u8]) -> Result<RenderedIm
         .map_err(|_| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
     let left_source = (left_image.width(), left_image.height());
     let right_source = (right_image.width(), right_image.height());
-    let left_fit = fit_into_pane(&left_image, IMAGE_PAIR_PANE).to_rgb8();
-    let right_fit = fit_into_pane(&right_image, IMAGE_PAIR_PANE).to_rgb8();
+    let left_fit = rgb_on_white(&fit_into_pane(&left_image, IMAGE_PAIR_PANE));
+    let right_fit = rgb_on_white(&fit_into_pane(&right_image, IMAGE_PAIR_PANE));
     let height = left_fit.height().max(right_fit.height()).max(1);
     let width = left_fit.width() + IMAGE_PAIR_GAP + right_fit.width();
     let mut canvas = image::RgbImage::from_pixel(width, height, image::Rgb([255, 255, 255]));
@@ -2277,7 +2260,7 @@ fn encode_image_view_with_preference(
     max_bytes: usize,
 ) -> Result<(Vec<u8>, &'static str, &'static str)> {
     // 截屏与 UI 截图基本是不透明画面，JPEG 比 PNG 小一个数量级；带透明通道
-    // 的图仍先试 PNG，避免透明区被压成黑块。
+    // 的图仍先试 PNG，JPEG 兜底则统一合成到白底。
     if prefer_jpeg && !image.color().has_alpha() {
         if let Some(jpeg) = encode_jpeg_within_budget(image, max_bytes)? {
             return Ok((jpeg, "image/jpeg", "jpg"));
@@ -2302,9 +2285,25 @@ fn encode_image_view_with_preference(
     Err(anyhow!(crate::i18n::t("tool.read_image.view_too_large")))
 }
 
+fn rgb_on_white(image: &DynamicImage) -> image::RgbImage {
+    if !image.color().has_alpha() {
+        return image.to_rgb8();
+    }
+    let rgba = image.to_rgba8();
+    let mut rgb = image::RgbImage::new(rgba.width(), rgba.height());
+    for (source, target) in rgba.pixels().zip(rgb.pixels_mut()) {
+        let alpha = u32::from(source[3]);
+        for channel in 0..3 {
+            let foreground = u32::from(source[channel]);
+            target[channel] = ((foreground * alpha + 255 * (255 - alpha) + 127) / 255) as u8;
+        }
+    }
+    rgb
+}
+
 fn encode_jpeg_within_budget(image: &DynamicImage, max_bytes: usize) -> Result<Option<Vec<u8>>> {
     use image::ImageEncoder;
-    let rgb = image.to_rgb8();
+    let rgb = rgb_on_white(image);
     // 起始质量对齐 codex（JPEG q85）；超字节保护才逐档降，最后才缩图。
     for quality in [85_u8, 78, 68] {
         let mut jpeg = Vec::new();
@@ -2332,7 +2331,7 @@ fn encode_png_within_budget(image: &DynamicImage, max_bytes: usize) -> Result<Op
 }
 
 fn compute_image_view_stats(image: &DynamicImage) -> ImageViewStats {
-    let rgb = image.to_rgb8();
+    let rgb = rgb_on_white(image);
     let (width, height) = rgb.dimensions();
     let pixels = rgb.as_raw();
     let count = u64::from(width) * u64::from(height);
@@ -2375,7 +2374,7 @@ fn compute_image_view_stats(image: &DynamicImage) -> ImageViewStats {
 
     // 边缘占比在降采样亮度图上算，颗粒噪声被平均掉，与技能的安全区像素
     // 检查同口径；渐变背景靠它而不是颜色差判断。
-    let luma = image.to_luma8();
+    let luma = image::imageops::grayscale(&rgb);
     let sample_width = width.min(IMAGE_VIEW_EDGE_SAMPLE_WIDTH).max(1);
     let sample_height =
         ((u64::from(height) * u64::from(sample_width)) / u64::from(width).max(1)).max(1) as u32;
@@ -2513,10 +2512,7 @@ mod tests {
             (10, 20, 30, 40)
         );
         for bad in ["10,20,10,60", "40,20,10,60", "10,60,40,20", "1,2,3"] {
-            assert!(
-                super::ImageCrop::parse_xyxy(bad).is_err(),
-                "accepted {bad}"
-            );
+            assert!(super::ImageCrop::parse_xyxy(bad).is_err(), "accepted {bad}");
         }
     }
 
@@ -2575,6 +2571,39 @@ mod tests {
         assert_eq!(extension, "png");
         let decoded = image::load_from_memory(&encoded).expect("decode view");
         assert_eq!((decoded.width(), decoded.height()), (20, 20));
+    }
+
+    #[test]
+    fn transparent_pixels_composite_on_white_for_jpeg_and_stats() {
+        let mut rgba = image::RgbaImage::new(2, 2);
+        rgba.put_pixel(0, 0, image::Rgba([200, 40, 20, 0]));
+        rgba.put_pixel(1, 0, image::Rgba([200, 40, 20, 255]));
+        rgba.put_pixel(0, 1, image::Rgba([200, 40, 20, 128]));
+        rgba.put_pixel(1, 1, image::Rgba([0, 0, 0, 255]));
+        let rgb = super::rgb_on_white(&image::DynamicImage::ImageRgba8(rgba));
+        assert_eq!(rgb.get_pixel(0, 0).0, [255, 255, 255]);
+        assert_eq!(rgb.get_pixel(1, 0).0, [200, 40, 20]);
+        assert_eq!(rgb.get_pixel(0, 1).0, [227, 147, 137]);
+        assert_eq!(rgb.get_pixel(1, 1).0, [0, 0, 0]);
+
+        let transparent = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            2,
+            2,
+            image::Rgba([200, 40, 20, 0]),
+        ));
+        let stats = super::compute_image_view_stats(&transparent);
+        assert_eq!(stats.background_rgb, [255, 255, 255]);
+        assert_eq!(stats.mean_luma, 255.0);
+        assert_eq!(stats.non_background_ratio, 0.0);
+        let jpeg = super::encode_jpeg_within_budget(&transparent, 64 * 1024)
+            .expect("encode jpeg")
+            .expect("jpeg within budget");
+        let decoded = image::load_from_memory(&jpeg)
+            .expect("decode jpeg")
+            .to_rgb8();
+        assert!(decoded
+            .pixels()
+            .all(|pixel| pixel.0.iter().all(|channel| *channel >= 245)));
     }
 
     #[test]

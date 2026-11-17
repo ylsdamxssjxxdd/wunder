@@ -599,11 +599,7 @@ pub trait ThreadOpenLeaseStore {
     /// 只允许在“该 client_kind 在本机保证单实例”的调用方使用（桌面版由
     /// 单实例锁保证）。崩溃/强杀后上一进程来不及释放租约，若不清扫，线程
     /// 要等 15 秒 TTL 才能重新打开；多开语义的客户端（命令行）不得调用。
-    fn purge_thread_open_leases(
-        &self,
-        client_kind: &str,
-        owner_instance_id: &str,
-    ) -> Result<i64> {
+    fn purge_thread_open_leases(&self, client_kind: &str, owner_instance_id: &str) -> Result<i64> {
         let _ = (self, client_kind, owner_instance_id);
         Ok(0)
     }
@@ -1100,6 +1096,10 @@ pub trait ChatSessionStore {
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)>;
     /// Active thread counts grouped by workspace for one user.
+    ///
+    /// Counts only threads the work catalogue can list: model/subagent child
+    /// threads, cron trace threads and channel conversations are excluded, so a
+    /// workspace badge always matches the rows its tree actually shows.
     fn count_chat_sessions_by_workspace(&self, user_id: &str) -> Result<Vec<(String, i64)>>;
     /// Thread starts bucketed by local calendar day (`YYYY-MM-DD`), oldest
     /// first. Model-created child threads are excluded so the series matches

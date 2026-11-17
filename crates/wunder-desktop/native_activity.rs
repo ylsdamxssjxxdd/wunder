@@ -6,7 +6,7 @@
 use super::NativeDesktop;
 use anyhow::Result;
 use chrono::{Local, NaiveDate, TimeZone};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 /// 53 weekly columns x 7 days is the widest grid the UI renders.
 pub const DEFAULT_ACTIVITY_DAYS: i64 = 371;

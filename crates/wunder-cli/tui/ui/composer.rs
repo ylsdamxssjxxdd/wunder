@@ -47,11 +47,11 @@ pub(crate) fn draw_activity(frame: &mut Frame, area: Rect, app: &TuiApp) {
         theme::secondary_text()
     };
 
-    if let Some(rest) = line.strip_prefix("• ") {
+    if let Some(rest) = line.strip_prefix(theme::STATUS_PREFIX) {
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(
-                    activity_indicator::RUNNING_INDICATOR,
+                    activity_indicator::loading_glyph(),
                     activity_indicator::pending_indicator_style(),
                 ),
                 Span::raw(" "),

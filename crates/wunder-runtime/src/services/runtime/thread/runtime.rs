@@ -3403,10 +3403,7 @@ mod tests {
             .unwrap()
             .expect("orphan row still present");
         assert_eq!(settled.status, TASK_STATUS_CANCELLED);
-        assert_eq!(
-            settled.last_error.as_deref(),
-            Some(ORPHAN_TASK_INTERRUPTED)
-        );
+        assert_eq!(settled.last_error.as_deref(), Some(ORPHAN_TASK_INTERRUPTED));
         assert!(!runtime.session_has_live_work(user, session).await);
 
         // 交接窗口内的 running 行仍算在途：领取与执行器接管之间没有锁，
@@ -3454,13 +3451,17 @@ mod tests {
             crate::storage::SessionLockStatus::Acquired { .. }
         ));
         assert!(runtime.session_has_live_work(user, expired_session).await);
-        assert!(!runtime
-            .is_session_available_for_submit(user, expired_session)
-            .await);
+        assert!(
+            !runtime
+                .is_session_available_for_submit(user, expired_session)
+                .await
+        );
         tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
         assert!(!runtime.session_has_live_work(user, expired_session).await);
-        assert!(runtime
-            .is_session_available_for_submit(user, expired_session)
-            .await);
+        assert!(
+            runtime
+                .is_session_available_for_submit(user, expired_session)
+                .await
+        );
     }
 }

@@ -1,10 +1,10 @@
 //! Serialized, secret-free projections of desktop configuration.
 use super::NativeDesktop;
 use crate::runtime::{
-    RuntimeToolStatus, load_desktop_settings, normalize_desktop_container_roots,
-    runtime_tool_statuses, save_desktop_settings,
+    load_desktop_settings, normalize_desktop_container_roots, runtime_tool_statuses,
+    save_desktop_settings, RuntimeToolStatus,
 };
-use anyhow::{Result, anyhow, bail};
+use anyhow::{anyhow, bail, Result};
 use wunder_server::config::{Config, LlmConfig};
 
 #[derive(Clone, Debug)]

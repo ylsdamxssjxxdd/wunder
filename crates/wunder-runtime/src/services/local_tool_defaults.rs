@@ -23,9 +23,11 @@ pub fn apply_local_tool_defaults(config: &mut Config) {
         // persisted desktop switch from an older build must not revive the
         // desktop tool on the phone.
         config.tools.desktop_control.enabled = false;
-        config.tools.builtin.enabled.retain(|name| {
-            crate::services::tools::resolve_tool_name(name.trim()) != "桌面控制"
-        });
+        config
+            .tools
+            .builtin
+            .enabled
+            .retain(|name| crate::services::tools::resolve_tool_name(name.trim()) != "桌面控制");
     } else {
         config.tools.desktop_control.enabled = true;
         config.tools.desktop_control.norm_width = config
@@ -72,7 +74,10 @@ mod tests {
 
         apply_local_tool_defaults(&mut config);
 
-        assert_eq!(config.tools.desktop_control.enabled, !cfg!(target_os = "android"));
+        assert_eq!(
+            config.tools.desktop_control.enabled,
+            !cfg!(target_os = "android")
+        );
         assert!(config.tools.browser.enabled);
         assert_eq!(
             config.tools.desktop_control.norm_width,

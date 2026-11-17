@@ -170,7 +170,10 @@ fn dims(value: &Value, prefix: &str) -> Option<(u32, u32)> {
 
 fn media_kind(data: &Value) -> String {
     string(data, &["media_kind"])
-        .or_else(|| data.get("result").and_then(|result| string(result, &["kind"])))
+        .or_else(|| {
+            data.get("result")
+                .and_then(|result| string(result, &["kind"]))
+        })
         .unwrap_or_default()
         .to_ascii_lowercase()
 }
@@ -293,7 +296,13 @@ fn downscale_line(
     };
     let percent = (scale * 100.0).round().max(1.0);
     let label = if is_zh { "查看" } else { "view" };
-    Some(format!("{} {} · {} {}%", label, px(width, height), verb, percent.round() as i64))
+    Some(format!(
+        "{} {} · {} {}%",
+        label,
+        px(width, height),
+        verb,
+        percent.round() as i64
+    ))
 }
 
 fn stats_line(data: &Value, is_zh: bool) -> Option<String> {
@@ -322,7 +331,12 @@ fn stats_line(data: &Value, is_zh: bool) -> Option<String> {
         ));
     }
     if let Some(edge) = ratio("edge_ratio") {
-        parts.push(label_value("边缘", "edges", &format!("{}%", fixed1(edge)), is_zh));
+        parts.push(label_value(
+            "边缘",
+            "edges",
+            &format!("{}%", fixed1(edge)),
+            is_zh,
+        ));
     }
     if parts.is_empty() {
         return None;
@@ -369,7 +383,11 @@ fn duration_line(data: &Value, is_zh: bool) -> Option<String> {
     let has_audio = result.get("has_audio") == Some(&Value::Bool(true));
     let mut line = label_value("时长", "duration", &format!("{}s", fixed1(seconds)), is_zh);
     if has_audio {
-        line.push_str(if is_zh { " · 含音轨" } else { " · with audio" });
+        line.push_str(if is_zh {
+            " · 含音轨"
+        } else {
+            " · with audio"
+        });
     }
     Some(line)
 }
@@ -407,12 +425,8 @@ fn derived_output_line(data: &Value, is_zh: bool) -> Option<String> {
         .iter()
         .filter_map(|attachment| {
             string(attachment, &["name"]).or_else(|| {
-                string(attachment, &["public_path"]).map(|path| {
-                    path.rsplit(['/', '\\'])
-                        .next()
-                        .unwrap_or(&path)
-                        .to_string()
-                })
+                string(attachment, &["public_path"])
+                    .map(|path| path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string())
             })
         })
         .filter(|name| Some(name) != source_name.as_ref())
@@ -522,11 +536,9 @@ mod tests {
         assert!(lines.iter().any(|line| line == "缩放 0.5×"));
         // 裁切区就是查看区：没有额外缩放，就不该报「缩小 26%」。
         assert!(!lines.iter().any(|line| line.contains("查看")));
-        assert!(lines
-            .iter()
-            .any(|line| line.contains("亮度 128.3")
-                && line.contains("背景 #1e1e1e")
-                && line.contains("非背景 42.0%")));
+        assert!(lines.iter().any(|line| line.contains("亮度 128.3")
+            && line.contains("背景 #1e1e1e")
+            && line.contains("非背景 42.0%")));
         assert!(lines.iter().any(|line| line == "输出 shot_view.png"));
         assert_eq!(
             summary(&data, &args, true),
@@ -565,8 +577,12 @@ mod tests {
                 "attachments": [{"name": "clip_001.png", "content_type": "image/png"}]}
         });
         let lines = display_lines(&data, &json!({"path": "clip.mp4"}), false);
-        assert!(lines.iter().any(|line| line == "frames 12 · of 120 · 2 fps"));
-        assert!(lines.iter().any(|line| line == "duration 4.0s · with audio"));
+        assert!(lines
+            .iter()
+            .any(|line| line == "frames 12 · of 120 · 2 fps"));
+        assert!(lines
+            .iter()
+            .any(|line| line == "duration 4.0s · with audio"));
     }
 
     #[test]

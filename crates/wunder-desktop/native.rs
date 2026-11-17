@@ -5,9 +5,9 @@
 //! calls; it does not duplicate scheduling or permission rules.
 
 use crate::{args::DesktopArgs, runtime::DesktopRuntime};
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use bytes::Bytes;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -60,7 +60,7 @@ mod stream;
 pub use crate::runtime::RuntimeToolStatus;
 pub use chat_turns::{NativeChatRound, NativeChatTurn, NativePlanStep, NativePlanView};
 pub use observer::{NativeThreadUpdate, NativeThreadWatch, NativeThreadWatchCancel};
-pub use queue::{NATIVE_QUEUE_LIMIT, NativeQueueTurn};
+pub use queue::{NativeQueueTurn, NATIVE_QUEUE_LIMIT};
 pub use stream::{NativeChatEvent, NativeStream};
 #[path = "native_catalog.rs"]
 mod catalog;
@@ -86,8 +86,8 @@ mod companion_overlay;
 #[path = "native_companions.rs"]
 mod companions;
 pub use companion_overlay::{
-    COMPANION_SCALE_MAX, COMPANION_SCALE_MIN, CompanionOverlayState, CompanionPlacement,
-    DEFAULT_COMPANION_SCALE, clamp_companion_scale,
+    clamp_companion_scale, CompanionOverlayState, CompanionPlacement, COMPANION_SCALE_MAX,
+    COMPANION_SCALE_MIN, DEFAULT_COMPANION_SCALE,
 };
 #[path = "native_navigation.rs"]
 mod navigation;
@@ -124,13 +124,13 @@ mod supplement;
 mod update;
 #[path = "native_workspace.rs"]
 mod workspace;
-pub use catalog::{AgentRecord, AgentSettingsEdit, DEFAULT_AGENT_ID, ToolRecord};
+pub use catalog::{AgentRecord, AgentSettingsEdit, ToolRecord, DEFAULT_AGENT_ID};
 pub use channels::{
     ChannelAccountCard, ChannelAccountListing, ChannelBindingCard, ChannelCatalogItem,
     ChannelLogEntry, NativeChannelAccountEdit, NativeChannelBindingEdit, WeixinQrLoginStart,
     WeixinQrLoginStatus,
 };
-pub use cloud::{CloudStatusView, validate_cloud_password};
+pub use cloud::{validate_cloud_password, CloudStatusView};
 pub use cron::{CronRecord, CronRunRecord, NativeCronJobEdit};
 pub use profile::NativeProfile;
 pub use settings::{
@@ -138,12 +138,12 @@ pub use settings::{
 };
 pub use supplement::SupplementImportReport;
 pub use update::{
-    CURRENT_VERSION, RELAUNCH_ENV as UPDATE_RELAUNCH_ENV, TARGET_CLI, TARGET_DESKTOP,
-    TARGET_SUPPLEMENT, UPDATE_GITHUB_REPO, UpdateStateView,
+    UpdateStateView, CURRENT_VERSION, RELAUNCH_ENV as UPDATE_RELAUNCH_ENV, TARGET_CLI,
+    TARGET_DESKTOP, TARGET_SUPPLEMENT, UPDATE_GITHUB_REPO,
 };
 pub use workspace::{
-    NativeWorkspace, WORKSPACE_COLORS, WORKSPACE_ICONS, WorkspaceDeleteSummary, WorkspaceEdit,
-    WorkspacePathReport, random_workspace_visual,
+    random_workspace_visual, NativeWorkspace, WorkspaceDeleteSummary, WorkspaceEdit,
+    WorkspacePathReport, WORKSPACE_COLORS, WORKSPACE_ICONS,
 };
 
 #[derive(Debug, Clone)]

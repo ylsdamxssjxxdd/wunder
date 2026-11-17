@@ -3,7 +3,7 @@ use ratatui::text::Line;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-pub(crate) const RUNNING_INDICATOR: &str = "•";
+pub(crate) const RUNNING_INDICATOR: &str = super::theme::STATUS_DOT;
 pub(crate) const RUNNING_ANIMATION_FRAME: Duration = Duration::from_millis(48);
 
 static PROCESS_START: OnceLock<Instant> = OnceLock::new();
@@ -18,6 +18,20 @@ const PENDING_REST_RGB: (u8, u8, u8) = (92, 188, 255);
 
 fn elapsed_since_start() -> Duration {
     PROCESS_START.get_or_init(Instant::now).elapsed()
+}
+
+pub(crate) fn loading_glyph() -> &'static str {
+    loading_glyph_at(elapsed_since_start(), animation_enabled())
+}
+
+fn loading_glyph_at(elapsed: Duration, animated: bool) -> &'static str {
+    const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    const FRAME_DURATION: Duration = Duration::from_millis(100);
+    if !animated {
+        return "◌";
+    }
+    let frame = elapsed.as_millis() / FRAME_DURATION.as_millis();
+    FRAMES[usize::try_from(frame).unwrap_or_default() % FRAMES.len()]
 }
 
 fn animation_enabled() -> bool {
@@ -103,15 +117,28 @@ mod tests {
     use ratatui::text::Span;
 
     #[test]
+    fn loading_glyph_cycles_through_the_codex_frames() {
+        let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        for (index, frame) in frames.into_iter().enumerate() {
+            assert_eq!(
+                loading_glyph_at(Duration::from_millis(index as u64 * 100), true),
+                frame
+            );
+        }
+        assert_eq!(loading_glyph_at(Duration::from_millis(1_000), true), "⠋");
+        assert_eq!(loading_glyph_at(Duration::from_millis(250), false), "◌");
+    }
+
+    #[test]
     fn resting_dots_take_the_live_colour() {
         let mut lines = vec![Line::from(vec![
-            Span::styled("• ".to_string(), pending_indicator_base_style()),
+            Span::styled("● ".to_string(), pending_indicator_base_style()),
             Span::raw("ran the tool"),
         ])];
         // A finished row keeps its own colour: only the running dot animates.
         let mut settled = vec![Line::from(vec![
             Span::styled(
-                "• ".to_string(),
+                "● ".to_string(),
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
@@ -134,7 +161,7 @@ mod tests {
     #[test]
     fn the_command_header_dot_without_a_separator_animates_too() {
         let mut lines = vec![Line::from(vec![
-            Span::styled("•".to_string(), pending_indicator_base_style()),
+            Span::styled("●".to_string(), pending_indicator_base_style()),
             Span::raw("Ran cargo test"),
         ])];
         paint_pending_dots(&mut lines);

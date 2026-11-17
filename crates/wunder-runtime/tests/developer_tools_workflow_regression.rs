@@ -584,6 +584,11 @@ async fn read_image_crop_coordinates_and_detail_warnings_stay_explicit() {
     assert_eq!(result["data"]["crop"]["y2"], 60);
     assert_eq!(result["data"]["view"]["width"], 40);
     assert_eq!(result["data"]["view"]["height"], 40);
+    assert_eq!(result["data"]["view"]["reference_width"], 20);
+    assert_eq!(result["data"]["view"]["reference_height"], 20);
+    assert_eq!(result["data"]["view"]["downscaled"], false);
+    assert_eq!(result["data"]["view"]["downscale_factor"], Value::Null);
+    assert_eq!(result["data"]["view"]["fine_detail_loss"], false);
 
     let context = fixture.context();
     let followup = build_read_image_followup_user_message(&context, &result["data"])
@@ -596,9 +601,10 @@ async fn read_image_crop_coordinates_and_detail_warnings_stay_explicit() {
         .iter()
         .filter_map(|block| block["text"].as_str())
         .collect::<Vec<_>>();
-    assert!(texts.iter().any(|text| {
-        text.contains("[image_crop]") && text.contains("crop_xyxy=40,40,60,60")
-    }));
+    assert!(texts
+        .iter()
+        .any(|text| { text.contains("[image_crop]") && text.contains("crop_xyxy=40,40,60,60") }));
+    assert!(!texts.iter().any(|text| text.contains("[image_view]")));
 
     let both = execute_tool(
         &context,
@@ -626,10 +632,12 @@ async fn read_image_crop_coordinates_and_detail_warnings_stay_explicit() {
     assert_eq!(tall["ok"], true);
     assert_eq!(tall["data"]["result"]["view"]["downscaled"], true);
     assert_eq!(tall["data"]["result"]["view"]["fine_detail_loss"], true);
-    assert!(tall["data"]["result"]["view"]["downscale_factor"]
-        .as_f64()
-        .expect("downscale factor")
-        > 2.0);
+    assert!(
+        tall["data"]["result"]["view"]["downscale_factor"]
+            .as_f64()
+            .expect("downscale factor")
+            > 2.0
+    );
     assert!(tall["summary"]
         .as_str()
         .unwrap_or_default()

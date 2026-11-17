@@ -13,7 +13,7 @@ use crate::services::tools::context::ToolContext;
 use crate::skills::SkillRegistry;
 use crate::user_tools::{UserToolBindings, UserToolKind};
 use anyhow::Result;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -2615,30 +2615,24 @@ mod tests {
         assert_eq!(restored.description, spec.description);
         assert_eq!(restored.input_schema, spec.input_schema);
 
-        assert!(
-            super::resolve_builtin_tool_schema(
-                &reference.schema_ref,
-                "tools-v999",
-                &reference.schema_hash,
-            )
-            .is_none()
-        );
-        assert!(
-            super::resolve_builtin_tool_schema(
-                &reference.schema_ref,
-                &reference.catalog_version,
-                "0".repeat(64).as_str(),
-            )
-            .is_none()
-        );
-        assert!(
-            super::resolve_builtin_tool_schema(
-                "tool-schema:not-a-hash",
-                &reference.catalog_version,
-                &reference.schema_hash,
-            )
-            .is_none()
-        );
+        assert!(super::resolve_builtin_tool_schema(
+            &reference.schema_ref,
+            "tools-v999",
+            &reference.schema_hash,
+        )
+        .is_none());
+        assert!(super::resolve_builtin_tool_schema(
+            &reference.schema_ref,
+            &reference.catalog_version,
+            "0".repeat(64).as_str(),
+        )
+        .is_none());
+        assert!(super::resolve_builtin_tool_schema(
+            "tool-schema:not-a-hash",
+            &reference.catalog_version,
+            &reference.schema_hash,
+        )
+        .is_none());
     }
 
     #[test]
@@ -2729,22 +2723,18 @@ mod tests {
 
         // A current dynamic reference must never be misclassified as an
         // independently recoverable builtin schema.
-        assert!(
-            super::resolve_builtin_tool_schema(
-                &mcp_reference.schema_ref,
-                &mcp_reference.catalog_version,
-                &mcp_reference.schema_hash,
-            )
-            .is_none()
-        );
-        assert!(
-            super::resolve_builtin_tool_schema(
-                &skill_reference.schema_ref,
-                &skill_reference.catalog_version,
-                &skill_reference.schema_hash,
-            )
-            .is_none()
-        );
+        assert!(super::resolve_builtin_tool_schema(
+            &mcp_reference.schema_ref,
+            &mcp_reference.catalog_version,
+            &mcp_reference.schema_hash,
+        )
+        .is_none());
+        assert!(super::resolve_builtin_tool_schema(
+            &skill_reference.schema_ref,
+            &skill_reference.catalog_version,
+            &skill_reference.schema_hash,
+        )
+        .is_none());
     }
 
     #[test]
@@ -2757,11 +2747,9 @@ mod tests {
         assert_eq!(fields["cursor"]["type"], "string");
         assert_eq!(fields["manifest_cursor"]["type"], "string");
         assert_eq!(fields["bytes_limit"]["maximum"], 65536);
-        assert!(
-            fields["cursor"]["description"]
-                .as_str()
-                .is_some_and(|description| description.contains("mutually exclusive"))
-        );
+        assert!(fields["cursor"]["description"]
+            .as_str()
+            .is_some_and(|description| description.contains("mutually exclusive")));
     }
 
     #[test]
@@ -2796,11 +2784,9 @@ mod tests {
             .expect("text edit spec");
         assert!(spec.description.to_lowercase().contains("edit"));
         // 多文件补丁无需额外目标路径；所有必填项按形态校验。
-        assert!(
-            spec.input_schema["required"]
-                .as_array()
-                .is_none_or(Vec::is_empty)
-        );
+        assert!(spec.input_schema["required"]
+            .as_array()
+            .is_none_or(Vec::is_empty));
         assert!(spec.input_schema["properties"]["old_str"].is_null());
         assert!(spec.input_schema["properties"]["new_str"].is_null());
         assert_eq!(spec.input_schema["additionalProperties"], false);
@@ -2863,15 +2849,12 @@ mod tests {
         assert!(zh_session.input_schema["properties"]["action"].is_null());
         assert!(zh_session.input_schema["properties"]["after_seq"].is_object());
         assert!(zh_session.input_schema["properties"]["wait_for"].is_object());
-        assert!(
-            zh_session.input_schema["properties"]["wait_for"]["enum"]
-                .as_array()
-                .is_some_and(|values| values.iter().any(|value| value == "exit"))
-        );
-        assert!(
-            zh.iter()
-                .all(|spec| spec.name != "LSP查询" && spec.name != "节点调用")
-        );
+        assert!(zh_session.input_schema["properties"]["wait_for"]["enum"]
+            .as_array()
+            .is_some_and(|values| values.iter().any(|value| value == "exit")));
+        assert!(zh
+            .iter()
+            .all(|spec| spec.name != "LSP查询" && spec.name != "节点调用"));
 
         let en_session = builtin_tool_specs_with_language("en-US")
             .into_iter()
@@ -2996,16 +2979,12 @@ mod tests {
         ];
         let aliases = build_mcp_tool_alias_entries(&config);
         assert_eq!(aliases.len(), 2);
-        assert!(
-            aliases
-                .iter()
-                .any(|item| item.display_name == "search__extra_mcp")
-        );
-        assert!(
-            aliases
-                .iter()
-                .any(|item| item.display_name == "search__ragflow")
-        );
+        assert!(aliases
+            .iter()
+            .any(|item| item.display_name == "search__extra_mcp"));
+        assert!(aliases
+            .iter()
+            .any(|item| item.display_name == "search__ragflow"));
     }
 
     #[test]
@@ -3103,10 +3082,9 @@ mod tests {
             .expect("web_fetch spec");
         assert!(en.description.contains("not a search provider"));
         assert!(en.description.contains("guessed URLs"));
-        assert!(
-            en.description
-                .contains("search result pages may also be fetched")
-        );
+        assert!(en
+            .description
+            .contains("search result pages may also be fetched"));
         let en_url = en.input_schema["properties"]["url"]["description"]
             .as_str()
             .expect("url description");
@@ -3117,10 +3095,8 @@ mod tests {
             i18n::t_in_language("tool.spec.web_fetch.description", "en-US")
                 .contains("not a search provider")
         );
-        assert!(
-            i18n::t_in_language("tool.spec.web_fetch.args.url", "en-US")
-                .contains("model-guessed site addresses")
-        );
+        assert!(i18n::t_in_language("tool.spec.web_fetch.args.url", "en-US")
+            .contains("model-guessed site addresses"));
     }
 
     #[test]
@@ -3143,11 +3119,9 @@ mod tests {
         assert!(spec.input_schema["properties"]["include"].is_object());
         assert!(spec.input_schema["properties"]["-C"].is_null());
         assert!(spec.input_schema["properties"]["-i"].is_null());
-        assert!(
-            spec.input_schema["required"]
-                .as_array()
-                .is_some_and(|items| items.iter().any(|item| item == "query"))
-        );
+        assert!(spec.input_schema["required"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item == "query")));
     }
 
     #[test]
@@ -3166,11 +3140,9 @@ mod tests {
         assert_eq!(item["additionalProperties"].as_bool(), Some(false));
         assert_eq!(item["required"], serde_json::json!(["step", "status"]));
         // 旧的 current 形态不再出现在 schema 里：只宣传一种写法。
-        assert!(
-            plan_spec.input_schema["properties"]
-                .get("current")
-                .is_none()
-        );
+        assert!(plan_spec.input_schema["properties"]
+            .get("current")
+            .is_none());
         assert_eq!(
             plan_spec.input_schema["additionalProperties"].as_bool(),
             Some(false)
@@ -3270,10 +3242,9 @@ mod tests {
             .find(|spec| spec.name == "子智能体控制")
             .expect("subagent_control spec");
         assert!(spec.description.contains("当前会话"));
-        assert!(
-            spec.description
-                .contains("spawn(task) -> wait/status -> history")
-        );
+        assert!(spec
+            .description
+            .contains("spawn(task) -> wait/status -> history"));
         let schema = &spec.input_schema;
         assert!(schema["oneOf"].is_null());
         assert_eq!(schema["additionalProperties"].as_bool(), Some(false));
@@ -3392,11 +3363,9 @@ mod tests {
         let variants = spec.input_schema["oneOf"]
             .as_array()
             .expect("action variants");
-        assert!(
-            variants
-                .iter()
-                .all(|variant| variant["additionalProperties"].as_bool() == Some(false))
-        );
+        assert!(variants
+            .iter()
+            .all(|variant| variant["additionalProperties"].as_bool() == Some(false)));
         let list = variants
             .iter()
             .find(|variant| variant["properties"]["action"]["const"] == "list")
@@ -3407,16 +3376,12 @@ mod tests {
             .find(|variant| variant["properties"]["action"]["const"] == "create")
             .expect("create branch");
         assert!(create["properties"]["parent_session_id"].is_object());
-        assert!(
-            variants
-                .iter()
-                .all(|variant| variant["properties"]["agentId"].is_null())
-        );
-        assert!(
-            variants
-                .iter()
-                .all(|variant| variant["properties"]["setMain"].is_null())
-        );
+        assert!(variants
+            .iter()
+            .all(|variant| variant["properties"]["agentId"].is_null()));
+        assert!(variants
+            .iter()
+            .all(|variant| variant["properties"]["setMain"].is_null()));
     }
 
     #[test]

@@ -281,7 +281,14 @@ fn browser_action_allowed_fields(action: &str) -> Option<&'static [&'static str]
             "submit",
             "timeout_ms",
         ],
-        "hover" => &["action", "target_id", "ref", "selector", "text", "timeout_ms"],
+        "hover" => &[
+            "action",
+            "target_id",
+            "ref",
+            "selector",
+            "text",
+            "timeout_ms",
+        ],
         "select" => &[
             "action",
             "target_id",
@@ -482,7 +489,14 @@ fn validate_batch_steps(steps: &Value) -> Result<()> {
         let kind = required_str(step, "kind")?;
         let allowed: &[&str] = match kind.as_str() {
             "navigate" => &["kind", "url", "timeout_ms"],
-            "click" => &["kind", "ref", "selector", "text", "double_click", "timeout_ms"],
+            "click" => &[
+                "kind",
+                "ref",
+                "selector",
+                "text",
+                "double_click",
+                "timeout_ms",
+            ],
             "type" => &["kind", "ref", "selector", "text", "submit", "timeout_ms"],
             "hover" => &["kind", "ref", "selector", "text", "timeout_ms"],
             "select" => &["kind", "ref", "selector", "value", "timeout_ms"],
@@ -801,11 +815,7 @@ async fn dispatch_operation(
         }
         OP_PRESS_KEY => {
             let key = required_str(args, "key")?;
-            let request = request_with(
-                "press",
-                args,
-                &["key", "ref", "selector", "timeout_ms"],
-            );
+            let request = request_with("press", args, &["key", "ref", "selector", "timeout_ms"]);
             act_outcome(
                 service,
                 &scope,
@@ -1155,10 +1165,10 @@ mod tests {
             &json!({"action":"press","key":"Enter","ref":"e1","selector":"#field"})
         )
         .is_err());
-        assert!(validate_browser_action(
-            &json!({"action":"click","ref":"e1","text":"Continue"})
-        )
-        .is_err());
+        assert!(
+            validate_browser_action(&json!({"action":"click","ref":"e1","text":"Continue"}))
+                .is_err()
+        );
         for action in ["click", "type", "hover", "select", "drag"] {
             let mut args = json!({"action":action,"selector":"#target","timeout_ms":50});
             if action == "type" {

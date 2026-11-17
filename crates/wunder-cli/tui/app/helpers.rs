@@ -77,12 +77,12 @@ pub(super) fn compute_transcript_window_spec(
 
 pub(crate) fn log_prefix(kind: LogKind) -> &'static str {
     match kind {
-        LogKind::Info => "• ",
+        LogKind::Info => crate::tui::theme::STATUS_PREFIX,
         LogKind::User => "▌ ",
-        LogKind::Assistant => "• ",
-        LogKind::Reasoning => "• ",
-        LogKind::Tool => "• ",
-        LogKind::Plan => "• ",
+        LogKind::Assistant => crate::tui::theme::STATUS_PREFIX,
+        LogKind::Reasoning => crate::tui::theme::STATUS_PREFIX,
+        LogKind::Tool => crate::tui::theme::STATUS_PREFIX,
+        LogKind::Plan => crate::tui::theme::STATUS_PREFIX,
         LogKind::Approval => "! ",
         LogKind::Inquiry => "? ",
         LogKind::Error => "✕ ",

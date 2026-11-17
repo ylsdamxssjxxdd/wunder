@@ -404,14 +404,18 @@ impl SqliteChatSessionStorage for SqliteStorage {
             .map(str::to_lowercase)
             .unwrap_or_default();
         if work_catalog {
-            // Channel conversations have ordinary root chat-session rows too,
-            // but they belong to the channel inbox rather than the user's
-            // work-thread strip. Exclude them before pagination.
-            parent_clause.push_str(" AND (COALESCE(parent_session_id, '') = '' OR COALESCE(spawned_by, '') NOT IN ('model', 'subagent_control')) AND NOT EXISTS (SELECT 1 FROM channel_sessions AS channel_session WHERE channel_session.session_id = chat_sessions.session_id AND channel_session.user_id = chat_sessions.user_id)");
+            // The catalogue lists only threads the user opened: channel
+            // conversations, model/subagent children and cron traces stay out.
+            // The workspace badge counts with the very same predicate, so the
+            // number next to a workspace always matches its tree.
+            parent_clause.push_str(" AND ");
+            parent_clause.push_str(crate::storage::chat_visibility::WORK_THREAD_VISIBLE_SQL);
+        } else {
+            // Scheduled runs execute in a private thread that carries their
+            // trace. It is not a thread the user opened, so no list surface
+            // shows it.
+            parent_clause.push_str(" AND COALESCE(spawned_by, '') <> 'cron'");
         }
-        // Scheduled runs execute in a private thread that carries their trace.
-        // It is not a thread the user opened, so no list surface shows it.
-        parent_clause.push_str(" AND COALESCE(spawned_by, '') <> 'cron'");
         let (status_clause, status_params) =
             if normalized_status.is_empty() || normalized_status == "all" {
                 ("".to_string(), Vec::new())
@@ -535,12 +539,18 @@ impl SqliteChatSessionStorage for SqliteStorage {
             return Ok(Vec::new());
         }
         let conn = self.read_connection()?;
-        let mut stmt = conn.prepare(
+        // Same visibility predicate as the work catalogue: a workspace badge
+        // must never count a child thread, cron trace or channel conversation
+        // that the tree cannot show.
+        let sql = format!(
             "SELECT workspace_id, COUNT(*) FROM chat_sessions \
              WHERE user_id = ? AND (status IS NULL OR status = '' OR status = 'active') \
              AND workspace_id IS NOT NULL AND workspace_id != '' \
+             AND {} \
              GROUP BY workspace_id",
-        )?;
+            crate::storage::chat_visibility::WORK_THREAD_VISIBLE_SQL
+        );
+        let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map([cleaned_user], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
         })?;
@@ -855,6 +865,72 @@ mod child_directory_tests {
             )
             .unwrap()
             .is_some());
+    }
+
+    /// The workspace badge and the sidebar tree must agree. A subagent child,
+    /// a scheduled trace and a channel conversation all keep ordinary active
+    /// rows in `chat_sessions`; counting them made a workspace with one visible
+    /// thread show "3" next to its name.
+    #[test]
+    fn workspace_badge_counts_only_threads_the_tree_can_show() {
+        let storage = build_storage();
+        let user = "badge-user";
+        let workspace = Some("ws-fixture".to_string());
+
+        let mut root = session(user, "root-visible", None, 3_000.0);
+        root.workspace_id = workspace.clone();
+        storage.upsert_chat_session(&root).expect("upsert root");
+
+        let mut child = session(user, "child-model", Some("root-visible"), 3_100.0);
+        child.workspace_id = workspace.clone();
+        child.spawned_by = Some("model".to_string());
+        storage.upsert_chat_session(&child).expect("upsert child");
+
+        let mut cron = session(user, "cron-trace", None, 3_200.0);
+        cron.workspace_id = workspace.clone();
+        cron.spawned_by = Some("cron".to_string());
+        storage.upsert_chat_session(&cron).expect("upsert cron trace");
+
+        let mut channel = session(user, "channel-thread", None, 3_300.0);
+        channel.workspace_id = workspace.clone();
+        storage
+            .upsert_chat_session(&channel)
+            .expect("upsert channel row");
+        storage
+            .upsert_channel_session(&ChannelSessionRecord {
+                channel: "fixture-channel".into(),
+                account_id: "fixture-account".into(),
+                peer_kind: "direct".into(),
+                peer_id: "fixture-peer".into(),
+                thread_id: None,
+                session_id: "channel-thread".into(),
+                agent_id: None,
+                user_id: user.into(),
+                tts_enabled: None,
+                tts_voice: None,
+                metadata: None,
+                last_message_at: 3_300.0,
+                created_at: 3_300.0,
+                updated_at: 3_300.0,
+            })
+            .expect("upsert channel binding");
+
+        let (listed, total) = storage
+            .list_work_chat_sessions(user, None, Some("active"), 0, 100)
+            .expect("work catalogue");
+        assert_eq!(listed.len(), 1, "the tree lists the user's own thread");
+        assert_eq!(total, 1);
+
+        let counts: std::collections::HashMap<String, i64> = storage
+            .count_chat_sessions_by_workspace(user)
+            .expect("workspace counts")
+            .into_iter()
+            .collect();
+        assert_eq!(
+            counts.get("ws-fixture").copied(),
+            Some(1),
+            "the badge must count exactly what the tree shows"
+        );
     }
 
     /// Directory load gate: a 24-thread catalog pages with correct totals and

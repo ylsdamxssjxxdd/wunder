@@ -1721,7 +1721,10 @@ mod tests {
                 .transport_failed("connection closed".to_string())
                 .expect("transient failure stays recoverable");
             assert!(!response.success);
-            assert_eq!(response.data.unwrap()["code"], "TOOL_BROWSER_TRANSPORT_FAILED");
+            assert_eq!(
+                response.data.unwrap()["code"],
+                "TOOL_BROWSER_TRANSPORT_FAILED"
+            );
             assert!(response.error.unwrap().contains("kept alive"));
             assert_eq!(exchange.transport_failures, attempt);
         }

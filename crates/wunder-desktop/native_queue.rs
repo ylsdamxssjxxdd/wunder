@@ -6,7 +6,7 @@
 //! stuck feeder.
 
 use super::NativeDesktop;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde_json::Value;
 use std::sync::Arc;
 

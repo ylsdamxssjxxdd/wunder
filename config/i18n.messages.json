@@ -1328,12 +1328,12 @@
     "zh-CN": "[image_crop] 实际源图像素区域：x={x}、y={y}、宽={width}、高={height}；等价 crop_xyxy={x},{y},{x2},{y2}（右下角不包含）。请核对这是否是预期区域。"
   },
   "tool.read_image.followup_resize": {
-    "en-US": "[image_view] Downscaled from {source_width}x{source_height} to {width}x{height} (maximum axis reduction {factor}x). Use crop on the source to inspect fine detail.",
-    "zh-CN": "[image_view] 已从 {source_width}x{source_height} 缩至 {width}x{height}（单轴最大缩小 {factor} 倍）。查看细节请在源图上使用 crop。"
+    "en-US": "[image_view] View downscaled from {reference_width}x{reference_height} to {width}x{height} (maximum axis reduction {factor}x). Resampling may lose fine detail even below 2x; crop the source for a closer inspection.",
+    "zh-CN": "[image_view] 视图已从 {reference_width}x{reference_height} 缩至 {width}x{height}（单轴最大缩小 {factor} 倍）。不足 2 倍的重采样也可能损失细节；需要细看时请裁切源图。"
   },
   "tool.read_image.followup_resize_detail": {
-    "en-US": "[image_view] Downscaled from {source_width}x{source_height} to {width}x{height} (maximum axis reduction {factor}x). Small text, tables, and 1px lines are unreliable in this view; crop original-resolution regions before judging them.",
-    "zh-CN": "[image_view] 已从 {source_width}x{source_height} 缩至 {width}x{height}（单轴最大缩小 {factor} 倍）。此视图中的小字、表格与 1px 细线不可靠；判断这些内容前必须裁切原尺寸区域。"
+    "en-US": "[image_view] View downscaled from {reference_width}x{reference_height} to {width}x{height} (maximum axis reduction {factor}x). Small text, tables, and 1px lines are unreliable in this view; crop original-resolution regions before judging them.",
+    "zh-CN": "[image_view] 视图已从 {reference_width}x{reference_height} 缩至 {width}x{height}（单轴最大缩小 {factor} 倍）。此视图中的小字、表格与 1px 细线不可靠；判断这些内容前必须裁切原尺寸区域。"
   },
   "tool.browser.screenshot_followup_prompt": {
     "en-US": "The browser screenshot is attached. Inspect it to verify the page state, then continue the task.",

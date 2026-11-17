@@ -607,11 +607,9 @@ mod tests {
             .expect("plan spec");
         let projected = prompt_tool_spec(&spec, "zh-CN");
         // 只有一种形态：current 不再出现在模型看到的 schema 里。
-        assert!(
-            projected.input_schema["properties"]
-                .get("current")
-                .is_none()
-        );
+        assert!(projected.input_schema["properties"]
+            .get("current")
+            .is_none());
         // 步骤条目 step + status 都必填，模型不会漏 status 再被提示补一次。
         assert_eq!(
             projected.input_schema["properties"]["plan"]["items"]["required"],
@@ -717,18 +715,14 @@ mod tests {
             projected.input_schema["properties"]["action"]["enum"],
             json!(["navigate", "click", "select"])
         );
-        assert!(
-            projected.input_schema["properties"]
-                .get("from_ref")
-                .is_none()
-        );
+        assert!(projected.input_schema["properties"]
+            .get("from_ref")
+            .is_none());
         assert!(projected.input_schema["properties"].get("value").is_some());
         assert_eq!(projected.input_schema["required"], json!(["action"]));
-        assert!(
-            projected.input_schema["$defs"]
-                .get("used")
-                .is_some_and(Value::is_object)
-        );
+        assert!(projected.input_schema["$defs"]
+            .get("used")
+            .is_some_and(Value::is_object));
         assert!(projected.input_schema["$defs"].get("orphan").is_none());
         assert!(projected.title.is_none());
         assert!(projected.description.starts_with("Built-in browser"));
@@ -751,11 +745,9 @@ mod tests {
         assert!(!properties.contains_key("load_state"));
         assert!(!properties.contains_key("state"));
         assert!(properties.contains_key("wait_ms"));
-        assert!(
-            projected
-                .description
-                .contains("wait_ms only applies to wait")
-        );
+        assert!(projected
+            .description
+            .contains("wait_ms only applies to wait"));
     }
 
     #[test]

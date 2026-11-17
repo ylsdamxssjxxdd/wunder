@@ -85,7 +85,8 @@ pub async fn settle_restarted_activity(state: Arc<AppState>) -> Result<usize> {
         }
         for (session, status) in sessions {
             if live.contains(&session) {
-                continue;            }
+                continue;
+            }
             // 队列刚领取的任务处于锁交接窗口，留给执行器接管。
             if fresh_running_task(&state, &session).await {
                 continue;

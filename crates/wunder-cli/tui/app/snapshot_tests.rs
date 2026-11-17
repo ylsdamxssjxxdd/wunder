@@ -438,6 +438,33 @@ async fn live_acceptance_incomplete_reasoning_and_answer_deltas_are_visible_with
 }
 
 #[tokio::test]
+async fn final_assistant_table_uses_the_completed_markdown_layout() {
+    let root = TempRoot::new("final_assistant_table");
+    let mut app = fixture_app(root.path()).await;
+    app.logs.clear();
+    app.transcript_rows.clear();
+    app.set_transcript_viewport(40, 20);
+
+    let source = "| State | Result |\n| --- | --- |\n| **ready** | `ok` |\n";
+    app.merge_assistant_delta("| State | Result |\n");
+    app.merge_assistant_delta("| --- | --- |\n");
+    app.merge_assistant_delta("| **ready** | `ok` |\n");
+    app.merge_final_answer(source);
+
+    let index = app.active_assistant.expect("assistant entry");
+    let lines = app
+        .render_entry_lines(index, false, 40)
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+    let visible = lines.join("\n");
+    assert!(visible.contains("State") && visible.contains("Result"), "{visible}");
+    assert!(visible.contains("ready") && visible.contains("ok"), "{visible}");
+    assert!(visible.contains('━'), "{visible}");
+    assert!(!visible.contains("| ---"), "{visible}");
+}
+
+#[tokio::test]
 async fn complete_reasoning_frames_do_not_duplicate_the_streamed_block() {
     let root = TempRoot::new("reasoning_full_frame");
     let mut app = fixture_app(root.path()).await;
@@ -490,7 +517,7 @@ async fn malformed_patch_arguments_use_one_tool_card_without_a_duplicate_marker(
         .map(|line| line.to_string())
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(!pending.contains("• •"), "{pending}");
+    assert!(!pending.contains("● ●"), "{pending}");
     assert!(app.logs[0].special.is_some());
 
     feed_stream_event(
@@ -997,6 +1024,13 @@ async fn the_working_line_and_the_transcript_view_reach_the_real_frame() {
         frame.contains("Working"),
         "the activity row draws for any running turn: {frame}"
     );
+    assert!(!frame.contains("● Working"), "{frame}");
+    assert!(
+        ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "◌"]
+            .iter()
+            .any(|glyph| frame.contains(&format!("{glyph} Working"))),
+        "the activity row uses a loading glyph rather than a card status dot: {frame}"
+    );
 
     // The Ctrl+T overlay is a modal reader over the same entries: what the folded frame
     // hid must appear, and the folded hint must be gone.
@@ -1293,7 +1327,7 @@ async fn workspace_reads_stay_individual_timeline_entries() {
         !frame.contains("Explored"),
         "no synthetic group header: {frame}"
     );
-    assert!(frame.contains("• Read"), "{frame}");
+    assert!(frame.contains("● Read"), "{frame}");
 }
 #[tokio::test]
 async fn the_warning_notice_and_its_panel_reach_the_frame() {
@@ -5263,14 +5297,14 @@ async fn the_transcript_and_the_draft_share_one_left_edge() {
     let gutter = usize::from(CONTENT_GUTTER_COLS);
     let card = rows
         .iter()
-        .position(|row| row.trim_start().starts_with('•'))
+        .position(|row| row.trim_start().starts_with('●'))
         .expect("a card is on screen");
     let prompt = rows
         .iter()
         .position(|row| row.trim_start().starts_with('›'))
         .expect("the draft is on screen");
     assert_eq!(
-        rows[card].find('•'),
+        rows[card].find('●'),
         Some(gutter),
         "the bullet sits one gutter in: {:?}",
         rows[card]

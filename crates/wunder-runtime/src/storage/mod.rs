@@ -7,6 +7,7 @@ mod bridge;
 pub(crate) mod canonical_thread_log;
 #[cfg(test)]
 mod canonical_thread_log_tests;
+pub(crate) mod chat_visibility;
 #[cfg(test)]
 mod cloud_tests;
 mod constants;

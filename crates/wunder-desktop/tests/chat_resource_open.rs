@@ -75,13 +75,19 @@ fn transcript_references_resolve_like_the_picture_loader() {
         let target = runtime
             .chat_resource_target(&root_text, source)
             .expect("relative document resolves");
-        assert_eq!(target.canonicalize().unwrap(), inside.canonicalize().unwrap());
+        assert_eq!(
+            target.canonicalize().unwrap(),
+            inside.canonicalize().unwrap()
+        );
     }
     let absolute_inside = inside.to_string_lossy().to_string();
     let target = runtime
         .chat_resource_target(&root_text, &absolute_inside)
         .expect("workspace absolute document resolves");
-    assert_eq!(target.canonicalize().unwrap(), inside.canonicalize().unwrap());
+    assert_eq!(
+        target.canonicalize().unwrap(),
+        inside.canonicalize().unwrap()
+    );
 
     // A document card outside the workspace renders on a local install, so the
     // click has to reach it too — even with no workspace bound at all.
@@ -107,7 +113,10 @@ fn transcript_references_resolve_like_the_picture_loader() {
         .chat_resource_target(&root_text, "../outside/report.pdf")
         .is_err());
     assert!(runtime
-        .chat_resource_target(&root_text, &absolute_outside.replace("report.pdf", "missing.pdf"))
+        .chat_resource_target(
+            &root_text,
+            &absolute_outside.replace("report.pdf", "missing.pdf")
+        )
         .is_err());
 }
 

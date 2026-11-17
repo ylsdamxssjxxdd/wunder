@@ -1,7 +1,7 @@
 //! Typed slash commands. These never enter the model's ordinary user-message path.
 use super::NativeDesktop;
-use anyhow::{Result, anyhow};
-use wunder_server::goal::{GoalCommand, parse_goal_command};
+use anyhow::{anyhow, Result};
+use wunder_server::goal::{parse_goal_command, GoalCommand};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NativeChatCommand {
@@ -132,14 +132,12 @@ mod tests {
             ..Default::default()
         };
         assert!(!fenced.active());
-        assert!(
-            !NativeGoal {
-                phase: "paused".into(),
-                activation: "armed".into(),
-                ..Default::default()
-            }
-            .active()
-        );
+        assert!(!NativeGoal {
+            phase: "paused".into(),
+            activation: "armed".into(),
+            ..Default::default()
+        }
+        .active());
     }
 
     #[test]
@@ -155,14 +153,12 @@ mod tests {
             assert!(!goal.active());
         }
         assert!(!NativeGoal::default().visible());
-        assert!(
-            !NativeGoal {
-                objective: "Fixture objective".into(),
-                phase: "complete".into(),
-                ..Default::default()
-            }
-            .visible()
-        );
+        assert!(!NativeGoal {
+            objective: "Fixture objective".into(),
+            phase: "complete".into(),
+            ..Default::default()
+        }
+        .visible());
     }
 
     #[test]
@@ -279,23 +275,17 @@ mod tests {
             })
             .unwrap();
         let api = wunder_server::api::chat_goal::native_session_goal;
-        assert!(
-            api(&state, &user, "missing-thread", GoalCommand::Show)
-                .await
-                .is_err()
-        );
-        assert!(
-            api(&state, &user, "fixture-thread", GoalCommand::Show)
-                .await
-                .unwrap()
-                .is_none()
-        );
-        assert!(
-            api(&state, &user, "fixture-thread", GoalCommand::Resume)
-                .await
-                .unwrap()
-                .is_none()
-        );
+        assert!(api(&state, &user, "missing-thread", GoalCommand::Show)
+            .await
+            .is_err());
+        assert!(api(&state, &user, "fixture-thread", GoalCommand::Show)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(api(&state, &user, "fixture-thread", GoalCommand::Resume)
+            .await
+            .unwrap()
+            .is_none());
         let goal = api(
             &state,
             &user,
@@ -315,21 +305,17 @@ mod tests {
         assert_eq!(turns.len(), 2);
         assert_eq!(turns[0].user.text, "/goal resume");
         assert_eq!(turns[1].user.text, "/goal Fixture objective");
-        assert!(
-            api(&state, &user, "fixture-thread", GoalCommand::Clear)
-                .await
-                .unwrap()
-                .is_none()
-        );
+        assert!(api(&state, &user, "fixture-thread", GoalCommand::Clear)
+            .await
+            .unwrap()
+            .is_none());
         super::super::stream::cancel_chat(&state, &user.user_id, "fixture-thread")
             .await
             .unwrap();
-        assert!(
-            api(&state, &user, "fixture-thread", GoalCommand::Show)
-                .await
-                .unwrap()
-                .is_none()
-        );
+        assert!(api(&state, &user, "fixture-thread", GoalCommand::Show)
+            .await
+            .unwrap()
+            .is_none());
         assert!(
             wunder_server::api::chat::compact_native_session(&state, &user, "missing-thread")
                 .await

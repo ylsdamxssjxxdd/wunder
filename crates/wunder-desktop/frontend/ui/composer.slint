@@ -287,7 +287,17 @@ component ModelPicker inherits Rectangle {
                 HorizontalLayout {
                     alignment: center;
                     spacing: 6px;
-                    Image { width: 14px; height: 14px; source: @image-url("../assets/icons/gear.svg"); colorize: Theme.accent-ink; }
+                    // 布局行对固定高度的子元素是顶部对齐：图标先住自己的全高格子再
+                    // 垂直居中，才能和右侧文字压在同一条线上。
+                    Rectangle {
+                        width: 14px; height: parent.height;
+                        Image {
+                            y: (parent.height - 14px) / 2;
+                            width: 14px; height: 14px;
+                            source: @image-url("../assets/icons/gear.svg");
+                            colorize: Theme.accent-ink;
+                        }
+                    }
                     Text {
                         text: I18n.common_model_config;
                         color: Theme.accent-ink; font-size: Theme.font-sm; font-weight: 600;
@@ -1517,6 +1527,7 @@ export component Composer inherits Rectangle {
     callback record-voice();
     callback launch-cli();
     callback screenshot();
+    callback paste-image() -> bool;
     callback file-drop(DropEvent);
     // ---- 发送队列 (§发送队列) ----
     // Parked turns come straight from the engine's queue projection; the strip
@@ -1762,6 +1773,7 @@ export component Composer inherits Rectangle {
                 selection-foreground-color: Theme.text;
                 font-size: 14px; font-family: "SimSun";
                 wrap: word-wrap;
+                paste-image() => { return root.paste-image(); }
                 edited => {
                     // A real edit restarts the flyout walk from the first row
                     // and revokes an Escape dismissal (云端版 resets both when
@@ -1771,6 +1783,9 @@ export component Composer inherits Rectangle {
                     root.command-index = 0;
                 }
                 key-pressed(event) => {
+                if event.modifiers.control && (event.text == "v" || event.text == "V") {
+                    if root.paste-image() { return accept; }
+                }
                 // While the slash-command flyout is up its keys come first:
                 // arrows walk the rows, Enter commits the highlighted command
                 // instead of sending, Escape dismisses until the next edit.

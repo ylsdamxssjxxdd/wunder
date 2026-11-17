@@ -139,7 +139,10 @@ mod disabled {
 #[cfg(not(all(feature = "desktop-control", any(windows, target_os = "linux"))))]
 pub use disabled::*;
 
-#[cfg(all(test, not(all(feature = "desktop-control", any(windows, target_os = "linux")))))]
+#[cfg(all(
+    test,
+    not(all(feature = "desktop-control", any(windows, target_os = "linux")))
+))]
 mod tests {
     use super::*;
     use crate::config::Config;

@@ -39,6 +39,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 serde_json = "=1.0.151"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 base64 = "0.22"
+arboard = { version = "=3.7.0", default-features = false, features = ["image-data"] }
 sha2 = "0.10"
 pulldown-cmark = "0.10"
 vt100 = "0.15"

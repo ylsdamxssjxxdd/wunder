@@ -6,8 +6,8 @@
 //! projects typed views and does the one local write.
 
 use super::NativeDesktop;
-use anyhow::{Result, anyhow, bail};
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use anyhow::{anyhow, bail, Result};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -861,13 +861,11 @@ mod tests {
         });
         let listing = listing_from_record(&record, "x", "cmd-2");
         assert_eq!(listing.status, "failed");
-        assert!(
-            listing
-                .error
-                .as_deref()
-                .unwrap_or("")
-                .contains("PATH_NOT_FOUND")
-        );
+        assert!(listing
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("PATH_NOT_FOUND"));
         assert!(listing.entries.is_empty());
     }
 
@@ -924,34 +922,26 @@ mod tests {
         let reason = pull_reason(&read_payload(&record).unwrap_err());
         assert!(reason.contains("上限"), "{reason}");
         assert!(reason.contains("4096"), "{reason}");
-        assert!(
-            pull_reason(&PullFailure {
-                code: "PATH_NOT_FOUND".to_string(),
-                summary: String::new(),
-            })
-            .contains("云端没有这个文件")
-        );
-        assert!(
-            pull_reason(&PullFailure {
-                code: "RESULT_EXPIRED".to_string(),
-                summary: String::new(),
-            })
-            .contains("过期")
-        );
-        assert!(
-            pull_reason(&PullFailure {
-                code: String::new(),
-                summary: String::new(),
-            })
-            .contains("未返回失败原因")
-        );
-        assert!(
-            pull_reason(&PullFailure {
-                code: "EXEC_UNAVAILABLE".to_string(),
-                summary: "cloud node is offline".to_string(),
-            })
-            .contains("EXEC_UNAVAILABLE")
-        );
+        assert!(pull_reason(&PullFailure {
+            code: "PATH_NOT_FOUND".to_string(),
+            summary: String::new(),
+        })
+        .contains("云端没有这个文件"));
+        assert!(pull_reason(&PullFailure {
+            code: "RESULT_EXPIRED".to_string(),
+            summary: String::new(),
+        })
+        .contains("过期"));
+        assert!(pull_reason(&PullFailure {
+            code: String::new(),
+            summary: String::new(),
+        })
+        .contains("未返回失败原因"));
+        assert!(pull_reason(&PullFailure {
+            code: "EXEC_UNAVAILABLE".to_string(),
+            summary: "cloud node is offline".to_string(),
+        })
+        .contains("EXEC_UNAVAILABLE"));
     }
 
     #[test]

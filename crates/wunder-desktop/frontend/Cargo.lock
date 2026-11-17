@@ -178,9 +178,12 @@ name = "arboard"
 version = "3.7.0"
 dependencies = [
  "clipboard-win",
+ "image",
  "log",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
@@ -7959,6 +7962,7 @@ name = "wunder-frontend-slint"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "arboard",
  "base64 0.22.1",
  "chrono",
  "i-slint-backend-winit",

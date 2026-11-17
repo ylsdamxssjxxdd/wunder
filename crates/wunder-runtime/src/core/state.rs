@@ -504,10 +504,7 @@ impl AppState {
             skills.clone(),
             user_tool_manager.clone(),
         );
-        startup_probe::point(
-            "new_done",
-            app_state_start.elapsed().as_secs_f64() * 1000.0,
-        );
+        startup_probe::point("new_done", app_state_start.elapsed().as_secs_f64() * 1000.0);
         Ok(Self {
             config_store,
             runtime_profile,

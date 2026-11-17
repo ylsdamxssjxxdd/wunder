@@ -271,19 +271,19 @@ fn transcript_entry_spacing_is_only_added_after_first_item() {
 fn busy_activity_line_names_the_phase_without_repeating_the_thinking_text() {
     assert_eq!(
         format_busy_activity_line(false, 3, false, true, false),
-        "\u{2022} Working (3s \u{00b7} esc to interrupt)"
+        "\u{25cf} Working (3s \u{00b7} esc to interrupt)"
     );
     assert_eq!(
         format_busy_activity_line(true, 113, false, true, false),
-        "\u{2022} 运行中 (1m 53s \u{00b7} Esc 可中断)"
+        "\u{25cf} 运行中 (1m 53s \u{00b7} Esc 可中断)"
     );
     assert_eq!(
         format_busy_activity_line(false, 3, false, true, true),
-        "\u{2022} Thinking (3s \u{00b7} esc to interrupt)"
+        "\u{25cf} Thinking (3s \u{00b7} esc to interrupt)"
     );
     assert_eq!(
         format_busy_activity_line(true, 3, false, true, true),
-        "\u{2022} 思考 (3s \u{00b7} Esc 可中断)"
+        "\u{25cf} 思考 (3s \u{00b7} Esc 可中断)"
     );
 }
 
@@ -318,7 +318,7 @@ fn plain_transcript_lines_use_hanging_indent_without_role_labels() {
     assert!(
         rendered
             .first()
-            .is_some_and(|line| line.starts_with("\u{2022} "))
+            .is_some_and(|line| line.starts_with("\u{25cf} "))
     );
     assert!(rendered.iter().skip(1).all(|line| line.starts_with("  ")));
     assert!(rendered.iter().all(|line| !line.contains("assistant>")));

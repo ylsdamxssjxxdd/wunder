@@ -976,7 +976,7 @@ For a GIF you can add a frame interval; for a video you can set how many frames 
 
 ## Return value
 
-The result states the material's type and size. Cropped results also include normalized `x/y/width/height` and `x2/y2` values for verifying the actual region. In `view`, `downscaled`, `downscale_factor`, and `fine_detail_loss` describe resizing and detail risk. These fields mean the material is ready, not that the model has analyzed it.
+The result states the material's type and size. Cropped results also include normalized `x/y/width/height` and `x2/y2` values for verifying the actual region. `view.reference_width/height` is the pre-resize reference (the crop region when cropping); `downscaled`, `downscale_factor`, and `fine_detail_loss` are relative to it. `fine_detail_loss` only means reduction beyond 2x on an axis, not that other views are necessarily lossless. Transparent images are composited onto white whenever RGB conversion is required. These fields mean the material is ready, not that the model has analyzed it.
 
 ## Errors
 

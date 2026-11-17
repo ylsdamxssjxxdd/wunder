@@ -71,7 +71,11 @@ pub fn probe_failed_launch_executable(browsers_path: Option<&str>) -> Option<Pat
     playwright_chromium_executables(browsers_path)
         .into_iter()
         .find(|path| exists(path))
-        .or_else(|| system_browser_paths().into_iter().find(|path| exists(&path)))
+        .or_else(|| {
+            system_browser_paths()
+                .into_iter()
+                .find(|path| exists(&path))
+        })
 }
 
 /// Every location the launch fallback knows about, for failure guidance.

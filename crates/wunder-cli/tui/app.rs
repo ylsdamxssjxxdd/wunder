@@ -10607,7 +10607,10 @@ fn format_busy_activity_line(
     } else {
         "esc to interrupt"
     };
-    let mut parts = vec![format!("• {label} ({elapsed} · {hint})")];
+    let mut parts = vec![format!(
+        "{} {label} ({elapsed} · {hint})",
+        super::activity_indicator::RUNNING_INDICATOR
+    )];
     if stream_catchup_mode {
         parts.push(if is_zh {
             "追帧中".to_string()

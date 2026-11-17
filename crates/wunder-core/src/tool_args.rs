@@ -1117,8 +1117,9 @@ mod tests {
             let options = item["options"].as_array().expect("options");
             assert!(!options.is_empty(), "原文: {broken}");
             assert!(
-                options.iter().any(|option| option.as_str() == Some("甲")
-                    || option["label"] == json!("甲")),
+                options
+                    .iter()
+                    .any(|option| option.as_str() == Some("甲") || option["label"] == json!("甲")),
                 "原文: {broken}"
             );
         }
@@ -1228,7 +1229,8 @@ mod tests {
     }
 
     #[test]
-    fn normalize_tool_arguments_json_with_meta_repairs_empty_object_prefix() {        let (normalized, repair) = normalize_tool_arguments_json_with_meta(
+    fn normalize_tool_arguments_json_with_meta_repairs_empty_object_prefix() {
+        let (normalized, repair) = normalize_tool_arguments_json_with_meta(
             "{}{\"filename\":\"sample.py\",\"content\":\"print(1)\"}",
         );
         assert_eq!(

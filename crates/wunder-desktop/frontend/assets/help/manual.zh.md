@@ -998,7 +998,7 @@ GIF 可以再加一个取帧间隔，视频可以再指定每秒取几帧：
 
 ## 返回值
 
-返回里会说明素材的类型和大小；裁切时还返回归一化后的 `x/y/width/height` 与 `x2/y2`，便于核对实际区域。`view` 中的 `downscaled`、`downscale_factor` 和 `fine_detail_loss` 说明缩放与细节风险。这些只表示素材已经准备好，不是模型的分析结论。
+返回里会说明素材的类型和大小；裁切时还返回归一化后的 `x/y/width/height` 与 `x2/y2`，便于核对实际区域。`view.reference_width/height` 是缩放前基准（裁切时为裁切区），`downscaled`、`downscale_factor` 和 `fine_detail_loss` 描述相对该基准的缩放；`fine_detail_loss` 仅表示单轴缩小超过 2 倍，不代表其他情况必然无损。透明图片需要转成 RGB 时统一合成到白底。这些只表示素材已经准备好，不是模型的分析结论。
 
 ## 错误与处理
 

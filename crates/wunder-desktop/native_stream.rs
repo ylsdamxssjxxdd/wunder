@@ -1,13 +1,13 @@
 //! Bounded asynchronous delivery; dropping a subscriber never cancels a settled turn.
 use super::{NativeChatInput, ThreadLeaseHeartbeat};
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use futures::{FutureExt, StreamExt};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::{runtime::Runtime, sync::mpsc};
 use tokio_util::sync::CancellationToken;
 use wunder_server::{
-    ThreadSubmitOutcome, api::chat::build_native_chat_request, blocking, state::AppState,
+    api::chat::build_native_chat_request, blocking, state::AppState, ThreadSubmitOutcome,
 };
 
 #[path = "native_follow.rs"]
@@ -516,7 +516,7 @@ fn is_transport_duplicate(event: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{TailLedger, is_transport_duplicate};
+    use super::{is_transport_duplicate, TailLedger};
     use serde_json::json;
 
     /// tail 是第二条通道：delta 已覆盖的那一段照旧丢掉（不占帧），跨过水位的
@@ -566,7 +566,10 @@ mod tests {
         );
         // 水位这时只是「想」这一段的长度；随后补上的下一段不该被当成重复。
         let repair = json!({"data": {"item_id": "t1:text-1", "field": "reasoning", "offset": 1, "text": "了"}});
-        assert!(!ledger.tail_is_redundant(&repair), "水位不该越过缺失的那一段");
+        assert!(
+            !ledger.tail_is_redundant(&repair),
+            "水位不该越过缺失的那一段"
+        );
     }
 
     /// 正文与思考两条通道的水位互不干扰；没有 turn_id 的增量不参与记账。

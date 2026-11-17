@@ -1,5 +1,5 @@
 //! Same authoritative compaction fields as the web; unknown occupancy is never zero.
-use super::{Section, line, push_body};
+use super::{line, push_body, Section};
 use serde_json::Value;
 fn number(data: &Value, keys: &[&str]) -> Option<f64> {
     keys.iter()

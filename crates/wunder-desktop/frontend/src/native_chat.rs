@@ -3390,6 +3390,8 @@ fn bind_attachments(app: &MainWindow) {
             }
         });
     });
+    let weak = app.as_weak();
+    app.on_paste_image(move || crate::clipboard_image::paste(weak.clone()));
     // §8.2 file attachment: the native picker blocks, so it runs off the UI
     // thread and the chips land back through the event loop.
     let weak = app.as_weak();

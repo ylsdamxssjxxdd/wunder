@@ -1,6 +1,6 @@
 //! Readable native equivalents of the web tool-result groups. Array and text
 //! budgets apply before projection; binary media stays out of the UI model.
-use super::{Section, line, push_body, text};
+use super::{line, push_body, text, Section};
 use serde_json::Value;
 
 fn section(title: String, kind: &str) -> Section {
@@ -258,8 +258,8 @@ pub(super) fn project(tool: &str, data: &Value, args: &Value) -> Vec<Section> {
             // 一次读图的可读事实由引擎统一生成：画面与源尺寸、体积、实际查看
             // 尺寸、裁切区、缩放、统计结论、帧与时长、并排对比、指纹、派生输出。
             // 各端此前只读 size_bytes 与 frame_count，默认读图因此长得一样。
-            let mut facts = wunder_server::read_image_display::display_lines(data, args, true)
-                .into_iter();
+            let mut facts =
+                wunder_server::read_image_display::display_lines(data, args, true).into_iter();
             if let Some(first) = facts.next() {
                 group.meta = first;
             }
