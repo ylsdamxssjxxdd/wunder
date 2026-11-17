@@ -746,3 +746,58 @@ test('upward wheel cancels a pending forced bottom request before a simultaneous
   runtime.dispose();
   assert.equal(listeners.size,0);
 });
+
+test('near-top reading keeps follow mode off when top and bottom thresholds overlap', () => {
+  const originalWindow = (globalThis as Record<string, unknown>).window;
+  const originalResizeObserver = (globalThis as Record<string, unknown>).ResizeObserver;
+  const frameQueue: FrameRequestCallback[] = [];
+  const listeners = new Map<string, (event: { deltaY: number }) => void>();
+  const container = {
+    scrollTop: 36,
+    clientHeight: 500,
+    scrollHeight: 536,
+    querySelectorAll: () => [],
+    getBoundingClientRect: () => ({ top: 0, height: 500 }),
+    addEventListener: (name: string, callback: (event: { deltaY: number }) => void) => listeners.set(name, callback),
+    removeEventListener: (name: string) => listeners.delete(name)
+  } as unknown as HTMLElement;
+
+  try {
+    (globalThis as Record<string, unknown>).window = {
+      requestAnimationFrame: (callback: FrameRequestCallback) => {
+        frameQueue.push(callback);
+        return frameQueue.length;
+      },
+      cancelAnimationFrame: () => {}
+    };
+    (globalThis as Record<string, unknown>).ResizeObserver = FakeResizeObserver;
+    FakeResizeObserver.instances = [];
+    const following = ref(true);
+    const runtime = createMessageViewportRuntime({
+      messageListRef: ref(container), showChatSettingsView: ref(false), autoStickToBottom: following,
+      showScrollTopButton: ref(false), showScrollBottomButton: ref(false),
+      isAgentConversationActive: ref(true), isWorldConversationActive: ref(false),
+      activeConversationKey: ref('fixture-short-thread'), shouldVirtualizeMessages: ref(false),
+      agentRenderableMessages: ref([]), worldRenderableMessages: ref([]), messageVirtualHeightCache: new Map(),
+      messageVirtualLayoutVersion: ref(0), messageVirtualScrollTop: ref(0), messageVirtualViewportHeight: ref(0),
+      estimateVirtualOffsetTop: () => 0, resolveVirtualMessageHeight: () => 0
+    });
+
+    listeners.get('wheel')?.({ deltaY: -100 });
+    container.scrollTop = 0;
+    runtime.handleMessageListScroll();
+    while (frameQueue.length) frameQueue.shift()?.(performance.now());
+    FakeResizeObserver.instances[0]?.emit([container]);
+    const followsAfterScrollingUp = following.value;
+    const topAfterResize = container.scrollTop;
+    runtime.dispose();
+
+    assert.equal(followsAfterScrollingUp, false);
+    assert.equal(topAfterResize, 0);
+  } finally {
+    if (originalWindow === undefined) delete (globalThis as Record<string, unknown>).window;
+    else (globalThis as Record<string, unknown>).window = originalWindow;
+    if (originalResizeObserver === undefined) delete (globalThis as Record<string, unknown>).ResizeObserver;
+    else (globalThis as Record<string, unknown>).ResizeObserver = originalResizeObserver;
+  }
+});

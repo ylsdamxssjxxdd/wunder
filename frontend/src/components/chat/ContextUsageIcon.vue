@@ -1,7 +1,7 @@
 <template>
   <span
     class="context-usage-icon"
-    :style="{ '--context-empty': `${100 - fillPercent}%`, '--context-liquid': liquidGradient }"
+    :style="{ '--context-empty': `${100 - fillPercent}%`, '--context-liquid': liquidColor }"
     role="img"
     :title="title || undefined"
     :aria-label="title || undefined"
@@ -13,11 +13,14 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { CONTEXT_DANGER_RATIO, CONTEXT_WARNING_RATIO } from '@/components/chat/composerContextUsage';
 
 // Liquid fill tracks context window occupancy: null/0 stays an empty gray glyph,
 // and the liquid rises toward full as the context window fills up.
-const props = defineProps<{ ratio: number | null; title?: string; compacted?: boolean }>();
+const props = defineProps<{
+  ratio: number | null;
+  title?: string;
+  compacted?: boolean;
+}>();
 
 const clampRatio = (value: number): number => Math.min(1, Math.max(0, value));
 
@@ -27,27 +30,25 @@ const fillPercent = computed(() => {
   return Math.round(clampRatio(ratio) * 100);
 });
 
-const lerpChannel = (from: number, to: number, progress: number): number =>
-  Math.round(from + (to - from) * progress);
+// crates/wunder-desktop/frontend/ui/composer.slint is the source of truth for
+// the liquid tone: flat orange in the safe range, deeper orange near the limit,
+// red at the hard limit. Keep these values and thresholds in sync with the
+// desktop gauge so the same occupancy reads as the same colour on both clients.
+const LIQUID_SAFE_COLOR = '#f97316';
+const LIQUID_WARNING_COLOR = '#ea580c';
+const LIQUID_DANGER_COLOR = '#dc2626';
+const LIQUID_WARNING_RATIO = 0.82;
+const LIQUID_DANGER_RATIO = 0.92;
 
-// Keep the calm amber look in the safe range, then blend toward red as the
-// window approaches the hard limit so the icon itself carries the old
-// warning/danger signal from the removed text.
-const liquidGradient = computed(() => {
-  // A compacted thread keeps the danger tone at any occupancy: red then means
-  // "this history is a summary", not "you are about to run out of room".
-  if (props.compacted) {
-    return 'linear-gradient(180deg, #ef4444, #dc2626)';
-  }
+// A compacted thread keeps the danger tone at any occupancy: red then means
+// "this history is a summary", not "you are about to run out of room".
+const liquidColor = computed(() => {
+  if (props.compacted) return LIQUID_DANGER_COLOR;
   const ratio = Number(props.ratio);
-  if (!Number.isFinite(ratio) || ratio < CONTEXT_WARNING_RATIO) {
-    return 'linear-gradient(180deg, #ffb35b, #f58a24)';
-  }
-  const span = Math.max(0.01, CONTEXT_DANGER_RATIO - CONTEXT_WARNING_RATIO);
-  const progress = clampRatio((ratio - CONTEXT_WARNING_RATIO) / span);
-  const top = `rgb(${lerpChannel(255, 255, progress)}, ${lerpChannel(179, 138, progress)}, ${lerpChannel(91, 92, progress)})`;
-  const bottom = `rgb(${lerpChannel(245, 220, progress)}, ${lerpChannel(138, 38, progress)}, ${lerpChannel(36, 38, progress)})`;
-  return `linear-gradient(180deg, ${top}, ${bottom})`;
+  if (!Number.isFinite(ratio)) return LIQUID_SAFE_COLOR;
+  if (ratio >= LIQUID_DANGER_RATIO) return LIQUID_DANGER_COLOR;
+  if (ratio >= LIQUID_WARNING_RATIO) return LIQUID_WARNING_COLOR;
+  return LIQUID_SAFE_COLOR;
 });
 </script>
 
@@ -76,7 +77,7 @@ const liquidGradient = computed(() => {
 
 .context-usage-icon-liquid {
   /* Crop the existing glyph from the bottom, keeping its silhouette intact. */
-  background: var(--context-liquid, linear-gradient(180deg, #ffb35b, #f58a24));
+  background: var(--context-liquid, #f97316);
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;

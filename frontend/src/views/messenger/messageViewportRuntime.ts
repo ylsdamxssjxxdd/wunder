@@ -673,7 +673,9 @@ export const createMessageViewportRuntime = (
     }
     const nearTop = container.scrollTop <= 72;
     const remaining = container.scrollHeight - container.clientHeight - container.scrollTop;
-    const shouldStick = remaining <= 72;
+    const atBottom = remaining <= 1;
+    // When both thresholds overlap, only the actual bottom may resume following.
+    const shouldStick = remaining <= 72 && (!nearTop || atBottom);
     const layoutChanged = lastScrollHeight > 0 &&
       (lastScrollHeight !== container.scrollHeight || lastClientHeight !== container.clientHeight);
     const movedUp = container.scrollTop < lastScrollTop - 1;

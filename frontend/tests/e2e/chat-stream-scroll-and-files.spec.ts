@@ -86,6 +86,39 @@ test('long replies retain every line across durable updates and keep scroll inte
   } finally { await service.dispose(); }
 });
 
+test('a barely overflowing transcript stays at the top after upward scrolling', async ({ page }) => {
+  const service = new ChatMockService();
+  const turn = service.scheduledTurn('completed');
+  service.items.get(`${turn.turn_id}:text-0`)!.content = Array.from(
+    { length: 17 }, (_, index) => `Fixture reply line ${index + 1}`
+  ).join('\n');
+  await service.install(page);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  try {
+    await page.goto('/login');
+    await page.locator('input[autocomplete="username"]').fill('fixture-user');
+    await page.locator('input[autocomplete="current-password"]').fill('fixture-password');
+    await page.locator('button[type="submit"]').click();
+    await page.waitForURL('**/app/**');
+    await page.goto(`/app/chat?session_id=${MOCK_SESSION}`);
+    const list = page.getByTestId('messenger-message-list');
+    await expect(list).toBeVisible();
+    await expect.poll(() => list.evaluate(el => el.scrollHeight - el.clientHeight)).toBeGreaterThan(0);
+    const overflow = await list.evaluate(el => el.scrollHeight - el.clientHeight);
+    expect(overflow).toBeLessThan(72);
+    await expect.poll(() => list.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThan(3);
+
+    await list.hover();
+    await page.mouse.wheel(0, -1000);
+    await expect.poll(() => list.evaluate(el => el.scrollTop)).toBe(0);
+    await page.setViewportSize({ width: 1280, height: 721 });
+    await page.waitForTimeout(250);
+    expect(await list.evaluate(el => el.scrollTop)).toBe(0);
+  } finally {
+    await service.dispose();
+  }
+});
+
 test('dropped files appear above the draft, can be removed, and serialize only on send', async ({ page }) => {
   await page.routeWebSocket(/\/wunder\//, socket => socket.close());
   await page.route('**/*', route => new URL(route.request().url()).pathname.startsWith('/wunder/')
