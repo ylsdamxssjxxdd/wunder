@@ -29,7 +29,7 @@ pub(crate) fn summarize_tool_result(payload: &Value, is_zh: bool) -> Option<Tool
         .or_else(|| summarize_search_matches(data, is_zh))
         .or_else(|| summarize_read_files(data, is_zh))
         .or_else(|| summarize_write_file(result, data))
-        .or_else(|| summarize_read_image(data))
+        .or_else(|| summarize_read_image(payload, data, is_zh))
         .or_else(|| summarize_mcp_result(data, is_zh))
         .or_else(|| summarize_skill_call(data, is_zh))
         .or_else(|| summarize_lsp_query(result, data, is_zh))
@@ -209,40 +209,23 @@ fn summarize_write_file(result: &Value, data: &Value) -> Option<ToolDisplaySumma
     })
 }
 
-fn summarize_read_image(data: &Value) -> Option<ToolDisplaySummary> {
+fn summarize_read_image(payload: &Value, data: &Value, is_zh: bool) -> Option<ToolDisplaySummary> {
     let path = data.get("path").and_then(Value::as_str)?.trim();
     if path.is_empty() {
         return None;
     }
-    let mut details = Vec::new();
-    if let Some(mime) = data
-        .get("mime_type")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        details.push(ToolDisplayLine {
-            label: Some("mime:".to_string()),
-            text: mime.to_string(),
-        });
-    }
-    if let Some(size) = number_value(data.get("size_bytes")) {
-        details.push(ToolDisplayLine {
-            label: Some("size:".to_string()),
-            text: format_bytes(size),
-        });
-    }
-    if let Some(prompt) = data
-        .get("prompt")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        details.push(ToolDisplayLine {
-            label: Some("prompt:".to_string()),
-            text: truncate_text(prompt, 120),
-        });
-    }
+    let args = payload
+        .get("args")
+        .or_else(|| payload.get("arguments"))
+        .or_else(|| data.get("args"))
+        .unwrap_or(&Value::Null);
+    // 读图条目要交代「看了哪张图的哪一部分」：画面与尺寸、体积、查看尺寸、
+    // 裁切区、缩放、统计结论、帧与时长、对比与指纹。事实由引擎统一生成，
+    // 命令行只负责逐行排版，避免与桌面版读出两套口径。
+    let details = wunder_server::read_image_display::display_lines(data, args, is_zh)
+        .into_iter()
+        .map(|text| ToolDisplayLine { label: None, text })
+        .collect::<Vec<_>>();
     Some(ToolDisplaySummary {
         summary: Some(path.to_string()),
         details,

@@ -704,6 +704,9 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 super::schema::string("crop")
                     .desc(t("tool.spec.read_image.args.crop"))
                     .optional(),
+                super::schema::string("crop_xyxy")
+                    .desc(t("tool.spec.read_image.args.crop_xyxy"))
+                    .optional(),
                 super::schema::number("scale")
                     .desc(t("tool.spec.read_image.args.scale"))
                     .max(16)
@@ -3830,6 +3833,8 @@ mod tests {
 
         assert!(spec.description.contains("本地图片"));
         assert!(spec.input_schema["properties"]["path"].is_object());
+        assert!(spec.input_schema["properties"]["crop"].is_object());
+        assert!(spec.input_schema["properties"]["crop_xyxy"].is_object());
         assert!(spec.input_schema["properties"]["frame_rate"].is_object());
         assert!(spec.input_schema["properties"]["frame_step"].is_object());
         assert!(spec.input_schema["properties"]["prompt"].is_null());

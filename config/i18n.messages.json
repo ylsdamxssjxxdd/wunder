@@ -1323,6 +1323,18 @@
     "en-US": "[image_path:{path}] source path for this image; re-read it with the image tool if you need the original again (e.g. after compaction).",
     "zh-CN": "[image_path:{path}] 这张图的原始路径；确实需要再看原图时（如压缩清退后）用读图工具按此路径重读。"
   },
+  "tool.read_image.followup_crop": {
+    "en-US": "[image_crop] Actual source-pixel region: x={x}, y={y}, w={width}, h={height}; equivalent crop_xyxy={x},{y},{x2},{y2} (bottom-right exclusive). Verify that this is the intended region.",
+    "zh-CN": "[image_crop] 实际源图像素区域：x={x}、y={y}、宽={width}、高={height}；等价 crop_xyxy={x},{y},{x2},{y2}（右下角不包含）。请核对这是否是预期区域。"
+  },
+  "tool.read_image.followup_resize": {
+    "en-US": "[image_view] Downscaled from {source_width}x{source_height} to {width}x{height} (maximum axis reduction {factor}x). Use crop on the source to inspect fine detail.",
+    "zh-CN": "[image_view] 已从 {source_width}x{source_height} 缩至 {width}x{height}（单轴最大缩小 {factor} 倍）。查看细节请在源图上使用 crop。"
+  },
+  "tool.read_image.followup_resize_detail": {
+    "en-US": "[image_view] Downscaled from {source_width}x{source_height} to {width}x{height} (maximum axis reduction {factor}x). Small text, tables, and 1px lines are unreliable in this view; crop original-resolution regions before judging them.",
+    "zh-CN": "[image_view] 已从 {source_width}x{source_height} 缩至 {width}x{height}（单轴最大缩小 {factor} 倍）。此视图中的小字、表格与 1px 细线不可靠；判断这些内容前必须裁切原尺寸区域。"
+  },
   "tool.browser.screenshot_followup_prompt": {
     "en-US": "The browser screenshot is attached. Inspect it to verify the page state, then continue the task.",
     "zh-CN": "浏览器截图已附上。请查看截图确认页面状态，然后继续任务。"
@@ -1336,12 +1348,20 @@
     "zh-CN": "指定文件不是受支持的视觉媒体格式。"
   },
   "tool.read_image.invalid_crop": {
-    "en-US": "crop must be four comma-separated non-negative integers \"x,y,w,h\" with w and h greater than 0.",
-    "zh-CN": "crop 需为四个逗号分隔的非负整数 \"x,y,w,h\"，且 w、h 大于 0。"
+    "en-US": "crop must be four comma-separated non-negative integers \"x,y,w,h\" (left, top, width, height), with w and h greater than 0. For corner coordinates use crop_xyxy=\"x1,y1,x2,y2\" instead.",
+    "zh-CN": "crop 需为四个逗号分隔的非负整数 \"x,y,w,h\"（左上角 x、y 与宽、高），且 w、h 大于 0。若使用对角坐标，请改用 crop_xyxy=\"x1,y1,x2,y2\"。"
+  },
+  "tool.read_image.invalid_crop_xyxy": {
+    "en-US": "crop_xyxy must be four comma-separated non-negative integers \"x1,y1,x2,y2\" (top-left and bottom-right corners), with x2 greater than x1 and y2 greater than y1.",
+    "zh-CN": "crop_xyxy 需为四个逗号分隔的非负整数 \"x1,y1,x2,y2\"（左上角与右下角坐标），且 x2 大于 x1、y2 大于 y1。"
+  },
+  "tool.read_image.crop_exclusive": {
+    "en-US": "crop and crop_xyxy are mutually exclusive. Use crop=\"x,y,w,h\" for width/height or crop_xyxy=\"x1,y1,x2,y2\" for corners.",
+    "zh-CN": "crop 与 crop_xyxy 不能同时使用。宽高写法用 crop=\"x,y,w,h\"，对角坐标写法用 crop_xyxy=\"x1,y1,x2,y2\"。"
   },
   "tool.read_image.crop_out_of_bounds": {
-    "en-US": "crop exceeds the image bounds (image is {width}x{height} pixels).",
-    "zh-CN": "crop 超出图片范围（图片为 {width}x{height} 像素）。"
+    "en-US": "crop exceeds the image bounds (image is {width}x{height} pixels; normalized crop is x={x}, y={y}, w={crop_width}, h={crop_height}, x2={x2}, y2={y2}, bottom-right exclusive).",
+    "zh-CN": "crop 超出图片范围（图片为 {width}x{height} 像素；归一化裁切区域为 x={x}、y={y}、w={crop_width}、h={crop_height}、x2={x2}、y2={y2}，右下角不包含）。"
   },
   "tool.read_image.invalid_scale": {
     "en-US": "scale must be a number in (0, 16].",
@@ -2864,12 +2884,16 @@
     "zh-CN": "本地视觉媒体路径，可使用工作区相对路径或允许的绝对路径。"
   },
   "tool.spec.read_image.description": {
-    "en-US": "Read a local image, GIF, or video into the current model context; not a web image-search tool. The default view is auto-fitted for the model (long side <=2048px, ~2500 patches); use crop=x,y,w,h plus scale to inspect original-resolution details. stats returns region numbers (mean luma, non-background/edge pixel ratios); stats_only returns numbers without pixels. Videos use frame_rate to extract frames. Images stay in context across rounds; re-read the path only when you need the pixels again (e.g. after compaction). To edit or retouch this image, pass its path in the image generation tool's input_paths array; for clarity enhancement keep the source dimensions and do not pass size.",
-    "zh-CN": "读取本地图片、GIF 或视频并送入当前模型上下文，不是联网看图工具。默认视图会自动压到适合模型的尺寸（长边 ≤2048px、约 2500 个 32px patch）；要看清原尺寸小字细节，用 crop=x,y,w,h 指定区域再配合 scale 放大。stats 附带区域平均亮度、非背景/边缘像素占比等数值，stats_only 只返回数值不回图。视频用 frame_rate 抽帧。图像随上下文保留，不必每轮重读；确实需要再看像素时（如压缩清退后）再按路径重读。需要修改或修图（换背景、去杂物、降噪、增强清晰度等）时，把这张图的路径放进图像生成工具的 input_paths 数组；高清化保持原图尺寸，不要传 size。"
+    "en-US": "Read a local image, GIF, or video into the current model context; not a web image-search tool. The default view is auto-fitted for the model (long side <=2048px, ~2500 patches); heavy reduction makes small text and 1px lines unreliable. crop=x,y,w,h means left/top/width/height, not corners; for corner coordinates use crop_xyxy=x1,y1,x2,y2. Add scale to inspect original-resolution details. stats returns region numbers (mean luma, non-background/edge pixel ratios); stats_only returns numbers without pixels. Videos use frame_rate to extract frames. Images stay in context across rounds; re-read the path only when you need the pixels again (e.g. after compaction). To edit or retouch this image, pass its path in the image generation tool's input_paths array; for clarity enhancement keep the source dimensions and do not pass size.",
+    "zh-CN": "读取本地图片、GIF 或视频并送入当前模型上下文，不是联网看图工具。默认视图会自动压到适合模型的尺寸（长边 ≤2048px、约 2500 个 32px patch），大幅缩小后小字与 1px 细线不可靠。crop=x,y,w,h 是左上角+宽高，不是对角坐标；对角坐标必须显式用 crop_xyxy=x1,y1,x2,y2，二者不可同传。可配合 scale 放大原尺寸细节。stats 附带区域平均亮度、非背景/边缘像素占比等数值，stats_only 只返回数值不回图。视频用 frame_rate 抽帧。图像随上下文保留，不必每轮重读；确实需要再看像素时（如压缩清退后）再按路径重读。需要修改或修图（换背景、去杂物、降噪、增强清晰度等）时，把这张图的路径放进图像生成工具的 input_paths 数组；高清化保持原图尺寸，不要传 size。"
   },
   "tool.spec.read_image.args.crop": {
-    "en-US": "Optional still-image crop in source pixels: \"x,y,w,h\". Applied before scale; stats are computed on this region.",
-    "zh-CN": "可选，静态图片裁切区域，源图像素坐标 \"x,y,w,h\"。先于 scale 生效；stats 在该区域上计算。"
+    "en-US": "Optional still-image crop in source pixels: \"x,y,w,h\" = left, top, WIDTH, HEIGHT (not bottom-right coordinates). Applied before scale; stats are computed on this region. Mutually exclusive with crop_xyxy.",
+    "zh-CN": "可选，静态图片裁切区域，源图像素 \"x,y,w,h\" = 左上角 x、y 与宽、高（不是右下角坐标）。先于 scale 生效；stats 在该区域上计算。与 crop_xyxy 互斥。"
+  },
+  "tool.spec.read_image.args.crop_xyxy": {
+    "en-US": "Optional still-image crop using explicit top-left and bottom-right source-pixel corners: \"x1,y1,x2,y2\"; bottom-right is exclusive. Use this instead of crop when coordinates are x1/y1/x2/y2. Mutually exclusive with crop.",
+    "zh-CN": "可选，使用明确的源图像素对角坐标裁切静态图片：\"x1,y1,x2,y2\"，右下角不包含。坐标为 x1/y1/x2/y2 时用此参数代替 crop；与 crop 互斥。"
   },
   "tool.spec.read_image.args.scale": {
     "en-US": "Optional viewing zoom applied after crop, e.g. 2 doubles, 0.5 halves. Max 16; output sides are capped at 6000px and 10000 32px patches.",

@@ -119,7 +119,7 @@ pub fn playwright_tool_specs() -> Vec<ToolSpec> {
     vec![ToolSpec {
         name: TOOL_BROWSER.to_string(),
         title: None,
-        description: "Built-in browser automation, already bundled with the workspace — no install or download. Use it for real web pages: login, forms, clicks, pagination, JS-rendered content or screenshots. Pick one action; the common flow is navigate -> observe_refs -> click/type/select/press -> observe_text or screenshot. observe_refs supplies element refs for element actions; refs survive same-page re-renders and reloads when the element still matches, and element actions also take a selector. navigate/tabs_new need url, type needs text, select needs the option value, press needs key. Element actions accept timeout_ms (default 5s; navigation uses the configured budget). tabs_* manage tabs and target_id selects one. screenshot saves a PNG (optional workspace-relative path) and the image is attached for you to view. Observations default to 12000 chars; pass max_chars for more. A text cursor expires when the DOM changes, so dynamic pages are best read once with a larger max_chars.".to_string(),
+        description: "Built-in browser automation, already bundled with the workspace — no install or download. Common flow: navigate -> observe_refs -> click/type/select/press -> observe_text or screenshot; re-observe after page changes. click/hover take exactly one of ref, selector or visible text (substring). type needs text, overwrites the field and accepts real JSON newlines; select needs the option value. press needs key and optionally ref or selector; without a target it uses the current keyboard focus. Element actions accept timeout_ms (default 5s). wait needs wait_ms or a selector/text/url/load_state condition; timeout_ms bounds each condition. navigate/tabs_new need url. tabs_* manage tabs and target_id selects one. screenshot saves a PNG (optional workspace-relative path) and attaches it for viewing. Observations default to 12000 chars; pass max_chars for more. A text cursor expires when the DOM changes, so dynamic pages are best read once with a larger max_chars.".to_string(),
         input_schema: json!({
             "type":"object",
             "$defs": defs,
@@ -214,7 +214,7 @@ fn validate_browser_action(args: &Value) -> Result<String> {
             required_str(args, "text")?;
             require_element_target(args, &action)?;
         }
-        "click" | "hover" => require_element_target(args, &action)?,
+        "click" | "hover" => require_click_target(args, &action)?,
         "select" => {
             require_element_target(args, &action)?;
             validate_select_value(args, "browser action select")?;
@@ -222,6 +222,7 @@ fn validate_browser_action(args: &Value) -> Result<String> {
         "drag" => require_drag_target(args, "browser action drag")?,
         "press" => {
             required_str(args, "key")?;
+            require_optional_element_target(args, &action)?;
         }
         "batch" => validate_batch_steps(
             args.get("steps")
@@ -267,6 +268,7 @@ fn browser_action_allowed_fields(action: &str) -> Option<&'static [&'static str]
             "target_id",
             "ref",
             "selector",
+            "text",
             "double_click",
             "timeout_ms",
         ],
@@ -279,7 +281,7 @@ fn browser_action_allowed_fields(action: &str) -> Option<&'static [&'static str]
             "submit",
             "timeout_ms",
         ],
-        "hover" => &["action", "target_id", "ref", "selector", "timeout_ms"],
+        "hover" => &["action", "target_id", "ref", "selector", "text", "timeout_ms"],
         "select" => &[
             "action",
             "target_id",
@@ -297,7 +299,14 @@ fn browser_action_allowed_fields(action: &str) -> Option<&'static [&'static str]
             "to_selector",
             "timeout_ms",
         ],
-        "press" => &["action", "target_id", "key"],
+        "press" => &[
+            "action",
+            "target_id",
+            "key",
+            "ref",
+            "selector",
+            "timeout_ms",
+        ],
         "wait" => &[
             "action",
             "target_id",
@@ -394,6 +403,28 @@ fn require_element_target(args: &Value, subject: &str) -> Result<()> {
     Ok(())
 }
 
+fn require_click_target(args: &Value, subject: &str) -> Result<()> {
+    let targets = ["ref", "selector", "text"]
+        .into_iter()
+        .filter(|key| opt_str(args, key).is_some())
+        .count();
+    if targets != 1 {
+        return Err(anyhow!(
+            "browser action '{subject}' requires exactly one of ref, selector or text"
+        ));
+    }
+    Ok(())
+}
+
+fn require_optional_element_target(args: &Value, subject: &str) -> Result<()> {
+    if opt_str(args, "ref").is_some() && opt_str(args, "selector").is_some() {
+        return Err(anyhow!(
+            "browser action '{subject}' accepts at most one of ref or selector"
+        ));
+    }
+    Ok(())
+}
+
 fn require_drag_target(args: &Value, subject: &str) -> Result<()> {
     let refs = opt_str(args, "from_ref").is_some() && opt_str(args, "to_ref").is_some();
     let selectors =
@@ -451,9 +482,9 @@ fn validate_batch_steps(steps: &Value) -> Result<()> {
         let kind = required_str(step, "kind")?;
         let allowed: &[&str] = match kind.as_str() {
             "navigate" => &["kind", "url", "timeout_ms"],
-            "click" => &["kind", "ref", "selector", "double_click", "timeout_ms"],
+            "click" => &["kind", "ref", "selector", "text", "double_click", "timeout_ms"],
             "type" => &["kind", "ref", "selector", "text", "submit", "timeout_ms"],
-            "hover" => &["kind", "ref", "selector", "timeout_ms"],
+            "hover" => &["kind", "ref", "selector", "text", "timeout_ms"],
             "select" => &["kind", "ref", "selector", "value", "timeout_ms"],
             "drag" => &[
                 "kind",
@@ -463,7 +494,7 @@ fn validate_batch_steps(steps: &Value) -> Result<()> {
                 "to_selector",
                 "timeout_ms",
             ],
-            "press" => &["kind", "key"],
+            "press" => &["kind", "key", "ref", "selector", "timeout_ms"],
             "back" => &["kind"],
             "observe_text" => &["kind", "max_chars", "cursor"],
             "wait" => &[
@@ -516,7 +547,7 @@ fn validate_batch_steps(steps: &Value) -> Result<()> {
             "navigate" => {
                 required_str(step, "url")?;
             }
-            "click" | "hover" => require_element_target(step, &format!("batch step {index}"))?,
+            "click" | "hover" => require_click_target(step, &format!("batch step {index}"))?,
             "type" => {
                 required_str(step, "text")?;
                 require_element_target(step, &format!("batch step {index}"))?;
@@ -528,6 +559,7 @@ fn validate_batch_steps(steps: &Value) -> Result<()> {
             "drag" => require_drag_target(step, &format!("browser batch step {index} drag"))?,
             "press" => {
                 required_str(step, "key")?;
+                require_optional_element_target(step, &format!("batch step {index}"))?;
             }
             "back" | "observe_text" | "wait" => {}
             _ => unreachable!("batch kind validated"),
@@ -696,7 +728,7 @@ async fn dispatch_operation(
             let request = request_with(
                 "click",
                 args,
-                &["ref", "selector", "double_click", "timeout_ms"],
+                &["ref", "selector", "text", "double_click", "timeout_ms"],
             );
             provider_act(
                 service,
@@ -725,7 +757,7 @@ async fn dispatch_operation(
             .await
         }
         OP_HOVER => {
-            let request = request_with("hover", args, &["ref", "selector", "timeout_ms"]);
+            let request = request_with("hover", args, &["ref", "selector", "text", "timeout_ms"]);
             act_outcome(
                 service,
                 &scope,
@@ -769,7 +801,11 @@ async fn dispatch_operation(
         }
         OP_PRESS_KEY => {
             let key = required_str(args, "key")?;
-            let request = json!({"kind": "press", "key": key});
+            let request = request_with(
+                "press",
+                args,
+                &["key", "ref", "selector", "timeout_ms"],
+            );
             act_outcome(
                 service,
                 &scope,
@@ -1109,6 +1145,20 @@ mod tests {
                 .is_err()
         );
         assert!(validate_browser_action(&json!({"action":"click","ref":"e1"})).is_ok());
+        assert!(validate_browser_action(&json!({"action":"click","text":"Continue"})).is_ok());
+        assert!(validate_browser_action(&json!({"action":"press","key":"Enter"})).is_ok());
+        assert!(validate_browser_action(
+            &json!({"action":"press","key":"Enter","selector":"#field","timeout_ms":50})
+        )
+        .is_ok());
+        assert!(validate_browser_action(
+            &json!({"action":"press","key":"Enter","ref":"e1","selector":"#field"})
+        )
+        .is_err());
+        assert!(validate_browser_action(
+            &json!({"action":"click","ref":"e1","text":"Continue"})
+        )
+        .is_err());
         for action in ["click", "type", "hover", "select", "drag"] {
             let mut args = json!({"action":action,"selector":"#target","timeout_ms":50});
             if action == "type" {
@@ -1143,6 +1193,15 @@ mod tests {
             validate_batch_steps(&json!([{"kind":"type","selector":"#field","text":"x"}])).is_ok()
         );
         assert!(validate_batch_steps(&json!([{"kind":"back"}])).is_ok());
+        assert!(validate_batch_steps(&json!([
+            {"kind":"click","text":"Continue"},
+            {"kind":"press","selector":"#field","key":"Enter","timeout_ms":50}
+        ]))
+        .is_ok());
+        assert!(validate_batch_steps(&json!([
+            {"kind":"press","ref":"e1","selector":"#field","key":"Enter"}
+        ]))
+        .is_err());
         assert!(validate_batch_steps(
             &json!([{"kind":"observe_text","max_chars":400,"cursor":"c1"}])
         )

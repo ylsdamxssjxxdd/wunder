@@ -27,6 +27,9 @@ const ATTACH_POLL: Duration = Duration::from_millis(50);
 const REMOTE_COMMAND_GRACE: Duration = Duration::from_secs(60);
 const REMOTE_CREATE_TIMEOUT: Duration = Duration::from_secs(180);
 const REMOTE_CLOSE_TIMEOUT: Duration = Duration::from_secs(3);
+/// A transient sandbox-hop failure must not destroy an otherwise healthy page.
+/// Only repeated transport failures retire the exchange and its browser.
+const REMOTE_TRANSPORT_FAILURE_LIMIT: u32 = 3;
 /// A session this recently active is never stolen by the capacity eviction.
 const ACTIVE_PROTECT: Duration = Duration::from_secs(5);
 /// Session key prefix for browsers the warm pool owns. They stay out of the
@@ -1402,6 +1405,7 @@ struct RemoteExchange {
     /// The page's own timeout plus room for the sandbox hop; a wedged page must
     /// fail the command instead of pinning the pump.
     command_timeout: Duration,
+    transport_failures: u32,
 }
 
 impl RemoteExchange {
@@ -1416,7 +1420,29 @@ impl RemoteExchange {
             bridge_id,
             ready_line: Some(ready_line),
             command_timeout,
+            transport_failures: 0,
         }
+    }
+
+    fn transport_failed(&mut self, error: String) -> Result<BridgeResponse, String> {
+        self.transport_failures += 1;
+        if self.transport_failures >= REMOTE_TRANSPORT_FAILURE_LIMIT {
+            return Err(error);
+        }
+        Ok(BridgeResponse {
+            success: false,
+            data: Some(serde_json::json!({
+                "code": "TOOL_BROWSER_TRANSPORT_FAILED",
+                "phase": "transport",
+                "retryable": true,
+                "next_step_hint": "Check tabs_list or the current page before retrying; the browser session and tabs were kept alive, so a mutating command may already have run.",
+            })),
+            error: Some(format!(
+                "Browser sandbox transport failed ({}/{}): {error}. The browser session was kept alive; inspect its tabs before retrying.",
+                self.transport_failures, REMOTE_TRANSPORT_FAILURE_LIMIT
+            )),
+            traceback: None,
+        })
     }
 }
 
@@ -1430,11 +1456,17 @@ impl BridgeExchange for RemoteExchange {
     }
 
     fn exchange(&mut self, line: &str) -> Result<BridgeResponse, String> {
-        let body = remote_post(
+        let body = match remote_post(
             &format!("{}/browser/bridges/command", self.endpoint),
             &serde_json::json!({ "bridge_id": self.bridge_id, "line": line }),
             self.command_timeout,
-        )?;
+        ) {
+            Ok(body) => {
+                self.transport_failures = 0;
+                body
+            }
+            Err(error) => return self.transport_failed(error),
+        };
         if body.get("ok").and_then(Value::as_bool) != Some(true) {
             let error = body
                 .get("error")
@@ -1622,8 +1654,9 @@ mod tests {
     use super::{
         bridge_spec, build_spawn_command, elapsed_millis, is_pipeline_unready, launch_deadline,
         parse_ready_line, pick_evict_candidate, short_slot, sweep_at, BridgeResponse,
-        BridgeSession, BrowserBridge, CdpOverride, Command, ACTIVE_PROTECT, LAUNCH_GRACE,
-        STATE_LAUNCHING, STATE_READY, WARM_PIPELINE_RETRY, WARM_RETRY_CEILING,
+        BridgeSession, BrowserBridge, CdpOverride, Command, RemoteExchange, ACTIVE_PROTECT,
+        LAUNCH_GRACE, REMOTE_TRANSPORT_FAILURE_LIMIT, STATE_LAUNCHING, STATE_READY,
+        WARM_PIPELINE_RETRY, WARM_RETRY_CEILING,
     };
     use crate::config::Config;
     use crate::services::browser::config::{effective_browser_config, EffectiveBrowserConfig};
@@ -1673,6 +1706,28 @@ mod tests {
         let response = BridgeResponse::failure("boom");
         assert!(!response.success);
         assert_eq!(response.error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn transient_sandbox_transport_failures_keep_the_exchange_alive() {
+        let mut exchange = RemoteExchange::new(
+            "http://sandbox.invalid",
+            "bridge-1".to_string(),
+            json!({"success":true}).to_string(),
+            Duration::from_secs(1),
+        );
+        for attempt in 1..REMOTE_TRANSPORT_FAILURE_LIMIT {
+            let response = exchange
+                .transport_failed("connection closed".to_string())
+                .expect("transient failure stays recoverable");
+            assert!(!response.success);
+            assert_eq!(response.data.unwrap()["code"], "TOOL_BROWSER_TRANSPORT_FAILED");
+            assert!(response.error.unwrap().contains("kept alive"));
+            assert_eq!(exchange.transport_failures, attempt);
+        }
+        let fatal = exchange.transport_failed("still unavailable".to_string());
+        assert!(fatal.is_err());
+        assert_eq!(exchange.transport_failures, REMOTE_TRANSPORT_FAILURE_LIMIT);
     }
 
     fn bridge_with(idle_timeout_secs: u64, max_sessions: usize) -> BrowserBridge {

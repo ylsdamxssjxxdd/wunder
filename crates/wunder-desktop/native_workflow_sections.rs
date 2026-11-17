@@ -464,6 +464,29 @@ mod tests {
         assert_eq!(body, vec!["line one", "line two"]);
     }
     #[test]
+    fn read_image_details_name_the_region_and_its_numbers() {
+        let payload = json!({
+            "args":{"path":"shot.png","crop":"0,0,400,300","scale":0.5,"stats":true},
+            "result":{"ok":true,"data":{
+                "path":"shot.png","media_kind":"image","size_bytes":320_512,
+                "view":{"source_width":1536,"source_height":1024,"width":400,"height":300},
+                "stats":{"width":400,"height":300,"mean_luma":128.3,
+                    "background_rgb":[30,30,30],"non_background_ratio":0.42,"edge_ratio":0.03},
+                "result":{"kind":"image","frame_count":1,
+                    "attachments":[{"name":"shot_view.png","content_type":"image/png"}]}
+            }}
+        });
+        let sections = project("读图工具", &payload, "completed", "fallback");
+        assert_eq!(sections[0].title, "shot.png");
+        assert_eq!(sections[0].meta, "图像 1536×1024");
+        let body: Vec<&str> = sections[0].lines.iter().map(|l| l.text.as_str()).collect();
+        assert!(body.contains(&"体积 313 KB · PNG"));
+        assert!(body.contains(&"裁切 0,0,400,300"));
+        assert!(body.contains(&"缩放 0.5×"));
+        assert!(body.iter().any(|line| line.contains("亮度 128.3")));
+        assert!(body.contains(&"输出 shot_view.png"));
+    }
+    #[test]
     fn web_search_projects_sources_and_web_fetch_projects_status() {
         let sections = project(
             "web_search",

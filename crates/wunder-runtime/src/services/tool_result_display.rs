@@ -47,6 +47,14 @@ fn memory_action_name(raw: &str) -> &'static str {
     }
 }
 
+/// 读图工具的四别名（含运行时中文名），结果事实由 read_image_display 统一生成。
+fn is_read_image_tool(tool: &str) -> bool {
+    matches!(
+        tool.trim(),
+        "读图工具" | "读图" | "查看图片" | "read_image" | "view_image"
+    )
+}
+
 /// Bounded body for one memory field: enough to recognise what was stored,
 /// never the whole record (the full content stays in args and audit events).
 fn memory_body_preview(text: &str) -> String {
@@ -248,6 +256,21 @@ pub fn tool_result_display(tool: &str, payload: &Value, pending: bool) -> String
     };
     if !target_text.is_empty() {
         lines.push(preview(target_text));
+    }
+    // 读图条目要说清「看了哪张图的哪一部分」：默认读图、裁切、缩放、统计、
+    // 抽帧、并排比较在折叠行里长得一样，只能靠结果事实区分开。
+    if is_read_image_tool(tool) {
+        for line in crate::services::read_image_display::display_lines(data, args, true) {
+            lines.push(preview(&line));
+        }
+        // 读图失败时没有事实可讲，但错误原因必须留下，不能只剩工具名和目标。
+        if failed {
+            let error = string(result, &["error", "message"]);
+            if !error.is_empty() {
+                lines.push(preview(error));
+            }
+        }
+        return preview(&lines.join("\n"));
     }
     if pending {
         return lines.join("\n");
@@ -484,6 +507,34 @@ mod tests {
         assert!(fetch.contains("https://example.test/a"));
         assert!(fetch.contains("hello"));
     }
+    #[test]
+    fn read_image_rows_name_the_region_and_its_numbers() {
+        let output = tool_result_display(
+            "读图工具",
+            &json!({
+                "args": {"path":"shot.png","crop":"0,0,400,300","scale":0.5,"stats":true},
+                "data": {
+                    "path":"shot.png","media_kind":"image","size_bytes":320_512,
+                    "view":{"source_width":1536,"source_height":1024,"width":400,"height":300},
+                    "stats":{"width":400,"height":300,"mean_luma":128.3,
+                        "background_rgb":[30,30,30],"non_background_ratio":0.42,"edge_ratio":0.03},
+                    "result":{"kind":"image","frame_count":1,
+                        "attachments":[{"name":"shot_view.png","content_type":"image/png"}]}
+                }
+            }),
+            false,
+        );
+        assert!(output.starts_with("读图工具 · 完成"));
+        assert!(output.contains("shot.png"));
+        assert!(output.contains("图像 1536×1024"));
+        assert!(output.contains("体积 313 KB · PNG"));
+        assert!(output.contains("裁切 0,0,400,300"));
+        assert!(output.contains("缩放 0.5×"));
+        assert!(output.contains("亮度 128.3"));
+        assert!(output.contains("背景 #1e1e1e"));
+        assert!(output.contains("输出 shot_view.png"));
+    }
+
     #[test]
     fn memory_rows_name_the_operation_and_content() {
         let output = tool_result_display(

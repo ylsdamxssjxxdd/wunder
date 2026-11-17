@@ -49,6 +49,7 @@ pub mod presence;
 pub mod preset_worker_cards;
 pub mod prompting;
 pub mod ragflow_knowledge;
+pub mod read_image_display;
 pub mod runtime;
 pub mod skill_archive;
 pub mod skills;

@@ -931,6 +931,25 @@ Pass a file path:
 }
 ```
 
+To inspect a still image's original-resolution details, use `crop=x,y,w,h` for the top-left corner plus width and height, optionally adding `scale`. The last two crop values are width and height, not bottom-right coordinates:
+
+```json
+{
+  "path": "screenshots/demo.png",
+  "crop": "40,40,800,600",
+  "scale": 2
+}
+```
+
+If you already have corner coordinates, explicitly use `crop_xyxy=x1,y1,x2,y2`. The bottom-right corner is exclusive, and this parameter cannot be combined with `crop`:
+
+```json
+{
+  "path": "screenshots/demo.png",
+  "crop_xyxy": "40,40,840,640"
+}
+```
+
 For a GIF you can add a frame interval; for a video you can set how many frames to take per second:
 
 ```json
@@ -949,17 +968,19 @@ For a GIF you can add a frame interval; for a video you can set how many frames 
 
 ## Handling by material type
 
-- A static image enters the context as image input unchanged; the model only needs the path, and the intent to look comes from the current conversation.
+- Small still images are not enlarged; large images are proportionally fitted to model input limits. The result reports source dimensions, actual view dimensions, and reduction factor.
+- Reduction beyond 2x on either axis produces an explicit detail warning. Crop original-resolution regions before judging small text, tables, or 1px lines.
+- Crops use source pixels and are applied before `scale`; out-of-bounds crops fail instead of being silently clamped.
 - A GIF is not handed to the model whole: by default only the first frame is taken, and if you give a frame interval it samples frames at that interval.
 - A video is organized into a series of image frames; if the video has an audio track, the transcript is attached as well.
 
 ## Return value
 
-The result states the material's type and size, but that only means the material is ready, not that the model has analyzed it: once it is ready, ask about it.
+The result states the material's type and size. Cropped results also include normalized `x/y/width/height` and `x2/y2` values for verifying the actual region. In `view`, `downscaled`, `downscale_factor`, and `fine_detail_loss` describe resizing and detail risk. These fields mean the material is ready, not that the model has analyzed it.
 
 ## Errors
 
-Look at the result first: whether the path resolved to a real file, whether the material type is right, and whether the byte size is what you expect. A wrong path or an unsupported material type reports an error directly.
+Check whether the path resolved to a real file, the material type is right, and the byte size is expected. Wrong paths, unsupported types, mixed crop forms, and out-of-bounds crops report errors directly.
 
 <!-- topic id="tools-multimodal-generation" block="tools" title="Generation" group="Multimodal" keywords="Multimodal Generation,Model dependencies,Arguments" -->
 

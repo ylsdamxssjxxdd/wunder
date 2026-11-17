@@ -241,9 +241,13 @@ export const buildCollapsedToolWorkflowSummary = (
   if (isExecuteCommandTool(entry.toolName)) {
     brief = readEntryField([entry.callItem], COMMAND_KEYS) || readCallSideParam(entry.resultItem, COMMAND_KEYS);
   } else if (isReadImageWorkflowTool(entry.toolName)) {
-    brief = basenameOfPath(
+    // 文件名单说不了「读了哪一部分」：裁切区是调用参数，折叠行直接带上。
+    const name = basenameOfPath(
       readEntryField([entry.callItem], PATH_KEYS) || readCallSideParam(entry.resultItem, PATH_KEYS)
     );
+    const crop = readCallSideParam(entry.callItem, ['crop']) ||
+      readCallSideParam(entry.resultItem, ['crop']);
+    brief = [name, crop ? `裁切 ${crop}` : ''].filter(Boolean).join(' · ');
   } else if (isWebFetchTool(entry.toolName)) {
     brief = readEntryField([entry.callItem], URL_KEYS) ||
       readEntryField([entry.callItem], QUERY_KEYS) ||

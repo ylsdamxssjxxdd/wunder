@@ -114,10 +114,43 @@ fn image_resize_notice(view: &MediaViewDims) -> String {
     if !view.downscaled() {
         return String::new();
     }
-    format!(
-        " Image was downscaled from {}x{} to {}x{} pixels for model input; use crop or scale to inspect fine detail.",
+    let mut notice = format!(
+        " Image was downscaled from {}x{} to {}x{} pixels for model input.",
         view.source_width, view.source_height, view.width, view.height
-    )
+    );
+    if view.fine_detail_loss() {
+        notice.push_str(
+            " Small text, tables, and 1px lines are unreliable at this reduction; crop the original-resolution region before judging fine detail.",
+        );
+    } else {
+        notice.push_str(" Use crop or scale to inspect fine detail.");
+    }
+    notice
+}
+
+fn image_view_data(view: &MediaViewDims) -> Value {
+    json!({
+        "source_width": view.source_width,
+        "source_height": view.source_height,
+        "width": view.width,
+        "height": view.height,
+        "downscaled": view.downscaled(),
+        "downscale_factor": view.downscale_factor(),
+        "fine_detail_loss": view.fine_detail_loss(),
+    })
+}
+
+fn image_crop_data(crop: ImageCrop) -> Value {
+    json!({
+        "x": crop.x,
+        "y": crop.y,
+        "width": crop.width,
+        "height": crop.height,
+        "x2": crop.x.saturating_add(crop.width),
+        "y2": crop.y.saturating_add(crop.height),
+        "coordinate_origin": "top_left",
+        "bottom_right": "exclusive",
+    })
 }
 
 pub const TOOL_READ_IMAGE: &str = "\u{8bfb}\u{56fe}\u{5de5}\u{5177}";
@@ -133,6 +166,8 @@ struct ReadImageArgs {
     frame_step: Option<usize>,
     #[serde(default)]
     crop: Option<String>,
+    #[serde(default)]
+    crop_xyxy: Option<String>,
     #[serde(default)]
     scale: Option<f64>,
     #[serde(default)]
@@ -183,13 +218,25 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
     let sample = read_visual_media_sample(&resolved, 512).await?;
     let media_kind = detect_media_kind_from_path(&resolved, &sample)
         .ok_or_else(|| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
-    let crop = payload
+    let crop_raw = payload
         .crop
         .as_deref()
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ImageCrop::parse)
-        .transpose()?;
+        .filter(|value| !value.is_empty());
+    let crop_xyxy_raw = payload
+        .crop_xyxy
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if crop_raw.is_some() && crop_xyxy_raw.is_some() {
+        return Err(anyhow!(crate::i18n::t("tool.read_image.crop_exclusive")));
+    }
+    let crop = match (crop_raw, crop_xyxy_raw) {
+        (Some(raw), None) => Some(ImageCrop::parse(raw)?),
+        (None, Some(raw)) => Some(ImageCrop::parse_xyxy(raw)?),
+        (None, None) => None,
+        (Some(_), Some(_)) => unreachable!(),
+    };
     let has_view_ops =
         crop.is_some() || payload.scale.is_some() || payload.stats || payload.stats_only;
 
@@ -292,23 +339,27 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
             .iter()
             .map(|attachment| serde_json::to_value(attachment).unwrap_or(Value::Null))
             .collect();
+        let view_dims = MediaViewDims {
+            source_width: view.source_width,
+            source_height: view.source_height,
+            width: view.view_width,
+            height: view.view_height,
+        };
         let mut data = json!({
             "path": raw_path,
             "resolved_path": resolved.to_string_lossy().to_string(),
             "media_kind": media_kind,
             "size_bytes": metadata.len(),
-            "view": {
-                "source_width": view.source_width,
-                "source_height": view.source_height,
-                "width": view.view_width,
-                "height": view.view_height,
-            },
+            "view": image_view_data(&view_dims),
             "result": {
                 "kind": "image",
                 "frame_count": attachments.len(),
                 "attachments": attachments,
             },
         });
+        if let Some(crop) = crop {
+            data["crop"] = image_crop_data(crop);
+        }
         if let Some(stats) = view.stats.as_ref() {
             data["stats"] = serde_json::to_value(stats).unwrap_or(Value::Null);
         }
@@ -323,12 +374,7 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
             format!(
                 "Prepared visual media {} for model inspection.{}{}",
                 raw_path,
-                image_resize_notice(&MediaViewDims {
-                    source_width: view.source_width,
-                    source_height: view.source_height,
-                    width: view.view_width,
-                    height: view.view_height,
-                }),
+                image_resize_notice(&view_dims),
                 unchanged_content_notice(unchanged, &fingerprint)
             )
         };
@@ -349,6 +395,7 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         payload.frame_step,
     )
     .await?;
+    let view_data = result.view.as_ref().map(image_view_data);
     let resize_notice = result
         .view
         .as_ref()
@@ -362,6 +409,9 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         "size_bytes": metadata.len(),
         "result": result,
     });
+    if let Some(view_data) = view_data {
+        data["result"]["view"] = view_data;
+    }
     if let Some(fingerprint) = fingerprint.as_ref() {
         data["mtime_ms"] = json!(fingerprint.mtime_ms);
         data["sha256_8"] = json!(fingerprint.sha256_8);
@@ -497,16 +547,27 @@ pub async fn build_followup_user_message(
     if content.len() <= 1 {
         return Ok(None);
     }
-    // 数值结论以纯文本留在图前面：像素会被持久化省略，数字不会，模型之后
-    // 可以直接引用而不必重看同一帧。
+    // 区域、缩放与数值结论以纯文本留在图前面：像素会被持久化省略，这些
+    // 事实不会，模型之后可以核对实际视图，而不必根据缩略图猜测原图细节。
     let has_image = content
         .iter()
         .any(|part| part.get("type").and_then(Value::as_str) == Some("image_url"));
     if has_image {
+        let mut insert_at = 1;
+        for text in persistent_image_view_texts(result_data) {
+            content.insert(
+                insert_at,
+                json!({
+                    "type": "text",
+                    "text": text,
+                }),
+            );
+            insert_at += 1;
+        }
         if let Some(stats) = result_data.get("stats").filter(|value| value.is_object()) {
             if let Ok(stats) = serde_json::from_value::<ImageViewStats>(stats.clone()) {
                 content.insert(
-                    1,
+                    insert_at,
                     json!({
                         "type": "text",
                         "text": format_image_stats_text(&stats),
@@ -519,6 +580,53 @@ pub async fn build_followup_user_message(
         "role": "user",
         "content": content
     })))
+}
+
+fn persistent_image_view_texts(data: &Value) -> Vec<String> {
+    let mut texts = Vec::new();
+    if let Some(crop) = data.get("crop").filter(|value| value.is_object()) {
+        let fields = ["x", "y", "width", "height", "x2", "y2"]
+            .map(|key| crop.get(key).and_then(Value::as_u64));
+        if let [Some(x), Some(y), Some(width), Some(height), Some(x2), Some(y2)] = fields {
+            texts.push(crate::i18n::t_with_params(
+                "tool.read_image.followup_crop",
+                &std::collections::HashMap::from([
+                    ("x".to_string(), x.to_string()),
+                    ("y".to_string(), y.to_string()),
+                    ("width".to_string(), width.to_string()),
+                    ("height".to_string(), height.to_string()),
+                    ("x2".to_string(), x2.to_string()),
+                    ("y2".to_string(), y2.to_string()),
+                ]),
+            ));
+        }
+    }
+    let view = data.get("view").or_else(|| data.get("result")?.get("view"));
+    if let Some(view) = view.filter(|value| value.is_object()) {
+        if let Ok(view) = serde_json::from_value::<MediaViewDims>(view.clone()) {
+            if view.downscaled() {
+                let key = if view.fine_detail_loss() {
+                    "tool.read_image.followup_resize_detail"
+                } else {
+                    "tool.read_image.followup_resize"
+                };
+                texts.push(crate::i18n::t_with_params(
+                    key,
+                    &std::collections::HashMap::from([
+                        ("source_width".to_string(), view.source_width.to_string()),
+                        ("source_height".to_string(), view.source_height.to_string()),
+                        ("width".to_string(), view.width.to_string()),
+                        ("height".to_string(), view.height.to_string()),
+                        (
+                            "factor".to_string(),
+                            format!("{:.2}", view.downscale_factor().unwrap_or(1.0)),
+                        ),
+                    ]),
+                ));
+            }
+        }
+    }
+    texts
 }
 
 pub(crate) fn format_image_stats_text(stats: &ImageViewStats) -> String {
@@ -649,6 +757,23 @@ mod tests {
         let notice = image_resize_notice(&downscaled);
         assert!(notice.contains("3840x2160 to 2048x1152"), "{notice}");
         assert!(notice.contains("crop or scale"), "{notice}");
+
+        let severe = MediaViewDims {
+            source_width: 640,
+            source_height: 18397,
+            width: 71,
+            height: 2048,
+        };
+        assert!(severe.downscale_factor().expect("factor") > 2.0);
+        assert!(severe.fine_detail_loss());
+        let notice = image_resize_notice(&severe);
+        assert!(
+            notice.contains("Small text, tables, and 1px lines"),
+            "{notice}"
+        );
+        let data = image_view_data(&severe);
+        assert_eq!(data["downscaled"], json!(true));
+        assert_eq!(data["fine_detail_loss"], json!(true));
     }
     use crate::config::Config;
     use crate::lsp::LspManager;

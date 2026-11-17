@@ -1446,7 +1446,7 @@ class BridgeSession:
         # not silently match a different element on the new one.
         self._clear_refs(target_id)
         response = None
-        for attempt in range(2):
+        for attempt in range(3):
             try:
                 response = page.goto(
                     url, wait_until="domcontentloaded", timeout=self._timeout_ms(timeout_ms)
@@ -1454,11 +1454,15 @@ class BridgeSession:
                 break
             except Exception as exc:
                 # Stop the timed-out load before a same-URL retry. Chromium can
-                # still report one in-flight interruption after window.stop(),
-                # so retry that specific race once after resetting to blank.
+                # still report one in-flight interruption after window.stop()
+                # or the blank reset, so only this specific race earns a retry.
                 self._stop_page_load(page)
                 interrupted = "interrupted by another navigation" in str(exc) or "ERR_ABORTED" in str(exc)
-                if attempt == 0 and interrupted:
+                if attempt < 2 and interrupted:
+                    # Let the driver finish processing the cancelled navigation
+                    # before issuing the next one; immediate goto can otherwise
+                    # be interrupted by the cleanup that just returned.
+                    page.wait_for_timeout(50)
                     continue
                 return {"success": False, "error": str(exc), "data": failure_details(exc, url)}
         verdict = self._final_url_verdict(page)

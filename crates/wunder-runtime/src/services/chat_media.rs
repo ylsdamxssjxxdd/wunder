@@ -68,6 +68,17 @@ impl MediaViewDims {
     pub fn downscaled(&self) -> bool {
         self.width < self.source_width || self.height < self.source_height
     }
+
+    pub fn downscale_factor(&self) -> Option<f64> {
+        self.downscaled().then(|| {
+            (f64::from(self.source_width) / f64::from(self.width.max(1)))
+                .max(f64::from(self.source_height) / f64::from(self.height.max(1)))
+        })
+    }
+
+    pub fn fine_detail_loss(&self) -> bool {
+        self.downscale_factor().is_some_and(|factor| factor > 2.0)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1834,8 +1845,8 @@ pub struct ImageCrop {
 }
 
 impl ImageCrop {
-    pub fn parse(raw: &str) -> Result<Self> {
-        let invalid = || anyhow!(crate::i18n::t("tool.read_image.invalid_crop"));
+    fn parse_values(raw: &str, error_key: &str) -> Result<[u32; 4]> {
+        let invalid = || anyhow!(crate::i18n::t(error_key));
         let parts: Vec<&str> = raw.split(',').map(str::trim).collect();
         if parts.len() != 4 {
             return Err(invalid());
@@ -1844,6 +1855,11 @@ impl ImageCrop {
         for (slot, part) in values.iter_mut().zip(parts) {
             *slot = part.parse::<u32>().map_err(|_| invalid())?;
         }
+        Ok(values)
+    }
+
+    pub fn parse(raw: &str) -> Result<Self> {
+        let values = Self::parse_values(raw, "tool.read_image.invalid_crop")?;
         let crop = Self {
             x: values[0],
             y: values[1],
@@ -1851,9 +1867,25 @@ impl ImageCrop {
             height: values[3],
         };
         if crop.width == 0 || crop.height == 0 {
-            return Err(invalid());
+            return Err(anyhow!(crate::i18n::t("tool.read_image.invalid_crop")));
         }
         Ok(crop)
+    }
+
+    pub fn parse_xyxy(raw: &str) -> Result<Self> {
+        let invalid = || anyhow!(crate::i18n::t("tool.read_image.invalid_crop_xyxy"));
+        let values = Self::parse_values(raw, "tool.read_image.invalid_crop_xyxy")?;
+        let width = values[2].checked_sub(values[0]).ok_or_else(invalid)?;
+        let height = values[3].checked_sub(values[1]).ok_or_else(invalid)?;
+        if width == 0 || height == 0 {
+            return Err(invalid());
+        }
+        Ok(Self {
+            x: values[0],
+            y: values[1],
+            width,
+            height,
+        })
     }
 }
 
@@ -2093,6 +2125,18 @@ fn render_image_view(
                     &std::collections::HashMap::from([
                         ("width".to_string(), source_width.to_string()),
                         ("height".to_string(), source_height.to_string()),
+                        ("x".to_string(), crop.x.to_string()),
+                        ("y".to_string(), crop.y.to_string()),
+                        ("crop_width".to_string(), crop.width.to_string()),
+                        ("crop_height".to_string(), crop.height.to_string()),
+                        (
+                            "x2".to_string(),
+                            crop.x.saturating_add(crop.width).to_string(),
+                        ),
+                        (
+                            "y2".to_string(),
+                            crop.y.saturating_add(crop.height).to_string(),
+                        ),
                     ]),
                 )));
             }
@@ -2461,6 +2505,18 @@ mod tests {
         assert_eq!((crop.x, crop.y, crop.width, crop.height), (10, 20, 30, 40));
         for bad in ["1,2,3", "1,2,0,4", "a,b,c,d", "-1,2,3,4", "1,2,3,4,5"] {
             assert!(super::ImageCrop::parse(bad).is_err(), "accepted {bad}");
+        }
+
+        let corners = super::ImageCrop::parse_xyxy("10,20,40,60").expect("parse corners");
+        assert_eq!(
+            (corners.x, corners.y, corners.width, corners.height),
+            (10, 20, 30, 40)
+        );
+        for bad in ["10,20,10,60", "40,20,10,60", "10,60,40,20", "1,2,3"] {
+            assert!(
+                super::ImageCrop::parse_xyxy(bad).is_err(),
+                "accepted {bad}"
+            );
         }
     }
 

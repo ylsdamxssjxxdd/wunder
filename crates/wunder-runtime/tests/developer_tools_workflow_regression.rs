@@ -563,6 +563,90 @@ async fn read_image_crop_scale_stats_deliver_pixels_and_persistent_numbers() {
 }
 
 #[tokio::test]
+async fn read_image_crop_coordinates_and_detail_warnings_stay_explicit() {
+    let fixture = ToolFixture::new();
+    image::RgbImage::from_pixel(100, 80, image::Rgb([20, 40, 60]))
+        .save(fixture.workspace_path("corners.png"))
+        .expect("write crop fixture");
+
+    let result = invoke(
+        &fixture,
+        "read_image",
+        json!({"path": "corners.png", "crop_xyxy": "40,40,60,60", "scale": 2}),
+    )
+    .await;
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["data"]["crop"]["x"], 40);
+    assert_eq!(result["data"]["crop"]["y"], 40);
+    assert_eq!(result["data"]["crop"]["width"], 20);
+    assert_eq!(result["data"]["crop"]["height"], 20);
+    assert_eq!(result["data"]["crop"]["x2"], 60);
+    assert_eq!(result["data"]["crop"]["y2"], 60);
+    assert_eq!(result["data"]["view"]["width"], 40);
+    assert_eq!(result["data"]["view"]["height"], 40);
+
+    let context = fixture.context();
+    let followup = build_read_image_followup_user_message(&context, &result["data"])
+        .await
+        .expect("build crop followup")
+        .expect("crop followup");
+    let texts = followup["content"]
+        .as_array()
+        .expect("content")
+        .iter()
+        .filter_map(|block| block["text"].as_str())
+        .collect::<Vec<_>>();
+    assert!(texts.iter().any(|text| {
+        text.contains("[image_crop]") && text.contains("crop_xyxy=40,40,60,60")
+    }));
+
+    let both = execute_tool(
+        &context,
+        "read_image",
+        &json!({
+            "path": "corners.png",
+            "crop": "40,40,20,20",
+            "crop_xyxy": "40,40,60,60"
+        }),
+    )
+    .await;
+    assert!(both.is_err(), "ambiguous crop forms must be rejected");
+    assert!(execute_tool(
+        &context,
+        "read_image",
+        &json!({"path": "corners.png", "crop_xyxy": "60,40,40,60"}),
+    )
+    .await
+    .is_err());
+
+    image::RgbImage::from_pixel(64, 5000, image::Rgb([120, 120, 120]))
+        .save(fixture.workspace_path("tall.png"))
+        .expect("write tall fixture");
+    let tall = invoke(&fixture, "read_image", json!({"path": "tall.png"})).await;
+    assert_eq!(tall["ok"], true);
+    assert_eq!(tall["data"]["result"]["view"]["downscaled"], true);
+    assert_eq!(tall["data"]["result"]["view"]["fine_detail_loss"], true);
+    assert!(tall["data"]["result"]["view"]["downscale_factor"]
+        .as_f64()
+        .expect("downscale factor")
+        > 2.0);
+    assert!(tall["summary"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("1px lines"));
+    let followup = build_read_image_followup_user_message(&context, &tall["data"])
+        .await
+        .expect("build resize followup")
+        .expect("resize followup");
+    assert!(followup["content"]
+        .as_array()
+        .expect("content")
+        .iter()
+        .filter_map(|block| block["text"].as_str())
+        .any(|text| text.contains("[image_view]") && text.contains("1px")));
+}
+
+#[tokio::test]
 async fn read_file_limit_and_list_files_top_level_work_in_one_call() {
     let fixture = ToolFixture::new();
     let root = fixture.workspace_path("survey");

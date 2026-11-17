@@ -211,8 +211,8 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "读图工具",
-        brief_en: "Read a local image/GIF/video into vision by path. The default view is auto-fitted (long side <=2048px); crop=x,y,w,h + scale inspect original-resolution details. stats adds region luma/non-background numbers; stats_only returns numbers without an image. Videos: frame_rate extracts frames. Images stay in context across rounds; re-read the path only when you need the pixels again.",
-        brief_zh: "按 path 把本地图片/GIF/视频送入视觉。默认视图自动压到长边 ≤2048px；要看清原尺寸细节用 crop=x,y,w,h 指定区域并配合 scale。stats 附带区域亮度与非背景像素占比数值，stats_only 只要数值不回图。视频用 frame_rate 抽帧。图像随上下文保留，不必每轮重读；确实需要再看像素时再按路径重读。",
+        brief_en: "Read a local image/GIF/video path. Default view is auto-fitted (long side <=2048px); >2x reduction makes small text/1px lines unreliable. crop=x,y,w,h means left/top/WIDTH/HEIGHT, not corners; use crop_xyxy=x1,y1,x2,y2 for corners (never both). Add scale for detail. stats adds region numbers; stats_only omits image. Video: frame_rate extracts frames. Re-read only when pixels are needed again.",
+        brief_zh: "按 path 把本地图片/GIF/视频送入视觉。默认视图自动压到长边 ≤2048px，大幅缩小后小字与 1px 细线不可靠。crop=x,y,w,h 是左上角+宽高，不是对角坐标；对角坐标必须显式用 crop_xyxy=x1,y1,x2,y2，二者不可同传。可配合 scale 看细节。stats 附带区域数值，stats_only 只要数值。视频用 frame_rate 抽帧；需要再看像素时才重读。",
         drop_actions: &[],
         drop_fields: &[],
     },
@@ -373,8 +373,8 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "browser",
-        brief_en: "Built-in browser for login, forms, clicks, JS pages and screenshots. Flow: navigate -> observe_refs -> click/type/select/press -> observe_text/screenshot; re-observe after changes. select needs the option value; element actions accept timeout_ms. Dynamic pages are best read once with larger max_chars because cursors expire on DOM changes. tabs_* manage tabs and target_id selects one; wait_ms only applies to wait.",
-        brief_zh: "工作台内置浏览器，无需安装。登录、表单、点击、翻页、JS 页面或截图直接用：navigate → observe_refs → click/type/select/press → observe_text/screenshot，变化后重新 observe_refs；select 传选项 value，元素动作可传 timeout_ms。动态页 DOM 变化会使分页 cursor 失效，宜增大 max_chars 一次读取。tabs_* 管理标签页，target_id 指定标签页，wait_ms 仅用于 wait。",
+        brief_en: "Built-in browser: navigate -> observe_refs -> click/type/select/press -> observe_text/screenshot; re-observe after changes. click/hover take ref, selector or visible text; select needs value. press needs key and optional ref/selector (default: focus). type overwrites and accepts newlines. Element actions and wait conditions accept timeout_ms; wait_ms only applies to wait. tabs_* manage tabs; target_id selects one.",
+        brief_zh: "浏览器：navigate → observe_refs → click/type/select/press → observe_text/screenshot；click/hover 可用 ref、selector 或可见文字，select 传 value；press 传 key，可选 ref/selector，默认焦点；type 覆盖支持真换行。元素动作和 wait 条件可传 timeout_ms，wait_ms 仅 wait。tabs_* 管标签，target_id 选标签；变后重新 observe_refs。",
         drop_actions: &["hover", "drag"],
         drop_fields: &[
             "from_ref",

@@ -140,6 +140,19 @@ class BrowserBridgeTests(unittest.TestCase):
         self.assertEqual(result["data"]["phase"], "interaction")
         self.assertEqual(result["data"]["code"], "TOOL_BROWSER_TIMEOUT")
 
+    def test_text_click_targeted_press_and_textarea_newlines(self):
+        clicked = self.act({"kind": "click", "text": "Send", "timeout_ms": 100})
+        self.assertTrue(clicked["success"], clicked)
+        self.assertTrue(self.act({"kind": "wait", "text": "Complete", "timeout_ms": 1000})["success"])
+        self.page.locator("#field").evaluate("el => el.onkeydown = e => { if(e.key === 'Enter') document.querySelector('#status').textContent='Targeted'; }")
+        pressed = self.act({"kind": "press", "selector": "#field", "key": "Enter", "timeout_ms": 100})
+        self.assertTrue(pressed["success"], pressed)
+        self.assertEqual(self.page.locator("#status").inner_text(), "Targeted")
+        self.page.set_content("<textarea id='notes'></textarea>")
+        typed = self.act({"kind": "type", "selector": "#notes", "text": "first\nsecond"})
+        self.assertTrue(typed["success"], typed)
+        self.assertEqual(self.page.locator("#notes").input_value(), "first\nsecond")
+
     def test_element_timeout_is_bounded_and_validation_is_not_a_timeout(self):
         started = time.monotonic()
         result = self.act({"kind": "click", "selector": "#missing", "timeout_ms": 40})

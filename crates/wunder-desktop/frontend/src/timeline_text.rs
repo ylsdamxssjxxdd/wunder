@@ -909,11 +909,40 @@ pub fn tool_summary(entry: &NativeWorkflowEntry) -> String {
 /// the row keeps the chip (it opens the resource) and leaves the outcome slot
 /// empty. The folded batch bar has no chip and keeps reading `tool_summary`.
 pub fn tool_row_summary(entry: &NativeWorkflowEntry, target: &str) -> String {
+    // 读图的折叠行不能只剩文件名：引擎的展示文本按「动作 · 状态」「目标」
+    // 「事实」排列，这里取事实部分，直接说出读了哪一块画面。
+    if is_read_image_entry(entry) {
+        let facts = read_image_fact_summary(entry);
+        if !facts.is_empty() {
+            return facts;
+        }
+    }
     let summary = tool_summary(entry);
     if is_same_target(target, &summary) {
         return String::new();
     }
     summary
+}
+
+fn is_read_image_entry(entry: &NativeWorkflowEntry) -> bool {
+    matches!(
+        entry.title.trim(),
+        "读图工具" | "读图" | "查看图片" | "read_image" | "view_image"
+    )
+}
+
+/// 读图条目折叠行的「读了哪一部分」：跳过动作/状态与目标两行，取事实行。
+fn read_image_fact_summary(entry: &NativeWorkflowEntry) -> String {
+    let facts = entry
+        .detail
+        .lines()
+        .skip(2)
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .take(3)
+        .collect::<Vec<_>>()
+        .join(" · ");
+    facts.chars().take(160).collect()
 }
 
 /// Either side may be the bounded one: the chip clips long paths to 64 chars
@@ -1151,6 +1180,38 @@ mod tests {
         entry.preview.clear();
         assert_eq!(tool_summary(&entry), "");
         assert_eq!(tool_target(&entry).0, "");
+    }
+
+    #[test]
+    fn a_read_image_row_states_the_region_it_read() {
+        let entry = NativeWorkflowEntry {
+            id: "fixture-image".into(),
+            title: "读图工具".into(),
+            preview: "fixture/shot.png".into(),
+            detail: [
+                "读图工具 · 完成",
+                "fixture/shot.png",
+                "图像 1536×1024",
+                "体积 313 KB · PNG",
+                "裁切 0,0,400,300",
+                "缩放 0.5×",
+            ]
+            .join("\n"),
+            state: "completed".into(),
+            tokens: String::new(),
+            duration: String::new(),
+            read_lines: String::new(),
+            command_output: String::new(),
+            command_meta: String::new(),
+            sections: Vec::new(),
+            patch_files: Vec::new(),
+            round: 0,
+        };
+        let (target, _) = tool_target(&entry);
+        assert_eq!(
+            tool_row_summary(&entry, &target),
+            "图像 1536×1024 · 体积 313 KB · PNG · 裁切 0,0,400,300"
+        );
     }
 
     #[test]

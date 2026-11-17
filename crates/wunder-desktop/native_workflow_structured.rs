@@ -245,7 +245,7 @@ pub(super) fn project(tool: &str, data: &Value, args: &Value) -> Vec<Section> {
                 vec![group]
             }
         }
-        "read_image" | "view_image" | "读图" => {
+        "read_image" | "view_image" | "读图" | "读图工具" | "查看图片" => {
             let path = text(data, &["path", "file_path"]);
             let mut group = section(
                 if path.is_empty() {
@@ -255,25 +255,21 @@ pub(super) fn project(tool: &str, data: &Value, args: &Value) -> Vec<Section> {
                 },
                 "media",
             );
-            for (label, value) in [
-                ("类型", &data["media_kind"]),
-                ("字节", &data["size_bytes"]),
-                ("帧数", &data["media"]["frame_count"]),
-                ("时长（ms）", &data["media"]["duration_ms"]),
-            ] {
-                let value = value_text(value);
-                if !value.is_empty() {
-                    group
-                        .lines
-                        .push(line(format!("{label}：{value}"), "context", String::new()));
-                }
+            // 一次读图的可读事实由引擎统一生成：画面与源尺寸、体积、实际查看
+            // 尺寸、裁切区、缩放、统计结论、帧与时长、并排对比、指纹、派生输出。
+            // 各端此前只读 size_bytes 与 frame_count，默认读图因此长得一样。
+            let mut facts = wunder_server::read_image_display::display_lines(data, args, true)
+                .into_iter();
+            if let Some(first) = facts.next() {
+                group.meta = first;
             }
-            for warning in data["media"]["warnings"]
+            for fact in facts {
+                group.lines.push(line(fact, "context", String::new()));
+            }
+            let warnings = data["result"]["warnings"]
                 .as_array()
-                .into_iter()
-                .flatten()
-                .take(4)
-            {
+                .or_else(|| data["media"]["warnings"].as_array());
+            for warning in warnings.into_iter().flatten().take(4) {
                 push_body(&mut group, &value_text(warning), "note");
             }
             if group.title.is_empty() && group.lines.is_empty() {
