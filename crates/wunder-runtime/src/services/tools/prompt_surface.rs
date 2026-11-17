@@ -373,15 +373,14 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "browser",
-        brief_en: "Built-in browser, no install needed. Use it for login, forms, clicks, pagination, JS pages or screenshots. Flow: navigate -> observe_refs -> click/type/press -> observe_text/screenshot; re-observe after changes. tabs_* manage tabs, target_id selects one; wait_ms only applies to wait.",
-        brief_zh: "工作台内置浏览器，无需安装。登录、表单、点击、翻页、JS 页面或截图直接用：navigate → observe_refs → click/type/press → observe_text/screenshot，变化后重新 observe_refs；tabs_* 管理标签页，target_id 指定标签页，wait_ms 仅用于 wait。",
-        drop_actions: &["hover", "select", "drag"],
+        brief_en: "Built-in browser for login, forms, clicks, JS pages and screenshots. Flow: navigate -> observe_refs -> click/type/select/press -> observe_text/screenshot; re-observe after changes. select needs the option value; element actions accept timeout_ms. Dynamic pages are best read once with larger max_chars because cursors expire on DOM changes. tabs_* manage tabs and target_id selects one; wait_ms only applies to wait.",
+        brief_zh: "工作台内置浏览器，无需安装。登录、表单、点击、翻页、JS 页面或截图直接用：navigate → observe_refs → click/type/select/press → observe_text/screenshot，变化后重新 observe_refs；select 传选项 value，元素动作可传 timeout_ms。动态页 DOM 变化会使分页 cursor 失效，宜增大 max_chars 一次读取。tabs_* 管理标签页，target_id 指定标签页，wait_ms 仅用于 wait。",
+        drop_actions: &["hover", "drag"],
         drop_fields: &[
             "from_ref",
             "from_selector",
             "to_ref",
             "to_selector",
-            "value",
             "state",
             "load_state",
             "snapshot_timeout_ms",
@@ -704,7 +703,7 @@ mod tests {
                     "orphan": {"type": "integer"}
                 },
                 "properties": {
-                    "action": {"type": "string", "enum": ["navigate", "click", "drag", "hover"]},
+                    "action": {"type": "string", "enum": ["navigate", "click", "select", "drag", "hover"]},
                     "url": {"$ref": "#/$defs/used"},
                     "from_ref": {"type": "string"},
                     "value": {"type": "string"}
@@ -716,14 +715,14 @@ mod tests {
         let projected = prompt_tool_spec(&spec, "en-US");
         assert_eq!(
             projected.input_schema["properties"]["action"]["enum"],
-            json!(["navigate", "click"])
+            json!(["navigate", "click", "select"])
         );
         assert!(
             projected.input_schema["properties"]
                 .get("from_ref")
                 .is_none()
         );
-        assert!(projected.input_schema["properties"].get("value").is_none());
+        assert!(projected.input_schema["properties"].get("value").is_some());
         assert_eq!(projected.input_schema["required"], json!(["action"]));
         assert!(
             projected.input_schema["$defs"]

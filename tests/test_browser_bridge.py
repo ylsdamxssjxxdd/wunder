@@ -137,6 +137,29 @@ class BrowserBridgeTests(unittest.TestCase):
         result = self.act({"kind": "type", "selector": "#missing", "text": "synthetic-secret", "timeout_ms": 30})
         self.assertFalse(result["success"])
         self.assertNotIn("synthetic-secret", json.dumps(result))
+        self.assertEqual(result["data"]["phase"], "interaction")
+        self.assertEqual(result["data"]["code"], "TOOL_BROWSER_TIMEOUT")
+
+    def test_element_timeout_is_bounded_and_validation_is_not_a_timeout(self):
+        started = time.monotonic()
+        result = self.act({"kind": "click", "selector": "#missing", "timeout_ms": 40})
+        self.assertFalse(result["success"])
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertEqual(result["data"]["phase"], "interaction")
+        self.assertEqual(result["data"]["code"], "TOOL_BROWSER_TIMEOUT")
+        self.assertIn("observe_refs", result["data"]["next_step_hint"])
+        self.assertEqual(self.session._element_timeout_ms({}), 2000)
+        long_config = object.__new__(bridge.BridgeSession)
+        long_config.timeout_ms = 60000
+        self.assertEqual(bridge.BridgeSession._element_timeout_ms(long_config, {}), 5000)
+        self.assertEqual(
+            bridge.BridgeSession._element_timeout_ms(long_config, {"timeout_ms": 25}), 25
+        )
+        invalid = self.act({"kind": "click"})
+        self.assertFalse(invalid["success"])
+        self.assertEqual(invalid["data"]["code"], "TOOL_BROWSER_INVALID_ARGUMENT")
+        self.assertEqual(invalid["data"]["phase"], "validation")
+        self.assertFalse(invalid["data"]["retryable"])
 
     def test_batch_reports_partial_progress_and_stops(self):
         result = self.act({"kind": "batch", "steps": [
@@ -232,6 +255,17 @@ class BrowserBridgeTests(unittest.TestCase):
         stale = self.session.read_page(self.target, 80, first["next_cursor"])
         self.assertFalse(stale["success"])
         self.assertEqual(stale["data"]["error_code"], "BROWSER_PAGE_CURSOR_STALE")
+        self.assertEqual(stale["data"]["code"], "TOOL_BROWSER_PAGE_CURSOR_STALE")
+        self.assertEqual(stale["data"]["reason"], "dom_content_changed")
+        self.assertFalse(stale["data"]["retryable"])
+        self.assertIn("max_chars", stale["error"])
+        self.assertIn("without cursor", stale["data"]["next_step_hint"])
+
+    def test_observe_text_includes_footer_outside_main_landmark(self):
+        self.page.set_content("<main><p>Main body</p></main><footer>Footer navigation</footer>")
+        content = self.session.read_page(self.target, 300)["data"]["content"]
+        self.assertIn("Main body", content)
+        self.assertIn("Footer navigation", content)
 
     def test_snapshot_is_bounded_and_ref_map_matches_visible_refs(self):
         self.page.set_content("<input type='password' value='synthetic-secret'>" +
@@ -275,9 +309,11 @@ class BrowserBridgeTests(unittest.TestCase):
 
     def test_wait_checks_all_conditions_with_a_shared_timeout(self):
         with patch.object(self.page, "wait_for_url", side_effect=RuntimeError("URL not ready")) as wait_url:
-            with self.assertRaisesRegex(RuntimeError, "URL not ready"):
-                self.act({"kind": "wait", "selector": "#send", "url": "**/complete",
-                          "timeout_ms": 100})
+            result = self.act({"kind": "wait", "selector": "#send", "url": "**/complete",
+                               "timeout_ms": 100})
+        self.assertFalse(result["success"])
+        self.assertIn("URL not ready", result["error"])
+        self.assertEqual(result["data"]["phase"], "interaction")
         self.assertEqual(wait_url.call_args.args, ("**/complete",))
         self.assertGreater(wait_url.call_args.kwargs["timeout"], 0)
         self.assertLessEqual(wait_url.call_args.kwargs["timeout"], 100)
@@ -365,6 +401,47 @@ class BrowserBridgeTests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertIn("snapshot_error", result["data"])
 
+    def test_navigation_returns_http_status_and_retries_after_timeout(self):
+        missing = "https://example.test/missing"
+        self.page.route(missing, lambda route: route.fulfill(
+            status=404, content_type="text/html", body="<h1>Not found</h1>"
+        ))
+        try:
+            result = self.session.handle({
+                "action": "navigate", "url": missing, "target_id": self.target
+            })
+            self.assertTrue(result["success"], result)
+            self.assertEqual(result["data"]["http_status"], 404)
+            self.assertFalse(result["data"]["http_ok"])
+        finally:
+            self.page.unroute(missing)
+
+        delayed = "https://example.test/delayed"
+        attempts = []
+        def respond(route):
+            attempts.append(1)
+            if len(attempts) == 1:
+                time.sleep(0.2)
+            route.fulfill(status=200, content_type="text/html", body="<h1>Recovered</h1>")
+        self.page.route(delayed, respond)
+        try:
+            first = self.session.handle({
+                "action": "navigate", "url": delayed, "target_id": self.target,
+                "timeout_ms": 40,
+            })
+            self.assertFalse(first["success"])
+            self.assertEqual(first["data"]["code"], "TOOL_BROWSER_TIMEOUT")
+            second = self.session.handle({
+                "action": "navigate", "url": delayed, "target_id": self.target,
+                "timeout_ms": 1000,
+            })
+            self.assertTrue(second["success"], second)
+            self.assertEqual(second["data"]["http_status"], 200)
+            self.assertTrue(second["data"]["http_ok"])
+            self.assertNotIn("ERR_ABORTED", json.dumps(second))
+        finally:
+            self.page.unroute(delayed)
+
     def test_navigation_and_batch_need_only_two_round_trips(self):
         url = "https://example.test/form"
         self.page.route(url, lambda route: route.fulfill(content_type="text/html", body="""
@@ -405,12 +482,29 @@ class BrowserBridgeTests(unittest.TestCase):
 
     def test_open_shadow_roots_remain_readable_and_interactive(self):
         self.page.set_content("<div id='host'></div>")
-        self.page.locator("#host").evaluate("el => el.attachShadow({mode:'open'}).innerHTML='<p>Shadow sample</p><button>Shadow action</button>'")
+        self.page.locator("#host").evaluate("""el => {
+            const root = el.attachShadow({mode:'open'});
+            root.innerHTML = '<p>Shadow sample</p><button>Shadow action</button>';
+            root.querySelector('button').onclick = () => {
+                root.querySelector('button').textContent = 'Shadow completed';
+            };
+        }""")
         data = self.session.read_page(self.target, 300)["data"]
         self.assertIn("Shadow sample", data["content"])
         snapshot = self.session.snapshot(self.target, max_chars=300)["data"]["snapshot"]
         self.assertIn("Shadow action", snapshot)
-        self.assertTrue(self.act({"kind": "click", "ref": self.observed_ref()})["success"])
+        shadow_ref, mapping = next(
+            (ref, item) for ref, item in self.session.refs[self.target].items()
+            if item["name"] == "Shadow action"
+        )
+        self.assertIn(" >> ", mapping["selector"])
+        self.assertNotIn(" >>> ", mapping["selector"])
+        clicked = self.act({"kind": "click", "ref": shadow_ref, "timeout_ms": 500})
+        self.assertTrue(clicked["success"], clicked)
+        self.assertEqual(
+            self.page.locator("#host").evaluate("el => el.shadowRoot.querySelector('button').textContent"),
+            "Shadow completed",
+        )
 
     def test_dom_update_keeps_observed_ref_usable(self):
         old_ref = self.observed_ref()
@@ -440,8 +534,10 @@ class BrowserBridgeTests(unittest.TestCase):
             # Replacing the document without the selector must fail fast with
             # the re-observe hint instead of waiting out Playwright's timeout.
             self.page.set_content("<p>different page</p>")
-            with self.assertRaisesRegex(ValueError, r"observe_refs"):
-                self.act({"kind": "click", "ref": old_ref, "timeout_ms": 100})
+            stale = self.act({"kind": "click", "ref": old_ref, "timeout_ms": 100})
+            self.assertFalse(stale["success"])
+            self.assertIn("observe_refs", stale["error"])
+            self.assertEqual(stale["data"]["code"], "TOOL_BROWSER_INVALID_ARGUMENT")
         finally:
             self.page.unroute(url)
 

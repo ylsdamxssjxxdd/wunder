@@ -243,9 +243,8 @@ SNAPSHOT_JS = """(opts) => {
     return '- ' + role + ' "' + safeName + '"' + suffix + ' [ref=' + ref + ']';
   }
 
-  // selectorPrefix carries the shadow-host chain (`>>>`), because Playwright's
-  // CSS engine pierces open shadow roots but a bare path is ambiguous inside
-  // them.
+  // selectorPrefix carries the shadow-host chain. Playwright selectors use
+  // `>>` between engine segments; `>>>` is not valid selector syntax.
   function walkRoot(root, stopNode, selectorPrefix, depth) {
     if (!root || depth > 8) return;
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
@@ -257,7 +256,7 @@ SNAPSHOT_JS = """(opts) => {
       const interactive = isInteractive(node);
       const needsSelector = interactive || node.shadowRoot || tag === 'iframe' || tag === 'frame';
       const own = needsSelector ? cssPath(node, stopNode) : '';
-      const selector = selectorPrefix ? selectorPrefix + ' >>> ' + own : own;
+      const selector = selectorPrefix ? selectorPrefix + ' >> ' + own : own;
 
       if (tag === 'iframe' || tag === 'frame') {
         const src = node.getAttribute('src') || '';
@@ -540,8 +539,10 @@ READABLE_JS = """(opts) => {
     for (const child of el.childNodes || []) { if (truncated || stopped) break; walk(child, depth + 1); }
   }
 
-  const main = document.querySelector('main, article, [role="main"], .content, #content');
-  walk(main || document.body, 0);
+  // The main landmark is only one part of the page. Walking the whole body
+  // keeps headings, forms and footer links outside that landmark observable;
+  // push() still suppresses repeated navigation/footer text.
+  walk(document.body, 0);
   return {content: lines.join(''), total: produced, truncated: truncated, stopped: stopped};
 }"""
 
@@ -703,42 +704,50 @@ RETRYABLE_NET_ERRORS = frozenset(
 )
 
 
-def failure_details(exc, url):
-    """Structured companion to a Playwright error message.
-
-    The message keeps the original text for humans; this payload gives the model
-    a `code`, the failing host and a retry verdict, mirroring the web_fetch
-    failure contract so one branch in the caller covers both tools.
-    """
-    message = str(exc)
-    match = NET_ERROR_RE.search(message)
+def failure_details(exc, url=None, phase="navigation", public_message=None):
+    """Structured, input-safe companion to a Playwright error message."""
+    raw_message = str(exc)
+    message = public_message if public_message is not None else raw_message
+    match = NET_ERROR_RE.search(raw_message)
     net_error = match.group(1) if match else None
     host = None
     try:
-        host = urlparse(url).hostname
+        host = urlparse(url).hostname if url else None
     except Exception:
         host = None
-    if net_error == "ERR_NAME_NOT_RESOLVED":
-        code = "TOOL_BROWSER_DNS_FAILED"
-    elif net_error in RETRYABLE_NET_ERRORS:
-        code = "TOOL_BROWSER_CONNECTION_FAILED"
-    elif net_error:
-        code = "TOOL_BROWSER_NAVIGATION_FAILED"
-    elif "Timeout" in message or "timeout" in message:
-        code = "TOOL_BROWSER_TIMEOUT"
+    timed_out = "Timeout" in raw_message or "timeout" in raw_message
+    if phase != "navigation":
+        code = "TOOL_BROWSER_TIMEOUT" if timed_out else "TOOL_BROWSER_COMMAND_FAILED"
+        retryable = False
+        hint = (
+            "The element was not found or did not become actionable. Call observe_refs again, "
+            "verify the selector and current tab, then retry with an explicit timeout_ms if needed."
+            if phase == "interaction"
+            else "Inspect the current page and correct the browser command before retrying."
+        )
     else:
-        code = "TOOL_BROWSER_NAVIGATION_FAILED"
-    retryable = code in ("TOOL_BROWSER_CONNECTION_FAILED", "TOOL_BROWSER_TIMEOUT")
-    details = {
-        "phase": "navigation",
-        "code": code,
-        "retryable": retryable,
-        "failure_summary": compact_error(message),
-        "next_step_hint": (
+        if net_error == "ERR_NAME_NOT_RESOLVED":
+            code = "TOOL_BROWSER_DNS_FAILED"
+        elif net_error in RETRYABLE_NET_ERRORS:
+            code = "TOOL_BROWSER_CONNECTION_FAILED"
+        elif net_error:
+            code = "TOOL_BROWSER_NAVIGATION_FAILED"
+        elif timed_out:
+            code = "TOOL_BROWSER_TIMEOUT"
+        else:
+            code = "TOOL_BROWSER_NAVIGATION_FAILED"
+        retryable = code in ("TOOL_BROWSER_CONNECTION_FAILED", "TOOL_BROWSER_TIMEOUT")
+        hint = (
             "Retry once, then reach the same resource another way (an API endpoint, or web_fetch)."
             if retryable
             else "The address itself is the problem; pick a different URL or host."
-        ),
+        )
+    details = {
+        "phase": phase,
+        "code": code,
+        "retryable": retryable,
+        "failure_summary": compact_error(message),
+        "next_step_hint": hint,
     }
     if host:
         details["host"] = host
@@ -747,6 +756,21 @@ def failure_details(exc, url):
     if retryable:
         details["retry_after_ms"] = 30000
     return details
+
+
+def validation_failure(message):
+    return {
+        "success": False,
+        "error": str(message),
+        "data": {
+            "code": "TOOL_BROWSER_INVALID_ARGUMENT",
+            "error_code": "BROWSER_INVALID_ARGUMENT",
+            "phase": "validation",
+            "retryable": False,
+            "failure_summary": compact_error(str(message)),
+            "next_step_hint": "Correct the browser action arguments; do not repeat the same invalid call.",
+        },
+    }
 
 
 def compact_error(message):
@@ -1206,7 +1230,37 @@ class BridgeSession:
         self._stop_spawned_browser()
 
     def handle(self, raw):
-        result = self._handle(raw)
+        try:
+            result = self._handle(raw)
+        except ValueError as exc:
+            result = validation_failure(exc)
+        except Exception as exc:
+            action = str(raw.get("action", "")).strip().lower()
+            request = raw.get("request") if isinstance(raw.get("request"), dict) else raw
+            kind = str(request.get("kind", "")).strip().lower()
+            operation = kind or action
+            phase = (
+                "navigation"
+                if operation in ("navigate", "open", "open_tab", "back")
+                else "interaction"
+                if operation in ("click", "type", "fill", "press", "hover", "select", "drag", "wait")
+                else "command"
+            )
+            public_message = (
+                "Browser input failed (%s)" % type(exc).__name__
+                if operation in ("type", "fill")
+                else str(exc)
+            )
+            result = {
+                "success": False,
+                "error": public_message,
+                "data": failure_details(
+                    exc,
+                    request.get("url") or raw.get("url"),
+                    phase=phase,
+                    public_message=public_message,
+                ),
+            }
         if raw.get("include_snapshot") and result.get("success"):
             data = result.setdefault("data", {})
             try:
@@ -1308,21 +1362,27 @@ class BridgeSession:
                 "success": False,
                 "error": "Browser session reached max tabs limit (%s)" % self.args.max_tabs,
             }
+        response = None
         if url:
-            page.goto(url, wait_until="domcontentloaded", timeout=self._timeout_ms(timeout_ms))
+            try:
+                response = page.goto(
+                    url, wait_until="domcontentloaded", timeout=self._timeout_ms(timeout_ms)
+                )
+            except Exception:
+                self._stop_page_load(page)
+                raise
             verdict = self._final_url_verdict(page)
             if verdict is not None:
                 return verdict
-        return {
-            "success": True,
-            "data": {
-                "target_id": target_id,
-                "title": page.title(),
-                "url": page.url,
-                "tabs": self._tabs_state(),
-                "active_target_id": self.active_target_id,
-            },
+        data = {
+            "target_id": target_id,
+            "title": page.title(),
+            "url": page.url,
+            "tabs": self._tabs_state(),
+            "active_target_id": self.active_target_id,
         }
+        data.update(http_metadata(response))
+        return {"success": True, "data": data}
 
     def focus_tab(self, target_id=None, index=None):
         try:
@@ -1385,27 +1445,49 @@ class BridgeSession:
         # the document with an error page, and selectors from the old page must
         # not silently match a different element on the new one.
         self._clear_refs(target_id)
-        try:
-            page.goto(url, wait_until="domcontentloaded", timeout=self._timeout_ms(timeout_ms))
-        except Exception as exc:
-            # A raw Playwright stack is unreadable for the model and hides the
-            # two facts it can act on: which host failed and whether retrying
-            # can possibly help. Details are preserved, the call log is not.
-            return {"success": False, "error": str(exc), "data": failure_details(exc, url)}
+        response = None
+        for attempt in range(2):
+            try:
+                response = page.goto(
+                    url, wait_until="domcontentloaded", timeout=self._timeout_ms(timeout_ms)
+                )
+                break
+            except Exception as exc:
+                # Stop the timed-out load before a same-URL retry. Chromium can
+                # still report one in-flight interruption after window.stop(),
+                # so retry that specific race once after resetting to blank.
+                self._stop_page_load(page)
+                interrupted = "interrupted by another navigation" in str(exc) or "ERR_ABORTED" in str(exc)
+                if attempt == 0 and interrupted:
+                    continue
+                return {"success": False, "error": str(exc), "data": failure_details(exc, url)}
         verdict = self._final_url_verdict(page)
         if verdict is not None:
             return verdict
         generation = self._refresh_page_generation(page, target_id)
-        return {
-            "success": True,
-            "data": {
-                "target_id": target_id,
-                "page_generation": generation,
-                "title": page.title(),
-                "url": page.url,
-                "tabs": self._tabs_state(),
-            },
+        data = {
+            "target_id": target_id,
+            "page_generation": generation,
+            "title": page.title(),
+            "url": page.url,
+            "tabs": self._tabs_state(),
         }
+        data.update(http_metadata(response))
+        return {"success": True, "data": data}
+
+    def _stop_page_load(self, page):
+        try:
+            page.evaluate("() => window.stop()")
+        except Exception:
+            pass
+        try:
+            page.goto(
+                "about:blank",
+                wait_until="domcontentloaded",
+                timeout=min(self.timeout_ms, 1000),
+            )
+        except Exception:
+            pass
 
     def _final_url_verdict(self, page):
         """A redirect can land somewhere the entry URL never named."""
@@ -1718,7 +1800,7 @@ class BridgeSession:
         locator_request = ({"ref": request.get("from_ref"), "selector": request.get("from_selector")}
                            if kind == "drag" else request)
         locator, locator_meta = self._resolve_locator(page, target_id, locator_request)
-        timeout_ms = self._timeout_ms(request.get("timeout_ms"), request.get("timeout_secs"))
+        timeout_ms = self._element_timeout_ms(request)
         if kind == "click":
             if bool(request.get("double_click", False)):
                 locator.dblclick(timeout=timeout_ms)
@@ -1734,7 +1816,14 @@ class BridgeSession:
                 if request.get("submit"):
                     locator.press("Enter", timeout=timeout_ms)
             except Exception as exc:
-                return {"success": False, "error": "Browser input failed (%s)" % type(exc).__name__}
+                message = "Browser input failed (%s)" % type(exc).__name__
+                return {
+                    "success": False,
+                    "error": message,
+                    "data": failure_details(
+                        exc, phase="interaction", public_message=message
+                    ),
+                }
             return self._action_result(page, target_id, kind, extra=locator_meta)
         if kind == "press":
             key = request.get("key")
@@ -1855,17 +1944,41 @@ class BridgeSession:
             try:
                 state = self._decode_page_cursor(cursor)
             except (TypeError, ValueError, json.JSONDecodeError):
-                return {"success": False, "error": "Invalid browser page cursor; call browser(action=observe_text) again."}
-            if (
-                state.get("target_id") != target_id
-                or int(state.get("page_generation", -1)) != generation
-                or state.get("revision") != revision
-            ):
+                result = validation_failure(
+                    "Invalid browser page cursor; call browser(action=observe_text) without a cursor."
+                )
+                result["data"]["error_code"] = "BROWSER_PAGE_CURSOR_INVALID"
+                return result
+            target_changed = state.get("target_id") != target_id
+            document_changed = int(state.get("page_generation", -1)) != generation
+            content_changed = state.get("revision") != revision
+            if target_changed or document_changed or content_changed:
+                reason = (
+                    "tab_changed"
+                    if target_changed
+                    else "document_changed"
+                    if document_changed
+                    else "dom_content_changed"
+                )
+                message = (
+                    "Browser page cursor is stale because %s. Restart observe_text without a cursor; "
+                    "for a dynamic page, use one read with a larger max_chars (up to 40000) instead "
+                    "of paginating a changing DOM." % reason.replace("_", " ")
+                )
                 return {
                     "success": False,
-                    "error": "Stale browser page cursor; call browser(action=observe_text) again.",
-                    "data": {"error_code": "BROWSER_PAGE_CURSOR_STALE", "target_id": target_id,
-                             "page_generation": generation},
+                    "error": message,
+                    "data": {
+                        "code": "TOOL_BROWSER_PAGE_CURSOR_STALE",
+                        "error_code": "BROWSER_PAGE_CURSOR_STALE",
+                        "phase": "observation",
+                        "retryable": False,
+                        "reason": reason,
+                        "failure_summary": message,
+                        "next_step_hint": "Call observe_text without cursor and without reusing this stale cursor; dynamic pages should be read once with a larger max_chars.",
+                        "target_id": target_id,
+                        "page_generation": generation,
+                    },
                 }
             offset = int(state.get("offset", 0))
         content, has_more, scan_truncated = self._read_all_frames(
@@ -1983,6 +2096,13 @@ class BridgeSession:
         except Exception:
             pass
         return target_id, page
+
+    def _element_timeout_ms(self, request):
+        if request.get("timeout_ms") is not None or request.get("timeout_secs") is not None:
+            return self._timeout_ms(request.get("timeout_ms"), request.get("timeout_secs"))
+        # Navigation may need a long budget; a missing or covered element should
+        # not stall an agent for the same 60 seconds before it can re-observe.
+        return min(self.timeout_ms, 5000)
 
     def _timeout_ms(self, value=None, seconds=None):
         if value is None and seconds is not None:
@@ -2182,6 +2302,15 @@ class BridgeSession:
 def _short(text, limit=120):
     value = " ".join(str(text).split())
     return value[:limit]
+
+
+def http_metadata(response):
+    if response is None:
+        return {"http_status": None, "http_ok": None}
+    try:
+        return {"http_status": int(response.status), "http_ok": bool(response.ok)}
+    except Exception:
+        return {"http_status": None, "http_ok": None}
 
 
 def safe_page_title(page):

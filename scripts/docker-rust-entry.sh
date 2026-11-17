@@ -36,16 +36,24 @@ ensure_playwright_browsers() {
     return 0
   fi
 
-  mkdir -p "${target}"
-  if find "${target}" -maxdepth 1 -type d -name 'chromium*' -print -quit 2>/dev/null | grep -q .; then
-    return 0
-  fi
   if ! find "${seed}" -maxdepth 1 -type d -name 'chromium*' -print -quit 2>/dev/null | grep -q .; then
     return 0
   fi
 
-  printf '%s\n' "[docker][browser] seeding Playwright Chromium into ${target}" >&2
-  cp -a "${seed}/." "${target}/"
+  mkdir -p "${target}"
+  # A persistent cache can contain an older Chromium revision. Add missing
+  # revisions from the image even then, but leave existing directories and
+  # compatibility symlinks alone; recursive cp would try to replace the latter.
+  printf '%s\n' "[docker][browser] syncing Playwright Chromium into ${target}" >&2
+  local source name destination
+  for source in "${seed}"/*; do
+    name="${source##*/}"
+    destination="${target}/${name}"
+    if [ -e "${destination}" ] || [ -L "${destination}" ]; then
+      continue
+    fi
+    cp -a "${source}" "${target}/"
+  done
 }
 
 binary_is_ready() {

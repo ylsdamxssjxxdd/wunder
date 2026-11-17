@@ -56,6 +56,24 @@ pub fn probe_launch_executable(browsers_path: Option<&str>) -> Option<PathBuf> {
     )
 }
 
+/// Probe after Playwright's direct launch has already failed. Prefer the
+/// supplement, then explicitly drive a cached Chromium over CDP, then try a
+/// system browser. An older cached revision must not suppress every fallback.
+pub fn probe_failed_launch_executable(browsers_path: Option<&str>) -> Option<PathBuf> {
+    let exists = |path: &Path| path.is_file();
+    if let Some(bundled) = supplement_roots()
+        .iter()
+        .flat_map(|root| supplement_browser_candidates(root))
+        .find(|path| exists(path))
+    {
+        return Some(bundled);
+    }
+    playwright_chromium_executables(browsers_path)
+        .into_iter()
+        .find(|path| exists(path))
+        .or_else(|| system_browser_paths().into_iter().find(|path| exists(&path)))
+}
+
 /// Every location the launch fallback knows about, for failure guidance.
 pub fn collect_browser_candidates(browsers_path: Option<&str>) -> Vec<BrowserCandidate> {
     let mut candidates: Vec<BrowserCandidate> = playwright_chromium_executables(browsers_path)
@@ -211,7 +229,8 @@ fn system_browser_paths() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        playwright_chromium_executables, probe_launch_executable, select_fallback_executable,
+        playwright_chromium_executables, probe_failed_launch_executable, probe_launch_executable,
+        select_fallback_executable,
     };
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
@@ -357,6 +376,23 @@ mod tests {
         assert!(cached
             .iter()
             .any(|path| path.ends_with("chromium-1248/chrome-linux64/chrome")));
+    }
+
+    #[test]
+    fn failed_launch_probe_explicitly_reuses_cached_chromium() {
+        let _guard = lock_env();
+        let home = tempfile::tempdir().unwrap();
+        let previous = std::env::var_os("WUNDER_HOME");
+        std::env::set_var("WUNDER_HOME", home.path());
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("chromium-1248/chrome-linux64/chrome");
+        touch(&executable);
+        let probed = probe_failed_launch_executable(Some(root.path().to_str().unwrap()));
+        match previous {
+            Some(value) => std::env::set_var("WUNDER_HOME", value),
+            None => std::env::remove_var("WUNDER_HOME"),
+        }
+        assert_eq!(probed, Some(executable));
     }
 
     #[test]

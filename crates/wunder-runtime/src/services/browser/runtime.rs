@@ -37,6 +37,20 @@ impl std::fmt::Display for BrowserCommandFailure {
 
 impl std::error::Error for BrowserCommandFailure {}
 
+impl BrowserCommandFailure {
+    pub fn invalid_argument(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            data: json!({
+                "code": "TOOL_BROWSER_INVALID_ARGUMENT",
+                "phase": "validation",
+                "retryable": false,
+                "next_step_hint": "Correct the browser action arguments and retry; do not repeat the same invalid call.",
+            }),
+        }
+    }
+}
+
 pub struct BrowserControlService {
     config: EffectiveBrowserConfig,
     bridge: BrowserBridge,
@@ -1146,6 +1160,16 @@ mod tests {
         assert_eq!(failure.data["code"], "TOOL_BROWSER_DNS_FAILED");
         assert_eq!(failure.data["retryable"], false);
         assert!(failure.data.get("retry_after_ms").is_none());
+    }
+
+    #[test]
+    fn invalid_arguments_have_a_stable_non_retryable_code() {
+        let failure =
+            super::BrowserCommandFailure::invalid_argument("timeout_ms must be an integer");
+        assert_eq!(failure.data["code"], "TOOL_BROWSER_INVALID_ARGUMENT");
+        assert_eq!(failure.data["phase"], "validation");
+        assert_eq!(failure.data["retryable"], false);
+        assert!(failure.message.contains("timeout_ms"));
     }
 
     #[test]

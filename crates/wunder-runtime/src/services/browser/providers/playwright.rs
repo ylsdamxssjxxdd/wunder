@@ -119,7 +119,7 @@ pub fn playwright_tool_specs() -> Vec<ToolSpec> {
     vec![ToolSpec {
         name: TOOL_BROWSER.to_string(),
         title: None,
-        description: "Built-in browser automation, already bundled with the workspace — no install or download. Use it for real web pages: login, forms, clicks, pagination, JS-rendered content or screenshots. Pick one action; the common flow is navigate -> observe_refs -> click/type/press -> observe_text or screenshot. observe_refs supplies element refs for element actions; refs survive same-page re-renders and reloads when the element still matches, and element actions also take a selector. navigate/tabs_new need url, type needs text, press needs key. tabs_* manage tabs and target_id selects one. screenshot saves a PNG (optional workspace-relative path) and the image is attached for you to view. Observations default to 12000 chars; pass max_chars for more.".to_string(),
+        description: "Built-in browser automation, already bundled with the workspace — no install or download. Use it for real web pages: login, forms, clicks, pagination, JS-rendered content or screenshots. Pick one action; the common flow is navigate -> observe_refs -> click/type/select/press -> observe_text or screenshot. observe_refs supplies element refs for element actions; refs survive same-page re-renders and reloads when the element still matches, and element actions also take a selector. navigate/tabs_new need url, type needs text, select needs the option value, press needs key. Element actions accept timeout_ms (default 5s; navigation uses the configured budget). tabs_* manage tabs and target_id selects one. screenshot saves a PNG (optional workspace-relative path) and the image is attached for you to view. Observations default to 12000 chars; pass max_chars for more. A text cursor expires when the DOM changes, so dynamic pages are best read once with a larger max_chars.".to_string(),
         input_schema: json!({
             "type":"object",
             "$defs": defs,
@@ -262,10 +262,32 @@ fn browser_action_allowed_fields(action: &str) -> Option<&'static [&'static str]
         "observe_refs" => &["action", "target_id", "max_chars", "snapshot_timeout_ms"],
         "observe_text" => &["action", "target_id", "max_chars", "cursor"],
         "screenshot" => &["action", "target_id", "path", "full_page"],
-        "click" => &["action", "target_id", "ref", "selector", "double_click"],
-        "type" => &["action", "target_id", "ref", "selector", "text", "submit"],
-        "hover" => &["action", "target_id", "ref", "selector"],
-        "select" => &["action", "target_id", "ref", "selector", "value"],
+        "click" => &[
+            "action",
+            "target_id",
+            "ref",
+            "selector",
+            "double_click",
+            "timeout_ms",
+        ],
+        "type" => &[
+            "action",
+            "target_id",
+            "ref",
+            "selector",
+            "text",
+            "submit",
+            "timeout_ms",
+        ],
+        "hover" => &["action", "target_id", "ref", "selector", "timeout_ms"],
+        "select" => &[
+            "action",
+            "target_id",
+            "ref",
+            "selector",
+            "value",
+            "timeout_ms",
+        ],
         "drag" => &[
             "action",
             "target_id",
@@ -273,6 +295,7 @@ fn browser_action_allowed_fields(action: &str) -> Option<&'static [&'static str]
             "from_selector",
             "to_ref",
             "to_selector",
+            "timeout_ms",
         ],
         "press" => &["action", "target_id", "key"],
         "wait" => &[
@@ -428,11 +451,18 @@ fn validate_batch_steps(steps: &Value) -> Result<()> {
         let kind = required_str(step, "kind")?;
         let allowed: &[&str] = match kind.as_str() {
             "navigate" => &["kind", "url", "timeout_ms"],
-            "click" => &["kind", "ref", "selector", "double_click"],
-            "type" => &["kind", "ref", "selector", "text", "submit"],
-            "hover" => &["kind", "ref", "selector"],
-            "select" => &["kind", "ref", "selector", "value"],
-            "drag" => &["kind", "from_ref", "from_selector", "to_ref", "to_selector"],
+            "click" => &["kind", "ref", "selector", "double_click", "timeout_ms"],
+            "type" => &["kind", "ref", "selector", "text", "submit", "timeout_ms"],
+            "hover" => &["kind", "ref", "selector", "timeout_ms"],
+            "select" => &["kind", "ref", "selector", "value", "timeout_ms"],
+            "drag" => &[
+                "kind",
+                "from_ref",
+                "from_selector",
+                "to_ref",
+                "to_selector",
+                "timeout_ms",
+            ],
             "press" => &["kind", "key"],
             "back" => &["kind"],
             "observe_text" => &["kind", "max_chars", "cursor"],
@@ -511,7 +541,8 @@ async fn dispatch(context: &ToolContext<'_>, tool: &str, args: &Value) -> Result
     if tool.trim() != TOOL_BROWSER {
         return Err(anyhow!("Unknown browser tool '{tool}'"));
     }
-    let action = validate_browser_action(args)?;
+    let action = validate_browser_action(args)
+        .map_err(|error| BrowserCommandFailure::invalid_argument(error.to_string()))?;
     let outcome = match action.as_str() {
         "navigate" => {
             let mut normalized = args.clone();
@@ -662,7 +693,11 @@ async fn dispatch_operation(
             Ok(ProviderOutcome::text(text).with_structured(data))
         }
         OP_CLICK => {
-            let request = request_with("click", args, &["ref", "selector", "double_click"]);
+            let request = request_with(
+                "click",
+                args,
+                &["ref", "selector", "double_click", "timeout_ms"],
+            );
             provider_act(
                 service,
                 &scope,
@@ -674,7 +709,11 @@ async fn dispatch_operation(
             .await
         }
         OP_TYPE => {
-            let request = request_with("type", args, &["ref", "selector", "text", "submit"]);
+            let request = request_with(
+                "type",
+                args,
+                &["ref", "selector", "text", "submit", "timeout_ms"],
+            );
             provider_act(
                 service,
                 &scope,
@@ -686,7 +725,7 @@ async fn dispatch_operation(
             .await
         }
         OP_HOVER => {
-            let request = request_with("hover", args, &["ref", "selector"]);
+            let request = request_with("hover", args, &["ref", "selector", "timeout_ms"]);
             act_outcome(
                 service,
                 &scope,
@@ -697,7 +736,7 @@ async fn dispatch_operation(
             .await
         }
         OP_SELECT_OPTION => {
-            let request = request_with("select", args, &["ref", "selector", "value"]);
+            let request = request_with("select", args, &["ref", "selector", "value", "timeout_ms"]);
             act_outcome(
                 service,
                 &scope,
@@ -711,7 +750,13 @@ async fn dispatch_operation(
             let request = request_with(
                 "drag",
                 args,
-                &["from_ref", "from_selector", "to_ref", "to_selector"],
+                &[
+                    "from_ref",
+                    "from_selector",
+                    "to_ref",
+                    "to_selector",
+                    "timeout_ms",
+                ],
             );
             act_outcome(
                 service,
@@ -1064,6 +1109,22 @@ mod tests {
                 .is_err()
         );
         assert!(validate_browser_action(&json!({"action":"click","ref":"e1"})).is_ok());
+        for action in ["click", "type", "hover", "select", "drag"] {
+            let mut args = json!({"action":action,"selector":"#target","timeout_ms":50});
+            if action == "type" {
+                args["text"] = json!("sample");
+            } else if action == "select" {
+                args["value"] = json!("sample");
+            } else if action == "drag" {
+                args = json!({
+                    "action":action,
+                    "from_selector":"#source",
+                    "to_selector":"#target",
+                    "timeout_ms":50
+                });
+            }
+            assert!(validate_browser_action(&args).is_ok(), "{action}: {args}");
+        }
         assert!(validate_browser_action(&json!({"action":"tabs_select","index":0})).is_ok());
         assert!(validate_browser_action(
             &json!({"action":"tabs_select","target_id":"tab-1","index":0})
@@ -1152,6 +1213,12 @@ mod tests {
         let properties = projected.input_schema["properties"]
             .as_object()
             .expect("browser properties");
+        assert!(properties.contains_key("value"));
+        assert!(properties.contains_key("timeout_ms"));
+        assert!(projected.input_schema["properties"]["action"]["enum"]
+            .as_array()
+            .expect("action enum")
+            .contains(&json!("select")));
         for field in properties.keys() {
             let accepted = BROWSER_ACTIONS.iter().any(|action| {
                 browser_action_allowed_fields(action)

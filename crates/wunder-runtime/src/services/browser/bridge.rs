@@ -695,7 +695,7 @@ impl BrowserBridge {
             return None;
         }
         let executable_path = self.config.executable_path.clone().or_else(|| {
-            super::probe::probe_launch_executable(self.config.browsers_path.as_deref())
+            super::probe::probe_failed_launch_executable(self.config.browsers_path.as_deref())
                 .map(|path| path.to_string_lossy().into_owned())
         })?;
         Some(CdpOverride { executable_path })
