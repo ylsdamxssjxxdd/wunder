@@ -710,6 +710,68 @@ fn approval_and_inquiry_have_distinct_transcript_markers() {
     assert_ne!(log_prefix(LogKind::Inquiry), log_prefix(LogKind::Tool));
 }
 
+/// The answer's bullet is the one bright dot in a turn. Thinking already wears the dim
+/// grey dot, so the answer cannot inherit the terminal's default foreground: a themed
+/// terminal can set that to grey and the two dots would read the same.
+#[test]
+fn the_answer_dot_is_white_and_the_thinking_dot_stays_grey() {
+    use ratatui::style::{Color, Modifier};
+
+    let answer = crate::tui::theme::log_prefix_style(LogKind::Assistant);
+    assert!(
+        matches!(answer.fg, Some(Color::White) | Some(Color::Rgb(255, 255, 255))),
+        "the answer dot is painted white instead of the terminal default: {answer:?}"
+    );
+    assert!(
+        answer.add_modifier.contains(Modifier::BOLD),
+        "a white dot at default weight is a smudge: {answer:?}"
+    );
+
+    let thinking = crate::tui::theme::log_prefix_style(LogKind::Reasoning);
+    assert!(
+        thinking.add_modifier.contains(Modifier::DIM),
+        "the thinking dot stays the dim margin note: {thinking:?}"
+    );
+    assert!(
+        thinking.fg.is_none(),
+        "thinking keeps the terminal's own tone, no hue: {thinking:?}"
+    );
+}
+
+/// The white dot is the bullet only: the answer's prose keeps the body style, so no
+/// paragraph of an answer turns white and bold along with its marker.
+#[test]
+fn the_answer_body_keeps_its_own_style_beside_the_white_dot() {
+    use ratatui::style::Modifier;
+
+    let lines = render_plain_lines(LogKind::Assistant, "plain answer", Style::default(), 40);
+    let marker = lines[0].spans.first().expect("the dot leads the answer");
+    assert_eq!(marker.content.as_ref(), log_prefix(LogKind::Assistant));
+    assert!(marker.style.add_modifier.contains(Modifier::BOLD));
+
+    let body = lines[0]
+        .spans
+        .iter()
+        .find(|span| span.content.contains("plain answer"))
+        .expect("the answer text follows the dot");
+    assert!(
+        !body.style.add_modifier.contains(Modifier::BOLD) && body.style.fg.is_none(),
+        "the answer reads in the body style, only its dot is white: {:?}",
+        body.style
+    );
+
+    // The markdown path builds its head the same way, or an answer would change tone
+    // depending on whether it happened to arrive as markdown.
+    let rendered = render_markdown_lines(LogKind::Assistant, "**bold** answer", 40);
+    let marker = rendered[0].spans.first().expect("the dot leads the answer");
+    assert_eq!(marker.content.as_ref(), log_prefix(LogKind::Assistant));
+    assert!(
+        marker.style.add_modifier.contains(Modifier::BOLD),
+        "the markdown answer leads with the same white dot: {:?}",
+        marker.style
+    );
+}
+
 #[test]
 fn tool_call_key_reads_stable_and_turn_ids_from_payload() {
     let payload = serde_json::json!({

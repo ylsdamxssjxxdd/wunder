@@ -319,6 +319,28 @@ pub(crate) fn log_style(kind: LogKind) -> Style {
     }
 }
 
+/// The bullet in front of the model's answer. Thinking already sinks to a dim italic
+/// margin note, so the answer's dot is the one bright dot in a turn; it is painted
+/// explicitly white instead of inheriting the terminal's default foreground, which a
+/// themed terminal can set to grey — the same tone the thinking dot already uses.
+pub(crate) fn answer_marker() -> Style {
+    let white = if rich_color_supported() {
+        Color::Rgb(255, 255, 255)
+    } else {
+        Color::White
+    };
+    degrade(Style::default().fg(white).add_modifier(Modifier::BOLD))
+}
+
+/// The bullet a transcript entry leads with. An answer carries its own bright dot;
+/// every other entry keeps the tone its body text already uses.
+pub(crate) fn log_prefix_style(kind: LogKind) -> Style {
+    match kind {
+        LogKind::Assistant => answer_marker(),
+        _ => log_style(kind),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

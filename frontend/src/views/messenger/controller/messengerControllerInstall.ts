@@ -14,7 +14,7 @@ import { composerModelCatalog } from '@/components/chat/composerModelCatalog';
 import { hasConfiguredModelField, normalizeConfiguredModelName } from '@/components/chat/composerModelCatalogModel';
 import { fetchCronJobs } from '@/api/cron';
 import { fetchUserSkillContent, uploadUserSkillZip } from '@/api/userTools';
-import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent } from '@/api/workspace';
+import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent, saveWunderWorkspaceFile } from '@/api/workspace';
 import { resolveRuntimeMessageContentSource } from '@/components/chat/messageRuntimeContent';
 import { getRuntimeConfig } from '@/config/runtime';
 import { getCurrentLanguage, setLanguage, useI18n } from '@/i18n';
@@ -54,7 +54,7 @@ import { hydrateExternalMarkdownImages, renderMarkdown } from '@/utils/markdown'
 import { mzPrompt } from '@/utils/mzDialog';
 import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
 import { saveBlobAsDownload } from '@/utils/downloadBlob';
-import { buildWorkspacePublicPath, normalizeWorkspaceOwnerId, resolveMarkdownWorkspacePath } from '@/utils/messageWorkspacePath';
+import { buildWorkspacePublicPath, buildWorkspacePublicPathFromScope, normalizeWorkspaceOwnerId, resolveMarkdownWorkspacePath } from '@/utils/messageWorkspacePath';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
 import { extractPromptToolingPreview } from '@/utils/promptToolingPreview';
 import type { PromptToolingPreviewItem } from '@/utils/promptToolingPreview';
@@ -69,7 +69,7 @@ import { claimAgentRuntimeCompletion, emitWorkspaceRefresh, onAgentRuntimeRefres
 import { createWorkspaceHydrationBatch } from '@/utils/workspaceHydrationBatch';
 import { extractWorkspaceRefreshPaths, isWorkspacePathAffected } from '@/utils/workspaceRefresh';
 import { bindWorkspaceImagePreviewState, getFilenameFromHeaders, hydrateWorkspaceResourceErrorDiagnostics, markWorkspaceImageCardError, normalizeWorkspaceImageResponseBlob, resetWorkspaceImageCardState, resolveWorkspaceResourceErrorDiagnostics, saveObjectUrlAsFile, scheduleWorkspaceLoadingLabel } from '@/utils/workspaceResourceCards';
-import { WORKSPACE_RESOURCE_PREVIEW_TEXT_MAX_BYTES, decodeWorkspaceResourceLabel, extractWorkspaceResourceExtension, normalizeWorkspacePreviewBlob, normalizeWorkspacePreviewFilename, resolveWorkspacePreviewTooLargeHint, resolveWorkspacePreviewUnsupportedHint, resolveWorkspaceResourcePreviewKind } from '@/utils/workspaceResourcePreview';
+import { decodeWorkspaceResourceLabel, extractWorkspaceResourceExtension, normalizeWorkspacePreviewBlob, normalizeWorkspacePreviewFilename, resolveWorkspacePreviewTooLargeHint, resolveWorkspacePreviewUnsupportedHint, resolveWorkspaceResourcePreviewKind } from '@/utils/workspaceResourcePreview';
 import { buildWorkspaceResourceRequestParams } from '@/utils/workspaceResourceRequest';
 import { isImagePath, isMetafileImagePath, parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
 import { installActiveChatRealtimeRecovery } from '@/views/messenger/activeChatRealtimeRecovery';
@@ -100,6 +100,8 @@ import { usePersistentStableListOrder } from '@/views/messenger/stableListOrder'
 import { captureStopRunSnapshot, validateStopRunSnapshot } from '@/views/messenger/stopRunGuard';
 import { buildTaskList } from '@/views/messenger/taskList';
 import { loadUserAppearance, saveUserAppearance } from '@/views/messenger/userAppearanceSync';
+import { WORKSPACE_DOCUMENT_TEXT_MAX_BYTES, loadWorkspaceDocumentPreview } from '@/views/messenger/workspace/workspaceDocumentPreview';
+import { resolveWorkspaceErrorMessage } from '@/views/messenger/workspace/workspaceFileApi';
 
 // Deferred realtime-pulse start handle shared by the lifecycle installers.
 let desktopRealtimePulseStartTimer: number | null = null;
@@ -477,6 +479,20 @@ function installMessengerControllerStateRefs(ctx: MessengerControllerContext): v
   ctx.resourcePreviewKind = ref('image');
 
   ctx.resourcePreviewUserId = ref('');
+
+  // 聊天区引用的文档和工作目录区走同一套预览/编辑能力：可编辑、可保存、
+  // Markdown 可切换渲染、HTML 默认渲染并支持切到源码。
+  ctx.resourcePreviewEditable = ref(false);
+
+  ctx.resourcePreviewSaving = ref(false);
+
+  ctx.resourcePreviewTooLarge = ref(false);
+
+  ctx.resourcePreviewRelativePath = ref('');
+
+  ctx.resourcePreviewAgentId = ref('');
+
+  ctx.resourcePreviewObjectUrls = [];
 
   ctx.onlyOfficeVisible = ref(false);
 
@@ -6070,6 +6086,19 @@ function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerCont
       }
   };
 
+  // 文档预览会为 HTML 资源生成一组对象 URL；切换/关闭时必须回收，避免泄漏。
+  const releaseResourceDocumentUrls = () => {
+      const urls = Array.isArray(ctx.resourcePreviewObjectUrls) ? ctx.resourcePreviewObjectUrls : [];
+      urls.forEach((url: string) => {
+          if (url) URL.revokeObjectURL(url);
+      });
+      ctx.resourcePreviewObjectUrls = [];
+      const currentUrl = String(ctx.resourcePreviewUrl.value || '').trim();
+      if (currentUrl.startsWith('blob:') && ctx.resourcePreviewKind.value === 'html') {
+          URL.revokeObjectURL(currentUrl);
+      }
+  };
+
   ctx.openResourcePreview = async (options: {
       src?: string;
       title?: string;
@@ -6087,6 +6116,7 @@ function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerCont
       const initialKind = String(options.kind || '').trim();
       const fileName = normalizeWorkspacePreviewFilename(title, workspacePath.split('/').pop() || '');
       const previewKind = initialKind || resolveWorkspaceResourcePreviewKind(fileName);
+      releaseResourceDocumentUrls();
       ctx.resourcePreviewVisible.value = true;
       ctx.resourcePreviewLoading.value = false;
       ctx.resourcePreviewTitle.value = title;
@@ -6097,6 +6127,11 @@ function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerCont
       ctx.resourcePreviewUrl.value = String(options.src || '').trim();
       ctx.resourcePreviewKind.value = previewKind || 'image';
       ctx.resourcePreviewUserId.value = userId;
+      ctx.resourcePreviewEditable.value = false;
+      ctx.resourcePreviewSaving.value = false;
+      ctx.resourcePreviewTooLarge.value = false;
+      ctx.resourcePreviewRelativePath.value = '';
+      ctx.resourcePreviewAgentId.value = '';
       if (!workspacePath) {
           return;
       }
@@ -6148,20 +6183,64 @@ function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerCont
           ctx.resourcePreviewHint.value = resolveWorkspacePreviewUnsupportedHint();
           return;
       }
+      ctx.resourcePreviewRelativePath.value = String(resource.relativePath || '').trim();
+      ctx.resourcePreviewAgentId.value = String(resource.requestAgentId || '').trim();
+      // 只有写回当前用户自己的工作区才是安全的：公共引用可能指向他人工作区，
+      // 用相对路径保存会落到同名文件上；容器作用域也无法通过 file 端点定位。
+      const ownerUser = ctx.authStore.user as Record<string, unknown> | null;
+      const currentOwnerId = normalizeWorkspaceOwnerId(
+          ownerUser?.id || ownerUser?.user_id || ownerUser?.username
+      );
+      const resourceWorkspaceId = String(resource.workspaceId || '').trim();
+      const ownsResource =
+          Boolean(currentOwnerId) &&
+          resource.containerId === null &&
+          (resourceWorkspaceId === currentOwnerId ||
+              resourceWorkspaceId.startsWith(`${currentOwnerId}__agent__`) ||
+              resourceWorkspaceId.startsWith(`${currentOwnerId}__a__`));
       ctx.resourcePreviewLoading.value = true;
       try {
-          if (previewKind === 'text') {
-              const response = await fetchWunderWorkspaceContent(buildVersionedWorkspaceResourceRequestParams(resource, {
-                  include_content: true,
-                  max_bytes: WORKSPACE_RESOURCE_PREVIEW_TEXT_MAX_BYTES
-              }));
-              const payload = response.data || {};
-              if (payload.truncated) {
+          if (previewKind === 'text' || previewKind === 'html') {
+              // 与工作目录区共用加载器：文本返回源码，HTML 额外生成可直接渲染的页面。
+              const scopeId = String(resource.workspaceId || '').trim();
+              // 与工作目录区共用同一上限，避免同一文件在两个入口一边可编辑一边只读。
+              const maxBytes = WORKSPACE_DOCUMENT_TEXT_MAX_BYTES;
+              const loaded = await loadWorkspaceDocumentPreview({
+                  path: String(resource.relativePath || fileName).trim(),
+                  maxBytes,
+                  readText: async () => {
+                      const response = await fetchWunderWorkspaceContent(buildVersionedWorkspaceResourceRequestParams(resource, {
+                          include_content: true,
+                          max_bytes: maxBytes
+                      }));
+                      const payload = response.data || {};
+                      return {
+                          content: typeof payload.content === 'string' ? payload.content : '',
+                          size: Number(payload.size) || 0,
+                          truncated: payload.truncated === true
+                      };
+                  },
+                  fetchBlob: async (relativePath: string) => {
+                      const scopedPath = buildWorkspacePublicPathFromScope(scopeId, relativePath);
+                      const response = scopedPath
+                          ? await downloadWunderWorkspaceFile({ path: scopedPath })
+                          : await downloadWunderWorkspaceFile(buildVersionedWorkspaceResourceRequestParams(resource));
+                      return response.data as Blob;
+                  }
+              });
+              if (loaded.status === 'too-large') {
+                  ctx.resourcePreviewTooLarge.value = true;
+                  ctx.resourcePreviewHint.value = resolveWorkspacePreviewTooLargeHint();
+                  return;
+              }
+              ctx.resourcePreviewObjectUrls = loaded.objectUrls;
+              ctx.resourcePreviewKind.value = loaded.kind;
+              ctx.resourcePreviewContent.value = loaded.content;
+              ctx.resourcePreviewUrl.value = loaded.previewUrl;
+              ctx.resourcePreviewEditable.value = !loaded.truncated && ownsResource;
+              if (loaded.truncated) {
                   ctx.resourcePreviewHint.value = ctx.t('workspace.preview.truncatedHint');
               }
-              ctx.resourcePreviewContent.value = typeof payload.content === 'string'
-                  ? payload.content || ctx.t('workspace.preview.emptyContent')
-                  : ctx.t('workspace.preview.emptyContent');
               return;
           }
           const preview = isMetafileImagePath(resource.filename || resource.relativePath || resource.publicPath)
@@ -6185,11 +6264,11 @@ function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerCont
           const missing = ctx.isWorkspaceResourceMissing(error);
           ctx.resourcePreviewHint.value = missing
               ? ctx.t('chat.resourceMissing')
-              : previewKind === 'text'
+              : previewKind === 'text' || previewKind === 'html'
                   ? ctx.t('workspace.preview.loadFailedHint')
                   : resolveWorkspacePreviewTooLargeHint();
           if (previewKind === 'text') {
-              ctx.resourcePreviewContent.value = ctx.t('workspace.preview.empty');
+              ctx.resourcePreviewContent.value = '';
           }
       }
       finally {
@@ -6225,6 +6304,7 @@ function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerCont
       }
       ctx.resourcePreviewVisible.value = false;
       ctx.resourcePreviewLoading.value = false;
+      releaseResourceDocumentUrls();
       ctx.resourcePreviewUrl.value = '';
       ctx.resourcePreviewTitle.value = '';
       ctx.resourcePreviewMeta.value = '';
@@ -6233,6 +6313,55 @@ function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerCont
       ctx.resourcePreviewWorkspacePath.value = '';
       ctx.resourcePreviewKind.value = 'image';
       ctx.resourcePreviewUserId.value = '';
+      ctx.resourcePreviewEditable.value = false;
+      ctx.resourcePreviewSaving.value = false;
+      ctx.resourcePreviewTooLarge.value = false;
+      ctx.resourcePreviewRelativePath.value = '';
+      ctx.resourcePreviewAgentId.value = '';
+  };
+
+  /**
+   * 聊天区引用文档的保存：写回同一份工作区文件，再按最新内容重载预览，
+   * 保证从消息里打开的文档与工作目录区看到的是同一份可编辑副本。
+   */
+  ctx.handleResourcePreviewSave = async (content: string) => {
+      const relativePath = String(ctx.resourcePreviewRelativePath.value || '').trim();
+      if (!relativePath || ctx.resourcePreviewSaving.value)
+          return;
+      const agentId = String(ctx.resourcePreviewAgentId.value || '').trim();
+      const userId = String(ctx.resourcePreviewUserId.value || '').trim();
+      ctx.resourcePreviewSaving.value = true;
+      try {
+          const payload: Record<string, unknown> = {
+              path: relativePath,
+              content: String(content ?? ''),
+              create_if_missing: false
+          };
+          if (agentId) payload.agent_id = agentId;
+          if (userId) payload.user_id = userId;
+          await saveWunderWorkspaceFile(payload);
+          ctx.resourcePreviewContent.value = String(content ?? '');
+          ElMessage.success(ctx.t('messenger.filesArea.saved'));
+          emitWorkspaceRefresh({
+              path: relativePath,
+              changed_paths: [relativePath],
+              agent_id: agentId,
+              container_id: null
+          });
+          await ctx.openResourcePreview({
+              title: ctx.resourcePreviewTitle.value,
+              workspacePath: ctx.resourcePreviewWorkspacePath.value,
+              userId: ctx.resourcePreviewUserId.value,
+              meta: ctx.resourcePreviewMeta.value,
+              kind: ctx.resourcePreviewKind.value
+          });
+      }
+      catch (error) {
+          ElMessage.error(resolveWorkspaceErrorMessage(error, ctx.t('messenger.filesArea.saveFailed')));
+      }
+      finally {
+          ctx.resourcePreviewSaving.value = false;
+      }
   };
 
   ctx.handleWorkspaceEditorSaved = async (payload: { path?: string } = {}) => {

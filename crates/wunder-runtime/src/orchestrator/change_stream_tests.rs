@@ -463,6 +463,39 @@ async fn subagent_message_replay_uses_one_stable_durable_item() {
     assert_eq!(payload["payload"]["message"], "result");
 }
 
+#[tokio::test]
+async fn browser_display_stream_omits_generic_delta_but_keeps_tail() {
+    let (state, _dir) = build_test_state("browser_tail_only").await;
+    let (queue_tx, mut queue_rx) = mpsc::channel::<StreamSignal>(16);
+    let emitter = EventEmitter::new(
+        "fixture-thread".into(),
+        "fixture-owner".into(),
+        Some(queue_tx),
+        None,
+        state.monitor.clone(),
+        false,
+        None,
+    )
+    .without_item_deltas();
+    emitter.bind_turn("fixture-turn", 1);
+    emitter
+        .emit(
+            "llm_output_delta",
+            json!({"model_round":1,"reasoning_delta":"fixture thought"}),
+        )
+        .await;
+    emitter.finish().await;
+
+    let mut tails = 0;
+    let mut generic_deltas = 0;
+    while let Ok(StreamSignal::Event(event)) = queue_rx.try_recv() {
+        tails += usize::from(event.event == "thread_item_tail");
+        generic_deltas += usize::from(event.event == "thread_item_delta");
+    }
+    assert_eq!(tails, 1);
+    assert_eq!(generic_deltas, 0);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn live_text_deltas_never_append_completed_history() {
     let (state, _dir) = build_test_state("change_stream_tail").await;

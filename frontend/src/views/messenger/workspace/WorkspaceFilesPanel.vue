@@ -162,12 +162,12 @@
     </div>
   </div>
 
-  <WorkspaceFilePreviewDialog
+  <WorkspaceDocumentDialog
     :visible="preview.visible"
     :loading="preview.loading"
     :title="preview.title"
     :path="preview.path"
-    :meta-label="preview.metaLabel"
+    :meta="preview.metaLabel"
     :hint="preview.hint"
     :error="preview.error"
     :too-large="preview.tooLarge"
@@ -230,7 +230,7 @@ import { mzConfirm, mzPrompt } from '@/utils/mzDialog';
 import WorkspaceNewFileDialog, {
   type WorkspaceNewFileTemplate
 } from '@/components/chat/WorkspaceNewFileDialog.vue';
-import WorkspaceFilePreviewDialog from './WorkspaceFilePreviewDialog.vue';
+import WorkspaceDocumentDialog from '@/components/workspace/WorkspaceDocumentDialog.vue';
 import WorkspaceFileTree from './WorkspaceFileTree.vue';
 import { useInterlinkNodeTarget } from '@/views/messenger/interlink/interlinkNodeTarget';
 import { useInterlinkNodes } from '@/views/messenger/interlink/useInterlinkNodes';
@@ -281,7 +281,7 @@ import { useWorkspaceFileTree } from './workspaceFileTree';
 import { createWorkspaceDirectoryRefresh } from './workspaceDirectoryRefresh';
 import { createWorkspaceUploadQueue, type WorkspaceUploadTask } from './workspaceUploadQueue';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
-import { buildWorkspaceHtmlPreviewDocument } from '@/components/chat/workspaceHtmlPreview';
+import { WORKSPACE_DOCUMENT_TEXT_MAX_BYTES, loadWorkspaceDocumentPreview } from './workspaceDocumentPreview';
 
 // The heavy editors are loaded only when the user actually opens such a file.
 const OnlyOfficeEditorDialog = defineAsyncComponent(
@@ -294,8 +294,6 @@ const DrawioEditorDialog = defineAsyncComponent(
 const { t } = useI18n();
 
 /** Text/code editing is capped; larger files are download-only (plan §6.3). */
-const WORKSPACE_TEXT_EDIT_MAX_BYTES = 2 * 1024 * 1024;
-const HTML_PREVIEW_EXTENSIONS = new Set(['html', 'htm', 'xhtml']);
 const UPLOAD_MAX_FILES_PER_DROP = 200;
 const SEARCH_DEBOUNCE_MS = 250;
 const SEARCH_RESULT_LIMIT = 200;
@@ -1644,38 +1642,25 @@ const openPreview = async (path: string, name: string, size: number) => {
 
   try {
     if (kind === 'text') {
-      const extension = extractWorkspaceResourceExtension(name);
-      if (HTML_PREVIEW_EXTENSIONS.has(extension)) {
-        const source = await fetchWorkspacePathBlob(path);
-        const previewDocument = await buildWorkspaceHtmlPreviewDocument({
-          rawHtml: await source.blob.text(),
-          entryPath: path,
-          fetchResource: async (relativePath) => {
-            const resource = await fetchWorkspacePathBlob(relativePath);
-            return resource.blob;
-          }
-        });
-        preview.previewKind = 'html';
-        previewHtmlObjectUrls = previewDocument.objectUrls;
-        preview.previewUrl = URL.createObjectURL(
-          new Blob([previewDocument.html], { type: 'text/html; charset=utf-8' })
-        );
-        return;
-      }
-      if (size > WORKSPACE_TEXT_EDIT_MAX_BYTES) {
+      const loaded = await loadWorkspaceDocumentPreview({
+        path,
+        sizeBytes: size,
+        maxBytes: WORKSPACE_DOCUMENT_TEXT_MAX_BYTES,
+        readText: () => readWorkspaceFileContent(path, WORKSPACE_DOCUMENT_TEXT_MAX_BYTES),
+        fetchBlob: async (relativePath) => (await fetchWorkspacePathBlob(relativePath)).blob
+      });
+      if (loaded.status === 'too-large') {
         preview.tooLarge = true;
         preview.hint = resolveWorkspacePreviewTooLargeHint();
         return;
       }
-      const payload = await readWorkspaceFileContent(path, WORKSPACE_TEXT_EDIT_MAX_BYTES);
-      if (payload.size > WORKSPACE_TEXT_EDIT_MAX_BYTES) {
-        preview.tooLarge = true;
-        preview.hint = resolveWorkspacePreviewTooLargeHint();
-        return;
-      }
-      preview.content = payload.content;
-      preview.editable = true;
-      preview.metaLabel = `${path}  ·  ${formatWorkspaceBytes(payload.size || size)}`;
+      preview.previewKind = loaded.kind;
+      previewHtmlObjectUrls = loaded.objectUrls;
+      preview.previewUrl = loaded.previewUrl;
+      preview.content = loaded.content;
+      preview.editable = !loaded.truncated;
+      if (loaded.truncated) preview.hint = t('workspace.preview.truncatedHint');
+      preview.metaLabel = `${path}  ·  ${formatWorkspaceBytes(loaded.size || size)}`;
       return;
     }
     if (kind === 'unsupported') {

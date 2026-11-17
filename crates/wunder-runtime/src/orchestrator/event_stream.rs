@@ -31,6 +31,7 @@ pub(super) struct EventEmitter {
     session_id: String,
     user_id: String,
     queue: Option<mpsc::Sender<StreamSignal>>,
+    emit_item_deltas: bool,
     storage: Option<Arc<dyn StorageBackend>>,
     monitor: Arc<MonitorState>,
     is_admin: bool,
@@ -88,6 +89,11 @@ impl EventEmitter {
         self
     }
 
+    pub(super) fn without_item_deltas(mut self) -> Self {
+        self.emit_item_deltas = false;
+        self
+    }
+
     pub(super) fn session_id(&self) -> &str {
         &self.session_id
     }
@@ -105,6 +111,7 @@ impl EventEmitter {
             session_id,
             user_id,
             queue,
+            emit_item_deltas: true,
             storage,
             monitor,
             is_admin,
@@ -335,6 +342,14 @@ impl EventEmitter {
                 committer.publish_live(&self.session_id, &tail_event);
             }
             self.enqueue_event(&tail_event, false).await;
+        }
+        if event_type.ends_with("_delta") && !self.emit_item_deltas {
+            return StreamEvent {
+                event: "thread_item_delta".into(),
+                data: Value::Null,
+                id: None,
+                timestamp: Some(timestamp),
+            };
         }
         let event_id = self.next_event_id.fetch_add(1, AtomicOrdering::SeqCst);
         let payload = enrich_event_payload(data, Some(&self.session_id), timestamp);

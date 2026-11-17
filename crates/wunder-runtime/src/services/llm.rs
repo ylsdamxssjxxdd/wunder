@@ -1529,13 +1529,80 @@ impl LlmClient {
                         if let Some(notice_fut) = notice_fut {
                             notice_fut.await?;
                         }
-                        Ok(())
+                        Ok::<(), anyhow::Error>(())
                     }
                 }
             };
             let mut stream = response.bytes_stream();
+            let mut pending_delta = String::new();
+            let mut pending_reasoning = String::new();
+            let batch_dirty = Arc::new(AtomicBool::new(false));
+            let callback_dirty = Arc::clone(&batch_dirty);
+            let mut on_chunk_delta = move |delta: String, reasoning_delta: String| {
+                let has_text = !delta.is_empty() || !reasoning_delta.is_empty();
+                let had_pending = !pending_delta.is_empty() || !pending_reasoning.is_empty();
+                let mut batches = Vec::new();
+                if has_text {
+                    if had_pending
+                        && pending_delta.len()
+                            + pending_reasoning.len()
+                            + delta.len()
+                            + reasoning_delta.len()
+                            > STREAM_DELTA_BATCH_BYTES
+                    {
+                        batches.push((
+                            std::mem::take(&mut pending_delta),
+                            std::mem::take(&mut pending_reasoning),
+                        ));
+                    }
+                    pending_delta.push_str(&delta);
+                    pending_reasoning.push_str(&reasoning_delta);
+                    if pending_delta.len() + pending_reasoning.len() >= STREAM_DELTA_BATCH_BYTES {
+                        batches.push((
+                            std::mem::take(&mut pending_delta),
+                            std::mem::take(&mut pending_reasoning),
+                        ));
+                    }
+                    callback_dirty.store(
+                        !pending_delta.is_empty() || !pending_reasoning.is_empty(),
+                        Ordering::Relaxed,
+                    );
+                } else {
+                    if had_pending {
+                        batches.push((
+                            std::mem::take(&mut pending_delta),
+                            std::mem::take(&mut pending_reasoning),
+                        ));
+                    }
+                    callback_dirty.store(false, Ordering::Relaxed);
+                }
+                let forward_empty = !has_text && !had_pending;
+                let batch_futures = batches
+                    .into_iter()
+                    .map(|(content, reasoning)| on_budget_delta(content, reasoning))
+                    .collect::<Vec<_>>();
+                let empty_future =
+                    forward_empty.then(|| on_budget_delta(String::new(), String::new()));
+                async move {
+                    for future in batch_futures {
+                        future.await?;
+                    }
+                    if let Some(future) = empty_future {
+                        future.await?;
+                    }
+                    Ok(())
+                }
+            };
+            macro_rules! flush_pending_delta {
+                () => {
+                    if batch_dirty.load(Ordering::Relaxed) {
+                        on_chunk_delta(String::new(), String::new()).await?;
+                    }
+                };
+            }
             let mut decoder = stream_decode::StreamDecoder::default();
             let mut buffer = String::new();
+            let mut sse_cursor = 0usize;
             let mut combined = String::new();
             let mut reasoning_combined = String::new();
             let mut usage: Option<TokenUsage> = None;
@@ -1546,26 +1613,39 @@ impl LlmClient {
                 let bytes = item?;
                 decoder.push(&bytes, &mut buffer)?;
 
-                while let Some(event_block) = take_next_sse_event(&mut buffer) {
-                    if process_sse_event_block_with_preview(
+                while let Some(event_block) = take_next_sse_event(&mut buffer, &mut sse_cursor) {
+                    if sse_event_block_is_done(&event_block) {
+                        flush_pending_delta!();
+                        if tripped.load(Ordering::Relaxed) {
+                            break 'read;
+                        }
+                    }
+                    let result = process_sse_event_block_with_preview(
                         event_block.as_str(),
                         &mut combined,
                         &mut reasoning_combined,
                         &mut usage,
                         &mut tool_calls_accumulator,
                         &mut final_response_preview,
-                        &mut on_budget_delta,
+                        &mut on_chunk_delta,
                     )
-                    .await?
-                    {
+                    .await;
+                    if result.is_err() {
+                        flush_pending_delta!();
+                    }
+                    if result? {
                         saw_done = true;
                         break;
                     }
                     if tripped.load(Ordering::Relaxed) {
+                        flush_pending_delta!();
                         break 'read;
                     }
                 }
-
+                flush_pending_delta!();
+                if tripped.load(Ordering::Relaxed) {
+                    break;
+                }
                 if saw_done {
                     break;
                 }
@@ -1584,39 +1664,57 @@ impl LlmClient {
                 decoder.finish()?;
             }
             while !saw_done {
-                let Some(event_block) = take_next_sse_event(&mut buffer) else {
+                let Some(event_block) = take_next_sse_event(&mut buffer, &mut sse_cursor) else {
                     break;
                 };
-                if process_sse_event_block_with_preview(
+                if sse_event_block_is_done(&event_block) {
+                    flush_pending_delta!();
+                    if tripped.load(Ordering::Relaxed) {
+                        break;
+                    }
+                }
+                let result = process_sse_event_block_with_preview(
                     event_block.as_str(),
                     &mut combined,
                     &mut reasoning_combined,
                     &mut usage,
                     &mut tool_calls_accumulator,
                     &mut final_response_preview,
-                    &mut on_budget_delta,
+                    &mut on_chunk_delta,
                 )
-                .await?
-                {
+                .await;
+                if result.is_err() {
+                    flush_pending_delta!();
+                }
+                if result? {
                     saw_done = true;
                     break;
                 }
             }
+            flush_pending_delta!();
+            if tripped.load(Ordering::Relaxed) && !saw_done {
+                return Ok(StreamAttempt::BudgetAborted {
+                    partial_reasoning: reasoning_combined,
+                    usage,
+                });
+            }
 
-            if !saw_done
-                && !buffer.trim().is_empty()
-                && process_sse_event_block_with_preview(
-                    buffer.as_str(),
+            let remaining = buffer[sse_cursor..].trim();
+            if !saw_done && !remaining.is_empty() {
+                let result = process_sse_event_block_with_preview(
+                    remaining,
                     &mut combined,
                     &mut reasoning_combined,
                     &mut usage,
                     &mut tool_calls_accumulator,
                     &mut final_response_preview,
-                    &mut on_budget_delta,
+                    &mut on_chunk_delta,
                 )
-                .await?
-            {
-                saw_done = true;
+                .await;
+                flush_pending_delta!();
+                if result? {
+                    saw_done = true;
+                }
             }
 
             let tool_calls = finalize_stream_tool_calls(&tool_calls_accumulator);
@@ -2071,9 +2169,26 @@ pub(super) fn extract_stream_text(value: Option<&Value>) -> String {
     }
 }
 
-fn take_next_sse_event(buffer: &mut String) -> Option<String> {
-    let newline_event = buffer.find("\n\n").map(|index| (index, 2));
-    let crlf_event = buffer.find("\r\n\r\n").map(|index| (index, 4));
+const STREAM_DELTA_BATCH_BYTES: usize = 32 * 1024;
+const SSE_BUFFER_COMPACT_BYTES: usize = 64 * 1024;
+
+fn sse_event_block_is_done(block: &str) -> bool {
+    block.lines().any(|line| {
+        line.trim()
+            .strip_prefix("data:")
+            .map(str::trim)
+            .is_some_and(|data| data == "[DONE]")
+    })
+}
+
+fn take_next_sse_event(buffer: &mut String, cursor: &mut usize) -> Option<String> {
+    if *cursor >= SSE_BUFFER_COMPACT_BYTES && *cursor >= buffer.len() / 2 {
+        buffer.drain(..*cursor);
+        *cursor = 0;
+    }
+    let remaining = &buffer[*cursor..];
+    let newline_event = remaining.find("\n\n").map(|index| (index, 2));
+    let crlf_event = remaining.find("\r\n\r\n").map(|index| (index, 4));
     let (index, delimiter_len) = match (newline_event, crlf_event) {
         (Some(left), Some(right)) => {
             if left.0 <= right.0 {
@@ -2086,8 +2201,16 @@ fn take_next_sse_event(buffer: &mut String) -> Option<String> {
         (None, None) => return None,
     };
 
-    let event = buffer[..index].to_string();
-    *buffer = buffer[index + delimiter_len..].to_string();
+    let start = *cursor;
+    let event = buffer[start..start + index].to_string();
+    *cursor = start + index + delimiter_len;
+    if *cursor == buffer.len() {
+        buffer.clear();
+        *cursor = 0;
+    } else if *cursor >= SSE_BUFFER_COMPACT_BYTES && *cursor >= buffer.len() / 2 {
+        buffer.drain(..*cursor);
+        *cursor = 0;
+    }
     Some(event)
 }
 
@@ -2227,6 +2350,7 @@ where
     match serde_json::from_str::<Value>(data) {
         Ok(payload) => {
             if let Some(reason) = output::finish_reason(&payload) {
+                on_delta(String::new(), String::new()).await?;
                 final_response_preview.finish_reason = Some(reason);
             }
             if let Some(error) = LlmPayloadError::from_payload(&payload) {
@@ -2754,11 +2878,31 @@ mod tests {
     #[test]
     fn take_next_sse_event_handles_crlf_and_lf_delimiters() {
         let mut buffer = "data: {\"x\":1}\r\n\r\ndata: {\"y\":2}\n\n".to_string();
-        let first = take_next_sse_event(&mut buffer).expect("first event");
+        let mut cursor = 0;
+        let first = take_next_sse_event(&mut buffer, &mut cursor).expect("first event");
         assert_eq!(first, "data: {\"x\":1}");
-        let second = take_next_sse_event(&mut buffer).expect("second event");
+        let second = take_next_sse_event(&mut buffer, &mut cursor).expect("second event");
         assert_eq!(second, "data: {\"y\":2}");
-        assert!(take_next_sse_event(&mut buffer).is_none());
+        assert!(take_next_sse_event(&mut buffer, &mut cursor).is_none());
+    }
+
+    #[test]
+    fn sse_cursor_compacts_consumed_prefix_without_losing_partial_event() {
+        let mut buffer = format!(
+            "data: {}\n\ndata: second\n\npartial",
+            "x".repeat(SSE_BUFFER_COMPACT_BYTES)
+        );
+        let mut cursor = 0;
+        let first = take_next_sse_event(&mut buffer, &mut cursor).unwrap();
+        assert_eq!(first.len(), SSE_BUFFER_COMPACT_BYTES + 6);
+        assert_eq!(cursor, 0);
+        assert!(buffer.starts_with("data: second"));
+        assert_eq!(
+            take_next_sse_event(&mut buffer, &mut cursor).as_deref(),
+            Some("data: second")
+        );
+        assert_eq!(&buffer[cursor..], "partial");
+        assert!(take_next_sse_event(&mut buffer, &mut cursor).is_none());
     }
     #[test]
     fn build_anthropic_messages_converts_system_tools_and_tool_results() {
@@ -4145,6 +4289,270 @@ mod tests {
 
         assert_eq!(response.content, "tail");
         assert!(response.reasoning.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stream_coalesces_one_network_chunk_without_changing_text() {
+        use axum::body::Body;
+        use axum::http::StatusCode;
+        use axum::response::Response;
+        use axum::routing::post;
+        use axum::Router;
+        use std::sync::{Arc, Mutex as StdMutex};
+        use tokio::net::TcpListener;
+
+        let events = [
+            r#"{"choices":[{"delta":{"reasoning_content":"aa"}}]}"#,
+            r#"{"choices":[{"delta":{"reasoning_content":"bb"}}]}"#,
+            r#"{"choices":[{"delta":{"content":"h"}}]}"#,
+            r#"{"choices":[{"delta":{"content":"i!"},"finish_reason":"stop"}]}"#,
+        ];
+        let mut sse = events
+            .into_iter()
+            .map(|event| format!("data: {event}\n\n"))
+            .collect::<String>();
+        sse.push_str("data: [DONE]\n\n");
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move || {
+                let body = sse.clone();
+                async move {
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header("content-type", "text/event-stream")
+                        .body(Body::from(body))
+                        .unwrap()
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("openai_compatible".into()),
+            base_url: Some(format!("http://{address}/v1")),
+            api_key: Some("test-key".into()),
+            model: Some("test-model".into()),
+            stream: Some(true),
+            model_type: Some("llm".into()),
+            ..Default::default()
+        };
+        let client = LlmClient::new(Client::new(), config);
+        let messages = vec![ChatMessage {
+            role: "user".into(),
+            content: Value::String("hello".into()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+        let seen = Arc::new(StdMutex::new(Vec::<(String, String)>::new()));
+        let callback_seen = Arc::clone(&seen);
+        let response = client
+            .stream_complete_with_callback(&messages, move |delta, reasoning| {
+                callback_seen.lock().unwrap().push((delta, reasoning));
+                async { Ok(()) }
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(response.content, "hi!");
+        assert_eq!(response.reasoning, "aabb");
+        let seen = seen.lock().unwrap();
+        assert!(seen.len() < 4, "chunk should be coalesced: {seen:?}");
+        assert_eq!(
+            seen.iter()
+                .map(|(delta, _)| delta.as_str())
+                .collect::<String>(),
+            "hi!"
+        );
+        assert_eq!(
+            seen.iter()
+                .map(|(_, reasoning)| reasoning.as_str())
+                .collect::<String>(),
+            "aabb"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_release_probe() {
+        use axum::body::Body;
+        use axum::http::StatusCode;
+        use axum::response::Response;
+        use axum::routing::post;
+        use axum::Router;
+        use std::sync::{Arc, Mutex as StdMutex};
+        use tokio::net::TcpListener;
+
+        if std::env::var_os("WUNDER_STREAM_RELEASE_PROBE").is_none() {
+            return;
+        }
+        let event_count = 20_000usize;
+        let mut sse = (0..event_count)
+            .map(|index| {
+                format!(
+                    "data: {{\"choices\":[{{\"delta\":{{\"reasoning_content\":\"r{index}:\"}}}}]}}\n\n"
+                )
+            })
+            .collect::<String>();
+        sse.push_str(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+        );
+        let sse_bytes = sse.len();
+        let baseline_sse = sse.clone();
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move || {
+                let body = sse.clone();
+                async move {
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header("content-type", "text/event-stream")
+                        .body(Body::from(body))
+                        .unwrap()
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("openai_compatible".into()),
+            base_url: Some(format!("http://{address}/v1")),
+            api_key: Some("test-key".into()),
+            model: Some("test-model".into()),
+            stream: Some(true),
+            model_type: Some("llm".into()),
+            ..Default::default()
+        };
+        let client = LlmClient::new(Client::new(), config);
+        let messages = vec![ChatMessage {
+            role: "user".into(),
+            content: Value::String("hello".into()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+        let callbacks = Arc::new(StdMutex::new(Vec::<(String, String)>::new()));
+        let callback_rows = Arc::clone(&callbacks);
+        let cpu_before = {
+            let mut value = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut value) };
+            std::time::Duration::new(value.tv_sec as u64, value.tv_nsec as u32)
+        };
+        let started = std::time::Instant::now();
+        let response = client
+            .stream_complete_with_callback(&messages, move |delta, reasoning| {
+                callback_rows.lock().unwrap().push((delta, reasoning));
+                async { Ok(()) }
+            })
+            .await
+            .unwrap();
+        let wall_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let cpu_ms = {
+            let mut value = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut value) };
+            std::time::Duration::new(value.tv_sec as u64, value.tv_nsec as u32)
+                .saturating_sub(cpu_before)
+                .as_secs_f64()
+                * 1000.0
+        };
+        let callbacks = callbacks.lock().unwrap();
+        let expected_reasoning_bytes = (0..event_count)
+            .map(|index| format!("r{index}:").len())
+            .sum::<usize>();
+        assert_eq!(response.content, "done");
+        assert_eq!(response.reasoning.len(), expected_reasoning_bytes);
+        assert_eq!(
+            callbacks
+                .iter()
+                .map(|(_, reasoning)| reasoning.len())
+                .sum::<usize>(),
+            expected_reasoning_bytes
+        );
+        assert!(callbacks.len() < event_count / 10);
+        println!(
+            "STREAM_RELEASE_PROBE events={event_count} sse_bytes={sse_bytes} callbacks={} wall_ms={wall_ms:.2} cpu_ms={cpu_ms:.2}",
+            callbacks.len()
+        );
+
+        fn legacy_take_next(buffer: &mut String) -> Option<String> {
+            let newline = buffer.find("\n\n").map(|index| (index, 2));
+            let crlf = buffer.find("\r\n\r\n").map(|index| (index, 4));
+            let (index, delimiter) = match (newline, crlf) {
+                (Some(left), Some(right)) => {
+                    if left.0 <= right.0 {
+                        left
+                    } else {
+                        right
+                    }
+                }
+                (Some(value), None) | (None, Some(value)) => value,
+                (None, None) => return None,
+            };
+            let event = buffer[..index].to_string();
+            *buffer = buffer[index + delimiter..].to_string();
+            Some(event)
+        }
+
+        let mut legacy_buffer = baseline_sse;
+        let mut legacy_content = String::new();
+        let mut legacy_reasoning = String::new();
+        let mut legacy_usage = None;
+        let mut legacy_tools = Vec::new();
+        let mut legacy_preview = StreamOutputState::default();
+        let mut legacy_callbacks = Vec::<(String, String)>::new();
+        let legacy_cpu_before = {
+            let mut value = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut value) };
+            std::time::Duration::new(value.tv_sec as u64, value.tv_nsec as u32)
+        };
+        while let Some(event) = legacy_take_next(&mut legacy_buffer) {
+            if process_sse_event_block_with_preview(
+                &event,
+                &mut legacy_content,
+                &mut legacy_reasoning,
+                &mut legacy_usage,
+                &mut legacy_tools,
+                &mut legacy_preview,
+                &mut |delta, reasoning| {
+                    legacy_callbacks.push((delta, reasoning));
+                    async { Ok(()) }
+                },
+            )
+            .await
+            .unwrap()
+            {
+                break;
+            }
+        }
+        let legacy_cpu_ms = {
+            let mut value = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut value) };
+            std::time::Duration::new(value.tv_sec as u64, value.tv_nsec as u32)
+                .saturating_sub(legacy_cpu_before)
+                .as_secs_f64()
+                * 1000.0
+        };
+        assert_eq!(legacy_content, response.content);
+        assert_eq!(legacy_reasoning, response.reasoning);
+        println!(
+            "STREAM_LEGACY_PROBE events={event_count} callbacks={} cpu_ms={legacy_cpu_ms:.2}",
+            legacy_callbacks.len()
+        );
     }
 
     #[tokio::test]

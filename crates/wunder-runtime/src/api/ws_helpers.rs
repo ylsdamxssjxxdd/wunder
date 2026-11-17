@@ -223,10 +223,50 @@ impl WsHandshakeError {
     }
 }
 
+const WS_TAIL_DEDUPE_CAPACITY: usize = 128;
+const WS_TAIL_DEDUPE_MAX_TEXT_BYTES: usize = 16 * 1024;
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct WsTailDedupeKey {
+    session_id: String,
+    item_id: String,
+    field: String,
+    offset: u64,
+    text: String,
+}
+
+impl WsTailDedupeKey {
+    fn from_event(event: &StreamEvent) -> Option<Self> {
+        if event.event != "thread_item_tail" {
+            return None;
+        }
+        let data = event.data.get("data").unwrap_or(&event.data);
+        let item_id = data.get("item_id")?.as_str()?.trim();
+        let field = data.get("field")?.as_str()?.trim();
+        let text = data.get("text")?.as_str()?;
+        if item_id.is_empty() || field.is_empty() || text.len() > WS_TAIL_DEDUPE_MAX_TEXT_BYTES {
+            return None;
+        }
+        Some(Self {
+            session_id: event
+                .data
+                .get("session_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            item_id: item_id.to_string(),
+            field: field.to_string(),
+            offset: data.get("offset")?.as_u64()?,
+            text: text.to_string(),
+        })
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct WsSender {
     tx: mpsc::Sender<Message>,
     slow_warn_at: Arc<AtomicU64>,
+    sent_tails: Arc<parking_lot::Mutex<std::collections::HashSet<WsTailDedupeKey>>>,
 }
 
 impl WsSender {
@@ -234,6 +274,7 @@ impl WsSender {
         Self {
             tx,
             slow_warn_at: Arc::new(AtomicU64::new(0)),
+            sent_tails: Arc::new(parking_lot::Mutex::new(std::collections::HashSet::new())),
         }
     }
 
@@ -1129,13 +1170,21 @@ pub(crate) async fn send_ws_event(
 }
 
 /// Text tails are best-effort and healed by offset-aware durable snapshots.
-/// Structural process frames instead wait for bounded queue capacity.
+/// Duplicate tails from the send stream and display watch share one connection
+/// dedupe window; structural process frames instead wait for bounded capacity.
 pub(crate) async fn send_ws_tail_event(
     tx: &WsSender,
     request_id: Option<&str>,
     event: StreamEvent,
 ) -> Result<(), ()> {
     let event_name = event.event.clone();
+    let dedupe_key = WsTailDedupeKey::from_event(&event);
+    if dedupe_key
+        .as_ref()
+        .is_some_and(|key| tx.sent_tails.lock().contains(key))
+    {
+        return Ok(());
+    }
     let event_id = event.id.clone();
     let data = enrich_ws_event_data(event.data, event_id.as_deref());
     let payload = json!({
@@ -1153,7 +1202,23 @@ pub(crate) async fn send_ws_tail_event(
         .map_err(|_| ())?
         .map_err(|_| ())
     } else {
-        try_send_text_strict(tx, text).map(|_| ()).map_err(|_| ())
+        let mut sent_tails = tx.sent_tails.lock();
+        if dedupe_key
+            .as_ref()
+            .is_some_and(|key| sent_tails.contains(key))
+        {
+            return Ok(());
+        }
+        let result = try_send_text_strict(tx, text).map(|_| ()).map_err(|_| ());
+        if result.is_ok() {
+            if let Some(key) = dedupe_key {
+                if sent_tails.len() >= WS_TAIL_DEDUPE_CAPACITY {
+                    sent_tails.clear();
+                }
+                sent_tails.insert(key);
+            }
+        }
+        result
     }
 }
 
@@ -1890,6 +1955,91 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn duplicate_live_tail_is_sent_once_per_connection() {
+        let (tx, mut rx) = mpsc::channel::<Message>(WS_TAIL_DEDUPE_CAPACITY * 2 + 8);
+        let sender = WsSender::new(tx);
+        let tail = |text: &str| StreamEvent {
+            event: "thread_item_tail".into(),
+            data: json!({
+                "session_id": "fixture-thread",
+                "data": {
+                    "item_id": "fixture-turn:text-1",
+                    "field": "reasoning",
+                    "offset": 0,
+                    "text": text,
+                }
+            }),
+            id: Some("7".into()),
+            timestamp: None,
+        };
+
+        send_ws_tail_event(&sender, Some("send-request"), tail("fixture thought"))
+            .await
+            .unwrap();
+        send_ws_tail_event(&sender, Some("watch-request"), tail("fixture thought"))
+            .await
+            .unwrap();
+
+        let Message::Text(raw) = rx.recv().await.unwrap() else {
+            panic!("expected tail")
+        };
+        let frame: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(frame["request_id"], "send-request");
+        assert!(matches!(
+            rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+
+        send_ws_tail_event(&sender, Some("repair-request"), tail("repaired thought"))
+            .await
+            .unwrap();
+        let Message::Text(raw) = rx.recv().await.unwrap() else {
+            panic!("expected repaired tail")
+        };
+        assert!(raw.contains("repaired thought"));
+
+        for index in 0..WS_TAIL_DEDUPE_CAPACITY * 2 {
+            let mut event = tail("unique");
+            event.data["data"]["offset"] = json!(index + 1);
+            send_ws_tail_event(&sender, Some("send-request"), event)
+                .await
+                .unwrap();
+        }
+        assert!(sender.sent_tails.lock().len() <= WS_TAIL_DEDUPE_CAPACITY);
+    }
+
+    #[tokio::test]
+    async fn failed_tail_delivery_does_not_suppress_another_lane() {
+        let (tx, mut rx) = mpsc::channel::<Message>(1);
+        tx.try_send(Message::Text("busy".into())).unwrap();
+        let sender = WsSender::new(tx);
+        let event = StreamEvent {
+            event: "thread_item_tail".into(),
+            data: json!({
+                "session_id": "fixture-thread",
+                "data": {
+                    "item_id": "fixture-turn:text-1",
+                    "field": "reasoning",
+                    "offset": 0,
+                    "text": "retryable thought"
+                }
+            }),
+            id: Some("8".into()),
+            timestamp: None,
+        };
+        assert_eq!(
+            send_ws_tail_event(&sender, Some("send-request"), event.clone()).await,
+            Err(())
+        );
+        rx.recv().await.unwrap();
+        assert_eq!(
+            send_ws_tail_event(&sender, Some("watch-request"), event).await,
+            Ok(())
+        );
+        assert!(matches!(rx.recv().await, Some(Message::Text(_))));
     }
 
     #[tokio::test]

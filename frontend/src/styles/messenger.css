@@ -6402,6 +6402,26 @@ body.desktop-shell-active .workspace-editor-shell {
   height: 100%;
 }
 
+/* Markdown 预览面：复用消息区的 markdown-body 排版，独立滚动，避免与源码编辑器抢高度。 */
+.workspace-dialog--file-preview .workspace-preview.is-markdown-preview {
+  overflow: hidden;
+}
+
+.workspace-dialog--file-preview .workspace-preview .workspace-document-markdown {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 24px 32px;
+  color: #1f2937;
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.workspace-dialog--file-preview .workspace-preview .workspace-document-markdown .markdown-body {
+  max-width: 860px;
+  margin: 0 auto;
+}
+
 .workspace-dialog--file-preview .workspace-preview.is-audio {
   justify-content: center;
 }

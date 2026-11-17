@@ -192,6 +192,17 @@ const ONLYOFFICE_EXTENSIONS = new Set([
   ...ONLYOFFICE_TEXT_ALIAS_EXTENSIONS
 ]);
 
+const HTML_DOCUMENT_EXTENSIONS = new Set(['html', 'htm', 'xhtml']);
+const MARKDOWN_DOCUMENT_EXTENSIONS = new Set(['md', 'markdown', 'mdown', 'mkd']);
+
+/** 可渲染预览的 HTML 文档（普通 `.html` 文件默认看渲染结果，可切到源码编辑）。 */
+export const isWorkspaceHtmlDocumentPath = (path = ''): boolean =>
+  HTML_DOCUMENT_EXTENSIONS.has(extractWorkspaceResourceExtension(path));
+
+/** Markdown 文档：编辑器默认给源码，另配一个渲染预览入口。 */
+export const isWorkspaceMarkdownDocumentPath = (path = ''): boolean =>
+  MARKDOWN_DOCUMENT_EXTENSIONS.has(extractWorkspaceResourceExtension(path));
+
 const IMAGE_MIME_TYPES: Record<string, string> = {
   png: 'image/png',
   jpg: 'image/jpeg',

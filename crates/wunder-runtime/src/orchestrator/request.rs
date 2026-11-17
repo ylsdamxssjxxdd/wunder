@@ -280,6 +280,21 @@ impl Orchestrator {
         &self,
         request: WunderRequest,
     ) -> Result<impl Stream<Item = Result<StreamEvent, std::convert::Infallible>>> {
+        self.stream_internal(request, false).await
+    }
+
+    pub(crate) async fn stream_without_item_deltas(
+        &self,
+        request: WunderRequest,
+    ) -> Result<impl Stream<Item = Result<StreamEvent, std::convert::Infallible>>> {
+        self.stream_internal(request, true).await
+    }
+
+    async fn stream_internal(
+        &self,
+        request: WunderRequest,
+        suppress_item_deltas: bool,
+    ) -> Result<impl Stream<Item = Result<StreamEvent, std::convert::Infallible>>> {
         let prepared = self.prepare_request(request).await?;
         let language = prepared.language.clone();
         let (queue_tx, queue_rx) = mpsc::channel::<StreamSignal>(STREAM_EVENT_QUEUE_SIZE);
@@ -294,7 +309,12 @@ impl Orchestrator {
             self.monitor.clone(),
             prepared.is_admin,
             prepared.client_message_id.clone(),
-        )
+        );
+        let emitter = if suppress_item_deltas {
+            emitter.without_item_deltas()
+        } else {
+            emitter
+        }
         .with_committer(self.committer.clone());
         emitter.bind_turn(
             &prepared.thread_turn_id.expect("accepted turn").to_string(),

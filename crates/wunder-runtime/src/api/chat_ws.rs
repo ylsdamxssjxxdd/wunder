@@ -639,7 +639,12 @@ async fn handle_ws(
                         long_task::spawn("api.chat_ws.stream_request", async move {
                             let _stream_busy = stream_busy;
                             let _lease = lease;
-                            match state_snapshot.kernel.orchestrator.stream(request).await {
+                            match state_snapshot
+                                .kernel
+                                .orchestrator
+                                .stream_without_item_deltas(request)
+                                .await
+                            {
                                 Ok(stream) => {
                                     tokio::pin!(stream);
                                     let mut feeder_started = false;

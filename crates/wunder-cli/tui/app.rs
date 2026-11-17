@@ -4425,7 +4425,7 @@ impl TuiApp {
                         if stream_preview.is_empty() {
                             vec![Line::from(Span::styled(
                                 log_prefix(entry.kind).to_string(),
-                                base_style,
+                                super::theme::log_prefix_style(entry.kind),
                             ))]
                         } else {
                             Vec::new()
@@ -10199,8 +10199,9 @@ fn log_base_style(kind: LogKind) -> Style {
 // on the first line, then hanging indents for wrapped and explicit newline content.
 fn render_plain_lines(kind: LogKind, text: &str, style: Style, width: u16) -> Vec<Line<'static>> {
     let prefix = log_prefix(kind);
+    let prefix_style = super::theme::log_prefix_style(kind);
     let prefix_width = UnicodeWidthStr::width(prefix).max(1);
-    let leading_indent = Line::from(Span::styled(prefix.to_string(), style));
+    let leading_indent = Line::from(Span::styled(prefix.to_string(), prefix_style));
     let continuation_indent = Line::from(Span::styled(" ".repeat(prefix_width), style));
     let body_indent = Line::from(Span::styled(" ".repeat(prefix_width), style));
     let wrap_width = usize::from(width.max(1));
@@ -10221,14 +10222,14 @@ fn render_plain_lines(kind: LogKind, text: &str, style: Style, width: u16) -> Ve
         );
 
         if wrapped.is_empty() {
-            lines.push(Line::from(Span::styled(prefix.to_string(), style)));
+            lines.push(Line::from(Span::styled(prefix.to_string(), prefix_style)));
         } else {
             super::line_utils::push_owned_lines(wrapped.as_slice(), &mut lines);
         }
     }
 
     if lines.is_empty() {
-        lines.push(Line::from(Span::styled(prefix.to_string(), style)));
+        lines.push(Line::from(Span::styled(prefix.to_string(), prefix_style)));
     }
     lines
 }
@@ -10242,11 +10243,15 @@ fn render_markdown_lines(kind: LogKind, text: &str, width: u16) -> Vec<Line<'sta
     let rendered = super::markdown_render::render_markdown_text_with_width(text, Some(wrap_width));
     let mut lines = rendered.lines;
     if lines.is_empty() {
-        return vec![Line::from(Span::styled(prefix.to_string(), style))];
+        return vec![Line::from(Span::styled(
+            prefix.to_string(),
+            super::theme::log_prefix_style(kind),
+        ))];
     }
-    lines[0]
-        .spans
-        .insert(0, Span::styled(prefix.to_string(), style));
+    lines[0].spans.insert(
+        0,
+        Span::styled(prefix.to_string(), super::theme::log_prefix_style(kind)),
+    );
     for line in &mut lines {
         line.style = style.patch(line.style);
     }
@@ -10272,9 +10277,10 @@ fn style_markdown_lines(
     let style = log_base_style(kind);
     if add_prefix {
         let prefix = log_prefix(kind);
-        lines[0]
-            .spans
-            .insert(0, Span::styled(prefix.to_string(), style));
+        lines[0].spans.insert(
+            0,
+            Span::styled(prefix.to_string(), super::theme::log_prefix_style(kind)),
+        );
     }
     for line in &mut lines {
         line.style = style.patch(line.style);

@@ -10,18 +10,23 @@
     @update:visible="updateAgentPromptPreviewVisible"
   />
 
-  <MessengerResourcePreviewDialog
+  <WorkspaceDocumentDialog
     :visible="resourcePreviewVisible"
     :loading="resourcePreviewLoading"
     :title="resourcePreviewTitle"
+    :path="resourcePreviewWorkspacePath"
     :meta="resourcePreviewMeta"
     :hint="resourcePreviewHint"
-    :src="resourcePreviewUrl"
-    :content="resourcePreviewContent"
-    :source-path="resourcePreviewWorkspacePath"
+    :error="''"
+    :too-large="resourcePreviewTooLarge"
+    :editable="resourcePreviewEditable"
+    :saving="resourcePreviewSaving"
     :preview-kind="resourcePreviewKind"
+    :preview-url="resourcePreviewUrl"
+    :content="resourcePreviewContent"
     @download="handleResourcePreviewDownload"
     @close="closeResourcePreview"
+    @save="handleResourcePreviewSave"
   />
 
   <OnlyOfficeEditorDialog
@@ -54,10 +59,7 @@
 <script setup lang="ts">
 import DrawioEditorDialog from '@/components/chat/DrawioEditorDialog.vue';
 import OnlyOfficeEditorDialog from '@/components/chat/OnlyOfficeEditorDialog.vue';
-import {
-  MessengerResourcePreviewDialog,
-  MessengerPromptPreviewDialog
-} from './asyncDialogs';
+import { MessengerPromptPreviewDialog, WorkspaceDocumentDialog } from './asyncDialogs';
 import type { PromptToolingPreviewItem } from '@/utils/promptToolingPreview';
 import type { WorkspaceResourcePreviewKind } from '@/utils/workspaceResourcePreview';
 
@@ -78,7 +80,11 @@ const {
   resourcePreviewContent,
   resourcePreviewWorkspacePath,
   resourcePreviewKind,
+  resourcePreviewTooLarge,
+  resourcePreviewEditable,
+  resourcePreviewSaving,
   handleResourcePreviewDownload,
+  handleResourcePreviewSave,
   closeResourcePreview,
   onlyOfficeVisible,
   onlyOfficePath,
@@ -107,7 +113,11 @@ const {
   resourcePreviewContent: string;
   resourcePreviewWorkspacePath: string;
   resourcePreviewKind: WorkspaceResourcePreviewKind;
+  resourcePreviewTooLarge: boolean;
+  resourcePreviewEditable: boolean;
+  resourcePreviewSaving: boolean;
   handleResourcePreviewDownload: () => void | Promise<void>;
+  handleResourcePreviewSave: (content: string) => void | Promise<void>;
   closeResourcePreview: () => void;
   onlyOfficeVisible: boolean;
   onlyOfficePath: string;
