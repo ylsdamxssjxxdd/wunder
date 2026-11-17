@@ -24,9 +24,9 @@ import type { PropType } from 'vue';
 import { useI18n } from '@/i18n';
 
 /**
- * 预设问题列表：作为输入区「+」菜单的级联子面板渲染（悬停行从右侧呼出）。
- * 卡片外观与定位由父组件的 `.composer-plus-flyout` 提供（父级 scoped 样式会落到子组件根节点），
- * 这里只管列表自身，不借用 ChatComposer 的 scoped `.composer-panel`（scoped 样式不外溢到子组件内部）。
+ * 预设问题列表：直接铺在输入区「+」面板的第一栏（一栏到底，点一下就填入草稿）。
+ * 卡片外观与位置由父组件的 `.composer-panel--plus` 提供，这里只管列表自身，
+ * 不借用 ChatComposer 的 scoped `.composer-panel`（scoped 样式不外溢到子组件内部）。
  */
 defineProps({
   items: {
@@ -43,20 +43,21 @@ const { t } = useI18n();
 .composer-preset-panel {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .composer-preset-panel-item {
   flex-shrink: 0;
   width: 100%;
-  padding: 6px 8px;
+  padding: 7px 8px;
   overflow: hidden;
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: var(--mz-text-secondary, #3d3d3d);
+  color: var(--mz-text, #1f2329);
   font: inherit;
-  font-size: 12px;
+  font-size: 12.5px;
+  line-height: 1.35;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;

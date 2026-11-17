@@ -2130,15 +2130,6 @@ button.messenger-sidebar-workspace-row {
   max-width: 100px;
 }
 
-/* 分屏窗格比整页窄：级联子菜单改从所属行向上展开并左对齐，
-   避免右侧窗格把 268px 的子菜单顶出视口。 */
-.messenger-split-pane .composer-panel--plus .composer-plus-flyout {
-  right: auto;
-  bottom: calc(100% + 6px);
-  left: 0;
-  width: min(268px, calc(100vw - 48px));
-}
-
 .messenger-split-resizer {
   position: absolute;
   z-index: 12;

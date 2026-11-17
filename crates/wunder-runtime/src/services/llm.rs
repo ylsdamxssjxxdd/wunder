@@ -1534,72 +1534,6 @@ impl LlmClient {
                 }
             };
             let mut stream = response.bytes_stream();
-            let mut pending_delta = String::new();
-            let mut pending_reasoning = String::new();
-            let batch_dirty = Arc::new(AtomicBool::new(false));
-            let callback_dirty = Arc::clone(&batch_dirty);
-            let mut on_chunk_delta = move |delta: String, reasoning_delta: String| {
-                let has_text = !delta.is_empty() || !reasoning_delta.is_empty();
-                let had_pending = !pending_delta.is_empty() || !pending_reasoning.is_empty();
-                let mut batches = Vec::new();
-                if has_text {
-                    if had_pending
-                        && pending_delta.len()
-                            + pending_reasoning.len()
-                            + delta.len()
-                            + reasoning_delta.len()
-                            > STREAM_DELTA_BATCH_BYTES
-                    {
-                        batches.push((
-                            std::mem::take(&mut pending_delta),
-                            std::mem::take(&mut pending_reasoning),
-                        ));
-                    }
-                    pending_delta.push_str(&delta);
-                    pending_reasoning.push_str(&reasoning_delta);
-                    if pending_delta.len() + pending_reasoning.len() >= STREAM_DELTA_BATCH_BYTES {
-                        batches.push((
-                            std::mem::take(&mut pending_delta),
-                            std::mem::take(&mut pending_reasoning),
-                        ));
-                    }
-                    callback_dirty.store(
-                        !pending_delta.is_empty() || !pending_reasoning.is_empty(),
-                        Ordering::Relaxed,
-                    );
-                } else {
-                    if had_pending {
-                        batches.push((
-                            std::mem::take(&mut pending_delta),
-                            std::mem::take(&mut pending_reasoning),
-                        ));
-                    }
-                    callback_dirty.store(false, Ordering::Relaxed);
-                }
-                let forward_empty = !has_text && !had_pending;
-                let batch_futures = batches
-                    .into_iter()
-                    .map(|(content, reasoning)| on_budget_delta(content, reasoning))
-                    .collect::<Vec<_>>();
-                let empty_future =
-                    forward_empty.then(|| on_budget_delta(String::new(), String::new()));
-                async move {
-                    for future in batch_futures {
-                        future.await?;
-                    }
-                    if let Some(future) = empty_future {
-                        future.await?;
-                    }
-                    Ok(())
-                }
-            };
-            macro_rules! flush_pending_delta {
-                () => {
-                    if batch_dirty.load(Ordering::Relaxed) {
-                        on_chunk_delta(String::new(), String::new()).await?;
-                    }
-                };
-            }
             let mut decoder = stream_decode::StreamDecoder::default();
             let mut buffer = String::new();
             let mut sse_cursor = 0usize;
@@ -1614,38 +1548,25 @@ impl LlmClient {
                 decoder.push(&bytes, &mut buffer)?;
 
                 while let Some(event_block) = take_next_sse_event(&mut buffer, &mut sse_cursor) {
-                    if sse_event_block_is_done(&event_block) {
-                        flush_pending_delta!();
-                        if tripped.load(Ordering::Relaxed) {
-                            break 'read;
-                        }
-                    }
-                    let result = process_sse_event_block_with_preview(
+                    if process_sse_event_block_with_preview(
                         event_block.as_str(),
                         &mut combined,
                         &mut reasoning_combined,
                         &mut usage,
                         &mut tool_calls_accumulator,
                         &mut final_response_preview,
-                        &mut on_chunk_delta,
+                        &mut on_budget_delta,
                     )
-                    .await;
-                    if result.is_err() {
-                        flush_pending_delta!();
-                    }
-                    if result? {
+                    .await?
+                    {
                         saw_done = true;
                         break;
                     }
                     if tripped.load(Ordering::Relaxed) {
-                        flush_pending_delta!();
                         break 'read;
                     }
                 }
-                flush_pending_delta!();
-                if tripped.load(Ordering::Relaxed) {
-                    break;
-                }
+
                 if saw_done {
                     break;
                 }
@@ -1667,31 +1588,21 @@ impl LlmClient {
                 let Some(event_block) = take_next_sse_event(&mut buffer, &mut sse_cursor) else {
                     break;
                 };
-                if sse_event_block_is_done(&event_block) {
-                    flush_pending_delta!();
-                    if tripped.load(Ordering::Relaxed) {
-                        break;
-                    }
-                }
-                let result = process_sse_event_block_with_preview(
+                if process_sse_event_block_with_preview(
                     event_block.as_str(),
                     &mut combined,
                     &mut reasoning_combined,
                     &mut usage,
                     &mut tool_calls_accumulator,
                     &mut final_response_preview,
-                    &mut on_chunk_delta,
+                    &mut on_budget_delta,
                 )
-                .await;
-                if result.is_err() {
-                    flush_pending_delta!();
-                }
-                if result? {
+                .await?
+                {
                     saw_done = true;
                     break;
                 }
             }
-            flush_pending_delta!();
             if tripped.load(Ordering::Relaxed) && !saw_done {
                 return Ok(StreamAttempt::BudgetAborted {
                     partial_reasoning: reasoning_combined,
@@ -1700,21 +1611,20 @@ impl LlmClient {
             }
 
             let remaining = buffer[sse_cursor..].trim();
-            if !saw_done && !remaining.is_empty() {
-                let result = process_sse_event_block_with_preview(
+            if !saw_done
+                && !remaining.is_empty()
+                && process_sse_event_block_with_preview(
                     remaining,
                     &mut combined,
                     &mut reasoning_combined,
                     &mut usage,
                     &mut tool_calls_accumulator,
                     &mut final_response_preview,
-                    &mut on_chunk_delta,
+                    &mut on_budget_delta,
                 )
-                .await;
-                flush_pending_delta!();
-                if result? {
-                    saw_done = true;
-                }
+                .await?
+            {
+                saw_done = true;
             }
 
             let tool_calls = finalize_stream_tool_calls(&tool_calls_accumulator);
@@ -2169,17 +2079,7 @@ pub(super) fn extract_stream_text(value: Option<&Value>) -> String {
     }
 }
 
-const STREAM_DELTA_BATCH_BYTES: usize = 32 * 1024;
 const SSE_BUFFER_COMPACT_BYTES: usize = 64 * 1024;
-
-fn sse_event_block_is_done(block: &str) -> bool {
-    block.lines().any(|line| {
-        line.trim()
-            .strip_prefix("data:")
-            .map(str::trim)
-            .is_some_and(|data| data == "[DONE]")
-    })
-}
 
 fn take_next_sse_event(buffer: &mut String, cursor: &mut usize) -> Option<String> {
     if *cursor >= SSE_BUFFER_COMPACT_BYTES && *cursor >= buffer.len() / 2 {
@@ -2350,7 +2250,6 @@ where
     match serde_json::from_str::<Value>(data) {
         Ok(payload) => {
             if let Some(reason) = output::finish_reason(&payload) {
-                on_delta(String::new(), String::new()).await?;
                 final_response_preview.finish_reason = Some(reason);
             }
             if let Some(error) = LlmPayloadError::from_payload(&payload) {
@@ -4292,7 +4191,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stream_coalesces_one_network_chunk_without_changing_text() {
+    async fn stream_forwards_each_delta_immediately_within_one_network_chunk() {
         use axum::body::Body;
         use axum::http::StatusCode;
         use axum::response::Response;
@@ -4359,7 +4258,7 @@ mod tests {
         assert_eq!(response.content, "hi!");
         assert_eq!(response.reasoning, "aabb");
         let seen = seen.lock().unwrap();
-        assert!(seen.len() < 4, "chunk should be coalesced: {seen:?}");
+        assert_eq!(seen.len(), 4, "every delta must be forwarded immediately");
         assert_eq!(
             seen.iter()
                 .map(|(delta, _)| delta.as_str())
@@ -4477,7 +4376,11 @@ mod tests {
                 .sum::<usize>(),
             expected_reasoning_bytes
         );
-        assert!(callbacks.len() < event_count / 10);
+        assert!(
+            callbacks.len() >= event_count,
+            "every reasoning delta must remain visible: {}",
+            callbacks.len()
+        );
         println!(
             "STREAM_RELEASE_PROBE events={event_count} sse_bytes={sse_bytes} callbacks={} wall_ms={wall_ms:.2} cpu_ms={cpu_ms:.2}",
             callbacks.len()

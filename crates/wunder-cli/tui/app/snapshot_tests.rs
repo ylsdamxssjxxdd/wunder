@@ -1393,33 +1393,23 @@ async fn the_warning_notice_and_its_panel_reach_the_frame() {
 }
 
 #[tokio::test]
-async fn the_footer_names_the_task_and_sheds_it_before_the_keys() {
+async fn the_footer_leaves_the_task_name_to_the_header() {
     let root = TempRoot::new("footer_title");
     let mut app = fixture_app(root.path()).await;
 
     let items = app.composer_footer_items();
     assert!(
-        items
+        !items
             .iter()
-            .any(|(key, label)| key.is_empty() && label.contains("summarise the flaky test")),
-        "the first user turn titles the thread: {items:?}"
+            .any(|(_, label)| label.contains("summarise the flaky test")),
+        "the footer no longer repeats the thread name: {items:?}"
     );
 
-    // Narrow enough that the task description cannot survive beside the
-    // shortcut key and the context figure.
-    let frame = draw_rows(&mut app, 30, 24).join("\n");
-    assert!(frame.contains('\u{2190}'), "the keys stay: {frame}");
-    assert!(
-        !frame
-            .lines()
-            .last()
-            .unwrap_or_default()
-            .contains("summarise the flaky test"),
-        "and the description gives way first: {frame}"
-    );
-
+    // Even a wide footer keeps the left side down to where it runs plus the key,
+    // so a redundant description never crowds out the shortcut.
     let wide = draw_rows(&mut app, 120, 24).join("\n");
-    assert!(wide.contains("summarise the flaky test"), "{wide}");
+    assert!(!wide.contains("summarise the flaky test"), "{wide}");
+    assert!(wide.contains('←'), "the keys stay: {wide}");
 }
 
 /// The thread-center hint carries the action, not just the destination: the

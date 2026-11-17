@@ -2266,6 +2266,7 @@ export default {
   'messenger.filesArea.preview.title': 'File preview',
   // ------------------------------------------- B4 composer (§8)
   'chat.composer.commands': 'Commands',
+  'chat.composer.presetEmpty': 'This agent has no preset questions yet',
   'chat.composer.moreActions': 'More actions',
   'chat.composer.queue.title': 'Queued',
   'chat.composer.queue.count': '{count} in queue',

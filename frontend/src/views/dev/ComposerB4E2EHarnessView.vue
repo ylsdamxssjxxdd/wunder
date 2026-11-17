@@ -7,6 +7,9 @@
       <button type="button" data-testid="composer-b4-queue-reference" @click="queueReference">
         引用到聊天
       </button>
+      <button type="button" data-testid="composer-b4-clear-presets" @click="clearPresets">
+        清空预设问题
+      </button>
       <button type="button" data-testid="composer-b4-reset" @click="resetLog">Reset</button>
     </header>
 
@@ -19,7 +22,6 @@
           send-key="enter"
           draft-key="composer-b4-harness"
           :approval-mode="approvalMode"
-          :approval-mode-editable="true"
           :model-name="modelName"
           :apply-model="applyModel"
           :preset-questions="presetQuestions"
@@ -27,7 +29,6 @@
           @stop="log('stop')"
           @new-thread="log('new-thread')"
           @open-thread="log(`open-thread:${$event}`)"
-          @update:approval-mode="handleApprovalMode"
         />
       </div>
     </section>
@@ -65,9 +66,8 @@ const handleSend = (payload: Record<string, unknown>) => {
   );
 };
 
-const handleApprovalMode = (value: string) => {
-  approvalMode.value = value;
-  log(`approval-mode:${value}`);
+const clearPresets = () => {
+  presetQuestions.value = [];
 };
 
 // Stands in for the controller chain so the popover -> apply -> label path is

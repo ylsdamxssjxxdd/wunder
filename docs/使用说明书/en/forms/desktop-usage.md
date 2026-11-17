@@ -28,7 +28,7 @@ updated_at: 2026-11-14
 | Capability | What it is |
 | --- | --- |
 | Interactive terminal | Run commands in a real terminal view (winpty on Windows, PTY on Linux) |
-| Screenshot capture | Capture the screen and drop it back into the composer |
+| Screenshot capture | Capture a region or the whole screen and drop it back into the composer; the desktop shell also copies it to the system clipboard for pasting into other apps |
 | Tray and notifications | Keep running in the background and get told when a task finishes |
 | Global hotkey | Wake the window from anywhere |
 | Voice input | Dictate instead of typing |

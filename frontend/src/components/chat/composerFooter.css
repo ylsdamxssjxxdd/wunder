@@ -130,22 +130,10 @@
   opacity: 0.7;
 }
 
-/* 录音计时紧贴麦克风（桌面 composer.slint:612-618）。 */
-.composer-voice-timer {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  height: 30px;
-  color: var(--mz-danger, #d04a43);
-  font-size: 12px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
 /* ------------------------------------------------------------- model 触发器 */
 
 /* 模型触发器是「无边框、悬停填充」的幽灵按钮（composer.slint:62-95），
-   高度与其余按钮同为 30px；审批模式入口已并入「+」菜单行。 */
+   高度与其余按钮同为 30px；审批模式入口只在智能体设置里配置。 */
 .composer-model-trigger {
   display: inline-flex;
   align-items: center;
@@ -285,103 +273,67 @@
   transform: rotate(45deg);
 }
 
-/* 菜单本体不再滚动也不限高，否则右侧呼出的子面板会被裁掉。
+/* 「+」面板只有一栏：该智能体的预设问题（输入 `/` 时同一栏换成命令建议）。
    两个类并列才能压过文件后面的 `.composer-panel` 基类（同为一段作用域属性，靠特异度取胜）。 */
 .composer-panel.composer-panel--plus {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  width: 220px;
-  max-height: none;
-  overflow: visible;
+  width: 232px;
+  max-width: calc(100vw - 48px);
+  max-height: min(420px, 58vh);
+  overflow-y: auto;
 }
 
-.composer-plus-row {
-  position: relative;
-}
-
-/* 级联子面板：贴着所属行从右侧呼出（参考形态），不向下挤开菜单。
-   菜单恒在屏幕下方，所以子面板按**底边**对齐所属行向上长——顶边对齐会在矮窗口里掉出视口。 */
-.composer-plus-flyout {
-  position: absolute;
-  bottom: -7px;
-  left: calc(100% + 6px);
-  z-index: 41;
+/* 命令建议：`/` 输入时借这一栏展示，宽度只有 232px，说明单行省略。 */
+.composer-plus-suggestions {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   box-sizing: border-box;
-  width: 268px;
-  max-width: calc(100vw - 48px);
-  max-height: 240px;
-  padding: 4px;
-  overflow-y: auto;
-  border: 1px solid var(--mz-border, #e8e6e3);
-  border-radius: 10px;
-  background: var(--mz-surface, #ffffff);
-  box-shadow: 0 12px 32px rgba(31, 35, 41, 0.16);
+  padding: 2px;
+  border-radius: 8px;
 }
 
-.composer-plus-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  box-sizing: border-box;
-  width: 100%;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 8px;
+.composer-plus-suggestions .command-menu-item {
+  border: 1px solid transparent;
+  border-radius: 6px;
   background: transparent;
   color: var(--mz-text, #1f2329);
-  font: inherit;
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
+  font-size: 12px;
 }
 
-.composer-plus-item:hover:not(:disabled),
-.composer-plus-item.is-active {
+.composer-plus-suggestions .command-menu-item:hover,
+.composer-plus-suggestions .command-menu-item.active {
+  border-color: transparent;
   background: var(--mz-hover, #f1efec);
 }
 
-.composer-plus-item:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.composer-plus-item-icon {
+.composer-plus-suggestions .command-menu-name {
   flex: 0 0 auto;
-  width: 16px;
+  font-weight: 600;
+  color: var(--mz-text, #1f2329);
+}
+
+.composer-plus-suggestions .command-menu-desc,
+.composer-plus-suggestions .command-menu-hint {
   color: var(--mz-text-muted, #8a8f99);
-  font-size: 13px;
-  text-align: center;
 }
 
-.composer-plus-item.is-active .composer-plus-item-icon,
-.composer-plus-item.is-recording .composer-plus-item-icon {
-  color: var(--mz-primary, var(--ui-accent-ink));
-}
-
-.composer-plus-item.is-recording {
-  color: var(--mz-danger, #d04a43);
-}
-
-.composer-plus-item-label {
+.composer-plus-suggestions .command-menu-desc {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
+  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.composer-plus-item-caret {
-  flex: 0 0 auto;
-  font-size: 10px;
-  opacity: 0.55;
-}
-
-.composer-plus-item.is-active .composer-plus-item-caret {
-  opacity: 1;
+.composer-plus-suggestions .command-menu-hint {
+  margin-top: 2px;
+  padding: 4px 8px 2px;
+  border-top: 1px solid var(--mz-border, #e8e6e3);
+  font-size: 11px;
 }
 
 /* ------------------------------------------------------------------ send */

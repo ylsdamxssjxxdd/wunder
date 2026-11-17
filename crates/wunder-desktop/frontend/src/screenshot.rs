@@ -1,10 +1,11 @@
 //! Region screenshot flow for the native desktop UI.
 //!
 //! GDI capture and PNG compression never run on Slint's UI thread. The frozen
-//! frame is retained only while the selector is open; confirmation adds the
-//! result to the composer as a native chat attachment.
+//! frame is retained only while the selector is open; confirmation puts the
+//! result both in the composer as a native chat attachment and on the system
+//! clipboard, so it can be pasted into any other program.
 
-use crate::{image_attachment, screen_capture, MainWindow, ScreenshotOverlay};
+use crate::{clipboard_image, image_attachment, screen_capture, MainWindow, ScreenshotOverlay};
 use slint::ComponentHandle;
 use std::{
     cell::RefCell,
@@ -663,8 +664,11 @@ pub fn capture_fullscreen(app: slint::Weak<MainWindow>, hide_window: bool) {
         if hidden {
             settle_hidden_window(proof.as_ref());
         }
-        let result = screen_capture::capture_screen()
-            .and_then(|frame| save_attachment(frame.width, frame.height, &frame.rgba));
+        let result = screen_capture::capture_screen().map(|frame| {
+            let saved = save_attachment(frame.width, frame.height, &frame.rgba);
+            let copied = clipboard_image::publish(frame.width, frame.height, frame.rgba);
+            (saved, copied)
+        });
         let _ = slint::invoke_from_event_loop(move || {
             if hidden {
                 if let Some(state) = proof.as_ref() {
@@ -675,8 +679,11 @@ pub fn capture_fullscreen(app: slint::Weak<MainWindow>, hide_window: bool) {
             }
             CAPTURE_IN_FLIGHT.store(false, Ordering::Release);
             match result {
-                Ok((name, data_url)) => add_attachment(&app, name, data_url, "全屏截图"),
-                Err(error) => report(&app, format!("截图失败：{error}")),
+                Ok((Ok((name, data_url)), copied)) => {
+                    add_attachment(&app, name, data_url, "全屏截图", copied)
+                }
+                Ok((Err(error), copied)) => report_unsaved(&app, "全屏截图", error, copied),
+                Err(error) => report(&app, format!("截图失败：{}", error)),
             }
         });
     });
@@ -759,15 +766,38 @@ fn finish_selection(app: slint::Weak<MainWindow>, x: i32, y: i32, width: i32, he
     );
     std::thread::spawn(move || {
         let result = save_attachment(width, height, &rgba);
+        // The clipboard is an independent delivery path: the picture the user
+        // just framed must be pasteable elsewhere even when the composer is
+        // full or its temporary PNG could not be written.
+        let copied = clipboard_image::publish(width, height, rgba);
         let _ = slint::invoke_from_event_loop(move || match result {
-            Ok((name, data_url)) => add_attachment(&app, name, data_url, "截图"),
-            Err(error) => report(&app, format!("截图失败：{error}")),
+            Ok((name, data_url)) => add_attachment(&app, name, data_url, "截图", copied),
+            Err(error) => report_unsaved(&app, "截图", error, copied),
         });
     });
 }
 
-fn add_attachment(app: &slint::Weak<MainWindow>, name: String, data_url: String, kind: &str) {
-    image_attachment::add(app, name, data_url, kind);
+/// Hand the picture to the composer and report both delivery paths in one
+/// status line: the chip in the composer and the system clipboard are
+/// independent, so the user is told which one actually happened.
+fn add_attachment(
+    app: &slint::Weak<MainWindow>,
+    name: String,
+    data_url: String,
+    kind: &str,
+    clipboard: Result<(), String>,
+) {
+    if !image_attachment::push(app, name, data_url) {
+        return;
+    }
+    let Some(app) = app.upgrade() else { return };
+    app.set_status(
+        match clipboard {
+            Ok(()) => format!("{}已放入输入区，并已复制到剪贴板", kind),
+            Err(error) => format!("{}已放入输入区，但复制到剪贴板失败：{}", kind, error),
+        }
+        .into(),
+    );
 }
 
 fn hide_selector() {
@@ -804,6 +834,30 @@ fn crop(
 
 fn save_attachment(width: u32, height: u32, rgba: &[u8]) -> Result<(String, String), String> {
     image_attachment::save(width, height, rgba, "wunder-screenshot")
+}
+
+/// A capture whose pixels exist but could not become a composer attachment: the
+/// picture may still be on the clipboard, so the failure must not be reported as
+/// if nothing had happened.
+fn report_unsaved(
+    app: &slint::Weak<MainWindow>,
+    kind: &str,
+    error: String,
+    clipboard: Result<(), String>,
+) {
+    match clipboard {
+        Ok(()) => report(
+            app,
+            format!("{}已复制到剪贴板，但无法放入输入区：{}", kind, error),
+        ),
+        Err(copy_error) => report(
+            app,
+            format!(
+                "{}失败：{}；复制到剪贴板也失败：{}",
+                kind, error, copy_error
+            ),
+        ),
+    }
 }
 
 fn report(app: &slint::Weak<MainWindow>, message: String) {

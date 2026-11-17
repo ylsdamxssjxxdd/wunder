@@ -142,7 +142,7 @@
 
       <div class="composer-action-row">
         <div class="composer-action-group">
-          <!-- 命令 / 预设问题 / 录音 / 审批收进「+」；常驻状态格只列后台任务与子智能体。 -->
+          <!-- 「+」只放预设问题（点一下即填入草稿）；常驻状态格只列后台任务与子智能体。 -->
           <div ref="plusMenuAnchorRef" class="composer-anchor">
             <button
               class="composer-plus-btn"
@@ -157,134 +157,35 @@
               <i class="fa-solid fa-plus composer-plus-icon" aria-hidden="true"></i>
             </button>
 
-            <div v-if="plusPanelVisible" class="composer-panel composer-panel--plus" @click.stop>
-              <div class="composer-plus-row" @mouseenter="hoverPlusSubmenu('command')">
+            <div v-if="plusPanelVisible" ref="plusPanelRef" class="composer-panel composer-panel--plus" @click.stop>
+              <!-- 只有一栏：点「+」直接铺出该智能体的预设问题，点一项就填入草稿；
+                   输入 `/` 时同一栏让位给命令建议。没有命令/审批/语音行，选问题只需一次点击。 -->
+              <div v-if="commandSuggestionsVisible" class="composer-plus-suggestions" role="listbox">
                 <button
-                  class="composer-plus-item"
+                  v-for="(item, index) in commandSuggestions"
+                  :key="item.command"
+                  class="command-menu-item"
+                  :class="{ active: index === commandMenuIndex }"
                   type="button"
-                  :class="{ 'is-active': commandMenuOpen }"
-                  :aria-expanded="commandMenuOpen"
-                  @click.stop="toggleCommandMenu"
+                  role="option"
+                  :aria-selected="index === commandMenuIndex"
+                  @mousedown.prevent="applyCommandSuggestion(index)"
+                  @mouseenter="setCommandMenuIndex(index)"
                 >
-                  <i class="fa-solid fa-terminal composer-plus-item-icon" aria-hidden="true"></i>
-                  <span class="composer-plus-item-label">{{ t('chat.composer.commands') }}</span>
-                  <i class="fa-solid fa-chevron-right composer-plus-item-caret" aria-hidden="true"></i>
+                  <span class="command-menu-name">{{ item.command }}</span>
+                  <span class="command-menu-desc">{{ item.description }}</span>
                 </button>
-                <div v-if="commandPanelVisible && !presetMenuVisible" class="composer-plus-flyout" role="listbox">
-                  <button
-                    v-for="(item, index) in commandPanelItems"
-                    :key="item.command"
-                    class="command-menu-item"
-                    :class="{ active: !commandMenuOpen && index === commandMenuIndex }"
-                    type="button"
-                    role="option"
-                    :aria-selected="!commandMenuOpen && index === commandMenuIndex"
-                    @mousedown.prevent="applyCommandSuggestion(index)"
-                    @mouseenter="setCommandMenuIndex(index)"
-                  >
-                    <span class="command-menu-name">{{ item.command }}</span>
-                    <span class="command-menu-desc">{{ item.description }}</span>
-                  </button>
-                  <div class="command-menu-hint">{{ t('chat.commandMenu.hint') }}</div>
-                </div>
+                <div class="command-menu-hint">{{ t('chat.commandMenu.hint') }}</div>
               </div>
-
-              <template v-if="presetQuestionItems.length">
-                <div class="composer-plus-row" @mouseenter="hoverPlusSubmenu('preset')">
-                  <button
-                    class="composer-plus-item"
-                    type="button"
-                    :class="{ 'is-active': presetMenuVisible }"
-                    :aria-expanded="presetMenuVisible"
-                    @click.stop="togglePresetMenu"
-                  >
-                    <i
-                      class="fa-solid fa-wand-magic-sparkles composer-plus-item-icon"
-                      aria-hidden="true"
-                    ></i>
-                    <span class="composer-plus-item-label">{{
-                      t('chat.commandMenu.presetQuestions')
-                    }}</span>
-                    <i class="fa-solid fa-chevron-right composer-plus-item-caret" aria-hidden="true"></i>
-                  </button>
-                  <ComposerPresetQuestions
-                    v-if="presetMenuVisible"
-                    class="composer-plus-flyout"
-                    :items="presetQuestionItems"
-                    @pick="applyPresetQuestion"
-                  />
-                </div>
+              <template v-else>
+                <div class="composer-panel-title">{{ t('chat.commandMenu.presetQuestions') }}</div>
+                <ComposerPresetQuestions
+                  v-if="presetQuestionItems.length"
+                  :items="presetQuestionItems"
+                  @pick="applyPresetQuestion"
+                />
+                <div v-else class="composer-panel-hint">{{ t('chat.composer.presetEmpty') }}</div>
               </template>
-
-              <div
-                v-if="showApprovalModeSelector"
-                class="composer-plus-row"
-                @mouseenter="hoverPlusSubmenu('approval')"
-              >
-                <button
-                  class="composer-plus-item"
-                  type="button"
-                  :class="{ 'is-active': approvalMenuVisible }"
-                  :disabled="approvalModeSyncing"
-                  :aria-expanded="approvalMenuVisible"
-                  @click.stop="toggleApprovalMenu"
-                >
-                  <i :class="[approvalTriggerIcon, 'composer-plus-item-icon']" aria-hidden="true"></i>
-                  <span class="composer-plus-item-label">{{ approvalModeLabel }}</span>
-                  <i class="fa-solid fa-chevron-right composer-plus-item-caret" aria-hidden="true"></i>
-                </button>
-                <!-- 审批模式子面板：与命令/预设同级的右侧呼出，选项列表复用原下拦内容。 -->
-                <div v-if="approvalMenuVisible" class="composer-plus-flyout" role="menu">
-                  <div class="composer-panel-title">{{ t('chat.composer.approval') }}</div>
-                  <button
-                    v-for="option in approvalOptions"
-                    :key="option.value"
-                    class="composer-panel-item composer-panel-item--radio"
-                    :class="{ 'is-selected': option.value === approvalModeValue }"
-                    type="button"
-                    role="menuitemradio"
-                    :aria-checked="option.value === approvalModeValue"
-                    @click="selectApprovalMode(option.value)"
-                  >
-                    <span class="composer-panel-radio" aria-hidden="true">
-                      <i v-if="option.value === approvalModeValue" class="fa-solid fa-check"></i>
-                    </span>
-                    <span class="composer-panel-main">
-                      <span class="composer-panel-item-label">{{ option.label }}</span>
-                      <span class="composer-panel-desc">{{ option.description }}</span>
-                    </span>
-                  </button>
-                  <div class="composer-panel-hint">{{ t('chat.composer.approval.hint') }}</div>
-                </div>
-              </div>
-
-              <div class="composer-plus-row" @mouseenter="hoverPlusSubmenu('none')">
-                <button
-                  v-if="voiceSupported"
-                  class="composer-plus-item"
-                  type="button"
-                  :class="{ 'is-recording': voiceRecording }"
-                  :disabled="composerBusy > 0 || voiceTranscribing"
-                  :title="voiceButtonTitle"
-                  @click.stop="handleToggleVoiceRecord"
-                >
-                  <i
-                    :class="[
-                      voiceRecording
-                        ? 'fa-solid fa-stop'
-                        : voiceTranscribing
-                          ? 'fa-solid fa-waveform-lines'
-                          : 'fa-solid fa-microphone',
-                      'composer-plus-item-icon'
-                    ]"
-                    aria-hidden="true"
-                  ></i>
-                  <span class="composer-plus-item-label">{{ t('messenger.world.voice.title') }}</span>
-                  <span v-if="voiceRecording" class="composer-voice-timer" :title="voiceRecordingLabel">
-                    {{ formatVoiceDurationLabel(props.voiceDurationMs) }}
-                  </span>
-                </button>
-              </div>
             </div>
           </div>
 
@@ -414,6 +315,9 @@ const props = defineProps({
     type: String,
     default: ''
   },
+  // 语音录音与审批选择目前没有输入区入口（审批在智能体设置里配置），
+  // 契约保留：`voiceRecording`/`voiceTranscribing` 仍驱动转写提示与发送快照，
+  // `approvalMode` 仍随消息上送。
   voiceSupported: {
     type: Boolean,
     default: false
@@ -499,12 +403,9 @@ const dragActive = ref(false);
 const dragCounter = ref(0);
 const modelMenuAnchorRef = ref<HTMLElement | null>(null);
 const plusMenuAnchorRef = ref<HTMLElement | null>(null);
-const approvalMenuVisible = ref(false);
+const plusPanelRef = ref<HTMLElement | null>(null);
 const modelMenuVisible = ref(false);
-const presetMenuVisible = ref(false);
 const plusMenuVisible = ref(false);
-// 命令按钮把命令面板钉住（桌面 `root.command-open`）；输入即交回 `/` 建议链路。
-const commandMenuOpen = ref(false);
 const modelSwitching = ref(false);
 type ReasoningEffort = 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 const normalizeReasoningEffort = (value: unknown): ReasoningEffort => {
@@ -741,26 +642,6 @@ const reasoningEffortOptions = computed(() =>
 const inputPlaceholder = computed(() =>
   props.inquiryActive ? t('chat.input.inquiryPlaceholder') : t('chat.input.placeholder')
 );
-const formatVoiceDurationLabel = (durationMs: unknown): string => {
-  const value = Number(durationMs);
-  if (!Number.isFinite(value) || value <= 0) {
-    return '0:00';
-  }
-  const totalSeconds = Math.max(1, Math.round(value / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${String(seconds).padStart(2, '0')}`;
-};
-const voiceButtonTitle = computed(() => {
-  if (props.voiceRecording) return t('messenger.world.voice.stop');
-  if (props.voiceTranscribing) return t('messenger.world.voice.transcribing');
-  return t('messenger.world.voice.start');
-});
-const voiceRecordingLabel = computed(() =>
-  t('messenger.world.voice.recording', {
-    duration: formatVoiceDurationLabel(props.voiceDurationMs)
-  })
-);
 const voiceTranscribingLabel = computed(() => t('messenger.world.voice.transcribing'));
 // §8.4 three approval tiers mapped onto the real `approval_mode` values.
 // `suggest` is the strictest gate the backend exposes (every write and command
@@ -803,15 +684,6 @@ const approvalModeValue = computed(() => {
   const matched = approvalOptions.value.find((item) => item.value === candidate);
   return matched?.value || 'full_auto';
 });
-const approvalModeLabel = computed(
-  () => approvalOptions.value.find((item) => item.value === approvalModeValue.value)?.label || ''
-);
-const approvalTriggerIcon = computed(
-  () => approvalOptions.value.find((item) => item.value === approvalModeValue.value)?.icon || 'fa-solid fa-bolt'
-);
-const showApprovalModeSelector = computed(() => Boolean(props.approvalModeEditable));
-const approvalModeSyncing = computed(() => props.approvalModeSyncing);
-const voiceSupported = computed(() => Boolean(props.voiceSupported));
 const voiceRecording = computed(() => Boolean(props.voiceRecording));
 const voiceTranscribing = computed(() => Boolean(props.voiceTranscribing));
 const hasSendableContent = computed(() =>
@@ -875,17 +747,6 @@ const commandSuggestionsVisible = computed(
   () => !commandMenuDismissed.value && commandSuggestions.value.length > 0
 );
 
-// 命令面板两条入口共用一份 DOM：输入 `/` 走建议过滤，命令按钮钉住时列全部命令。
-const allCommandItems = computed(() =>
-  slashCommandDefinitions.map((item) => ({
-    command: item.command,
-    description: t(item.descriptionKey)
-  }))
-);
-const commandPanelItems = computed(() =>
-  commandMenuOpen.value ? allCommandItems.value : commandSuggestions.value
-);
-const commandPanelVisible = computed(() => commandMenuOpen.value || commandSuggestionsVisible.value);
 const presetQuestionItems = computed(() => normalizeAgentPresetQuestions(props.presetQuestions));
 
 const buildAttachmentId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -1163,8 +1024,6 @@ const syncCaretPosition = () => {
 
 const handleInput = () => {
   commandMenuDismissed.value = false;
-  // 一旦开始输入，命令面板交回 `/` 建议链路，避免钉住的面板抢走 Enter/Tab。
-  commandMenuOpen.value = false;
   resetHistoryRecall();
   resizeInput();
   syncCaretPosition();
@@ -1387,13 +1246,12 @@ const moveCommandMenuIndex = (delta) => {
 };
 
 const applyCommandSuggestion = (index = commandMenuIndex.value) => {
-  const item = commandPanelItems.value[index];
+  const item = commandSuggestions.value[index];
   if (!item) {
     return false;
   }
   const leading = String(inputText.value || '').match(/^\s*/)?.[0] || '';
   inputText.value = `${leading}${item.command} `;
-  commandMenuOpen.value = false;
   commandMenuDismissed.value = false;
   nextTick(() => {
     resizeInput();
@@ -1417,12 +1275,7 @@ const handleInputKeydown = async (event) => {
     return;
   }
   if (event.key === 'Escape') {
-    const hasOpenPanel =
-      commandMenuOpen.value ||
-      approvalMenuVisible.value ||
-      modelMenuVisible.value ||
-      presetMenuVisible.value;
-    if (hasOpenPanel) {
+    if (hasOpenComposerPanel()) {
       event.preventDefault();
       closeComposerPanels();
       return;
@@ -2208,108 +2061,29 @@ const clearAttachments = () => {
 };
 
 const closeComposerPanels = () => {
-  commandMenuOpen.value = false;
-  approvalMenuVisible.value = false;
   modelMenuVisible.value = false;
-  presetMenuVisible.value = false;
   plusMenuVisible.value = false;
 };
 
-const closeOtherPanels = (keep: 'plus' | 'command' | 'approval' | 'model' | 'preset') => {
-  if (keep !== 'command') commandMenuOpen.value = false;
-  if (keep !== 'approval') approvalMenuVisible.value = false;
+const closeOtherPanels = (keep: 'plus' | 'model') => {
   if (keep !== 'model') modelMenuVisible.value = false;
-  if (keep !== 'preset') presetMenuVisible.value = false;
-  if (keep !== 'plus' && keep !== 'command' && keep !== 'preset' && keep !== 'approval') {
-    plusMenuVisible.value = false;
-  }
+  if (keep !== 'plus') plusMenuVisible.value = false;
 };
 
 /**
- * 「+」面板的可见性：点加号，或被 `/` 建议与预设列表任一分支点亮时都要在。
- * 命令、预设与审批模式在面板内各自开合，因此它们任一为真也代表面板开着。
+ * 「+」面板的可见性：点加号，或输入 `/` 让命令建议借这一栏时都在。
  */
-const plusPanelVisible = computed(() =>
-  plusMenuVisible.value ||
-  commandMenuOpen.value ||
-  presetMenuVisible.value ||
-  approvalMenuVisible.value ||
-  commandSuggestionsVisible.value
+const plusPanelVisible = computed(
+  () => plusMenuVisible.value || commandSuggestionsVisible.value
 );
 
-// 加号只开合面板；面板内的四段各自负责自己的开合。
+// 加号只开合这一栏，内容永远是该智能体的预设问题。
 const togglePlusMenu = () => {
   const next = !plusPanelVisible.value;
   closeOtherPanels('plus');
   plusMenuVisible.value = next;
-  if (!next) {
-    commandMenuOpen.value = false;
-    presetMenuVisible.value = false;
-    approvalMenuVisible.value = false;
-  }
-};
-
-// 命令按钮只开面板、不发送：选中项填入草稿（与桌面 `root.draft = command.value` 一致）。
-const toggleCommandMenu = () => {
-  const next = !commandMenuOpen.value;
-  closeOtherPanels('command');
-  commandMenuOpen.value = next;
-  if (next) plusMenuVisible.value = true;
-  if (next) commandMenuIndex.value = 0;
-};
-
-// 预设问题：只开合列表，选中项由 applyPresetQuestion 填入草稿。
-const togglePresetMenu = () => {
-  const next = !presetMenuVisible.value;
-  closeOtherPanels('preset');
-  presetMenuVisible.value = next;
-  if (next) plusMenuVisible.value = true;
-};
-
-/**
- * 「+」菜单的级联形态：悬停行就从右侧呼出子面板，移开不自动收起。
- * 语音行没有子面板，指过去即把其余子面板关掉。
- */
-const hoverPlusSubmenu = (target: 'command' | 'preset' | 'approval' | 'none') => {
-  if (!plusPanelVisible.value) return;
-  if (target === 'none') {
-    commandMenuOpen.value = false;
-    presetMenuVisible.value = false;
-    approvalMenuVisible.value = false;
-    return;
-  }
-  if (target === 'preset') {
-    commandMenuOpen.value = false;
-    approvalMenuVisible.value = false;
-    presetMenuVisible.value = true;
-    return;
-  }
-  if (target === 'approval') {
-    commandMenuOpen.value = false;
-    presetMenuVisible.value = false;
-    if (!approvalModeSyncing.value) approvalMenuVisible.value = true;
-    return;
-  }
-  presetMenuVisible.value = false;
-  approvalMenuVisible.value = false;
-  // 输入 `/` 的候选已经挂在同一份子面板上，别再切成全量命令表。
-  if (commandSuggestionsVisible.value) return;
-  commandMenuOpen.value = true;
-  commandMenuIndex.value = 0;
-};
-
-const toggleApprovalMenu = () => {
-  if (approvalModeSyncing.value) return;
-  const next = !approvalMenuVisible.value;
-  closeOtherPanels('approval');
-  approvalMenuVisible.value = next;
-};
-
-const selectApprovalMode = (value: string) => {
-  const normalized = String(value || '').trim();
-  approvalMenuVisible.value = false;
-  if (!normalized || normalized === approvalModeValue.value) return;
-  emit('update:approval-mode', normalized);
+  // 收起时把 `/` 唤出的建议也一起收掉，下次点「+」还是预设问题。
+  if (!next) commandMenuDismissed.value = true;
 };
 
 // ------------------------------------------------------------- model switching
@@ -2444,29 +2218,17 @@ const handleSendButtonKeydown = (event: KeyboardEvent) => {
   }
 };
 
-const handleToggleVoiceRecord = () => {
-  closeComposerPanels();
-  emit('toggle-voice-record');
-};
-
 const isPointerInside = (element: HTMLElement | null, target: Node | null): boolean =>
   Boolean(element && target && element.contains(target));
 
-const hasOpenComposerPanel = (): boolean =>
-  plusPanelVisible.value ||
-  commandMenuOpen.value ||
-  approvalMenuVisible.value ||
-  modelMenuVisible.value ||
-  presetMenuVisible.value;
+const hasOpenComposerPanel = (): boolean => plusPanelVisible.value || modelMenuVisible.value;
 
 const handleDocumentPointerDown = (event: PointerEvent) => {
   const target = event.target as Node | null;
-  // 审批模式子面板挂在加号锚点内，加号分支关面板时会一并收掉。
+  // 面板整栏挂在加号锚点内，点外面就把整栏收掉（`/` 建议也一起收）。
   if (plusPanelVisible.value && !isPointerInside(plusMenuAnchorRef.value, target)) {
-    commandMenuOpen.value = false;
-    presetMenuVisible.value = false;
-    approvalMenuVisible.value = false;
     plusMenuVisible.value = false;
+    commandMenuDismissed.value = true;
   }
   if (modelMenuVisible.value && !isPointerInside(modelMenuAnchorRef.value, target)) {
     modelMenuVisible.value = false;

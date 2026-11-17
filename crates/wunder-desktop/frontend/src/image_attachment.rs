@@ -27,12 +27,18 @@ pub fn save(
     Ok((name, data_url))
 }
 
-pub fn add(app: &slint::Weak<MainWindow>, name: String, data_url: String, kind: &str) {
-    let Some(app) = app.upgrade() else { return };
+/// Append one image to the composer. Returns whether it was accepted; when the
+/// pending limit rejects it the limit message has already been reported, and
+/// the caller decides which status line fits its own entry point (a screenshot
+/// also mentions the clipboard).
+pub fn push(app: &slint::Weak<MainWindow>, name: String, data_url: String) -> bool {
+    let Some(app) = app.upgrade() else {
+        return false;
+    };
     let mut attachments = app.get_pending_attachments().iter().collect::<Vec<_>>();
     if attachments.len() >= MAX_PENDING_ATTACHMENTS {
         app.set_status(format!("最多可附加 {MAX_PENDING_ATTACHMENTS} 张图片，请先移除一张").into());
-        return;
+        return false;
     }
     attachments.push(ChatAttachment {
         name: name.into(),
@@ -40,7 +46,16 @@ pub fn add(app: &slint::Weak<MainWindow>, name: String, data_url: String, kind: 
         data_url: data_url.into(),
     });
     app.set_pending_attachments(ModelRc::new(VecModel::from(attachments)));
-    app.set_status(format!("{kind}已放入输入区，发送即可交给模型").into());
+    true
+}
+
+pub fn add(app: &slint::Weak<MainWindow>, name: String, data_url: String, kind: &str) {
+    if !push(app, name, data_url) {
+        return;
+    }
+    if let Some(app) = app.upgrade() {
+        app.set_status(format!("{kind}已放入输入区，发送即可交给模型").into());
+    }
 }
 
 pub fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {

@@ -1521,10 +1521,11 @@ impl TuiApp {
         }
     }
 
-    /// Left side of the footer: what the thread is about, where it runs, and the
-    /// key that opens the thread center. The model and the context figure form
-    /// the right cluster (`composer_footer_context`), so the two halves never
-    /// compete for the same columns.
+    /// Left side of the footer: where it runs and the key that opens the thread
+    /// center. The thread name is not repeated here — the header line already
+    /// shows it, and the footer stays short. The model and the context figure
+    /// form the right cluster (`composer_footer_context`), so the two halves
+    /// never compete for the same columns.
     pub fn composer_footer_items(&self) -> Vec<(String, String)> {
         // While a history search is running the footer reports the search instead
         // of the usual hints: the query, the direction and the way out.
@@ -1573,12 +1574,6 @@ impl TuiApp {
 
         let mut items = Vec::new();
 
-        // What the thread is about, the way Codex names the task in the footer. It is a
-        // label-only item, so the bounded shrink sheds it before the shortcut keys.
-        if let Some(title) = self.session_task_title() {
-            items.push((String::new(), title));
-        }
-
         let cwd_display = crate::path_display::format_directory_display(
             self.runtime.launch_dir.as_path(),
             Some(self.runtime.repo_root.as_path()),
@@ -1602,29 +1597,6 @@ impl TuiApp {
         items.push(("←".to_string(), hint.to_string()));
 
         items
-    }
-
-    /// The first user turn names the task. Scanning stops at the first match, and the text
-    /// is already capped by the transcript's own limits.
-    fn session_task_title(&self) -> Option<String> {
-        const TITLE_MAX_CHARS: usize = 28;
-        let raw = self
-            .logs
-            .iter()
-            .find(|entry| entry.kind == LogKind::User)?
-            .text
-            .lines()
-            .next()?
-            .trim();
-        if raw.is_empty() {
-            return None;
-        }
-        let (text, truncated) = truncate_by_chars(raw, TITLE_MAX_CHARS);
-        Some(if truncated {
-            format!("{text}\u{2026}")
-        } else {
-            text
-        })
     }
 
     /// Read the thread name from the session record, the single owner of it.

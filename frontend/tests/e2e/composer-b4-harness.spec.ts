@@ -185,63 +185,40 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   const plusPanelBox = await plusPanel.boundingBox();
   expect(plusPanelBox!.y + plusPanelBox!.height).toBeLessThanOrEqual(plusBox!.y + 2);
   expect(Math.abs(plusPanelBox!.x - plusBox!.x)).toBeLessThanOrEqual(2);
-  // 命令 + 预设问题恒在，录音行取决于运行环境是否支持 MediaRecorder。
-  expect(await plusPanel.locator('.composer-plus-item').count()).toBeGreaterThanOrEqual(2);
-
-  // 审批模式三档 + 即时回传：触发器就是「+」里的一行，悬停从右侧呼出档位子面板。
-  // 行上只显示当前档位文案，所以换档后要按新文案重新定位（旧的按档位文本的过滤条件会失效）。
-  const approvalRow = plusPanel
-    .locator('.composer-plus-row')
-    .filter({ hasText: /自动执行|Run automatically/ })
-    .first();
-  await expect(approvalRow).toBeVisible();
-  await approvalRow.hover();
-  const approvalFlyout = approvalRow.locator('.composer-plus-flyout');
-  await expect(approvalFlyout).toBeVisible();
-  await expect(approvalFlyout).toContainText(/工具需确认|Confirm tools/);
-  await expect(approvalFlyout).toContainText(/全部需确认|Confirm everything/);
-  const approvalRowBox = await approvalRow.boundingBox();
-  const approvalFlyoutBox = await approvalFlyout.boundingBox();
-  expect(approvalFlyoutBox!.x).toBeGreaterThan(approvalRowBox!.x + approvalRowBox!.width - 2);
-  await approvalFlyout.locator('.composer-panel-item--radio').nth(1).click();
-  await expect(
-    plusPanel.locator('.composer-plus-item-label').filter({ hasText: /工具需确认|Confirm tools/ }).first()
-  ).toBeVisible();
-  await expect(page.locator('[data-testid="composer-b4-log"]')).toContainText('approval-mode:auto_edit');
-  // 选档只收起子面板，「+」菜单本身保持展开。
-  await expect(plusPanel.locator('.composer-plus-flyout')).toHaveCount(0);
-  await expect(plusPanel).toBeVisible();
-
-  // 命令：悬停行就从右侧呼出子面板（级联形态，不向下挤开菜单），点选只填草稿不发送。
-  const commandRow = plusPanel.locator('.composer-plus-row').filter({ hasText: /命令|Commands/ }).first();
-  await commandRow.hover();
-  const commandFlyout = commandRow.locator('.composer-plus-flyout');
-  await expect(commandFlyout).toBeVisible();
-  await expect(commandFlyout).toContainText('/help');
-  await expect(commandFlyout).toContainText('/compact');
-  const commandRowBox = await commandRow.boundingBox();
-  const commandFlyoutBox = await commandFlyout.boundingBox();
-  expect(commandFlyoutBox!.x).toBeGreaterThan(commandRowBox!.x + commandRowBox!.width - 2);
-  await commandFlyout.locator('.command-menu-item').first().click();
-  await expect(textarea).toHaveValue(/^\/(help|new|stop|goal|compact)\s/);
-  await textarea.fill('');
-  // 工具栏右组：模型（大脑占用填充 + 百分比）→ 发送；整屏占用面只有这一处。
-  expect(await page.locator('.context-usage-icon').count()).toBe(1);
-
-  // 预设问题：换成它自己的右侧子面板，命令子面板同时收起；点击填入输入框并收起整个面板。
-  const presetRow = plusPanel
-    .locator('.composer-plus-row')
-    .filter({ hasText: /预设问题|Preset/ })
-    .first();
-  await presetRow.hover();
-  const presetPanel = page.locator('.composer-preset-panel').first();
+  // 「+」只有一栏：点开就是该智能体的预设问题，没有命令/审批/语音行，也没有第二栏。
+  const presetPanel = plusPanel.locator('.composer-preset-panel');
   await expect(presetPanel).toBeVisible();
-  await expect(commandRow.locator('.composer-plus-flyout')).toHaveCount(0);
-  const presetRowBox = await presetRow.boundingBox();
-  expect((await presetPanel.boundingBox())!.x).toBeGreaterThan(presetRowBox!.x + presetRowBox!.width - 2);
+  expect(await presetPanel.locator('.composer-preset-panel-item').count()).toBeGreaterThanOrEqual(2);
+  await expect(plusPanel.locator('.composer-plus-item')).toHaveCount(0);
+  await expect(plusPanel.locator('[data-testid="chat-composer-plus-commands"]')).toHaveCount(0);
+  await expect(plusPanel.locator('[data-testid="chat-composer-plus-approval"]')).toHaveCount(0);
+
+  // 点一项预设问题就填入草稿并收起整个面板：选问题只要一次点击。
   await presetPanel.locator('.composer-preset-panel-item').first().click();
   await expect(textarea).toHaveValue(/总结当前线程/);
   await expect(page.locator('.composer-panel--plus')).toHaveCount(0);
+  await textarea.fill('');
+
+  // 输入 `/` 时同一栏换成命令建议（命令入口只剩这一条链路），选完回填命令、不发送。
+  await textarea.fill('/');
+  const suggestionPanel = page.locator('.composer-panel--plus');
+  await expect(suggestionPanel).toBeVisible();
+  await expect(suggestionPanel.locator('.composer-preset-panel')).toHaveCount(0);
+  const suggestionList = suggestionPanel.locator('.composer-plus-suggestions');
+  await expect(suggestionList).toBeVisible();
+  await expect(suggestionList).toContainText('/help');
+  await expect(suggestionList).toContainText('/compact');
+  const suggestionBox = (await suggestionList.boundingBox())!;
+  const plusPanelInner = (await plusPanel.boundingBox())!;
+  expect(suggestionBox.x).toBeGreaterThanOrEqual(plusPanelInner.x - 1);
+  expect(suggestionBox.x + suggestionBox.width).toBeLessThanOrEqual(
+    plusPanelInner.x + plusPanelInner.width + 1
+  );
+  await suggestionList.locator('.command-menu-item').first().click();
+  await expect(textarea).toHaveValue(/^\/(help|new|stop|goal|compact)\s/);
+  await textarea.fill('');
+  await page.keyboard.press('Escape');
+  await textarea.fill('');
 
   // B2 引用路径直接插入草稿，发送内容与输入框一致。
   await textarea.fill('看看这个文件');

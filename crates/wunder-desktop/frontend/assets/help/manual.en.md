@@ -165,7 +165,7 @@ Components follow the supplement, not the app version. Moving machines means cop
 | Capability | What it is |
 | --- | --- |
 | Interactive terminal | Run commands in a real terminal view (winpty on Windows, PTY on Linux) |
-| Screenshot capture | Capture the screen and drop it back into the composer |
+| Screenshot capture | Capture a region or the whole screen and drop it back into the composer; the desktop shell also copies it to the system clipboard for pasting into other apps |
 | Tray and notifications | Keep running in the background and get told when a task finishes |
 | Global hotkey | Wake the window from anywhere |
 | Voice input | Dictate instead of typing |
@@ -351,6 +351,8 @@ When something fails, check in order: the resolved install root (a non-empty `WU
 | `completion` | — | generate shell completion |
 
 ### Slash commands
+
+The palette and `/help` show each command with a one-line description and no argument grammar: a command that needs a value takes it after the name (`/rename new title`), and multi-field setup such as `/model add` asks one field at a time.
 
 22 in total: `/help` `/status` `/resume` `/trajectory` `/new` `/clear` `/model` `/permissions` `/plan` `/goal` `/edit` `/init` `/attach` `/diff` `/review` `/skills` `/rename` `/compact` `/mcp` `/config` `/exit` `/quit`.
 
@@ -746,17 +748,14 @@ When any of these tools fails it puts the reason in the result; look mainly at t
 
 Give the command to run, and you can also specify a working directory. Common arguments:
 
-- **Timeout** `timeout_s`: 120 seconds by default; pass 0 for no limit.
-- **Background** `run_in_background`: off by default, meaning the call blocks until the command finishes.
-- **Yield wait** `yield_time_ms`: used only together with background mode.
-- **Budget** `budget`: caps time, output bytes, and the maximum number of commands.
-- **Preview** `dry_run`: validates the plan without actually running it.
+- **Command** `content`: required, the command itself.
+- **Working directory** `workdir`: optional, a workspace-relative path.
+- **Wait window** `yield_time_ms`: 10000 by default, 50–30000. It only decides how long this call waits before handing control back; it is not a kill timeout.
+- **Action label** `description`: a short title shown in the UI.
 
 ## Blocking and background
 
-Execution blocks by default: one call waits until the command exits or the timeout is reached, then returns the full output at once; on timeout the process is killed and the partial output collected so far is returned.
-
-Set `run_in_background` only for long-running commands: after a brief wait, a command that is still running returns immediately, with a next-step hint in the result. Track a background command afterwards with the command session below; do not spin in an idle loop waiting for it.
+A call first waits up to `yield_time_ms`: a command that finishes sooner returns its full result (exit code, stdout, stderr) immediately; one that is still running at the deadline returns `command_session_id`, the current `seq` and the output so far, and keeps running. The deadline hands control back without killing the process, so long commands need no separate "background" flag.
 
 Only a bounded preview of the output is kept. Cancelling the current thread terminates the active commands of that thread and of its child threads.
 
@@ -764,13 +763,17 @@ Only a bounded preview of the output is kept. Cancelling the current thread term
 
 A long-lived background command session is managed by the `command_session` tool, which supports switching between foreground and background: a foreground call reads the current status and output directly, while switching to background leaves the command running.
 
-One call has exactly two intents, decided by `input`:
+One call has exactly three intents, decided by `chars`:
 
-- **Empty `input`** (or omitted): read back status plus new output only, returning within 250 ms by default — the cheap "take a look" call.
-- **Non-empty `input`**: write it to the session's stdin first; that call then waits for the command to exit within the same wait window (the `printf ... | cmd` semantics). Pass `wait_for=output` to return as soon as output appears. Sessions started without an interactive stdin reject the write, say it was not delivered, and suggest piping the input through the command itself (`printf '...' | cmd`).
-- **Ctrl-C `input`**: treated as an interrupt, i.e. terminate the command; works even when the session has no stdin.
+- **Empty `chars`** (or omitted): read back status plus new output only, waiting at most `yield_time_ms` (1000 ms by default) and returning immediately when new output arrives.
+- **Non-empty `chars`**: write those bytes to the session's stdin first, then read new output within the same wait window; include a newline when answering a line-based prompt. Sessions started without an interactive stdin reject the write, say it was not delivered, and suggest piping the input through the command itself (`printf '...' | cmd`).
+- **Ctrl-C `chars`**: treated as an interrupt, i.e. terminate the command; works even when the session has no stdin, and the result is marked `interrupted` with the output produced so far.
 
-`wait_for` defaults to `output` (return as soon as there is new output). Pass `wait_for=exit` to ignore intermediate output and block until the command exits or the wait window ends; the window is `yield_time_ms` (up to 60000, and 60000 is the default in that mode).
+Optional arguments:
+
+- **`yield_time_ms`**: wait ceiling for this call, 0–30000; pass 0 for an immediate read.
+- **`after_seq`**: return only output newer than that `seq`, for catching up on a chunk that was truncated or only partially shown.
+- **`wait_for=exit`**: ignore intermediate output and block until the process exits or the window ends (that mode defaults the window to 30000).
 
 An already-exited session is not an error: its final output and exit code are still returned. Decide completion from `status` and `exit_code` instead of re-running the command.
 
@@ -931,25 +934,6 @@ Pass a file path:
 }
 ```
 
-To inspect a still image's original-resolution details, use `crop=x,y,w,h` for the top-left corner plus width and height, optionally adding `scale`. The last two crop values are width and height, not bottom-right coordinates:
-
-```json
-{
-  "path": "screenshots/demo.png",
-  "crop": "40,40,800,600",
-  "scale": 2
-}
-```
-
-If you already have corner coordinates, explicitly use `crop_xyxy=x1,y1,x2,y2`. The bottom-right corner is exclusive, and this parameter cannot be combined with `crop`:
-
-```json
-{
-  "path": "screenshots/demo.png",
-  "crop_xyxy": "40,40,840,640"
-}
-```
-
 For a GIF you can add a frame interval; for a video you can set how many frames to take per second:
 
 ```json
@@ -968,19 +952,17 @@ For a GIF you can add a frame interval; for a video you can set how many frames 
 
 ## Handling by material type
 
-- Small still images are not enlarged; large images are proportionally fitted to model input limits. The result reports source dimensions, actual view dimensions, and reduction factor.
-- Reduction beyond 2x on either axis produces an explicit detail warning. Crop original-resolution regions before judging small text, tables, or 1px lines.
-- Crops use source pixels and are applied before `scale`; out-of-bounds crops fail instead of being silently clamped.
+- A static image enters the context as image input unchanged; the model only needs the path, and the intent to look comes from the current conversation.
 - A GIF is not handed to the model whole: by default only the first frame is taken, and if you give a frame interval it samples frames at that interval.
 - A video is organized into a series of image frames; if the video has an audio track, the transcript is attached as well.
 
 ## Return value
 
-The result states the material's type and size. Cropped results also include normalized `x/y/width/height` and `x2/y2` values for verifying the actual region. `view.reference_width/height` is the pre-resize reference (the crop region when cropping); `downscaled`, `downscale_factor`, and `fine_detail_loss` are relative to it. `fine_detail_loss` only means reduction beyond 2x on an axis, not that other views are necessarily lossless. Transparent images are composited onto white whenever RGB conversion is required. These fields mean the material is ready, not that the model has analyzed it.
+The result states the material's type and size, but that only means the material is ready, not that the model has analyzed it: once it is ready, ask about it.
 
 ## Errors
 
-Check whether the path resolved to a real file, the material type is right, and the byte size is expected. Wrong paths, unsupported types, mixed crop forms, and out-of-bounds crops report errors directly.
+Look at the result first: whether the path resolved to a real file, whether the material type is right, and whether the byte size is what you expect. A wrong path or an unsupported material type reports an error directly.
 
 <!-- topic id="tools-multimodal-generation" block="tools" title="Generation" group="Multimodal" keywords="Multimodal Generation,Model dependencies,Arguments" -->
 
@@ -1140,13 +1122,13 @@ Each call specifies one action. Actions use closed, action-specific field branch
 - `close`: close a session, optionally cascading.
 - `resume`: restore it to active; with a message it is the same as one append instruction.
 
-When no target is given, the current session is treated as the parent thread by default; you can also point at a target using a dispatched run id, session id, or batch id. For `list`, `parent_id` accepts both `root` and `/root` for the current task-tree root.
+When no target is given, the current session is treated as the parent thread by default; you can also point at a target using a dispatched run id, session id, or batch id.
 
 When dispatching, you can also specify:
 
 - `label`: a recognizable name for the child thread.
 - `agent_id`, `model`: override the subagent or the model it uses; both are checked against the current user's agent ownership.
-- `run_timeout_seconds` (alias `timeout_seconds`): the timeout of a single run; in a synchronous dispatch it is also the wait duration.
+- `run_timeout_seconds`: the timeout of a single run; in a synchronous dispatch it is also the wait duration.
 - `fork_turns`: copy the most recent rounds of user context, 0–16, 0 by default.
 - `context_summary`: attach a background summary.
 - `cleanup`: how to wrap up, `keep` (the default) or `delete` (runtime state is cleaned up and the child is closed; its history remains inspectable).

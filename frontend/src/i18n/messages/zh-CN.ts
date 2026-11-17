@@ -2236,6 +2236,7 @@ export default {
   'messenger.filesArea.preview.title': '文件预览',
   // ------------------------------------------- B4 composer (§8)
   'chat.composer.commands': '命令',
+  'chat.composer.presetEmpty': '该智能体还没有预设问题',
   'chat.composer.moreActions': '更多操作',
   'chat.composer.queue.title': '排队中',
   'chat.composer.queue.count': '共 {count} 条',

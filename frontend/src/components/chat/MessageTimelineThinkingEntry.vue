@@ -17,6 +17,9 @@
       <span class="tl-thinking-label">
         {{ entry.streaming ? t('chat.timeline.thinkingRunning') : t('chat.timeline.thinkingDone') }}
       </span>
+      <span v-if="entry.streaming" class="tl-thinking-ellipsis" aria-hidden="true">
+        <span>.</span><span>.</span><span>.</span>
+      </span>
       <span v-if="entry.summary" ref="summaryRef" class="tl-thinking-summary" :title="entry.summary">{{ entry.summary }}</span>
       <!-- 与工具条目同一套右侧列：模型轮次 + 该轮请求的上下文占用 + 思考耗时。 -->
       <span v-if="roundLabel || tokenMetric || durationMetric" class="tl-thinking-metrics">
@@ -183,6 +186,38 @@ const { t } = useI18n();
   font-size: 13px;
   /* 与工具条目同口径：标签和右侧摘要共用 18px 行高，混排时落在同一水平线。 */
   line-height: 18px;
+}
+
+.tl-thinking-ellipsis {
+  flex: 0 0 2ch;
+  display: inline-flex;
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.tl-thinking-ellipsis span {
+  animation: tl-thinking-dot 1.2s ease-in-out infinite;
+}
+
+.tl-thinking-ellipsis span:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.tl-thinking-ellipsis span:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+@keyframes tl-thinking-dot {
+  0%, 60%, 100% { opacity: 0.25; }
+  30% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tl-thinking-ellipsis span {
+    animation: none;
+    opacity: 1;
+  }
 }
 
 .tl-thinking-summary {
