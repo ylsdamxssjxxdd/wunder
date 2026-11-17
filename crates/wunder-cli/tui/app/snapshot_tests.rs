@@ -999,10 +999,17 @@ async fn folded_thinking_shows_its_head_in_dim_italic() {
             .any(|line| line.contains("reasoning line 12")),
         "the tail stays folded: {rendered:?}"
     );
+    let mut found_upright_marker = false;
     for line in &lines {
         let content = text(line);
         if content.contains("reasoning line") {
             for span in &line.spans {
+                if span.content == log_prefix(LogKind::Reasoning) {
+                    assert!(span.style.add_modifier.contains(Modifier::DIM));
+                    assert!(!span.style.add_modifier.contains(Modifier::ITALIC));
+                    found_upright_marker = true;
+                    continue;
+                }
                 assert!(
                     span.style.add_modifier.contains(Modifier::DIM)
                         && span.style.add_modifier.contains(Modifier::ITALIC),
@@ -1011,6 +1018,7 @@ async fn folded_thinking_shows_its_head_in_dim_italic() {
             }
         }
     }
+    assert!(found_upright_marker, "the reasoning status dot stays upright");
 }
 
 #[tokio::test]

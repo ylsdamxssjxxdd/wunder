@@ -1,5 +1,6 @@
 // 首次启动的运行环境部署引导页（安卓版）：全屏不透明，安装过程用「注入 LCL
 // 液体」呈现——液面随进度从底部漫上来，波浪、气泡与高光由引擎 tick 的相位驱动。
+// 头像画在液面之下：液面涨过头顶时头被液体淹没，文字与百分比留在水面之上。
 // 安装状态由引擎投影，页面只负责呈现。
 
 import { I18n } from "../../../crates/wunder-desktop/frontend/ui/i18n.slint";
@@ -8,6 +9,7 @@ import { Theme } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
 // 主操作：强调色按钮。
 component SetupButton inherits Rectangle {
     in property <string> label;
+    in property <bool> enabled: true;
     callback clicked();
     height: 44px;
     border-radius: Theme.radius-md;
@@ -26,6 +28,7 @@ component SetupButton inherits Rectangle {
         vertical-alignment: center;
     }
     button-touch := TouchArea {
+        enabled: root.enabled;
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
@@ -34,6 +37,7 @@ component SetupButton inherits Rectangle {
 // 次要操作：纯文字按钮。
 component SetupTextButton inherits Rectangle {
     in property <string> label;
+    in property <bool> enabled: true;
     callback clicked();
     height: 40px;
     background: transparent;
@@ -50,8 +54,98 @@ component SetupTextButton inherits Rectangle {
         vertical-alignment: center;
     }
     touch := TouchArea {
+        enabled: root.enabled;
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
+    }
+}
+
+// 页面排版被渲染两遍：一层在液体之下（只留头像，液面涨上来时头像被液体
+// 淹没），一层在液体之上（文字与按钮保持清晰，头像位置留同尺寸透明占位）。
+// 两层共用这个组件，保证行高与居中结果逐像素一致；under-water 只切换哪
+// 一半可见，隐藏的文字仍参与布局（不能改成删元素，否则两层的垂直居中会
+// 错开，头像与文字分家）。
+component SetupBody inherits VerticalLayout {
+    in property <bool> under-water: false;
+    in property <bool> failed: false;
+    in property <bool> ready: false;
+    in property <int> shown: 0;
+    in property <string> state: "installing";
+    in property <string> stage: "";
+    in property <string> error: "";
+    callback retry();
+    callback dismiss();
+
+    padding-left: 32px;
+    padding-right: 32px;
+    spacing: 0px;
+    alignment: center;
+
+    HorizontalLayout {
+        alignment: center;
+        Image {
+            width: 88px;
+            height: 88px;
+            source: @image-url("../../../images/eva01-head.svg");
+            image-fit: contain;
+            opacity: root.under-water ? 1.0 : 0.0;
+        }
+    }
+    Rectangle { height: 20px; }
+    if root.failed || root.ready : Text {
+        text: root.failed ? I18n.and_env_setup_failed : I18n.and_env_setup_ready;
+        color: root.failed ? Theme.danger : Theme.text;
+        font-size: Theme.font-headline;
+        font-weight: 700;
+        horizontal-alignment: center;
+        opacity: root.under-water ? 0.0 : 1.0;
+    }
+    if !root.ready : Rectangle { height: 26px; }
+
+    // ---- 安装中：注入进度 ----
+    if !root.failed && !root.ready : VerticalLayout {
+        spacing: 0px;
+        opacity: root.under-water ? 0.0 : 1.0;
+        Text {
+            text: root.shown + "%";
+            color: #8A3E05;
+            font-size: 46px;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+        Rectangle { height: 8px; }
+        // 文字与百分比都在液体之上，统一用深色，任何进度下都可读；水下只
+        // 有头像，靠液体本身的橙色给出浸没感。
+        Text {
+            text: root.state == "missing" ? I18n.and_env_setup_preparing : root.stage;
+            color: #5E452C;
+            font-size: Theme.font-sm;
+            wrap: word-wrap;
+            horizontal-alignment: center;
+        }
+    }
+
+    // ---- 失败：原因 + 重试 / 先进入 ----
+    if root.failed : VerticalLayout {
+        spacing: 12px;
+        opacity: root.under-water ? 0.0 : 1.0;
+        Text {
+            text: root.error != "" ? root.error : root.stage;
+            color: Theme.danger;
+            font-size: Theme.font-sm;
+            wrap: word-wrap;
+            horizontal-alignment: center;
+        }
+        SetupButton {
+            label: I18n.and_env_setup_retry;
+            enabled: !root.under-water;
+            clicked => { root.retry(); }
+        }
+        SetupTextButton {
+            label: I18n.and_env_setup_enter;
+            enabled: !root.under-water;
+            clicked => { root.dismiss(); }
+        }
     }
 }
 
@@ -114,10 +208,28 @@ export component EnvSetupPage inherits Rectangle {
         return root.wave-line() + " L \{root.w * 2} 10 L 0 10 Z";
     }
 
-    // 铺满一层触摸面挡住聊天界面的事件穿透；内容与按钮声明在它之后（上层）。
+    // 铺满一层触摸面挡住聊天界面的事件穿透；两遍排版与液体声明在它之后。
     block := TouchArea {
         width: 100%;
         height: 100%;
+    }
+
+    // ---- 内容底层：只有头像 --------------------------------------------
+    // 头像单独画在液体层下面：液面涨过头顶时，头被橙色的 LCL 盖住，得到
+    // 「头淹进水里」的观感。文字与按钮留给液体上层的那一遍。
+    SetupBody {
+        y: root.inset-top;
+        width: 100%;
+        height: parent.height - root.inset-top - root.inset-bottom;
+        under-water: true;
+        failed: root.failed;
+        ready: root.ready;
+        shown: root.shown;
+        state: root.state;
+        stage: root.stage;
+        error: root.error;
+        retry => { root.retry(); }
+        dismiss => { root.dismiss(); }
     }
 
     // ---- LCL 液体 ------------------------------------------------------
@@ -192,75 +304,20 @@ export component EnvSetupPage inherits Rectangle {
             : 0.0;
     }
 
-    // ---- 内容 ----------------------------------------------------------
-    VerticalLayout {
+    // ---- 内容上层：文字与按钮 ------------------------------------------
+    // 与底层共用同一份排版，头像处留 88px 透明占位；因此文字位置与之前完全
+    // 一致，只是头像不再浮在水面上。
+    SetupBody {
         y: root.inset-top;
+        width: 100%;
         height: parent.height - root.inset-top - root.inset-bottom;
-        padding-left: 32px;
-        padding-right: 32px;
-        alignment: center;
-        spacing: 0px;
-
-        HorizontalLayout {
-            alignment: center;
-            Image {
-                width: 88px;
-                height: 88px;
-                source: @image-url("../../../images/eva01-head.svg");
-                image-fit: contain;
-            }
-        }
-        Rectangle { height: 20px; }
-        if root.failed || root.ready : Text {
-            text: root.failed ? I18n.and_env_setup_failed : I18n.and_env_setup_ready;
-            color: root.failed ? Theme.danger : Theme.text;
-            font-size: Theme.font-headline;
-            font-weight: 700;
-            horizontal-alignment: center;
-        }
-        if !root.ready : Rectangle { height: 26px; }
-
-        // ---- 安装中：注入进度 ----
-        if !root.failed && !root.ready : VerticalLayout {
-            spacing: 0px;
-            Text {
-                text: root.shown + "%";
-                color: #8A3E05;
-                font-size: 46px;
-                font-weight: 700;
-                horizontal-alignment: center;
-            }
-            Rectangle { height: 8px; }
-            // 阶段文案保持深色：小字号在水面上方/下方都要可读，水下偏色只给
-            // 大号百分比做。
-            Text {
-                text: root.state == "missing" ? I18n.and_env_setup_preparing : root.stage;
-                color: #5E452C;
-                font-size: Theme.font-sm;
-                wrap: word-wrap;
-                horizontal-alignment: center;
-            }
-        }
-
-        // ---- 失败：原因 + 重试 / 先进入 ----
-        if root.failed : VerticalLayout {
-            spacing: 12px;
-            Text {
-                text: root.error != "" ? root.error : root.stage;
-                color: Theme.danger;
-                font-size: Theme.font-sm;
-                wrap: word-wrap;
-                horizontal-alignment: center;
-            }
-            SetupButton {
-                label: I18n.and_env_setup_retry;
-                clicked => { root.retry(); }
-            }
-            SetupTextButton {
-                label: I18n.and_env_setup_enter;
-                clicked => { root.dismiss(); }
-            }
-        }
-
+        failed: root.failed;
+        ready: root.ready;
+        shown: root.shown;
+        state: root.state;
+        stage: root.stage;
+        error: root.error;
+        retry => { root.retry(); }
+        dismiss => { root.dismiss(); }
     }
 }

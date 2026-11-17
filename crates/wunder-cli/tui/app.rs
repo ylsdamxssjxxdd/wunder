@@ -4447,8 +4447,7 @@ impl TuiApp {
         lines.extend(stream_preview);
 
         // Codex keeps thinking visible as a dim, italic margin note rather than a
-        // second voice in the transcript: patch every span (markdown included) so
-        // no heading or bold fragment can reclaim the reader's attention.
+        // second voice in the transcript. The status marker is not prose and stays upright.
         if entry.kind == LogKind::Reasoning {
             for line in &mut lines {
                 for span in &mut line.spans {
@@ -4457,6 +4456,15 @@ impl TuiApp {
                         .add_modifier(ratatui::style::Modifier::DIM)
                         .add_modifier(ratatui::style::Modifier::ITALIC);
                 }
+            }
+            if let Some(marker) = lines
+                .first_mut()
+                .and_then(|line| line.spans.first_mut())
+                .filter(|span| span.content == log_prefix(entry.kind))
+            {
+                marker.style = marker
+                    .style
+                    .remove_modifier(ratatui::style::Modifier::ITALIC);
             }
         }
 
