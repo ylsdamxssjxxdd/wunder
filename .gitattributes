@@ -1,0 +1,7 @@
+# 换行符归一：容器内 bash 读到 CRLF 会在入口脚本第 2 行
+# `set -euo pipefail` 处报 `set: pipefail: invalid option name` 并以 2 退出，
+# 服务端 compose 把仓库目录 bind mount 进容器（./:/app），所以这些文件必须是 LF。
+*.sh text eol=lf
+*.bash text eol=lf
+Dockerfile text eol=lf
+docker-compose*.yml text eol=lf
