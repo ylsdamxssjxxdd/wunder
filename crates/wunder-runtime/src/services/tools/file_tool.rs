@@ -30,6 +30,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+mod file_tool_large;
+
 pub(crate) async fn list_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     if let Some(result) = execute_in_sandbox(context, "列出文件", args).await {
         return Ok(result);
@@ -1880,6 +1882,21 @@ pub(crate) fn read_files_inner(
             summaries.push(summary);
             continue;
         }
+        if size > MAX_READ_BYTES as u64 && spec.mode == ReadFileMode::Slice {
+            let large = file_tool_large::read_large_slice(&target, raw_path, &spec)?;
+            successful_reads += 1;
+            if let Some(remaining) = remaining_output_budget.as_mut() {
+                *remaining = remaining.saturating_sub(large.rendered.len());
+            }
+            if large.omitted_bytes > 0 {
+                output_budget_hit = true;
+                output_budget_omitted_bytes =
+                    output_budget_omitted_bytes.saturating_add(large.omitted_bytes);
+            }
+            outputs.push(large.rendered);
+            summaries.push(large.summary);
+            continue;
+        }
         let source_truncated_by_size = size > MAX_READ_BYTES as u64;
         let guarded = read_file_guard::read_text_file_with_limit(&target, MAX_READ_BYTES)?;
         let content = match guarded {
@@ -2048,7 +2065,7 @@ pub(crate) fn read_files_inner(
                         .saturating_sub(96)
                         .min(4096)
                         .max(256);
-                    let (excerpt, omitted) = truncate_utf8_output(long_line, budget);
+                    let (excerpt, omitted) = file_tool_large::excerpt_long_line(long_line, budget);
                     if omitted > 0 {
                         output_budget_hit = true;
                         output_budget_omitted_bytes =

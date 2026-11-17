@@ -48,7 +48,7 @@ export component ChatAlignmentDemo inherits Window {
                 foldable: true, text: "The sample file passed both checks. One requested file is unavailable."},
             {kind: 7, id: "fixture-footer", visible: true, group-idx: -1, process-idx: -1,
                 text: root.running ? "" : "The sample file passed both checks. One requested file is unavailable.",
-                stats: [{key: root.footer-status == "" ? "hashtag" : root.running ? "status-tool" : "status-stopped", value: root.footer-status == "" ? "57" : root.footer-status}, {key: "stopwatch", value: "3.2s"}, {key: "gauge-high", value: "42.8 token/s"}, {key: "layer-group", value: "12.3k"}, {key: "bolt", value: "2.4k"}, {key: "screwdriver-wrench", value: "3"}, {key: "coins", value: "4"}]}
+                stats: [{key: root.footer-status == "" ? "hashtag" : root.running ? "status-tool" : "status-stopped", value: root.footer-status == "" ? "57" : root.footer-status}, {key: "stopwatch", value: "3.2s"}, {key: "gauge-high", value: "42.8 t/s"}, {key: "bolt", value: "2.4k"}, {key: "coins", value: "4"}]}
         ];
         toggle(index) => {
             if index == 1 { root.process-open = !root.process-open; }

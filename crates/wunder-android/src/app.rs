@@ -4368,10 +4368,8 @@ pub fn install_preview_data(
     footer.stats = vec![
         ("hashtag".into(), "1".into()),
         ("stopwatch".into(), "3.2s".into()),
-        ("gauge-high".into(), "18.4 token/s".into()),
-        ("layer-group".into(), "12k".into()),
+        ("gauge-high".into(), "18.4 t/s".into()),
         ("bolt".into(), "1.8k".into()),
-        ("screwdriver-wrench".into(), "2".into()),
         ("coins".into(), "1".into()),
     ];
     rows.push(footer);

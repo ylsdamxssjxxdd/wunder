@@ -53,14 +53,16 @@ async fn every_selector_checks_tree_before_read_or_mutation() {
     );
     let sibling = harness.context("worker-a");
     harness.upsert_session("worker-c", Some("root-a"));
-    let result = execute(&sibling, &json!({"action":"list","parent_id":"/root"}))
-        .await
-        .unwrap();
-    assert!(result["data"]["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|item| item["task_path"] == "/root/worker-c"));
+    for root_alias in ["root", "/root"] {
+        let result = execute(&sibling, &json!({"action":"list","parent_id":root_alias}))
+            .await
+            .unwrap();
+        assert!(result["data"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["task_path"] == "/root/worker-c"));
+    }
     assert!(execute(
         &sibling,
         &json!({"action":"status","session_id":"/root/worker-c"})

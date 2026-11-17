@@ -160,14 +160,7 @@ pub fn install(app: &MainWindow) {
         model.push(body);
         let mut footer = fixture_row(crate::timeline::KIND_FOOTER, model.row_count(), &reply);
         footer.user_round = round;
-        footer.stats = demo_stats(
-            &round.to_string(),
-            "3.6s",
-            "51.0 token/s",
-            "6.1k",
-            "812",
-            "",
-        );
+        footer.stats = demo_stats(&round.to_string(), "3.6s", "51.0 t/s", "812");
         let group = model.row_count() as i32;
         let mut bar = fixture_row(
             crate::timeline::KIND_GROUP,
@@ -556,26 +549,19 @@ fn demo_last_answer(model: &Rc<VecModel<TimelineRow>>) -> String {
     String::new()
 }
 
-/// The preview's metric row: same five metrics, same icon keys, same order the
-/// live and reloaded rows produce.
+/// The preview's metric row: same metrics, same icon keys, same order the live
+/// and reloaded rows produce (round, duration, speed, quota, credits).
 fn demo_stats(
     round: &str,
     duration: &str,
     speed: &str,
-    context: &str,
     quota: &str,
-    tools: &str,
 ) -> slint::ModelRc<crate::TurnStatMetric> {
     let entries = [
         ("hashtag", round),
         ("stopwatch", duration),
         ("gauge-high", speed),
-        ("layer-group", context),
         ("bolt", quota),
-        (
-            "screwdriver-wrench",
-            if tools.is_empty() { "0" } else { tools },
-        ),
         ("coins", "--"),
     ];
     ModelRc::new(VecModel::from(
@@ -670,7 +656,7 @@ fn demo_timeline() -> Vec<TimelineRow> {
     ];
     let mut footer = fixture_row(crate::timeline::KIND_FOOTER, rows.len(), &rows[1].text);
     footer.user_round = 1;
-    footer.stats = demo_stats("1", "8.2s", "42.5 token/s", "8.4k", "1.2k", "2");
+    footer.stats = demo_stats("1", "8.2s", "42.5 t/s", "1.2k");
     rows.push(footer);
     rows.push(fixture_row(
         crate::timeline::KIND_USER,
@@ -779,7 +765,7 @@ fn demo_timeline() -> Vec<TimelineRow> {
     answer.foldable = true;
     let mut footer = fixture_row(crate::timeline::KIND_FOOTER, rows.len() + 1, &answer.text);
     footer.user_round = 2;
-    footer.stats = demo_stats("2", "12.4s", "68234.0 token/s", "12.3k", "4.1k", "3");
+    footer.stats = demo_stats("2", "12.4s", "68234.0 t/s", "4.1k");
     rows.push(answer);
     rows.push(footer);
     crate::timeline_text::process_models(&mut rows);

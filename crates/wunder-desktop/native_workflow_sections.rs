@@ -47,6 +47,45 @@ fn push_body(section: &mut Section, body: &str, kind: &str) {
     }
 }
 
+/// A command section already prints the command as its title and the state as
+/// its meta chip, and `fallback` is the row display text — "动作 · 状态", then
+/// the command, then the retained output. Echoing those two leading lines into
+/// the body repeated the whole command under itself, so they are dropped and
+/// only lines the section does not already show are kept.
+fn without_display_echo(fallback: &str, command: &str, meta: &str) -> String {
+    let command = command.trim();
+    let mut rest = fallback.lines().peekable();
+    let header_echo = rest
+        .peek()
+        .copied()
+        .and_then(|value| value.split_once(" · "))
+        .is_some_and(|(action, status)| {
+            matches!(action.trim(), "执行" | "运行命令")
+                && matches!(status.trim(), "运行中" | "完成" | "失败" | "已取消")
+        });
+    if header_echo {
+        rest.next();
+    }
+    if let Some(value) = rest.peek().copied() {
+        // The call target sits right after the header. Display previews are
+        // bounded, so a kept echo may be a "…"-terminated prefix.
+        let value = value.trim();
+        let head = value.trim_end_matches('…');
+        let echoed = !command.is_empty()
+            && (value == command || (header_echo && !head.is_empty() && command.starts_with(head)));
+        if echoed {
+            rest.next();
+        }
+    }
+    let meta = meta.trim();
+    rest.filter(|value| {
+        let value = value.trim();
+        !value.is_empty() && (meta.is_empty() || value != meta)
+    })
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
 pub(super) fn project(tool: &str, payload: &Value, state: &str, fallback: &str) -> Vec<Section> {
     if tool == "上下文压缩" || tool == "context_compaction" {
         return compaction::project(payload, state);
@@ -133,17 +172,26 @@ pub(super) fn project(tool: &str, payload: &Value, state: &str, fallback: &str) 
                 kind: "command".into(),
                 ..Default::default()
             };
-            for (key, kind) in [("stdout", "context"), ("stderr", "error")] {
+            for (key, kind) in [
+                ("stdout", "context"),
+                ("stderr", "error"),
+                // Streamed sessions keep the tail in `output`; without it the
+                // body fell back to the row's display text.
+                ("output", "context"),
+            ] {
                 if let Some(body) = record[key].as_str() {
                     push_body(&mut section, body, kind);
                 }
             }
             if section.lines.is_empty() {
-                push_body(
-                    &mut section,
-                    fallback,
-                    if failed { "error" } else { "context" },
-                );
+                let body = without_display_echo(fallback, &command, &section.meta);
+                if !body.is_empty() {
+                    push_body(
+                        &mut section,
+                        &body,
+                        if failed { "error" } else { "context" },
+                    );
+                }
             }
             sections.push(section);
         }
@@ -387,6 +435,33 @@ mod tests {
         assert_eq!(sections[0].title, "$ fixture");
         assert_eq!(sections[0].meta, "exit 1");
         assert_eq!(sections[0].lines[1].kind, "error");
+    }
+    #[test]
+    fn command_detail_never_repeats_the_command_it_already_titles() {
+        let command = "cd /work && cargo test --bin demo 2>&1 | tail -8";
+        // Pending call: the display text only carries the header and the
+        // command, both of which the section prints itself.
+        let pending_display = ["执行 · 运行中", command].join("\n");
+        let pending = project(
+            "execute_command",
+            &json!({"args":{"command":command}}),
+            "running",
+            &pending_display,
+        );
+        assert_eq!(pending[0].title, format!("$ {command}"));
+        assert_eq!(pending[0].meta, "运行中");
+        assert!(pending[0].lines.is_empty(), "{:?}", pending[0].lines);
+        // Streamed session: the tail arrives in `output`, and neither the
+        // header, the command, nor the exit code may be echoed again.
+        let streamed = json!({"args":{"command":command},"result":{"data":{
+            "command":command,"output":"line one\nline two","status":"exited","exit_code":0
+        }}});
+        let streamed_display =
+            ["执行 · 完成", command, "line one", "line two", "exit 0"].join("\n");
+        let sections = project("execute_command", &streamed, "completed", &streamed_display);
+        assert_eq!(sections[0].meta, "exit 0");
+        let body: Vec<&str> = sections[0].lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(body, vec!["line one", "line two"]);
     }
     #[test]
     fn web_search_projects_sources_and_web_fetch_projects_status() {

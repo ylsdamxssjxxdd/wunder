@@ -238,10 +238,30 @@ struct TranscriptRenderCache {
     local_scroll: u16,
 }
 
+/// One selectable popup line: what the user picks, and an optional aside that
+/// says what it is. Command rows carry a one-line description on the right;
+/// file, app and skill rows usually carry none.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PopupRow {
+    pub label: String,
+    pub detail: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct PopupView {
-    pub lines: Vec<String>,
+    pub lines: Vec<PopupRow>,
     pub selected_index: Option<usize>,
+}
+
+impl PopupRow {
+    /// A row that is only a token (`@file`, `$app`, `#skill`): there is nothing
+    /// to explain on the right, so the list renders it as a single column.
+    pub(crate) fn from_label(label: String) -> Self {
+        Self {
+            label,
+            detail: String::new(),
+        }
+    }
 }
 
 /// One frame's worth of composer content: the visible wrapped draft lines as styled
@@ -4513,15 +4533,21 @@ impl TuiApp {
         }
     }
 
-    fn popup_lines_full(&self) -> Vec<String> {
+    fn popup_lines_full(&self) -> Vec<PopupRow> {
         let trimmed = self.input.trim_start();
         if trimmed.starts_with('/') {
             let body = trimmed.trim_start_matches('/');
-            return slash_command::popup_lines_with_language(
+            return slash_command::suggestions_with_language(
                 body,
                 POPUP_MAX_CANDIDATES,
                 self.display_language.as_str(),
-            );
+            )
+            .into_iter()
+            .map(|entry| PopupRow {
+                label: entry.label,
+                detail: entry.detail,
+            })
+            .collect();
         }
 
         let cursor = self.input_cursor.min(self.input.len());
@@ -4532,13 +4558,13 @@ impl TuiApp {
             .unwrap_or(0);
         let token = &head[token_start..];
         if let Some(query) = token.strip_prefix('@') {
-            return self.mention_popup_lines(query, POPUP_MAX_CANDIDATES);
+            return self.mention_popup_rows(query, POPUP_MAX_CANDIDATES);
         }
         if let Some(query) = token.strip_prefix('$') {
-            return self.app_popup_lines(query, POPUP_MAX_CANDIDATES);
+            return self.app_popup_rows(query, POPUP_MAX_CANDIDATES);
         }
         if let Some(query) = token.strip_prefix('#') {
-            return self.skill_popup_lines(query, POPUP_MAX_CANDIDATES);
+            return self.skill_popup_rows(query, POPUP_MAX_CANDIDATES);
         }
 
         Vec::new()
@@ -4630,18 +4656,36 @@ impl TuiApp {
         " Commands "
     }
 
-    fn mention_popup_lines(&self, query: &str, limit: usize) -> Vec<String> {
+    fn mention_popup_rows(&self, query: &str, limit: usize) -> Vec<PopupRow> {
         self.mention_popup_tokens(query, limit)
+            .into_iter()
+            .map(PopupRow::from_label)
+            .collect()
     }
 
-    fn app_popup_lines(&self, query: &str, limit: usize) -> Vec<String> {
+    fn app_popup_rows(&self, query: &str, limit: usize) -> Vec<PopupRow> {
         self.app_popup_tokens(query, limit)
+            .into_iter()
+            .map(PopupRow::from_label)
+            .collect()
     }
 
-    fn skill_popup_lines(&self, query: &str, limit: usize) -> Vec<String> {
+    fn skill_popup_rows(&self, query: &str, limit: usize) -> Vec<PopupRow> {
         self.skill_popup_tokens(query, limit)
             .into_iter()
-            .map(|token| self.decorate_skill_popup_line(token.as_str()))
+            .map(|token| {
+                let detail = if self.is_skill_enabled_token(token.as_str()) {
+                    String::new()
+                } else if self.is_zh_language() {
+                    "已禁用".to_string()
+                } else {
+                    "disabled".to_string()
+                };
+                PopupRow {
+                    label: token,
+                    detail,
+                }
+            })
             .collect()
     }
 
@@ -4745,18 +4789,6 @@ impl TuiApp {
         };
         let lowered = name.trim().to_ascii_lowercase();
         self.enabled_skill_names.contains(lowered.as_str())
-    }
-
-    fn decorate_skill_popup_line(&self, token: &str) -> String {
-        if self.is_skill_enabled_token(token) {
-            return token.to_string();
-        }
-        let skill_name = token.strip_prefix('#').unwrap_or(token).trim();
-        if self.is_zh_language() {
-            format!("{token}  [已禁用，运行 /skills enable {skill_name}]")
-        } else {
-            format!("{token}  [disabled, run /skills enable {skill_name}]")
-        }
     }
 
     pub async fn drain_stream_events(&mut self) {

@@ -79,7 +79,7 @@ export component ChatGreeting inherits Rectangle {
 // One entry kind per timeline row; the Rust projection stamps the matching
 // value (see src/timeline.rs).
 // Icons for the end-of-turn metrics, mirroring the web component's Font Awesome
-// classes: stopwatch / gauge-high / layer-group / bolt / screwdriver-wrench.
+// classes: hashtag / stopwatch / gauge-high / bolt / coins, plus live status keys.
 // Kept out of ToolIcons because these are message statistics, not tools.
 export global StatsIcons {
     public pure function is-live(key: string) -> bool {
@@ -100,9 +100,7 @@ export global StatsIcons {
         key == "coins" ? @image-url("../assets/icons/coins.svg") :
         key == "stopwatch" ? @image-url("../assets/icons/stopwatch.svg") :
         key == "gauge-high" ? @image-url("../assets/icons/gauge-high.svg") :
-        key == "layer-group" ? @image-url("../assets/icons/layer-group.svg") :
         key == "bolt" ? @image-url("../assets/icons/bolt.svg") :
-        key == "screwdriver-wrench" ? @image-url("../assets/icons/screwdriver-wrench.svg") :
         @image-url("../assets/icons/wrench.svg");
     }
     // The label is the tooltip and the accessible name. Slint has no map, so the
@@ -122,9 +120,7 @@ export global StatsIcons {
         key == "coins" ? I18n.tl_stat_credits :
         key == "stopwatch" ? I18n.tl_stat_duration :
         key == "gauge-high" ? I18n.tl_stat_speed :
-        key == "layer-group" ? I18n.tl_stat_context :
         key == "bolt" ? I18n.tl_stat_quota :
-        key == "screwdriver-wrench" ? I18n.tl_stat_tools :
         key;
     }
     public pure function hint(key: string) -> string {
@@ -139,7 +135,6 @@ export global StatsIcons {
         key == "status-error" ? I18n.tl_status_error :
         key == "status-waiting" ? I18n.tl_status_waiting :
         key == "gauge-high" ? I18n.tl_stat_speed_hint :
-        key == "layer-group" ? I18n.tl_stat_context_hint :
         StatsIcons.label(key);
     }
 

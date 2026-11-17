@@ -18,9 +18,7 @@ const createTranslator = () => {
   const table: Record<string, string> = {
     'chat.stats.duration': 'Duration',
     'chat.stats.speed': 'Speed',
-    'chat.stats.contextTokens': 'Context',
     'chat.stats.quota': 'Quota',
-    'chat.stats.toolCalls': 'Tools',
     'messenger.tasks.quota': 'Credits',
     'chat.stats.userRoundStatus': 'User round {round}',
     'messenger.messageStatus.compacting': 'Compacting',
@@ -110,10 +108,10 @@ test('tool invocation stats retain explicit zero and snake case without inventin
     [{ toolCalls: 1.5 }, '--'],
   ] as Array<[Record<string, unknown>, string]>) {
     const stats = { interaction_duration_s: 1, ...raw };
-    for (const projected of [stats, normalizeMessageStats(stats)]) {
-      const entries = buildAssistantMessageStatsEntries({ role: 'assistant', stats: projected }, createTranslator());
-      assert.equal(findEntryValue(entries, 'Tools'), expected, JSON.stringify(raw));
-    }
+    // footer 不再展示工具次数，规范化口径仍由 store 守着：显式 0 保留、脏值归 null。
+    const count = normalizeMessageStats(stats).toolCalls;
+    const label = count === null || count === undefined ? '--' : String(count);
+    assert.equal(label, expected, JSON.stringify(raw));
   }
   const live = mergeMessageStats({ tool_calls: 2 }, { tool_calls: 2 });
   assert.equal(live?.toolCalls, 2, 'terminal replay does not add counts');
@@ -140,7 +138,7 @@ test('message stats present the user-round aggregate speed for the whole bubble'
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Speed'), '1050.5 token/s');
+  assert.equal(findEntryValue(entries, 'Speed'), '1050.5 t/s');
 });
 
 test('normalized message stats prefer the user-round aggregate decode speed', async () => {
@@ -157,7 +155,7 @@ test('normalized message stats prefer the user-round aggregate decode speed', as
 
   assert.equal(stats?.visible_decode_tokens, 84);
   assert.equal(stats?.visible_decode_duration_s, 1.2);
-  assert.equal(findEntryValue(entries, 'Speed'), '280.0 token/s');
+  assert.equal(findEntryValue(entries, 'Speed'), '280.0 t/s');
 });
 
 test('message stats derive visible reply speed from stream timing when explicit speed is absent', () => {
@@ -169,7 +167,7 @@ test('message stats derive visible reply speed from stream timing when explicit 
       stream_timing: { decode_ms: 722 }
     }
   }, createTranslator());
-  assert.equal(findEntryValue(entries, 'Speed'), '113.6 token/s');
+  assert.equal(findEntryValue(entries, 'Speed'), '113.6 t/s');
 });
 
 test('message stats restore generation speed from persisted tokens and duration', () => {
@@ -182,7 +180,7 @@ test('message stats restore generation speed from persisted tokens and duration'
       visible_decode_speed_tps: null
     }
   }, createTranslator());
-  assert.equal(findEntryValue(entries, 'Speed'), '60.0 token/s');
+  assert.equal(findEntryValue(entries, 'Speed'), '60.0 t/s');
 });
 
 test('message stats retains provider decode speed for a tool-only model round', () => {
@@ -195,15 +193,19 @@ test('message stats retains provider decode speed for a tool-only model round', 
       decode_speed_tps: 60
     }
   }, createTranslator());
-  assert.equal(findEntryValue(entries, 'Speed'), '60.0 token/s');
+  assert.equal(findEntryValue(entries, 'Speed'), '60.0 t/s');
 });
 
-test('message stats render a legal zero tool count as zero', () => {
+test('message stats footer keeps only duration, speed, quota and credits', () => {
+  // 气泡底部不再显示上下文占用与工具调用次数：即使这两项有值，footer 也不产出对应条目。
   const entries = buildAssistantMessageStatsEntries({
     role: 'assistant',
-    stats: { toolCalls: 0, contextTokens: 12 }
+    stats: { toolCalls: 3, contextTokens: 12, interaction_duration_s: 2, quotaConsumed: 100 }
   }, createTranslator());
-  assert.equal(findEntryValue(entries, 'Tools'), '0');
+  assert.equal(entries.some((entry) => entry.key === 'contextTokens'), false);
+  assert.equal(entries.some((entry) => entry.key === 'toolCalls'), false);
+  assert.equal(findEntryValue(entries, 'Duration'), '2s');
+  assert.equal(findEntryValue(entries, 'Quota'), '100');
 });
 
 test('message stats expose quota charges carried as consumed', () => {
@@ -220,7 +222,6 @@ test('message stats show the admitted request total when an exempt request has n
     stats: { modelRequestCount: 1, creditsConsumed: 0, toolCalls: 0 }
   }, createTranslator());
   assert.equal(findEntryValue(entries, 'Credits'), '1');
-  assert.equal(findEntryValue(entries, 'Tools'), '0');
 });
 
 test('message stats restore the persisted model request total ahead of a zero account debit', () => {
@@ -229,7 +230,6 @@ test('message stats restore the persisted model request total ahead of a zero ac
     stats: { account_credits_consumed: 0, model_request_count: 7, toolCalls: 6 }
   }, createTranslator());
   assert.equal(findEntryValue(entries, 'Credits'), '7');
-  assert.equal(findEntryValue(entries, 'Tools'), '6');
 });
 
 test('message stats recover a legacy zero account charge from request count', () => {
@@ -253,7 +253,7 @@ test('message stats show aggregate speed when it has measured rounds', () => {
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Speed'), '1050.5 token/s');
+  assert.equal(findEntryValue(entries, 'Speed'), '1050.5 t/s');
 });
 
 test('message stats keeps persisted aggregate duration after history refresh', () => {
@@ -273,178 +273,6 @@ test('message stats keeps persisted aggregate duration after history refresh', (
 
   // 时长统一按整秒口径展示（3.0s -> 3s）。
   assert.equal(findEntryValue(entries, 'Duration'), '3s');
-});
-
-test('message stats context ignores final usage and round usage totals without occupancy', () => {
-  const t = createTranslator();
-  const entries = buildAssistantMessageStatsEntries(
-    {
-      role: 'assistant',
-      stats: {
-        roundUsage: {
-          input_tokens: 4027,
-          output_tokens: 171,
-          total_tokens: 4198
-        },
-        usage: {
-          input_tokens: 3900,
-          output_tokens: 180,
-          total_tokens: 4080
-        }
-      }
-    },
-    t
-  );
-  assert.equal(findEntryValue(entries, 'Context'), '--');
-});
-
-test('message stats context prefers explicit occupancy over final usage total', () => {
-  const t = createTranslator();
-  const entries = buildAssistantMessageStatsEntries(
-    {
-      role: 'assistant',
-      stats: {
-        context_tokens: 7101,
-        roundUsage: {
-          input_tokens: 7180,
-          output_tokens: 47,
-          total_tokens: 7227
-        },
-        usage: {
-          input_tokens: 7101,
-          output_tokens: 126,
-          total_tokens: 7300
-        }
-      }
-    },
-    t
-  );
-  assert.equal(findEntryValue(entries, 'Context'), '7.1k');
-});
-
-test('message stats context does not fall back to final usage total when explicit occupancy is absent', () => {
-  const t = createTranslator();
-  const entries = buildAssistantMessageStatsEntries(
-    {
-      role: 'assistant',
-      stats: {
-        usage: {
-          input_tokens: 9244,
-          output_tokens: 12,
-          total_tokens: 9268
-        }
-      }
-    },
-    t
-  );
-  assert.equal(findEntryValue(entries, 'Context'), null);
-});
-
-test('message stats context does not fall back to final usage input when explicit occupancy is absent', () => {
-  const t = createTranslator();
-  const entries = buildAssistantMessageStatsEntries(
-    {
-      role: 'assistant',
-      stats: {
-        usage: {
-          input_tokens: 4027,
-          output_tokens: 171,
-        }
-      }
-    },
-    t
-  );
-  assert.equal(findEntryValue(entries, 'Context'), null);
-});
-
-test('message stats context supports explicit context_occupancy_tokens alias', () => {
-  const t = createTranslator();
-  const entries = buildAssistantMessageStatsEntries(
-    {
-      role: 'assistant',
-      stats: {
-        context_occupancy_tokens: 6123
-      }
-    },
-    t
-  );
-  assert.equal(findEntryValue(entries, 'Context'), '6.1k');
-});
-
-test('message stats context supports explicit contextOccupancyTokens alias', () => {
-  const t = createTranslator();
-  const entries = buildAssistantMessageStatsEntries(
-    {
-      role: 'assistant',
-      stats: {
-        contextOccupancyTokens: 6124
-      }
-    },
-    t
-  );
-  assert.equal(findEntryValue(entries, 'Context'), '6.1k');
-});
-
-test('message stats context supports explicit contextTokens alias', () => {
-  const t = createTranslator();
-  const entries = buildAssistantMessageStatsEntries(
-    {
-      role: 'assistant',
-      stats: {
-        contextTokens: 6125
-      }
-    },
-    t
-  );
-  assert.equal(findEntryValue(entries, 'Context'), '6.1k');
-});
-
-test('message stats context supports explicit context_tokens alias', () => {
-  const t = createTranslator();
-  const entries = buildAssistantMessageStatsEntries(
-    {
-      role: 'assistant',
-      stats: {
-        context_tokens: 6126
-      }
-    },
-    t
-  );
-  assert.equal(findEntryValue(entries, 'Context'), '6.1k');
-});
-
-test('message stats context prefers explicit occupancy over accumulated round usage', () => {
-  const t = createTranslator();
-  const entries = buildAssistantMessageStatsEntries(
-    {
-      role: 'assistant',
-      stats: {
-        context_occupancy_tokens: 7510,
-        roundUsage: {
-          input_tokens: 83699,
-          output_tokens: 4533,
-          total_tokens: 88232
-        }
-      }
-    },
-    t
-  );
-  assert.equal(findEntryValue(entries, 'Context'), '7.5k');
-});
-
-test('message stats context prefers observed occupancy alias over cached contextTokens', () => {
-  const t = createTranslator();
-  const entries = buildAssistantMessageStatsEntries(
-    {
-      role: 'assistant',
-      stats: {
-        contextTokens: 8795,
-        context_occupancy_tokens: 1693
-      }
-    },
-    t
-  );
-  assert.equal(findEntryValue(entries, 'Context'), '1.7k');
 });
 
 test('message stats shows quota consumed tokens for the user round', () => {
@@ -502,7 +330,6 @@ test('message stats interrupted response prefers accumulated user-round quota ov
   );
 
   assert.equal(findEntryValue(entries, 'Quota'), '1.5k');
-  assert.equal(findEntryValue(entries, 'Context'), '5k');
 });
 
 test('message stats interrupted response falls back to round usage instead of usage snapshot when quota event is missing', () => {
@@ -530,7 +357,6 @@ test('message stats interrupted response falls back to round usage instead of us
   );
 
   assert.equal(findEntryValue(entries, 'Quota'), '2.5k');
-  assert.equal(findEntryValue(entries, 'Context'), '6.2k');
 });
 
 test('transient first retry stays hidden during grace window', () => {
@@ -809,7 +635,6 @@ test('message stats interrupted response falls back to completed model-round usa
   );
 
   assert.equal(findEntryValue(entries, 'Quota'), '4.2k');
-  assert.equal(findEntryValue(entries, 'Context'), '4.2k');
 });
 
 test('message stats shows queue ahead count in queued status', () => {
@@ -995,7 +820,6 @@ test('message stats takes the cumulative maximum across assistant snapshots in t
   const entries = buildAssistantMessageStatsEntries(messages[2], t, messages);
 
   assert.equal(findEntryValue(entries, 'Quota'), '2.8k');
-  assert.equal(findEntryValue(entries, 'Context'), '--');
 });
 
 test('conversation consumed tokens aggregate by user turn instead of context totals', () => {
@@ -1075,7 +899,7 @@ test('message stats show the explicit visible reply speed without frontend clamp
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Speed'), '1800.0 token/s');
+  assert.equal(findEntryValue(entries, 'Speed'), '1800.0 t/s');
 });
 
 test('message stats prefer the explicit visible reply speed for tool turns', () => {
@@ -1098,7 +922,7 @@ test('message stats prefer the explicit visible reply speed for tool turns', () 
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Speed'), '312.5 token/s');
+  assert.equal(findEntryValue(entries, 'Speed'), '312.5 t/s');
 });
 
 test('message stats hides tool-turn speed when no reliable average exists', () => {

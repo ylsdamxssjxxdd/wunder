@@ -300,8 +300,8 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "子智能体控制",
-        brief_en: "Manage child agent sessions: list/history/status to inspect, spawn(task) to create, send/report/wait for messages, close for lifecycle. Select by session_id or run_id; list defaults to direct children, parent_id=/root selects root children, and selectors stay in the current root tree. accepted means received, not finished.",
-        brief_zh: "管理子智能体会话：list/history/status 查看，spawn(task) 创建，send/report/wait 通信，close 结束；用 session_id 或 run_id 定位，list 默认只看直接子级（parent_id=/root 选根级子级），选择器限于当前根任务树；accepted 仅表示已接收，不等于完成。",
+        brief_en: "Manage child agent sessions: list/history/status to inspect, spawn(task) to create, send/report/wait for messages, close for lifecycle. Select by session_id or run_id; list defaults to direct children, parent_id=root or /root selects root children, and selectors stay in the current root tree. spawn accepts timeout_seconds as run_timeout_seconds; wait accepts it as wait_seconds. accepted means received, not finished.",
+        brief_zh: "管理子智能体会话：list/history/status 查看，spawn(task) 创建，send/report/wait 通信，close 结束；用 session_id 或 run_id 定位，list 默认只看直接子级（parent_id=root 或 /root 选根级子级），选择器限于当前根任务树；spawn 的 timeout_seconds 等同 run_timeout_seconds，wait 的等同 wait_seconds；accepted 仅表示已接收，不等于完成。",
         drop_actions: &["interrupt", "resume"],
         drop_fields: &[
             "announce_persist_history",

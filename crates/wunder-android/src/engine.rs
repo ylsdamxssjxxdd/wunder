@@ -9088,7 +9088,8 @@ mod tests {
             project::LiveStep::Tool(tool) => tool,
             _ => panic!("tool step"),
         };
-        assert_eq!(tool.title, "正在执行");
+        // 命令类工具在工作过程里只写一个动词。
+        assert_eq!(tool.title, "执行");
         assert_eq!(tool.tool_icon, "terminal");
         assert_eq!(tool.summary, "ls -la");
         assert_eq!(tool.state, "running");

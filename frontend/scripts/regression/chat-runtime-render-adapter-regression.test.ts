@@ -53,9 +53,7 @@ const t = (key: string, params?: Record<string, unknown>): string => {
   const table: Record<string, string> = {
     'chat.stats.duration': 'Duration',
     'chat.stats.speed': 'Speed',
-    'chat.stats.contextTokens': 'Context',
     'chat.stats.quota': 'Quota',
-    'chat.stats.toolCalls': 'Tools',
     'chat.stats.userRoundStatus': `Round ${String(params?.round ?? '')}`,
     'messenger.messageStatus.done': 'Done',
     'messenger.messageStatus.requesting': 'Requesting',
@@ -1623,9 +1621,10 @@ test('chat runtime render adapter materializes projected usage stats for message
   assert.equal(message.stats.context_occupancy_tokens, 180);
   assert.equal(message.stats.contextTotalTokens, 1000);
   assert.equal(message.stats.quotaConsumed, 150);
-  assert.equal(entries.find((item) => item.key === 'contextTokens')?.value, '180');
+  // 气泡底部不再显示上下文占用：占用值仍落在消息 stats 与 composer 源上。
+  assert.equal(entries.some((item) => item.key === 'contextTokens'), false);
   assert.equal(entries.find((item) => item.key === 'quota')?.value, '150');
-  assert.equal(entries.find((item) => item.key === 'speed')?.value, '10.0 token/s');
+  assert.equal(entries.find((item) => item.key === 'speed')?.value, '10.0 t/s');
   assert.equal(contextSource.contextTokens, 180);
   assert.equal(contextSource.contextTotalTokens, 1000);
   (message.stats.roundUsage as Record<string, unknown>).total = 1;
@@ -1700,7 +1699,7 @@ test('chat runtime render adapter keeps persisted speed when workflow history re
   const message = materializeChatRuntimeMessages(projection, sessionId)[1] as Record<string, any>;
   const entries = buildAssistantMessageStatsEntries(message, t, [message]);
   assert.equal(message.stats.visible_decode_speed_tps, 44.12591453578667);
-  assert.equal(entries.find((item) => item.key === 'speed')?.value, '44.1 token/s');
+  assert.equal(entries.find((item) => item.key === 'speed')?.value, '44.1 t/s');
 });
 
 test('chat runtime render adapter updates cached materialization when projected stats mutate in place', () => {
@@ -1778,8 +1777,8 @@ test('chat runtime render adapter updates cached materialization when projected 
   assert.equal(second, first);
   assert.equal(second.stats.avg_model_round_speed_tps, 5);
   assert.equal(second.stats.toolCalls, 1);
-  assert.equal(entries.find((item) => item.key === 'speed')?.value, '5.0 token/s');
-  assert.equal(entries.find((item) => item.key === 'toolCalls')?.value, '1');
+  assert.equal(entries.find((item) => item.key === 'speed')?.value, '5.0 t/s');
+  assert.equal(entries.some((item) => item.key === 'toolCalls'), false);
 });
 
 test('chat runtime render adapter preserves projected subagent cards', () => {

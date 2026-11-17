@@ -6523,8 +6523,8 @@
  },
  {
   "key": "tl_user_round",
-  "zh": "第 {} 个用户轮次",
-  "en": "User round {}",
+  "zh": "U{}",
+  "en": "U{}",
   "params": [
    "round"
   ]
@@ -6540,11 +6540,6 @@
   "en": "Measured output tokens per streaming second, excluding wait and tool execution. Uses the turn aggregate when available; - means unavailable."
  },
  {
-  "key": "tl_stat_context_hint",
-  "zh": "最近一次模型请求观测的上下文占用，不是累计消耗；压缩后重新观测，可能下降。",
-  "en": "Context occupancy observed for the latest model request, rather than cumulative consumption. It may decrease after compaction."
- },
- {
   "key": "tl_stat_duration",
   "zh": "耗时",
   "en": "Duration"
@@ -6555,19 +6550,9 @@
   "en": "Generation speed"
  },
  {
-  "key": "tl_stat_context",
-  "zh": "上下文占用",
-  "en": "Context occupancy"
- },
- {
   "key": "tl_stat_quota",
   "zh": "上下文消耗",
   "en": "Consumed tokens"
- },
- {
-  "key": "tl_stat_tools",
-  "zh": "工具调用次数",
-  "en": "Tool calls"
  },
  {
   "key": "tl_thought_done",

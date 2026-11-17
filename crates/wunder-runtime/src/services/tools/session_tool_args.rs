@@ -86,7 +86,13 @@ struct RawSessionSpawnArgs {
     agent_name: Option<String>,
     #[serde(default)]
     model: Option<String>,
-    #[serde(default, rename = "runTimeoutSeconds", alias = "run_timeout_seconds")]
+    #[serde(
+        default,
+        rename = "runTimeoutSeconds",
+        alias = "run_timeout_seconds",
+        alias = "timeoutSeconds",
+        alias = "timeout_seconds"
+    )]
     run_timeout_seconds: Option<f64>,
     #[serde(default)]
     cleanup: Option<String>,

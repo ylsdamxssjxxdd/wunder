@@ -35,125 +35,166 @@ pub struct ParsedSlashCommand<'a> {
     pub args: &'a str,
 }
 
+/// What the command list shows for one command: the spelling to type and one
+/// plain sentence about what it does.
+///
+/// The list deliberately carries **no argument grammar**. Every command either
+/// opens a picker (resume, model, permissions, skills, MCP) or asks for the one
+/// value it needs once selected, so a `[list|add <name> <endpoint> ...]` string
+/// only ever taught users to type forms the UI no longer asks for.
 #[derive(Debug, Clone, Copy)]
 struct SlashCommandDoc {
     command: SlashCommand,
-    usage: &'static str,
+    /// Canonical spelling, without the leading `/`. Presentation order follows
+    /// this table; there is no sorting pass on top of it.
+    name: &'static str,
     description: &'static str,
+    description_zh: &'static str,
 }
 
 const SLASH_COMMAND_DOCS: [SlashCommandDoc; 22] = [
     SlashCommandDoc {
         command: SlashCommand::Help,
-        usage: "/help",
-        description: "show slash command help",
+        name: "help",
+        description: "list the commands you can run",
+        description_zh: "查看可用命令",
     },
     SlashCommandDoc {
         command: SlashCommand::Status,
-        usage: "/status",
-        description: "show session config and token usage",
+        name: "status",
+        description: "show this session's config and token usage",
+        description_zh: "查看会话配置与用量",
     },
     SlashCommandDoc {
         command: SlashCommand::Resume,
-        usage: "/resume [--all|session_id]",
-        description: "list and resume sessions (current workspace, --all widens)",
-    },
-    SlashCommandDoc {
-        command: SlashCommand::Trajectory,
-        usage: "/trajectory [session_id]",
-        description: "inspect the durable thread trajectory (alias: /trace)",
+        name: "resume",
+        description: "resume an earlier thread",
+        description_zh: "恢复历史线程",
     },
     SlashCommandDoc {
         command: SlashCommand::New,
-        usage: "/new",
-        description: "start a new thread in the current workspace",
+        name: "new",
+        description: "start a new thread",
+        description_zh: "新建线程",
     },
     SlashCommandDoc {
         command: SlashCommand::Clear,
-        usage: "/clear",
-        description: "clear the screen and start a new thread (Ctrl+L)",
-    },
-    SlashCommandDoc {
-        command: SlashCommand::Config,
-        usage: "/config [show|edit]",
-        description: "show the effective config or edit config.toml",
+        name: "clear",
+        description: "clear the screen and start a new thread",
+        description_zh: "清屏并新建线程",
     },
     SlashCommandDoc {
         command: SlashCommand::Model,
-        usage: "/model [<name> [effort]|add <base_url> <api_key> <name> [max_context]]",
-        description: "show or switch the model; /model add registers an endpoint",
+        name: "model",
+        description: "choose the model and reasoning effort",
+        description_zh: "选择模型与推理强度",
     },
     SlashCommandDoc {
         command: SlashCommand::Permissions,
-        usage: "/permissions [never|on-request|suggest|read-only|workspace-write|danger-full-access]",
-        description: "show or switch the sandbox and approval policy (alias: /approvals)",
+        name: "permissions",
+        description: "choose what the assistant may do",
+        description_zh: "选择助手的权限范围",
     },
     SlashCommandDoc {
         command: SlashCommand::Plan,
-        usage: "/plan [topic]",
-        description: "ask model for a step-by-step plan first",
+        name: "plan",
+        description: "ask for a step-by-step plan first",
+        description_zh: "先让助手给出计划",
     },
     SlashCommandDoc {
         command: SlashCommand::Goal,
-        usage: "/goal [pause|resume|clear|edit <objective>|<objective>]",
-        description: "enter or manage persistent goal mode",
-    },
-    SlashCommandDoc {
-        command: SlashCommand::Edit,
-        usage: "/edit [draft]",
-        description: "edit the draft in an external editor (Ctrl+G)",
-    },
-    SlashCommandDoc {
-        command: SlashCommand::Init,
-        usage: "/init [force]",
-        description: "create an AGENTS.md template in the current workspace",
-    },
-    SlashCommandDoc {
-        command: SlashCommand::Attach,
-        usage: "/attach [list|clear|drop <index>|<path>]",
-        description: "queue local file/image attachments for the next turn",
+        name: "goal",
+        description: "set or manage the long-running goal",
+        description_zh: "设置或管理持续目标",
     },
     SlashCommandDoc {
         command: SlashCommand::Diff,
-        usage: "/diff [summary|files|show <path>|hunks <path>|stage <path>]",
-        description: "show current git changes (including untracked)",
+        name: "diff",
+        description: "show the workspace's git changes",
+        description_zh: "查看工作区 Git 变更",
     },
     SlashCommandDoc {
         command: SlashCommand::Review,
-        usage: "/review [focus]",
-        description: "review current git changes with the model",
+        name: "review",
+        description: "review the current changes",
+        description_zh: "评审当前变更",
+    },
+    SlashCommandDoc {
+        command: SlashCommand::Attach,
+        name: "attach",
+        description: "queue local files for the next turn",
+        description_zh: "为下一轮挂载本地文件",
     },
     SlashCommandDoc {
         command: SlashCommand::Skills,
-        usage: "/skills [list|enable <name>|disable <name>|root]",
+        name: "skills",
         description: "list and toggle local skills",
-    },
-    SlashCommandDoc {
-        command: SlashCommand::Rename,
-        usage: "/rename <title>",
-        description: "rename the current thread",
-    },
-    SlashCommandDoc {
-        command: SlashCommand::Compact,
-        usage: "/compact",
-        description: "compact the current thread into a summary",
+        description_zh: "列出并开关本地技能",
     },
     SlashCommandDoc {
         command: SlashCommand::Mcp,
-        usage: "/mcp [list|get <name>|add <name> <endpoint> [transport]|enable <name>|disable <name>|remove <name>|login <name> [bearer-token|token|api-key] <secret>|logout <name>|test <name>|<name>]",
-        description: "list/manage MCP servers and auth status",
+        name: "mcp",
+        description: "manage MCP servers",
+        description_zh: "管理 MCP 服务器",
+    },
+    SlashCommandDoc {
+        command: SlashCommand::Config,
+        name: "config",
+        description: "show or edit config.toml",
+        description_zh: "查看或编辑配置文件",
+    },
+    SlashCommandDoc {
+        command: SlashCommand::Edit,
+        name: "edit",
+        description: "edit the draft in your editor (Ctrl+G)",
+        description_zh: "在编辑器里修改草稿（Ctrl+G）",
+    },
+    SlashCommandDoc {
+        command: SlashCommand::Init,
+        name: "init",
+        description: "create an AGENTS.md template here",
+        description_zh: "生成 AGENTS.md 模板",
+    },
+    SlashCommandDoc {
+        command: SlashCommand::Compact,
+        name: "compact",
+        description: "compact the thread into a summary",
+        description_zh: "把上下文压缩成摘要",
+    },
+    SlashCommandDoc {
+        command: SlashCommand::Rename,
+        name: "rename",
+        description: "rename the current thread",
+        description_zh: "重命名当前线程",
+    },
+    SlashCommandDoc {
+        command: SlashCommand::Trajectory,
+        name: "trajectory",
+        description: "inspect this thread's activity log",
+        description_zh: "查看线程活动记录",
     },
     SlashCommandDoc {
         command: SlashCommand::Exit,
-        usage: "/exit",
-        description: "exit interactive mode",
+        name: "exit",
+        description: "exit wunder",
+        description_zh: "退出 wunder",
     },
     SlashCommandDoc {
         command: SlashCommand::Quit,
-        usage: "/quit",
-        description: "exit interactive mode",
+        name: "quit",
+        description: "exit wunder",
+        description_zh: "退出 wunder",
     },
 ];
+
+/// One row of the command list. `label` is what the user types (`/model`);
+/// `detail` is the sentence shown to its right. File, app and skill rows fill
+/// `label` only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandSuggestion {
+    pub label: String,
+    pub detail: String,
+}
 
 impl SlashCommand {
     pub fn available_during_task(self) -> bool {
@@ -223,28 +264,37 @@ pub fn parse_slash_command(input: &str) -> Option<ParsedSlashCommand<'_>> {
     })
 }
 
+/// `/help`: the same rows as the popup, laid out as two columns.
 pub fn help_lines_with_language(language: &str) -> Vec<String> {
-    let width = SLASH_COMMAND_DOCS
+    let entries: Vec<&SlashCommandDoc> = SLASH_COMMAND_DOCS
         .iter()
-        .map(|entry| entry.usage.len())
+        .filter(|entry| entry.command != SlashCommand::Quit)
+        .collect();
+    let width = entries
+        .iter()
+        .map(|entry| entry.name.len() + 1)
         .max()
         .unwrap_or(0);
 
-    SLASH_COMMAND_DOCS
-        .iter()
-        .filter(|entry| entry.command != SlashCommand::Quit)
+    entries
+        .into_iter()
         .map(|entry| {
             format!(
-                "{usage:<width$}  {description}",
-                usage = entry.usage,
-                description = localized_description(entry, language),
+                "/{name:<width$}  {detail}",
+                name = entry.name,
+                detail = description(entry, language),
                 width = width,
             )
         })
         .collect()
 }
 
-pub fn popup_lines_with_language(prefix: &str, limit: usize, language: &str) -> Vec<String> {
+/// The popup list while the user is typing a slash command.
+pub fn suggestions_with_language(
+    prefix: &str,
+    limit: usize,
+    language: &str,
+) -> Vec<CommandSuggestion> {
     if limit == 0 {
         return Vec::new();
     }
@@ -252,16 +302,17 @@ pub fn popup_lines_with_language(prefix: &str, limit: usize, language: &str) -> 
     let cleaned = prefix.trim();
     let (head, tail) = split_head(cleaned);
 
+    // `/model something` is still `/model`: keep one row so the popup says what
+    // the command does instead of vanishing.
     if !tail.is_empty() {
-        if let Some(entry) = command_doc_by_name(head) {
-            return vec![format_popup_line(entry, language)];
-        }
-        return Vec::new();
+        return command_doc_by_name(head)
+            .map(|entry| vec![suggestion(entry, language)])
+            .unwrap_or_default();
     }
 
     command_entries_for_lookup(head, limit)
         .into_iter()
-        .map(|entry| format_popup_line(entry, language))
+        .map(|entry| suggestion(entry, language))
         .collect()
 }
 
@@ -278,8 +329,19 @@ pub fn command_completions(prefix: &str, limit: usize) -> Vec<String> {
 
     command_entries_for_lookup(head, limit)
         .into_iter()
-        .map(|entry| command_token(entry).trim_start_matches('/').to_string())
+        .map(|entry| entry.name.to_string())
         .collect()
+}
+
+fn suggestion(entry: &SlashCommandDoc, language: &str) -> CommandSuggestion {
+    CommandSuggestion {
+        label: format!("/{}", entry.name),
+        detail: description(entry, language),
+    }
+}
+
+fn description(entry: &SlashCommandDoc, language: &str) -> String {
+    locale::tr(language, entry.description_zh, entry.description)
 }
 
 fn command_doc_by_name(name: &str) -> Option<&'static SlashCommandDoc> {
@@ -326,12 +388,9 @@ fn command_entries_for_lookup(lookup: &str, limit: usize) -> Vec<&'static SlashC
         .iter()
         .filter(|entry| entry.command != SlashCommand::Quit)
     {
-        let token = command_token(entry)
-            .trim_start_matches('/')
-            .to_ascii_lowercase();
-        if normalized.is_empty() || token.starts_with(normalized.as_str()) {
+        if normalized.is_empty() || entry.name.starts_with(normalized.as_str()) {
             prefix_matches.push(entry);
-        } else if token.contains(normalized.as_str()) {
+        } else if entry.name.contains(normalized.as_str()) {
             contains_matches.push(entry);
         }
     }
@@ -339,56 +398,6 @@ fn command_entries_for_lookup(lookup: &str, limit: usize) -> Vec<&'static SlashC
     prefix_matches.extend(contains_matches);
     prefix_matches.truncate(limit);
     prefix_matches
-}
-
-fn popup_usage(entry: &SlashCommandDoc) -> &'static str {
-    match entry.command {
-        SlashCommand::Mcp => {
-            "/mcp [list|get <name>|add <name> <endpoint>|enable|disable|remove|login|logout|test]"
-        }
-        SlashCommand::Permissions => {
-            "/permissions [never|on-request|suggest|read-only|workspace-write|danger-full-access]"
-        }
-        _ => entry.usage,
-    }
-}
-
-fn format_popup_line(entry: &SlashCommandDoc, language: &str) -> String {
-    let usage = popup_usage(entry);
-    let description = localized_description(entry, language).replace(['\n', '\r'], " ");
-    format!("{usage}  {description}")
-}
-
-fn command_token(entry: &SlashCommandDoc) -> &str {
-    entry.usage.split_whitespace().next().unwrap_or(entry.usage)
-}
-
-fn localized_description(entry: &SlashCommandDoc, language: &str) -> String {
-    let zh = match entry.command {
-        SlashCommand::Help => "显示 slash 命令帮助",
-        SlashCommand::Status => "显示会话配置与 token 用量",
-        SlashCommand::Resume => "列出并恢复历史会话（默认限当前工作区，--all 放开）",
-        SlashCommand::Trajectory => "查看当前或指定线程的轨迹日志（别名：/trace）",
-        SlashCommand::New => "在当前工作区新建线程",
-        SlashCommand::Clear => "清屏并新建线程（Ctrl+L）",
-        SlashCommand::Config => "查看生效配置或编辑 config.toml",
-        SlashCommand::Model => "查看或切换模型与推理强度；用 /model add 登记端点",
-        SlashCommand::Permissions => "查看或切换沙箱与审批策略（别名：/approvals）",
-        SlashCommand::Plan => "先让模型输出步骤化执行计划",
-        SlashCommand::Goal => "进入或管理持续目标态",
-        SlashCommand::Edit => "用外部编辑器编辑并回填输入草稿（Ctrl+G）",
-        SlashCommand::Init => "在当前工作区生成 AGENTS.md 模板",
-        SlashCommand::Attach => "为下一轮请求挂载本地文件/图片附件",
-        SlashCommand::Diff => "显示当前工作区 git 变更（含未跟踪文件）",
-        SlashCommand::Review => "基于当前 git 变更发起评审",
-        SlashCommand::Skills => "列出并管理本地技能",
-        SlashCommand::Rename => "重命名当前线程",
-        SlashCommand::Compact => "压缩当前线程上下文为摘要",
-        SlashCommand::Mcp => "列出并管理 MCP 配置与鉴权状态",
-        SlashCommand::Exit => "退出交互模式",
-        SlashCommand::Quit => "退出交互模式",
-    };
-    locale::tr(language, zh, entry.description)
 }
 
 fn split_head(input: &str) -> (&str, &str) {
@@ -459,17 +468,43 @@ mod tests {
     }
 
     #[test]
-    fn popup_lines_show_usage_for_argument_entry() {
-        let lines = popup_lines_with_language("permissions never", 7, "en-US");
-        assert_eq!(lines.len(), 1);
-        assert!(lines[0].contains("/permissions [never|on-request|suggest|"));
+    fn the_list_shows_a_plain_description_instead_of_argument_grammar() {
+        for language in ["en-US", "zh-CN"] {
+            let rows = suggestions_with_language("", 32, language);
+            assert_eq!(rows.len(), SLASH_COMMAND_DOCS.len() - 1);
+            for row in &rows {
+                assert!(row.label.starts_with('/'), "{row:?}");
+                assert!(!row.detail.is_empty(), "{row:?}");
+                for forbidden in ['[', ']', '<', '>', '|'] {
+                    assert!(
+                        !row.detail.contains(forbidden),
+                        "{language}: {row:?} still teaches a command form"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
-    fn popup_lines_show_mcp_usage_for_argument_entry() {
-        let lines = popup_lines_with_language("mcp list", 7, "en-US");
-        assert_eq!(lines.len(), 1);
-        assert!(lines[0].contains("/mcp [list|get <name>"));
+    fn a_finished_command_keeps_one_row_that_explains_it() {
+        let rows = suggestions_with_language("permissions never", 7, "zh-CN");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "/permissions");
+        assert_eq!(rows[0].detail, "选择助手的权限范围");
+
+        let rows = suggestions_with_language("mcp list", 7, "en-US");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "/mcp");
+        assert_eq!(rows[0].detail, "manage MCP servers");
+    }
+
+    #[test]
+    fn prefix_matches_come_before_contains_matches() {
+        let rows = suggestions_with_language("mod", 7, "en-US");
+        assert_eq!(rows[0].label, "/model");
+
+        let rows = suggestions_with_language("del", 7, "en-US");
+        assert_eq!(rows[0].label, "/model", "contains matches still resolve");
     }
 
     #[test]
@@ -519,9 +554,23 @@ mod tests {
     fn help_lists_every_command_but_quit() {
         let lines = help_lines_with_language("en-US");
         assert_eq!(lines.len(), SLASH_COMMAND_DOCS.len() - 1);
-        assert!(lines.iter().any(|line| line.contains("/permissions")));
-        assert!(lines.iter().any(|line| line.contains("/clear")));
+        assert!(lines.iter().any(|line| line.starts_with("/permissions")));
+        assert!(lines.iter().any(|line| line.starts_with("/clear")));
         assert!(!lines.iter().any(|line| line.contains("/statusline")));
+    }
+
+    #[test]
+    fn help_never_prints_an_argument_form() {
+        for language in ["en-US", "zh-CN"] {
+            for line in help_lines_with_language(language) {
+                for forbidden in ['[', ']', '<', '>', '|'] {
+                    assert!(
+                        !line.contains(forbidden),
+                        "{language}: {line} still teaches a command form"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -540,26 +589,19 @@ mod tests {
     }
 
     #[test]
-    fn the_endpoint_form_lives_on_model_not_config() {
+    fn the_endpoint_form_is_never_advertised_in_the_list() {
+        // The endpoint wizard asks one field at a time (`/model add`), so no
+        // surface may go back to spelling out `<base_url> <api_key> <name>`.
         for language in ["en-US", "zh-CN"] {
-            let lines = help_lines_with_language(language);
-            let config_line = lines
-                .iter()
-                .find(|line| line.starts_with("/config"))
-                .expect("config is listed");
-            assert!(
-                !config_line.contains("<base_url>"),
-                "{language}: /config must not advertise an endpoint form: {config_line}"
-            );
-
-            let model_line = lines
-                .iter()
-                .find(|line| line.starts_with("/model"))
-                .expect("model is listed");
-            assert!(
-                model_line.contains("add <base_url>"),
-                "{language}: /model must offer the endpoint form: {model_line}"
-            );
+            for line in help_lines_with_language(language) {
+                assert!(
+                    !line.contains("base_url") && !line.contains("api_key"),
+                    "{language}: {line} must not advertise the endpoint arguments"
+                );
+            }
+            for row in suggestions_with_language("model", 7, language) {
+                assert!(!row.detail.contains("base_url"), "{row:?}");
+            }
         }
     }
 

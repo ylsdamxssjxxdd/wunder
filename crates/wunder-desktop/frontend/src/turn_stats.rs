@@ -38,9 +38,7 @@ fn icon_for(key: &str) -> &'static str {
         "credits" => "coins",
         "duration" => "stopwatch",
         "speed" => "gauge-high",
-        "context" => "layer-group",
         "quota" => "bolt",
-        "tools" => "screwdriver-wrench",
         _ => "wrench",
     }
 }
@@ -73,15 +71,8 @@ pub fn metrics_from_native(stats: &wunder_desktop::native::NativeMessageStats) -
             "speed",
             stats
                 .speed_tps
-                .map(|value| format!("{value:.1} token/s"))
+                .map(|value| format!("{value:.1} t/s"))
                 .unwrap_or_else(|| "-".into()),
-        ),
-        metric(
-            "context",
-            stats
-                .context_tokens
-                .map(count)
-                .unwrap_or_else(|| "--".into()),
         ),
         metric(
             "quota",
@@ -89,10 +80,6 @@ pub fn metrics_from_native(stats: &wunder_desktop::native::NativeMessageStats) -
                 .consumed_tokens
                 .map(count)
                 .unwrap_or_else(|| "--".into()),
-        ),
-        metric(
-            "tools",
-            stats.tool_calls.map(count).unwrap_or_else(|| "--".into()),
         ),
         metric(
             "credits",
@@ -298,10 +285,8 @@ mod tests {
             vec![
                 ("round", "57"),
                 ("duration", "1h 2m 5s"),
-                ("speed", "68234.0 token/s"),
-                ("context", "120k"),
+                ("speed", "68234.0 t/s"),
                 ("quota", "4.1k"),
-                ("tools", "0"),
                 ("credits", "4")
             ]
         );
@@ -315,9 +300,7 @@ mod tests {
             vec![
                 ("duration", "-"),
                 ("speed", "-"),
-                ("context", "0"),
                 ("quota", "--"),
-                ("tools", "0"),
                 ("credits", "--")
             ]
         );

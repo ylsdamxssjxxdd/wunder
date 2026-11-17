@@ -27,6 +27,8 @@ updated_at: 2026-11-14
 
 ### Slash commands
 
+The palette and `/help` show each command with a one-line description and no argument grammar: a command that needs a value takes it after the name (`/rename new title`), and multi-field setup such as `/model add` asks one field at a time.
+
 22 in total: `/help` `/status` `/resume` `/trajectory` `/new` `/clear` `/model` `/permissions` `/plan` `/goal` `/edit` `/init` `/attach` `/diff` `/review` `/skills` `/rename` `/compact` `/mcp` `/config` `/exit` `/quit`.
 
 There are **no** `cloud`, `cron`, `channel`, `memory` or `knowledge` slash commands: `cloud` is a subcommand, and the other four have no management UI in the CLI.

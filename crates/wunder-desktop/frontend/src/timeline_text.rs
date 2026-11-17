@@ -33,9 +33,12 @@ pub fn tool_label(tool: &str) -> String {
         "文件名匹配" | "glob" | "glob_files" => "匹配",
         "搜索内容" | "search_content" | "search_files" => "搜索",
         "网页搜索" | "web_search" | "web_search_tool" | "web search" | "websearch" => "联网",
-        "网页抓取" | "web_fetch" | "web_fetch_tool" | "web fetch" | "webfetch" => "抓取",
+        // 抓取与搜索都是“去网页上拿东西”，行首只说「网页」，具体动作由摘要里的 URL/查询词说明。
+        "网页抓取" | "web_fetch" | "web_fetch_tool" | "web fetch" | "webfetch" => "网页",
+        // 命令会话也是「执行」：写 stdin 和轮询输出都是同一条命令的后续动作，
+        // 行首不该读成三件事。
         "命令会话" | "命令交互" | "command_session" | "write_stdin" | "write_command_stdin" => {
-            wunder_server::tools::command_session_verb(false).0
+            "执行"
         }
         "问询面板" | "question_panel" | "ask_panel" => "问询",
         "计划面板" | "update_plan" | "plan_update" => "计划",
@@ -74,18 +77,12 @@ pub fn is_command_tool(tool: &str) -> bool {
     )
 }
 
+/// 工作过程里命令类工具只写一个动词「执行」：发起执行、写 stdin、轮询新输出都是
+/// 同一条命令的动作，右侧已经给出命令文本与轮询序号，行首再分叉只会让一件事读成
+/// 三件事。命令行侧仍按动作细分（引擎的 `tool_verbs`），那是终端里的说明词。
 pub fn tool_label_for_entry(entry: &NativeWorkflowEntry) -> String {
-    if is_command_tool(&entry.title) {
+    if is_command_tool(&entry.title) || wunder_server::tools::is_command_session_tool(&entry.title) {
         return "执行".into();
-    }
-    // 命令会话一个工具两种动作：等新输出是「等待」，写 stdin 是「发送输入」。词表在
-    // 引擎里（`wunder_server::tools::tool_verbs`），命令行、安卓版与云端版同一份；
-    // 这里只负责读出这次调用有没有写 stdin。
-    if wunder_server::tools::is_command_session_tool(&entry.title) {
-        let (label, _) = wunder_server::tools::command_session_verb(
-            entry.command_meta.contains("stdin ›"),
-        );
-        return label.to_string();
     }
     tool_label(&entry.title)
 }

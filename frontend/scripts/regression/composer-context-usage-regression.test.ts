@@ -12,9 +12,7 @@ const createTranslator = () => {
   const table: Record<string, string> = {
     'chat.stats.duration': 'Duration',
     'chat.stats.speed': 'Speed',
-    'chat.stats.contextTokens': 'Context',
     'chat.stats.quota': 'Quota',
-    'chat.stats.toolCalls': 'Tools',
     'messenger.messageStatus.done': 'Done'
   };
   return (key: string) => table[key] || key;
@@ -427,8 +425,8 @@ test('composer context usage and bubble stats align on observed occupancy', () =
   );
 
   assert.equal(composerSource.contextTokens, 21024);
-  assert.equal(findEntryValue(bubbleEntries, 'Context'), '21k');
-  // 气泡按紧凑口径显示（21k），原始观测值仍由 composer 源保留。
+  // 气泡底部不再显示上下文占用；原始观测值仍由 composer 源保留。
+  assert.equal(bubbleEntries.some((entry) => entry.key === 'contextTokens'), false);
 });
 
 test('composer context usage keeps session max context after reload', () => {

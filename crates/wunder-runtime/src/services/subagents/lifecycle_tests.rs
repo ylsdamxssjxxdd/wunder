@@ -48,6 +48,12 @@ fn task_tree_restores_identity_and_rejects_other_roots_users_and_cycles() {
         tree::resolve(&db, "owner", "b", "/root/a/nested").unwrap(),
         "nested"
     );
+    for root_alias in ["root", "/root"] {
+        assert_eq!(
+            tree::resolve(&db, "owner", "b", root_alias).unwrap(),
+            "root"
+        );
+    }
     assert!(tree::resolve(&db, "owner", "b", "/root/b/nested").is_err());
     assert_eq!(
         tree::ancestors(&db, "owner", "nested").unwrap(),

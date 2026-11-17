@@ -2283,17 +2283,6 @@ pub(super) fn localize_cli_notice(language: &str, text: &str) -> String {
         "press Ctrl+C again to exit (or wait to continue)" => {
             "再按一次 Ctrl+C 退出（或等待继续）".to_string()
         }
-        "usage: /mention <query>" => "用法: /mention <query>".to_string(),
-        "usage: /approvals [show|suggest|auto_edit|full_auto]" => {
-            "用法: /approvals [show|suggest|auto_edit|full_auto]".to_string()
-        }
-        "valid modes: suggest, auto_edit, full_auto" => {
-            "可选模式: suggest, auto_edit, full_auto".to_string()
-        }
-        "usage: /tool-call-mode <tool_call|function_call> [model]" => {
-            "用法: /tool-call-mode <tool_call|function_call> [model]".to_string()
-        }
-        "valid modes: tool_call, function_call" => "可选模式: tool_call, function_call".to_string(),
         "too many arguments" => "参数过多".to_string(),
         "config values cannot be empty" => "配置值不能为空".to_string(),
         "configure llm model (step 1/4)" => "配置 LLM 模型（步骤 1/4）".to_string(),

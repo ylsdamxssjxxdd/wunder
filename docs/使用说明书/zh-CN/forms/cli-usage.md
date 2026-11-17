@@ -36,6 +36,8 @@ wunder-cli
 
 ### 斜杠命令
 
+命令面板与 `/help` 只给命令名和一句「它做什么」，不再展示参数语法：需要参数的命令在选中后再写值（如 `/rename 新标题`），`/model add` 这类多字段配置会一步步询问。
+
 `/help`（`/h`）、`/status`、`/resume`（`/r`）、`/trajectory`（`/trace`）、`/new`、`/clear`（`/cls`）、`/model`（`/model add` 登记新端点）、`/permissions`（`/perm`）、`/plan`、`/goal`、`/edit`、`/init`、`/attach`、`/diff`、`/review`、`/skills`、`/rename`、`/compact`、`/mcp`、`/config`（`/config edit` 编辑配置）、`/exit`、`/quit`（`/q`）。
 
 没有 `cloud`、`cron`、`channel`、`memory`、`knowledge` 斜杠命令：`cloud` 是子命令形式，后四者在命令行上没有管理界面。

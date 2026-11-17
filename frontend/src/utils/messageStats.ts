@@ -1,6 +1,5 @@
 import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from './chatTiming';
 import { tokenUsageDetails } from './tokenUsageDetails';
-import { resolveMessageToolCalls } from './toolCallStats';
 import { continuesRecoveryOnModelRequest, isChatRetryEventType, isModelRecoveryReason } from '@/realtime/chat/chatRetryState';
 import { resolveAssistantFailureNotice } from './assistantFailureNotice';
 import {
@@ -62,7 +61,8 @@ const formatSpeed = (value: unknown): string => {
   if (value === null || value === undefined) return '-';
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return '-';
-  return `${parsed.toFixed(1)} token/s`;
+  // 速度单位统一用 t/s：气泡底部越短越好读。
+  return `${parsed.toFixed(1)} t/s`;
 };
 
 const formatCompactElapsed = (milliseconds: number): string => {
@@ -202,26 +202,6 @@ const resolvePartialConsumedTokens = (source: Record<string, any> | null | undef
       source.partialConsumedTokens ??
       source.partial_consumed_tokens
   );
-};
-
-const resolveExplicitContextTokens = (stats: Record<string, any> | null | undefined): number | null => {
-  if (!stats || typeof stats !== 'object') return null;
-  const raw =
-    stats.context_occupancy_tokens ??
-      stats.contextOccupancyTokens ??
-      stats.context_usage?.context_occupancy_tokens ??
-      stats.context_usage?.contextOccupancyTokens ??
-      stats.contextTokens ??
-      stats.context_tokens ??
-      stats.context_usage?.contextTokens ??
-      stats.context_usage?.context_tokens;
-  if (raw === 0 || raw === '0') return 0;
-  return parsePositiveInteger(raw);
-};
-
-const resolveContextTokens = (stats: Record<string, any> | null | undefined): number | null => {
-  if (!stats || typeof stats !== 'object') return null;
-  return resolveExplicitContextTokens(stats);
 };
 
 const resolveAssistantTurnConsumedTokens = (
@@ -932,44 +912,29 @@ export const buildAssistantMessageStatsEntries = (
   }
   const durationSeconds = resolveDurationSeconds(stats);
   const speed = resolveTokenSpeed(stats);
-  const contextTokens = resolveContextTokens(stats);
   const effectiveQuotaConsumedTokens = resolveAssistantConsumedTokens(message, allMessages);
   const effectiveCreditsConsumed = resolveAssistantCreditsConsumed(message, allMessages);
-  const hasUsage = contextTokens !== null && Number.isFinite(Number(contextTokens));
   const hasQuota =
     Number.isFinite(Number(effectiveQuotaConsumedTokens)) && Number(effectiveQuotaConsumedTokens) > 0;
   const hasDuration = Number.isFinite(Number(durationSeconds)) && Number(durationSeconds) > 0;
   const hasSpeed = Number.isFinite(Number(speed)) && Number(speed) > 0;
-  const toolCalls = resolveMessageToolCalls(stats);
-  const hasToolCalls = toolCalls !== null;
   const hasCredits = effectiveCreditsConsumed !== null;
-  if (!hasUsage && !hasQuota && !hasDuration && !hasToolCalls && !hasSpeed && !hasCredits) {
+  if (!hasQuota && !hasDuration && !hasSpeed && !hasCredits) {
     return statusEntry ? [statusEntry] : [];
   }
   const entries: MessageStatsEntry[] = [];
   if (statusEntry) {
     entries.push(statusEntry);
   }
+  // 气泡底部只保留耗时、速度、额度与积分：上下文占用与工具次数让行更短。
   entries.push(
     buildMetricEntry('duration', t('chat.stats.duration'), formatDuration(durationSeconds), 'fa-solid fa-stopwatch'),
     buildMetricEntry('speed', t('chat.stats.speed'), formatSpeed(speed), 'fa-solid fa-gauge-high'),
-    buildMetricEntry(
-      'contextTokens',
-      t('chat.stats.contextTokens'),
-      formatCount(contextTokens),
-      'fa-solid fa-layer-group'
-    ),
     buildMetricEntry(
       'quota',
       t('chat.stats.quota'),
       formatCount(effectiveQuotaConsumedTokens),
       'fa-solid fa-bolt'
-    ),
-    buildMetricEntry(
-      'toolCalls',
-      t('chat.stats.toolCalls'),
-      formatCount(toolCalls),
-      'fa-solid fa-screwdriver-wrench'
     ),
     buildMetricEntry(
       'credits',
@@ -982,7 +947,6 @@ export const buildAssistantMessageStatsEntries = (
     if (entry.key === 'quota') entry.hint = tokenUsageDetails(stats, t);
     if (entry.key === 'credits') entry.hint = t('messenger.tasks.quota');
     if (entry.key === 'speed') entry.hint = t('chat.stats.speedHint');
-    if (entry.key === 'contextTokens') entry.hint = t('chat.stats.contextHint');
   }
   return entries;
 };

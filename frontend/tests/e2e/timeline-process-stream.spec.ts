@@ -384,11 +384,13 @@ test('automatic compaction system records render as one process entry', async ({
           await new Promise(resolve => setTimeout(resolve, 25));
         }
       };
-      await until(() => (host.textContent?.includes('上下文压缩') ?? false));
+      // 标签是按语言渲染的（中文「压缩」/ 英文「Context compaction」），这里只断言
+      // 压缩系统消息渲染成了一条普通条目，不绑定具体文案。
+      await until(() => !!host.querySelector('.tl-entry-tool-label'));
       host.querySelector<HTMLElement>('.tl-entry-head')?.click();
       await until(() => host.textContent?.includes('Retained compacted history.') ?? false);
       return {
-        compaction: host.textContent?.includes('上下文压缩') ?? false,
+        compaction: !!host.querySelector('.tl-entry-tool-label'),
         summary: host.textContent?.includes('Retained compacted history.') ?? false
       };
     } finally {
@@ -481,7 +483,7 @@ test('command entries keep output folded until requested and settle in place', a
       await nextTick();
       const initialLabel = host.querySelector('.tl-entry-tool-label')?.textContent || '';
       const initial = {
-        running: ['Running', '正在执行', 'chat.timeline.commandRunning'].includes(initialLabel),
+        running: ['Run', '执行', 'chat.timeline.commandRan'].includes(initialLabel),
         command: host.textContent?.includes('fixture-command --wait') ?? false,
         outputHidden: !(host.textContent?.includes('first\nsecond') ?? true),
         hidesDescription: !(host.textContent?.includes('fixture title') ?? true)
@@ -502,7 +504,7 @@ test('command entries keep output folded until requested and settle in place', a
       await nextTick();
       const refolded = !(host.textContent?.includes('first\nsecond') ?? true);
       return { ...initial, deltaHidden, expanded, refolded,
-        settled: ['Ran', '执行', 'chat.timeline.commandRan'].includes(settledLabel) };
+        settled: ['Run', '执行', 'chat.timeline.commandRan'].includes(settledLabel) };
     } finally {
       app.unmount();
       host.remove();

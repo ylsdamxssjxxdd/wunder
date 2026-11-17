@@ -3227,10 +3227,12 @@ mod tests {
         timeline.set_turn_status("已停止", 57);
         let row = timeline.model.row_data(timeline.footer.get()).unwrap();
         assert_eq!(row.stats.row_data(0).unwrap().key, "status-stopped");
+        // 气泡底部只留耗时、速度、额度与积分：工具次数与上下文占用不再出现。
         assert!(
-            row.stats
+            !row
+                .stats
                 .iter()
-                .any(|stat| stat.key == "screwdriver-wrench" && stat.value == "0")
+                .any(|stat| stat.key == "screwdriver-wrench" || stat.key == "layer-group")
         );
         assert_eq!(row.kind, KIND_FOOTER);
         assert_eq!(
@@ -3894,13 +3896,12 @@ mod tests {
             1
         );
         assert_eq!(body.stats.row_data(0).unwrap().value, "57");
-        assert_eq!(
-            body.stats
+        assert!(
+            !body
+                .stats
                 .iter()
-                .find(|metric| metric.key == "screwdriver-wrench")
-                .unwrap()
-                .value,
-            "0"
+                .any(|metric| metric.key == "screwdriver-wrench"),
+            "工具次数不再进入气泡底部"
         );
     }
 

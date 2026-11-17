@@ -1293,15 +1293,12 @@ export global I18n {
     out property <string> tl_md_image_loading: zh ? "图片加载中…" : "Loading image…";
     out property <string> tl_md_image_error: zh ? "图片加载失败 · " : "Image failed to load · ";
     out property <string> tl_stat_round: zh ? "用户轮次" : "User round";
-    public pure function tl_user_round(round: string) -> string { return zh ? "第 " + round + " 个用户轮次" : "User round " + round + ""; }
+    public pure function tl_user_round(round: string) -> string { return zh ? "U" + round + "" : "U" + round + ""; }
     out property <string> tl_stat_credits: zh ? "额度" : "Quota";
     out property <string> tl_stat_speed_hint: zh ? "有效模型输出 token / 生成流式时间；不含等待和工具执行，优先使用本轮已测量的汇总速度。无法可靠测量时显示 -。" : "Measured output tokens per streaming second, excluding wait and tool execution. Uses the turn aggregate when available; - means unavailable.";
-    out property <string> tl_stat_context_hint: zh ? "最近一次模型请求观测的上下文占用，不是累计消耗；压缩后重新观测，可能下降。" : "Context occupancy observed for the latest model request, rather than cumulative consumption. It may decrease after compaction.";
     out property <string> tl_stat_duration: zh ? "耗时" : "Duration";
     out property <string> tl_stat_speed: zh ? "生成速度" : "Generation speed";
-    out property <string> tl_stat_context: zh ? "上下文占用" : "Context occupancy";
     out property <string> tl_stat_quota: zh ? "上下文消耗" : "Consumed tokens";
-    out property <string> tl_stat_tools: zh ? "工具调用次数" : "Tool calls";
     out property <string> tl_thought_done: zh ? "思考" : "Thought";
     out property <string> tl_thought_running: zh ? "思考" : "Thinking…";
     out property <string> tl_thought_failed: zh ? "思考中断" : "Thinking interrupted";

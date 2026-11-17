@@ -7395,3 +7395,39 @@ async fn switching_to_a_thread_the_desktop_holds_reports_instead_of_exiting() {
         "the refusal is reported"
     );
 }
+
+/// The command popup is a menu, not a manual: every row carries the one-line
+/// description of what the command does, and none of them spells out an
+/// argument grammar (`[list|add <name> ...]`) the UI no longer asks for.
+#[tokio::test]
+async fn the_command_list_explains_commands_without_argument_grammar() {
+    let root = TempRoot::new("command_list_plain");
+    let mut app = fixture_app(root.path()).await;
+    app.on_key(key(KeyCode::Char('/')))
+        .await
+        .expect("open the command list");
+
+    let rows = app.popup_view().lines;
+    assert!(rows.len() > 3, "the list is a list: {:?}", rows);
+    for row in &rows {
+        assert!(row.label.starts_with('/'), "{row:?}");
+        assert!(!row.detail.trim().is_empty(), "{row:?} has no description");
+        for forbidden in ['[', ']', '<', '>', '|'] {
+            assert!(
+                !row.detail.contains(forbidden),
+                "{row:?} still teaches an argument form"
+            );
+        }
+    }
+
+    // The description is actually drawn next to the name, on the same row.
+    let screen = draw_rows(&mut app, 80, 24);
+    let model = screen
+        .iter()
+        .find(|line| line.contains("/model"))
+        .unwrap_or_else(|| panic!("no /model row: {screen:?}"));
+    assert!(
+        model.contains("选择模型") || model.contains("choose the model"),
+        "the description shares the row with the name: {model:?}"
+    );
+}

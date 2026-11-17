@@ -75,11 +75,11 @@ pub(crate) fn resolve(
     caller: &str,
     target: &str,
 ) -> Result<String> {
+    if matches!(target, "root" | "/root") {
+        return Ok(identity(storage, user, caller)?.root);
+    }
     if !target.starts_with('/') {
         return Ok(target.to_string());
-    }
-    if target == "/root" {
-        return Ok(identity(storage, user, caller)?.root);
     }
     let id = target
         .rsplit('/')

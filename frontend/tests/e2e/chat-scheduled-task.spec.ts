@@ -34,10 +34,10 @@ test('speed survives completion off-page, navigation back and reload with readab
     await navigate(`/app/chat?session_id=${MOCK_SESSION}`);
     await expect(bubble).toContainText('Completed reply 1.');
     await expect(bubble.locator('.messenger-message-stats')).toContainText('24');
-    await expect(bubble.locator('.messenger-message-stats')).toContainText('token/s');
+    await expect(bubble.locator('.messenger-message-stats')).toContainText('t/s');
     await page.reload();
     await expect(bubble.locator('.messenger-message-stats')).toContainText('24');
-    await expect(bubble.locator('.messenger-message-stats')).toContainText('token/s');
+    await expect(bubble.locator('.messenger-message-stats')).toContainText('t/s');
     await page.screenshot({ path: resolve(directory, 'speed-after-navigation.png'), fullPage: true });
     // Open the actual tool row to verify the production structured result renderer.
     // The newest turn's process region ships expanded and hydrates from the

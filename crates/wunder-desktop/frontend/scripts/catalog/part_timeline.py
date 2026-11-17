@@ -19,15 +19,12 @@ ENTRIES = [
     ("tl_md_image_error", "图片加载失败 · ", "Image failed to load · "),
     # ---- end-of-turn metrics: labels double as the row tooltips ----
     ("tl_stat_round", "用户轮次", "User round"),
-    ("tl_user_round", "第 {} 个用户轮次", "User round {}", ["round"]),
+    ("tl_user_round", "U{}", "U{}", ["round"]),
     ("tl_stat_credits", "额度", "Quota"),
     ("tl_stat_speed_hint", "有效模型输出 token / 生成流式时间；不含等待和工具执行，优先使用本轮已测量的汇总速度。无法可靠测量时显示 -。", "Measured output tokens per streaming second, excluding wait and tool execution. Uses the turn aggregate when available; - means unavailable."),
-    ("tl_stat_context_hint", "最近一次模型请求观测的上下文占用，不是累计消耗；压缩后重新观测，可能下降。", "Context occupancy observed for the latest model request, rather than cumulative consumption. It may decrease after compaction."),
     ("tl_stat_duration", "耗时", "Duration"),
     ("tl_stat_speed", "生成速度", "Generation speed"),
-    ("tl_stat_context", "上下文占用", "Context occupancy"),
     ("tl_stat_quota", "上下文消耗", "Consumed tokens"),
-    ("tl_stat_tools", "工具调用次数", "Tool calls"),
 
     ("tl_thought_done", "思考", "Thought"),
     ("tl_thought_running", "思考", "Thinking…"),

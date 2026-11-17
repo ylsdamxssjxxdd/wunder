@@ -398,6 +398,16 @@ async fn interrupt_input_cancels_the_session_without_reporting_failure() {
     assert_eq!(interrupted["ok"], true, "{interrupted}");
     assert_eq!(interrupted["data"]["interrupted"], true, "{interrupted}");
     assert_eq!(interrupted["data"]["status"], "exited", "{interrupted}");
+    let polled = command_session_control(
+        &context,
+        &json!({"command_session_id": id, "chars": "", "yield_time_ms": 0}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(polled["ok"], true, "{polled}");
+    assert_eq!(polled["data"]["status"], "exited", "{polled}");
+    assert_eq!(polled["data"]["interrupted"], true, "{polled}");
+    assert!(polled["data"]["error"].is_null(), "{polled}");
 }
 
 #[test]
@@ -652,6 +662,39 @@ async fn sandbox_background_output_streams_independently_and_polls_incrementally
         .await
         .unwrap()
         .unwrap();
+
+    let eot_launch = http
+        .post(format!(
+            "http://{address}/sandboxes/command-sessions/launch"
+        ))
+        .json(&json!({
+            "user_id": "user", "session_id": "thread", "workspace_root": "/",
+            "container_root": "/", "allow_commands": ["*"],
+            "args": {
+                "content": "env -u PYTHONHOME -u PYTHONPATH python3 -u -c \"import sys; print('ready', flush=True); data=sys.stdin.read(); print('eof='+str(len(data)), flush=True)\"",
+                "yield_time_ms": 50
+            }
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    let eot_id = eot_launch["data"]["command_session_id"].as_str().unwrap();
+    let eot = command_session_control(
+        &context,
+        &json!({"command_session_id": eot_id, "chars": "\\x04", "yield_time_ms": 1000}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(eot["ok"], true, "{eot}");
+    assert_eq!(eot["data"]["status"], "exited", "{eot}");
+    assert_eq!(eot["data"]["exit_code"], 0, "{eot}");
+    assert!(
+        eot["data"]["stdout"].as_str().unwrap().contains("eof=0"),
+        "{eot}"
+    );
 
     let large_launch = http
         .post(format!(

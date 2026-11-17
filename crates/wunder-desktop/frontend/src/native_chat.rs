@@ -6890,10 +6890,8 @@ mod turn_tests {
             vec![
                 ("hashtag".to_string(), "57".to_string()),
                 ("stopwatch".to_string(), "12s".to_string()),
-                ("gauge-high".to_string(), "68234.0 token/s".to_string()),
-                ("layer-group".to_string(), "12.3k".to_string()),
+                ("gauge-high".to_string(), "68234.0 t/s".to_string()),
                 ("bolt".to_string(), "4.1k".to_string()),
-                ("screwdriver-wrench".to_string(), "3".to_string()),
                 ("coins".to_string(), "4".to_string()),
             ],
             "the row mirrors the web messenger: icon key plus value, in order",
@@ -6941,9 +6939,7 @@ mod turn_tests {
             vec![
                 ("stopwatch".into(), "2s".into()),
                 ("gauge-high".into(), "-".into()),
-                ("layer-group".into(), "--".into()),
                 ("bolt".into(), "--".into()),
-                ("screwdriver-wrench".into(), "0".into()),
                 ("coins".into(), "--".into())
             ]
         );

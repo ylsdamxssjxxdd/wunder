@@ -694,9 +694,11 @@ pub(crate) fn tool_label(tool: &str) -> String {
         "文件名匹配" | "glob" | "glob_files" => "匹配",
         "搜索内容" | "search_content" | "search_files" => "搜索",
         "网页搜索" | "web_search" | "web_search_tool" | "web search" | "websearch" => "联网",
-        "网页抓取" | "web_fetch" | "web_fetch_tool" | "web fetch" | "webfetch" => "抓取",
+        // 抓取与搜索都是去网页上拿东西，行首只说「网页」。
+        "网页抓取" | "web_fetch" | "web_fetch_tool" | "web fetch" | "webfetch" => "网页",
+        // 命令会话也是「执行」：写 stdin 与轮询输出都是同一条命令的后续动作。
         "命令会话" | "命令交互" | "command_session" | "write_stdin" | "write_command_stdin" => {
-            wunder_desktop::tool_verbs::command_session_verb(false).0
+            "执行"
         }
         "问询面板" | "question_panel" | "ask_panel" => "问询",
         "计划面板" | "update_plan" | "plan_update" => "计划",
@@ -719,17 +721,14 @@ pub(crate) fn tool_label(tool: &str) -> String {
     mapped.chars().take(64).collect()
 }
 
+/// 工作过程里命令类工具只写一个动词「执行」：发起执行、写 stdin、轮询新输出都是
+/// 同一条命令的动作，与桌面版、云端版同一口径。命令行侧仍按动作细分（引擎的
+/// `tool_verbs`），那是终端里的说明词。
 pub(crate) fn tool_label_for_entry(entry: &NativeWorkflowEntry) -> String {
-    if is_command_tool(&entry.title) {
+    if is_command_tool(&entry.title)
+        || wunder_desktop::tool_verbs::is_command_session_tool(&entry.title)
+    {
         return "执行".into();
-    }
-    // 命令会话一个工具两种动作：等新输出是「等待」，写 stdin 是「发送输入」。词表在
-    // 引擎里（`tool_verbs`），与桌面版、命令行、云端版同一份。
-    if wunder_desktop::tool_verbs::is_command_session_tool(&entry.title) {
-        let (label, _) = wunder_desktop::tool_verbs::command_session_verb(
-            entry.command_meta.contains("stdin ›"),
-        );
-        return label.to_string();
     }
     tool_label(&entry.title)
 }
@@ -993,27 +992,13 @@ fn footer_stats(stats: &NativeMessageStats, round: i64) -> Vec<(String, String)>
             "gauge-high".into(),
             stats
                 .speed_tps
-                .map(|value| format!("{value:.1} token/s"))
+                .map(|value| format!("{value:.1} t/s"))
                 .unwrap_or_else(|| "-".into()),
-        ));
-        metrics.push((
-            "layer-group".into(),
-            stats
-                .context_tokens
-                .map(count_text)
-                .unwrap_or_else(|| "--".into()),
         ));
         metrics.push((
             "bolt".into(),
             stats
                 .consumed_tokens
-                .map(count_text)
-                .unwrap_or_else(|| "--".into()),
-        ));
-        metrics.push((
-            "screwdriver-wrench".into(),
-            stats
-                .tool_calls
                 .map(count_text)
                 .unwrap_or_else(|| "--".into()),
         ));

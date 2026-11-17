@@ -35,10 +35,10 @@ export const isCommandSessionTimelineTool = (run: RawToolRun): boolean => {
 };
 
 /**
- * 命令会话一个工具两种动作：空 `chars` 是轮询新增输出（词：`chat.timeline.commandWait`
- * 「等待」），非空是写 stdin（词：`chat.timeline.commandInput`「发送输入」）。桌面版、
- * 安卓版与命令行读的是引擎里的同一张词表（wunder-runtime 的 `tools::tool_verbs`），
- * 改词时四端一起改，不要只改这里的文案。
+ * 命令会话一个工具两种动作：空 `chars` 是轮询新增输出，非空是写 stdin。时间线上
+ * 两种动作都只写一个动词「执行」（`chat.timeline.commandRan`）：动作差别已经由
+ * 行尾的命令文本与状态点说明，行首不必再分叉。命令行侧仍按动作细分的词表在引擎
+ * （wunder-runtime 的 `tools::tool_verbs`），那是终端里的说明，不要搬到时间线。
  */
 export const resolveCommandInteractionKind = (run: RawToolRun): CommandInteractionKind | null => {
   if (isExecuteCommandTimelineTool(run)) return 'execute';

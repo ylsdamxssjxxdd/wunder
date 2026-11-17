@@ -1119,13 +1119,13 @@ Each call specifies one action. Actions use closed, action-specific field branch
 - `close`: close a session, optionally cascading.
 - `resume`: restore it to active; with a message it is the same as one append instruction.
 
-When no target is given, the current session is treated as the parent thread by default; you can also point at a target using a dispatched run id, session id, or batch id.
+When no target is given, the current session is treated as the parent thread by default; you can also point at a target using a dispatched run id, session id, or batch id. For `list`, `parent_id` accepts both `root` and `/root` for the current task-tree root.
 
 When dispatching, you can also specify:
 
 - `label`: a recognizable name for the child thread.
 - `agent_id`, `model`: override the subagent or the model it uses; both are checked against the current user's agent ownership.
-- `run_timeout_seconds`: the timeout of a single run; in a synchronous dispatch it is also the wait duration.
+- `run_timeout_seconds` (alias `timeout_seconds`): the timeout of a single run; in a synchronous dispatch it is also the wait duration.
 - `fork_turns`: copy the most recent rounds of user context, 0–16, 0 by default.
 - `context_summary`: attach a background summary.
 - `cleanup`: how to wrap up, `keep` (the default) or `delete` (runtime state is cleaned up and the child is closed; its history remains inspectable).

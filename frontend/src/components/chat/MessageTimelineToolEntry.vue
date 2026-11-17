@@ -17,7 +17,7 @@
       </span>
       <span v-if="entry.toolLabel" class="tl-entry-tool">
         <i :class="['fa-solid', entry.toolIconClass]" aria-hidden="true"></i>
-        <span class="tl-entry-tool-label">{{ commandToolLabel || entry.toolLabel }}</span>
+        <span class="tl-entry-tool-label">{{ commandToolLabel || rowLabel }}</span>
       </span>
       <span v-if="entry.targets.length" class="tl-entry-chips">
         <button
@@ -125,6 +125,7 @@ import {
   resolveTimelineCommandSessionRef
 } from './toolTimelineCommandSession';
 import { formatDurationLabel, formatTokenLabel } from './toolWorkflowCollapsedMetadata';
+import { toolRowLabel } from './toolTimelineLabel';
 
 const props = withDefaults(defineProps<{
   entry: TimelineToolEntry;
@@ -149,20 +150,14 @@ const commandSession = computed(() => commandSessionId.value
   : commandStore.getByToolCallId(String(props.entry.run.callItem?.toolCallId ??
       props.entry.run.callItem?.tool_call_id ?? props.entry.run.key)));
 const isCommand = computed(() => props.entry.commandInteraction !== null);
-const commandToolLabel = computed(() => {
-  switch (props.entry.commandInteraction) {
-    case 'execute':
-      return t(displayStatus.value === 'loading'
-        ? 'chat.timeline.commandRunning'
-        : 'chat.timeline.commandRan');
-    case 'write':
-      return t('chat.timeline.commandInput');
-    case 'poll':
-      return t('chat.timeline.commandWait');
-    default:
-      return '';
-  }
-});
+// 命令类工具在行首只写一个动词「执行」：是刚发起、写 stdin 还是轮询新输出，
+// 由命令文本与状态点说明，标签不再分叉成「正在执行 / 发送输入 / 等待」。
+const commandToolLabel = computed(() =>
+  isCommand.value ? t('chat.timeline.commandRan') : ''
+);
+// 其它工具收成两字（读取/编辑/列出/搜索…），与桌面版、安卓版同一张词表。
+// `entry.toolLabel` 的原名仍留给折叠摘要与结构化视图使用。
+const rowLabel = computed(() => toolRowLabel(props.entry.toolLabel));
 const commandSummary = computed(() =>
   isCommand.value ? String(commandSession.value?.command || props.entry.summary || '') : ''
 );

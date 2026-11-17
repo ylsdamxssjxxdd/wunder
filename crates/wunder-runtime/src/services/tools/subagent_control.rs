@@ -316,6 +316,8 @@ fn validate_action_fields(args: &Value, action: &str) -> Result<()> {
             "model",
             "run_timeout_seconds",
             "runTimeoutSeconds",
+            "timeout_seconds",
+            "timeoutSeconds",
             "cleanup",
             "thread_strategy",
             "threadStrategy",
@@ -460,8 +462,17 @@ fn validate_action_fields(args: &Value, action: &str) -> Result<()> {
 
 #[cfg(test)]
 mod action_validation_tests {
-    use super::{compact_subagent_item_for_model, validate_action_fields};
+    use super::{compact_subagent_item_for_model, validate_action_fields, SessionSpawnArgs};
     use serde_json::json;
+
+    #[test]
+    fn spawn_accepts_timeout_seconds_alias() {
+        let args = json!({"action":"spawn", "task":"Fixture task", "timeout_seconds":12});
+        validate_action_fields(&args, "spawn").expect("spawn should accept the timeout alias");
+        let payload: SessionSpawnArgs =
+            serde_json::from_value(args).expect("timeout alias should deserialize");
+        assert_eq!(payload.run_timeout_seconds, Some(12.0));
+    }
 
     #[test]
     fn rejects_fields_from_another_action() {

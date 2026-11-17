@@ -72,7 +72,7 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
       await expect(page.getByTestId('chat-composer-send')).toHaveAttribute('data-mode', 'send');
       const assistant = page.locator(`.messenger-turn[data-root-turn-id="fixture-turn-${round}"] [data-turn-slot="assistant"] .messenger-message`);
       await expect(assistant).toHaveAttribute('data-message-status', 'final');
-      await expect(assistant.locator('.messenger-message-stats')).toContainText('token/s');
+      await expect(assistant.locator('.messenger-message-stats')).toContainText('t/s');
       await expect(assistant.locator('.messenger-message-stats')).not.toContainText('Queued');
       if (requireNotice) {
         await expect.poll(noticeCount).toBeGreaterThan(noticesBeforeRound);
@@ -184,7 +184,7 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
       expect(rows, `assistant count for round ${round}`).toHaveLength(1);
       expect(rows[0].content).toBe(round === 3 ? 'Partial reply 3.' : round === 6 ? 'Retained fixture summary.' : `Completed reply ${round}.`);
       expect(rows[0].stats, `statistics for round ${round}`).not.toBe('');
-      expect(rows[0].stats).toContain('token/s');
+      expect(rows[0].stats).toContain('t/s');
       expect(rows[0].status).toBe(round === 3 ? 'cancelled' : 'final');
     }
     coverage.render = true;

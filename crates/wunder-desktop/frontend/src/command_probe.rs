@@ -10,17 +10,36 @@ use std::path::PathBuf;
 
 use slint::ComponentHandle;
 
-const COMMAND: &str = "$ cd /work/demo && cargo test --lib -- \
+const COMMAND: &str = "cd /work/demo && cargo test --lib -- \
 compact_command_result_for_model services::tools::command 2>&1 | tail -8";
 
-fn detail_text(lines: usize) -> String {
-    let mut text = vec![COMMAND.to_string(), "执行 · 运行中".to_string()];
-    for index in 0..lines {
-        text.push(format!(
-            "test services::tools::command::case_{index} ... ok  第 {index} 行把面板撑长一点"
-        ));
-    }
-    text.join("\n")
+/// The card projects a command call through the engine, not by handing the
+/// frontend one display string: the section prints the command as its title,
+/// the state as its meta chip and the streamed tail as its body. Building the
+/// payload the same way keeps the probe on that path.
+fn entry(lines: usize) -> wunder_desktop::NativeWorkflowEntry {
+    let output = (0..lines)
+        .map(|index| {
+            format!("test services::tools::command::case_{index} ... ok  第 {index} 行把面板撑长一点")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let payload = serde_json::json!({
+        "args": { "command": COMMAND, "cwd": "/work/demo" },
+        "result": { "data": {
+            "command": COMMAND, "cwd": "/work/demo",
+            "output": output, "status": "running"
+        }}
+    });
+    let detail =
+        wunder_server::tool_result_display::tool_result_display("execute_command", &payload, true);
+    wunder_desktop::NativeWorkflowEntry::from_payload(
+        "probe",
+        "execute_command",
+        detail,
+        "running",
+        &payload,
+    )
 }
 
 pub fn run(
@@ -71,13 +90,15 @@ pub fn run(
     bar.process_open = true;
     rows.push(bar);
     let index = rows.len();
+    let entry = entry(lines);
     let mut command = crate::demo::fixture_row(crate::timeline::KIND_TOOL, index, "");
-    command.tool_name = "正在执行".into();
+    command.tool_name = "执行".into();
     command.tool_icon = "terminal".into();
-    command.summary = "cd … && cargo test -p wunder-runtime --lib".into();
+    command.summary = COMMAND.chars().take(48).collect::<String>().into();
     command.target = "/work/demo".into();
-    command.detail = detail_text(lines).into();
-    command.command_meta = "/work/demo".into();
+    command.detail = crate::timeline_text::copy_text(&entry.sections, entry.detail.as_str());
+    command.sections = crate::timeline_text::sections(&entry.sections);
+    command.command_meta = entry.command_meta.as_str().into();
     command.status_kind = crate::timeline::STATUS_RUNNING;
     command.tokens = "159k".into();
     command.model_round = 13;

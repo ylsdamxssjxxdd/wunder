@@ -1457,8 +1457,10 @@ pub(crate) async fn command_session_control(
     let input = parse_command_session_input(args);
     let wait = parse_command_session_wait(args);
     let yield_time_ms = wait.yield_time_ms;
-    // 普通写入与普通轮询都只等待新增输出；中断则等进程完成收尾。
-    let wait_for_exit = wait.wait_for_exit || matches!(input, CommandSessionInput::Interrupt);
+    // 普通写入与轮询只等待新增输出；中断和 EOF 首次调用就等待会话收尾，
+    // 避免 EOT 已关闭 stdin、调用方却先看到 running 而误以为必须再发一次。
+    let wait_for_exit = wait.wait_for_exit
+        || matches!(input, CommandSessionInput::Interrupt | CommandSessionInput::Eof);
     let after_seq = args.get("after_seq").and_then(Value::as_u64);
     let broker = context.command_sessions.as_ref();
     let managed = broker.is_some_and(|broker| {
@@ -1696,6 +1698,17 @@ fn command_session_failure_message(data: &Value) -> String {
 
 fn build_command_session_result(mut data: Value) -> Value {
     let running = data.get("status").and_then(Value::as_str) == Some("running");
+    if !running
+        && data
+            .get("error")
+            .and_then(Value::as_str)
+            .is_some_and(|error| error.starts_with("command cancelled"))
+    {
+        if let Value::Object(ref mut map) = data {
+            map.insert("error".to_string(), Value::Null);
+            map.insert("interrupted".to_string(), Value::Bool(true));
+        }
+    }
     if !running
         && (data.get("timed_out").and_then(Value::as_bool) == Some(true)
             || data
