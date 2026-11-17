@@ -166,6 +166,46 @@ pub fn project_rows(rows: &[NativeQueueTurn]) -> (Vec<QueueTurn>, usize) {
     project_rows_with_waiting(rows, &[])
 }
 
+/// Characters a strip row keeps. The row is 28px high and elides the rest, so a
+/// long label never widens the card; the limit only bounds what Rust copies
+/// into the model on every publish.
+const STRIP_LABEL_CHARS: usize = 200;
+
+/// One physical line for a strip row.
+///
+/// A strip row is a fixed 28px line: the renderer honours any newline left in
+/// the label, so a pasted block used to lay out as a tall multi-line text that
+/// painted over the header above the card. Collapsing every whitespace run keeps
+/// the row one line no matter what the user pasted; a cut label ends with an
+/// ellipsis so it never reads as the whole message.
+pub fn strip_label(text: &str) -> String {
+    let mut out = String::with_capacity(text.len().min(STRIP_LABEL_CHARS * 3 + 4));
+    let mut count = 0usize;
+    let mut pending_space = false;
+    for ch in text.chars() {
+        if ch.is_whitespace() {
+            pending_space = !out.is_empty();
+            continue;
+        }
+        if pending_space {
+            if count >= STRIP_LABEL_CHARS {
+                out.push('…');
+                return out;
+            }
+            out.push(' ');
+            count += 1;
+            pending_space = false;
+        }
+        if count >= STRIP_LABEL_CHARS {
+            out.push('…');
+            return out;
+        }
+        out.push(ch);
+        count += 1;
+    }
+    out
+}
+
 /// A message this window submitted that the engine has not admitted yet: it
 /// waits inside the composer's strip, not in the transcript.
 ///
@@ -195,7 +235,7 @@ impl WaitingTurn {
     pub fn to_queue_turn(&self) -> QueueTurn {
         QueueTurn {
             queue_id: SharedString::from(format!("waiting-{}", self.client_message_id)),
-            text: SharedString::from(self.text.as_str()),
+            text: SharedString::from(strip_label(self.text.as_str())),
             attachments: self.attachments as i32,
             interjected: false,
             waiting: true,
@@ -236,7 +276,7 @@ pub fn project_rows_with_waiting(
     let hidden = rows.len().saturating_sub(STRIP_ROWS);
     projected.extend(rows.iter().take(STRIP_ROWS).map(|row| QueueTurn {
         queue_id: SharedString::from(row.queue_id.as_str()),
-        text: SharedString::from(row.content.as_str()),
+        text: SharedString::from(strip_label(row.content.as_str())),
         attachments: row.attachment_count as i32,
         interjected: row.priority > 0,
         waiting: false,
@@ -518,6 +558,30 @@ mod tests {
             priority,
             client_message_id: format!("send-{id}"),
         }
+    }
+
+    #[test]
+    fn a_strip_label_is_always_one_line() {
+        // A pasted block arrives with its own newlines; the row is a fixed
+        // 28px line and must not lay them out as a tall text block.
+        assert_eq!(strip_label("第一行\n第二行\t第三行"), "第一行 第二行 第三行");
+        assert_eq!(strip_label("  前导空白\n\n  收尾\n"), "前导空白 收尾");
+        assert_eq!(strip_label(""), "");
+        assert_eq!(strip_label(" \n\t "), "");
+        let long = "甲".repeat(STRIP_LABEL_CHARS + 40);
+        let short = strip_label(&long);
+        assert_eq!(short.chars().count(), STRIP_LABEL_CHARS + 1);
+        assert!(short.ends_with('…'));
+        // Exactly at the limit stays intact, without a redundant ellipsis.
+        let exact = "乙".repeat(STRIP_LABEL_CHARS);
+        assert_eq!(strip_label(&exact), exact);
+    }
+
+    #[test]
+    fn a_multiline_engine_row_reaches_the_strip_as_one_line() {
+        let rows = vec![row("task-m", "开头\n中间\n结尾", 0)];
+        let (projected, _) = project_rows(&rows);
+        assert_eq!(projected[0].text.as_str(), "开头 中间 结尾");
     }
 
     #[test]

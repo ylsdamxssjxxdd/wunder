@@ -2492,8 +2492,8 @@
     "zh-CN": "可选，搜索的目录。省略时默认使用智能体工作目录；相对路径按该目录解释。"
   },
   "tool.spec.text_edit.description": {
-    "en-US": "Edit UTF-8 files. Default (or command=str_replace): file_path + old_string + new_string; old_string must match exactly once unless replace_all=true. command=create: file_path + file_text, new files only. command=insert: file_path + insert_line + new_string; insert after a 1-based line, 0 prepends. command=view: file_path and optional view_range. Alternatively use input for a multi-file apply_patch without file_path; do not mix input with command or replacement fields. dry_run=true previews every write mode without changing files. Read current content first; preserve indentation, omit displayed line numbers. Only LF/CRLF differences are normalized to the target file.",
-    "zh-CN": "编辑 UTF-8 文件。默认（或 command=str_replace）：file_path + old_string + new_string；old_string 须逐字唯一匹配，replace_all=true 才替换全部。command=create：file_path + file_text，仅新建。command=insert：file_path + insert_line + new_string，在指定行之后插入，行号从 1 开始，0 表示开头。command=view：file_path，可选 view_range。也可单独用 input 应用多文件 apply_patch，无需 file_path；不要与 command 或替换字段混用。所有写入方式均支持 dry_run=true 预演且不改文件。先读取当前原文，保持缩进，不带展示行号；仅 LF/CRLF 差异按目标文件换行风格归一化。"
+    "en-US": "Edit UTF-8 files. Default (or command=str_replace): file_path + old_string + new_string; old_string must match exactly once unless replace_all=true. command=create: file_path + file_text, new files only. command=insert: file_path + insert_line + new_string; insert after a 1-based line, 0 prepends. command=view: file_path and optional view_range. command=undo_edit: file_path only; restores the newest pre-write snapshot (one step back per call, reversible), so a bad write needs no manual repair. Alternatively use input for a multi-file apply_patch without file_path; do not mix with command or replacement fields. Every write mode supports dry_run=true. Read the current text first, keep indentation, and strip display line numbers; only LF/CRLF differences are normalized. Range replace: file_path + start_line + end_line + new_string (1-based, inclusive), mutually exclusive with old_string. Results carry a receipt and a unified diff; a missed old_string returns the 3 nearest fragments with line ranges and per-line differences.",
+    "zh-CN": "编辑 UTF-8 文件。默认（或 command=str_replace）：file_path + old_string + new_string；old_string 须逐字唯一匹配，replace_all=true 才替换全部。command=create：file_path + file_text，仅新建。command=insert：file_path + insert_line + new_string，在指定行之后插入，行号从 1 开始，0 表示开头。command=view：file_path，可选 view_range。command=undo_edit：只给 file_path，把文件恢复成最近一次写入前的快照（每次退一步，可再撤回），写坏了不必手工修。也可单独用 input 应用多文件 apply_patch，无需 file_path；不要与 command 或替换字段混用。所有写入方式均支持 dry_run=true 预演且不改文件。先读取当前原文，保持缩进，不带展示行号；仅 LF/CRLF 差异按目标文件换行风格归一化。行区间替换：file_path + start_line + end_line + new_string（1-based 含两端），与 old_string 互斥。结果带回执与 unified diff；old_string 未匹配时返回最相似 3 个片段、行区间与逐行差异。"
   },
   "tool.spec.text_edit.args.file_path": {
     "en-US": "Target file or view directory; required for replacement and all subcommands. Omit for input-mode patches; their paths are in the patch.",
@@ -2520,8 +2520,8 @@
     "zh-CN": "默认 false。true 时校验并预演替换、create、insert 或 input 补丁，不写文件、不创建目录。"
   },
   "tool.spec.text_edit.args.command": {
-    "en-US": "Omit for literal replacement. view reads numbered lines, create requires file_text, insert requires insert_line + new_string. str_replace uses the same old_string/new_string/replace_all rules as default replacement. Do not combine with input.",
-    "zh-CN": "省略即字面替换。view 读带行号文本，create 需 file_text，insert 需 insert_line + new_string；str_replace 与默认替换共用 old_string/new_string/replace_all 规则。不要与 input 混用。"
+    "en-US": "Omit for literal replacement. view reads numbered lines, create requires file_text, insert requires insert_line + new_string, undo_edit takes file_path alone to step back one write. str_replace uses the same old_string/new_string/replace_all rules as default replacement. Do not combine with input.",
+    "zh-CN": "省略即字面替换。view 读带行号文本，create 需 file_text，insert 需 insert_line + new_string，undo_edit 只给 file_path 退回到上一次写入前；str_replace 与默认替换共用 old_string/new_string/replace_all 规则。不要与 input 混用。"
   },
   "tool.spec.text_edit.args.file_text": {
     "en-US": "Required for the create sub-command. Full contents of the new file.",
@@ -3256,8 +3256,8 @@
     "zh-CN": "要写入的文件路径。"
   },
   "tool.spec.write.description": {
-    "en-US": "Create or fully replace a UTF-8 text file. Use path (required; file_path is also accepted) and content (required string). An explicit empty string clears the file; a missing content is an error and is never treated as an empty write. Existing files are overwritten. dry_run only previews the target and size change without persisting.",
-    "zh-CN": "创建或完整覆盖 UTF-8 文本文件。path 必填（也接受 file_path），content 必填且为字符串。显式空字符串表示清空文件；缺失 content 视为错误，绝不会被当作空写入。已存在文件会被覆盖。dry_run 仅预览目标与大小变化，不落盘。"
+    "en-US": "Create or fully replace a UTF-8 text file. path is required (file_path also accepted); content is required and must be a string. An explicit empty string clears the file; a missing content is an error. Existing files are overwritten after a snapshot is kept in temp/.history. The result is a receipt: line count, sha256 prefix, symbol ranges, syntax check and head line, so a full re-read is unnecessary. dry_run=true returns a unified diff (max 60 lines) without writing.",
+    "zh-CN": "创建或完整覆盖 UTF-8 文本文件。path 必填（也接受 file_path），content 必填且为字符串。显式空字符串表示清空文件；缺失 content 视为错误。已存在文件会被覆盖，覆盖前在 temp/.history 留一份快照。结果返回回执：行数、sha256 前缀、符号行区间、语法校验与首行，无需整篇回读。dry_run=true 返回 unified diff（最多 60 行），不落盘。"
   },
   "tool.spec.subagent_control.description": {
     "zh-CN": "管理当前会话所属任务树的持久子智能体。流程 spawn(task) -> wait/status -> history，复用前先 list；list 默认列直属子线程，parent_id=root 或 /root 查根的直属子线程。spawn 的运行超时用 run_timeout_seconds（别名 timeout_seconds），wait 的等待时长用 wait_seconds（别名 timeout_seconds）。所有查询仅限同一用户、同一根任务树，独立会话线程不能接管。send 向运行中的工作线程追加指导，空闲时开始新任务；report 向直属父线程汇报。accepted 仅表示接收，不等于完成；执行心跳过期按中断处理，须显式 send 才能继续。",
@@ -3710,5 +3710,17 @@
   "tool.spec.search.args.offset": {
     "zh-CN": "可选，分页起点，默认 0。把上一次返回的 next_offset 原值传进来即可续页，不要重新调大 max_matches；mode=paths 时偏移单位是文件，其余模式是命中行。",
     "en-US": "Optional paging start (default 0). Pass the previous next_offset back to continue instead of raising max_matches; the unit is files in mode=paths and hit lines otherwise."
+  },
+  "tool.spec.write.args.dry_run": {
+    "en-US": "Default false. true previews only: returns a unified diff (max 60 lines), writes nothing.",
+    "zh-CN": "默认 false。true 只预演：返回 unified diff（最多 60 行），不落盘。"
+  },
+  "tool.spec.text_edit.args.start_line": {
+    "en-US": "First line of the range (1-based, inclusive); needs end_line.",
+    "zh-CN": "行区间起始行号（1-based，含该行），需与 end_line 成对。"
+  },
+  "tool.spec.text_edit.args.end_line": {
+    "en-US": "Last line of the range (1-based, inclusive).",
+    "zh-CN": "行区间结束行号（1-based，含该行）。"
   }
 }

@@ -2611,3 +2611,40 @@ fn dry_run_state_marks_preview_even_without_the_data_flag() {
     assert_eq!(projected["would_change"], json!(true));
     assert!(projected.get("changed_files").is_none());
 }
+
+/// 写入回执与 unified diff 必须存活到模型投影：压缩后只剩计数就等于没有证据。
+#[test]
+fn write_receipt_and_unified_diff_survive_the_projection() {
+    let projected = project_file_write_success(&json!({
+        "action": "write_file",
+        "state": "completed",
+        "data": {
+            "path": "temp/sketch.py",
+            "bytes": 24,
+            "added_lines": 1,
+            "deleted_lines": 1,
+            "changed_files": 1,
+            "hunks_applied": 1,
+            "receipt": "file: temp/sketch.py (2 lines, 24 B, sha256: 9f3a1c2d4e5f)",
+            "sha256": "9f3a1c2d4e5f",
+            "lines": 2,
+            "syntax": "OK (py_compile)",
+            "history": "temp/.history/sketch.py@3",
+            "unified_diff": "--- a/temp/sketch.py\n+++ b/temp/sketch.py\n-x = 1\n+x = 2",
+            "unified_diff_truncated": false
+        }
+    }))
+    .expect("projection");
+    assert_eq!(
+        projected["receipt"],
+        json!("file: temp/sketch.py (2 lines, 24 B, sha256: 9f3a1c2d4e5f)")
+    );
+    assert_eq!(projected["syntax"], json!("OK (py_compile)"));
+    assert_eq!(projected["lines"], json!(2));
+    assert_eq!(projected["history"], json!("temp/.history/sketch.py@3"));
+    assert!(projected["unified_diff"]
+        .as_str()
+        .unwrap_or("")
+        .contains("+x = 2"));
+    assert_eq!(projected["changed"], json!(true));
+}

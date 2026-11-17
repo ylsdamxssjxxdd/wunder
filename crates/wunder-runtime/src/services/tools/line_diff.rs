@@ -448,9 +448,159 @@ pub(super) fn insert_diff_fields(
     map.insert("files".to_string(), json!([file_entry(action, path, diff)]));
 }
 
+/// dry_run/写入回执用的 unified diff 行数上限（含 `---`/`+++`/`@@` 头）。
+pub(super) const MAX_UNIFIED_DIFF_LINES: usize = 60;
+/// 每个变更块前后各带几行上下文。
+const UNIFIED_CONTEXT_LINES: usize = 2;
+
+/// 把已有的块结构渲染成 unified diff 文本：`---`/`+++`/`@@` + 上下文 + `-`/`+`。
+///
+/// 与 `apply_patch` 的 `diff_blocks` 同源，因此前端差异卡片与模型看到的文本
+/// 不会互相矛盾；超过 `max_lines` 直接截断并返回 `true`，绝不输出半块。
+pub(super) fn unified_diff(
+    path: &str,
+    before: &str,
+    after: &str,
+    diff: &LineDiff,
+    max_lines: usize,
+) -> (String, bool) {
+    let old = build_line_index(before).texts;
+    let new = build_line_index(after).texts;
+    let mut out: Vec<String> = Vec::with_capacity(16);
+    out.push("--- a/".to_string() + path);
+    out.push("+++ b/".to_string() + path);
+    let mut truncated = false;
+    let mut stopped = false;
+    let mut last_old = 0usize;
+
+    for block in &diff.blocks {
+        if stopped {
+            break;
+        }
+        let old_start = block.start_line_before.max(1);
+        let new_start = block.start_line_after.max(1);
+        let old_len = if block.end_line_before >= block.start_line_before
+            && block.start_line_before > 0
+        {
+            block.end_line_before - block.start_line_before + 1
+        } else {
+            0
+        };
+        let new_len = if block.end_line_after >= block.start_line_after {
+            block.end_line_after - block.start_line_after + 1
+        } else {
+            0
+        };
+
+        // 前置上下文：最多两行，且不与上一个块已经输出过的行重叠。
+        if old_len > 0 || new_len > 0 {
+            let from = old_start.saturating_sub(UNIFIED_CONTEXT_LINES).max(last_old + 1);
+            for line_no in from..old_start {
+                let Some(text) = old.get(line_no - 1) else {
+                    break;
+                };
+                if !push_unified_line(&mut out, " ".to_string() + text, max_lines) {
+                    truncated = true;
+                    stopped = true;
+                    break;
+                }
+            }
+        }
+        if stopped {
+            break;
+        }
+
+        let mut header = String::from("@@ -");
+        header.push_str(&old_start.to_string());
+        header.push(',');
+        header.push_str(&old_len.to_string());
+        header.push_str(" +");
+        header.push_str(&new_start.to_string());
+        header.push(',');
+        header.push_str(&new_len.to_string());
+        header.push_str(" @@");
+        if !push_unified_line(&mut out, header, max_lines) {
+            truncated = true;
+            break;
+        }
+
+        for line in &block.lines {
+            let prefix = if line.kind == "add" { "+" } else { "-" };
+            let text = prefix.to_string() + &line.text;
+            if !push_unified_line(&mut out, text, max_lines) {
+                truncated = true;
+                stopped = true;
+                break;
+            }
+        }
+        last_old = block.end_line_before.max(old_start.saturating_sub(1));
+
+        // 后置上下文：接在本次块之后，下一块的前置上下文会自动去重。
+        if !stopped {
+            for offset in 1..=UNIFIED_CONTEXT_LINES {
+                let line_no = block.end_line_after + offset;
+                let Some(text) = new.get(line_no.saturating_sub(1)) else {
+                    break;
+                };
+                if !push_unified_line(&mut out, " ".to_string() + text, max_lines) {
+                    truncated = true;
+                    stopped = true;
+                    break;
+                }
+                last_old = line_no;
+            }
+        }
+    }
+
+    if truncated {
+        out.push("… diff truncated (read the file or rerun with a narrower range)".to_string());
+    }
+    (out.join("\n"), truncated)
+}
+
+/// 行数预算守卫：超预算返回 `false`，由调用方标记截断并停止。
+fn push_unified_line(out: &mut Vec<String>, line: String, max_lines: usize) -> bool {
+    if out.len() >= max_lines {
+        return false;
+    }
+    out.push(line);
+    true
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unified_diff_shows_context_and_change_lines() {
+        let before = "a\nb\nc\nd\ne\n";
+        let after = "a\nb\nC\nd\ne\n";
+        let diff = diff_replaced(before, after);
+        let (text, truncated) =
+            unified_diff("x.txt", before, after, &diff, MAX_UNIFIED_DIFF_LINES);
+        assert!(!truncated);
+        assert!(text.starts_with("--- a/x.txt\n+++ b/x.txt\n"), "{}", text);
+        assert!(text.contains("@@ -3,1 +3,1 @@"), "{}", text);
+        assert!(text.contains("\n a\n b\n"), "{}", text);
+        assert!(text.contains("\n-c\n+C\n"), "{}", text);
+    }
+
+    #[test]
+    fn unified_diff_truncates_at_the_budget() {
+        let mut before = String::new();
+        let mut after = String::new();
+        for index in 0..40 {
+            before.push_str(&format!("line {}\n", index));
+            after.push_str(&format!("line {}!\n", index));
+        }
+        let diff = diff_replaced(&before, &after);
+        let (text, truncated) = unified_diff("x.txt", &before, &after, &diff, 10);
+        assert!(truncated);
+        assert!(text.contains("truncated"), "{}", text);
+        assert!(text.lines().count() <= 11, "{}", text);
+    }
+
 
     fn kinds(diff: &LineDiff) -> Vec<&'static str> {
         diff.blocks

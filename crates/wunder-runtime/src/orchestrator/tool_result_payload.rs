@@ -646,6 +646,8 @@ const OBSERVATION_SEARCH_CONTEXT_LINE_CHARS: usize = 220;
 // real ceiling is still the turn budget below.
 pub(super) const OBSERVATION_MIN_TOKEN_BUDGET: i64 = 512;
 const OBSERVATION_STATUS_TOKEN_BUDGET: i64 = 768;
+/// 写文件结果带回执与 60 行 unified diff，比纯状态结果需要更多余地。
+const OBSERVATION_WRITE_TOKEN_BUDGET: i64 = 2_000;
 const OBSERVATION_LIST_TOKEN_BUDGET: i64 = 3_000;
 const OBSERVATION_COMMAND_TOKEN_BUDGET: i64 = 6_000;
 const OBSERVATION_DOCUMENT_TOKEN_BUDGET: i64 = 8_000;
@@ -714,9 +716,8 @@ pub(super) fn default_observation_token_budget(tool_name: &str) -> i64 {
         // Browser action is selected at runtime from the structured response.
         // Use the document cap as the safe default before that response exists.
         "browser" => OBSERVATION_DOCUMENT_TOKEN_BUDGET,
-        "写入文件" | "write_file" | "apply_patch" | "应用补丁" => {
-            OBSERVATION_STATUS_TOKEN_BUDGET
-        }
+        "写入文件" | "write_file" => OBSERVATION_WRITE_TOKEN_BUDGET,
+        "apply_patch" | "应用补丁" => OBSERVATION_STATUS_TOKEN_BUDGET,
         // `command=view` shares the edit tool but returns line-numbered file
         // content; give it the same room as a document read.
         "编辑" | "文本编辑" => OBSERVATION_DOCUMENT_TOKEN_BUDGET,
@@ -2760,6 +2761,15 @@ fn project_file_write_success(data: &Value) -> Option<Value> {
             "deleted_lines",
             "changed_files",
             "hunks_applied",
+            // 回执与 unified diff 才是「写进内容」的证据，压缩后必须留着。
+            "receipt",
+            "sha256",
+            "lines",
+            "syntax",
+            "history",
+            "history_rev",
+            "unified_diff",
+            "unified_diff_truncated",
         ],
     );
     let dry_run = is_dry_run_preview(data, map);
@@ -3500,6 +3510,14 @@ fn compact_apply_patch_observation_data(map: &Map<String, Value>) -> Option<Valu
         "added_lines",
         "deleted_lines",
         "no_effect_updates",
+        "path",
+        "receipt",
+        "sha256",
+        "lines",
+        "syntax",
+        "history",
+        "unified_diff",
+        "unified_diff_truncated",
     ] {
         if let Some(value) = map.get(key) {
             compacted.insert(key.to_string(), value.clone());

@@ -14,6 +14,7 @@ pub(super) fn normalize_edit_args(args: &Value) -> Result<Value, Value> {
         ("file_path", "path"),
         ("old_string", "old_str"),
         ("new_string", "new_str"),
+        ("new_string", "new_text"),
         ("input", "patch"),
     ] {
         if let (Some(first), Some(second)) = (map.get(primary), map.get(alias)) {
@@ -72,6 +73,17 @@ pub(super) fn normalize_edit_args(args: &Value) -> Result<Value, Value> {
                 &format!("{key} 必须是布尔值 true 或 false。"),
                 json!({"field": key}),
             ));
+        }
+    }
+    // 行区间替换的行号是整数，不是字符串；类型错了要立刻纠正，别落到运行时。
+    for key in ["start_line", "end_line"] {
+        if let Some(value) = map.get(key) {
+            if !value.is_u64() && !value.is_i64() {
+                return Err(invalid_args(
+                    &format!("{key} 必须是整数行号（1-based，区间含两端）。"),
+                    json!({"field": key}),
+                ));
+            }
         }
     }
     if let Some(Value::String(command)) = map.get_mut("command") {

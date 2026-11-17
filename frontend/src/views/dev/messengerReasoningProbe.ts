@@ -11,8 +11,8 @@ const settle = (ms = 200) => new Promise(resolve => setTimeout(resolve, ms));
  *
  * 渲染源是 durable thread 状态（`buildChatThreadMaterializedSlots`），因此这里用
  * `installChatThreadFixture` 装载 fixture、用 `thread_item_tail` 推推理增量——
- * 与线上 watch/send 路径同一套帧。推理在时间线里由「思考条目」呈现：
- * 条目摘要是有界预览（160 字），展开后的正文必须跟着流更新。
+ * 与线上 watch/send 路径同一套帧。推理在时间线里由「思考条目」呈现：条目行不再
+ * 渲染随流改写的摘要（避免整行抖动），只有点开后的正文跟着流更新。
  */
 export const runMessengerReasoningProbe = async (sessionId: string) => {
   const chat = useChatStore();
@@ -50,7 +50,7 @@ export const runMessengerReasoningProbe = async (sessionId: string) => {
     await settle(5);
   }
   await settle();
-  const summary = document.querySelector('.tl-thinking-summary')?.textContent || '';
+  const previewRendered = Boolean(document.querySelector('.tl-thinking-summary'));
   document.querySelector<HTMLElement>('.tl-thinking-head')?.click();
   await nextTick();
   await settle(20);
@@ -67,7 +67,7 @@ export const runMessengerReasoningProbe = async (sessionId: string) => {
   });
   await settle();
   await nextTick();
-  return { previewLength: summary.length,
+  return { previewRendered,
     bodyContainsLastChunk: body.includes('chunk-99'),
     panelUpdates: report.summary.rendering.messagePanelUpdates,
     contentFlushes: report.durations.chat_stream_plain_text_flush?.count || 0,

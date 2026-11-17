@@ -1,7 +1,7 @@
 use super::line_diff::{
     diff_added_file, diff_replaced, diff_source_too_large, insert_diff_fields, LineDiff,
     DIFF_UNAVAILABLE_BINARY, DIFF_UNAVAILABLE_OVERSIZE, DIFF_UNAVAILABLE_UNREADABLE,
-    MAX_DIFF_SOURCE_BYTES,
+    MAX_DIFF_SOURCE_BYTES, unified_diff, MAX_UNIFIED_DIFF_LINES,
 };
 use super::{
     build_model_tool_success, build_model_tool_success_with_hint, collect_allow_roots,
@@ -15,6 +15,7 @@ use super::{
     MAX_READ_BUDGET_FILES, MAX_READ_BYTES, MAX_READ_LINES, MAX_READ_OUTPUT_BUDGET_BYTES,
     MAX_READ_TIME_BUDGET_MS, MIN_READ_OUTPUT_BUDGET_BYTES,
 };
+use super::{file_history, write_receipt};
 use crate::core::atomic_write::atomic_write_text;
 use crate::core::blocking;
 use crate::i18n;
@@ -2435,7 +2436,11 @@ struct WriteFileOutcome {
     target: PathBuf,
     existed: bool,
     previous_bytes: u64,
+    /// 覆盖写前的旧内容（有界），只给回执与 unified diff 用。
+    previous_text: Option<String>,
     diff: WriteDiff,
+    snapshot: Option<file_history::Snapshot>,
+    receipt: write_receipt::Receipt,
 }
 
 /// 覆盖写前的旧内容，只为 diff 服务；读不到或过大时降级为「只有计数」。
@@ -2575,6 +2580,7 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
         .expect("write_file arguments were validated")
         .trim();
     let dry_run = parse_dry_run(&args);
+    let verify = args.get("verify").and_then(Value::as_bool).unwrap_or(true);
     let content = args
         .get("content")
         .and_then(Value::as_str)
@@ -2586,6 +2592,7 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
     let user_id = context.workspace_id.to_string();
     let path_for_write = path.clone();
     let allow_roots = collect_allow_roots(context);
+    let content_for_write = content.clone();
     let write_outcome = blocking::run_fs("tools.file.write", move || {
         let target =
             resolve_tool_path(workspace.as_ref(), &user_id, &path_for_write, &allow_roots)?;
@@ -2604,28 +2611,41 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
         } else {
             PreviousContent::Absent
         };
+        let previous_text = match &previous {
+            PreviousContent::Text(text) => Some(text.clone()),
+            _ => None,
+        };
+        let workspace_root = workspace.workspace_root(&user_id);
+        // 覆盖前快照：写坏了能 diff 回滚；快照失败不影响写入。
+        let snapshot = match (existed, dry_run, previous_text.as_deref()) {
+            (true, false, Some(text)) => file_history::snapshot(&target, &workspace_root, text),
+            _ => None,
+        };
         if !dry_run {
-            let workspace_root = workspace.workspace_root(&user_id);
             let default_workspace_target = workspace.resolve_path(&user_id, &path_for_write)?;
             if is_within_root(&workspace_root, &target)
                 && normalize_path_for_compare(&normalize_target_path(&target))
                     == normalize_path_for_compare(&normalize_target_path(&default_workspace_target))
             {
-                workspace.write_file(&user_id, &path_for_write, &content, true)?;
+                workspace.write_file(&user_id, &path_for_write, &content_for_write, true)?;
             } else {
                 if let Some(parent) = target.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                atomic_write_text(&target, &content)?;
+                atomic_write_text(&target, &content_for_write)?;
             }
         }
         // dry_run 也给预览 diff，与 apply_patch 的 dry_run 语义一致。
-        let diff = build_write_diff(existed, &previous, &content);
+        let diff = build_write_diff(existed, &previous, &content_for_write);
+        let receipt = write_receipt::build(&path_for_write, &content_for_write, verify);
         Ok::<WriteFileOutcome, anyhow::Error>(WriteFileOutcome {
             target,
             existed,
             previous_bytes,
+            previous_text,
             diff,
+            snapshot,
+            receipt,
         })
     })
     .await;
@@ -2633,7 +2653,7 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
         Ok(outcome) => outcome,
         Err(err) => {
             return Ok(build_failed_tool_result(
-                format!("写入文件失败：{err}"),
+                format!("写入文件失败：{}", err),
                 json!({
                     "path": path,
                     "dry_run": dry_run,
@@ -2653,6 +2673,14 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
     } else {
         touch_lsp_file(context, &write_outcome.target, true).await
     };
+    let previous_text = write_outcome.previous_text.as_deref().unwrap_or("");
+    let (unified, unified_truncated) = unified_diff(
+        &path,
+        previous_text,
+        &content,
+        &write_outcome.diff.diff,
+        MAX_UNIFIED_DIFF_LINES,
+    );
     let data = build_write_data(
         &path,
         bytes,
@@ -2661,23 +2689,37 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
         write_outcome.previous_bytes,
         lsp_info,
         &write_outcome.diff,
+        &write_outcome.receipt,
+        write_outcome.snapshot.as_ref(),
+        &unified,
+        unified_truncated,
     );
+    let receipt = &write_outcome.receipt;
+    let summary = if dry_run {
+        format!(
+            "Dry run: would write {path} ({} lines, sha256 {}).",
+            receipt.lines, receipt.sha256
+        )
+    } else if write_outcome.existed {
+        format!(
+            "Updated file {path} ({} lines, sha256 {}, syntax {}).",
+            receipt.lines, receipt.sha256, receipt.syntax
+        )
+    } else {
+        format!(
+            "Created file {path} ({} lines, sha256 {}, syntax {}).",
+            receipt.lines, receipt.sha256, receipt.syntax
+        )
+    };
     Ok(build_model_tool_success(
         "write_file",
         if dry_run { "dry_run" } else { "completed" },
-        if dry_run {
-            format!("Validated write target for {path} without writing content.")
-        } else if write_outcome.existed {
-            format!("Updated file {path}.")
-        } else {
-            format!("Created file {path}.")
-        },
+        summary,
         data,
     ))
 }
 
-/// 组装写入结果 `data`：既有字段保持不变，补丁家族的 diff 键由其一并给出，
-/// 时间线据此在工作过程行显示 +N/−N 并在详情里画差异卡片。
+/// 组装写入结果 `data`：既有字段保持不变，回执、历史快照与 unified diff 一并给出。
 fn build_write_data(
     path: &str,
     bytes: usize,
@@ -2686,24 +2728,33 @@ fn build_write_data(
     previous_bytes: u64,
     lsp: Value,
     diff: &WriteDiff,
+    receipt: &write_receipt::Receipt,
+    snapshot: Option<&file_history::Snapshot>,
+    unified: &str,
+    unified_truncated: bool,
 ) -> Value {
-    let mut diff_fields = Map::<String, Value>::new();
-    insert_diff_fields(&mut diff_fields, diff.action, path, &diff.diff);
+    let mut data = Map::<String, Value>::new();
+    insert_diff_fields(&mut data, diff.action, path, &diff.diff);
     if let Some(reason) = diff.unavailable {
-        diff_fields.insert("diff_unavailable".to_string(), json!(reason));
+        data.insert("diff_unavailable".to_string(), json!(reason));
     }
-    let mut data = json!({
-        "path": path,
-        "bytes": bytes,
-        "dry_run": dry_run,
-        "existed": existed,
-        "previous_bytes": previous_bytes,
-        "lsp": lsp
-    });
-    if let Some(map) = data.as_object_mut() {
-        map.extend(diff_fields);
+    data.insert("path".to_string(), json!(path));
+    data.insert("bytes".to_string(), json!(bytes));
+    data.insert("dry_run".to_string(), json!(dry_run));
+    data.insert("existed".to_string(), json!(existed));
+    data.insert("previous_bytes".to_string(), json!(previous_bytes));
+    data.insert("lsp".to_string(), lsp);
+    if let Some(snapshot) = snapshot {
+        data.insert("history".to_string(), json!(snapshot.display));
+        data.insert("history_rev".to_string(), json!(snapshot.rev));
     }
-    data
+    write_receipt::insert_fields(&mut data, receipt);
+    data.insert("unified_diff".to_string(), json!(unified));
+    data.insert(
+        "unified_diff_truncated".to_string(),
+        json!(unified_truncated),
+    );
+    Value::Object(data)
 }
 
 #[cfg(test)]
@@ -3065,7 +3116,10 @@ mod write_result_tests {
     #[test]
     fn new_file_write_reports_all_added_lines() {
         let diff = build_write_diff(false, &PreviousContent::Absent, "first\nsecond\n");
-        let data = build_write_data("sample.txt", 13, false, false, 0, Value::Null, &diff);
+        let receipt = write_receipt::build("sample.txt", "first\nsecond\n", false);
+        let data = build_write_data(
+            "sample.txt", 13, false, false, 0, Value::Null, &diff, &receipt, None, "", false,
+        );
         assert_eq!(data["added_lines"], json!(2));
         assert_eq!(data["deleted_lines"], json!(0));
         assert_eq!(data["files"][0]["action"], json!("add"));
@@ -3081,7 +3135,10 @@ mod write_result_tests {
     fn overwrite_write_diffs_middle_with_both_line_numbers() {
         let previous = PreviousContent::Text("alpha\nbeta\ngamma\n".into());
         let diff = build_write_diff(true, &previous, "alpha\nbeta two\ngamma\n");
-        let data = build_write_data("sample.txt", 21, false, true, 17, Value::Null, &diff);
+        let receipt = write_receipt::build("sample.txt", "alpha\nbeta two\ngamma\n", false);
+        let data = build_write_data(
+            "sample.txt", 21, false, true, 17, Value::Null, &diff, &receipt, None, "", false,
+        );
         assert_eq!(data["added_lines"], json!(1));
         assert_eq!(data["deleted_lines"], json!(1));
         let block = &data["files"][0]["diff_blocks"][0];
@@ -3099,7 +3156,10 @@ mod write_result_tests {
             &PreviousContent::Skipped(DIFF_UNAVAILABLE_BINARY),
             "next\n",
         );
-        let data = build_write_data("sample.txt", 5, false, true, 4, Value::Null, &diff);
+        let receipt = write_receipt::build("sample.txt", "next\n", false);
+        let data = build_write_data(
+            "sample.txt", 5, false, true, 4, Value::Null, &diff, &receipt, None, "", false,
+        );
         assert_eq!(data["diff_unavailable"], json!(DIFF_UNAVAILABLE_BINARY));
         assert_eq!(data["added_lines"], json!(0));
         assert_eq!(data["deleted_lines"], json!(0));

@@ -1179,6 +1179,8 @@ component QueueRow inherits Rectangle {
     callback remove(string);
     callback move-by(string, int);
     height: 28px;
+    // The row is a fixed 28px line; nothing it holds may paint outside it.
+    clip: true;
     private property <length> drag-start: 0px;
     private property <bool> dragging: false;
     private property <bool> drop-before: DragPreview.active
@@ -1311,11 +1313,13 @@ export component QueueStrip inherits Rectangle {
     callback remove(string);
     callback move-by(string, int);
     height: card-body.preferred-height;
+    // Clip on the component itself: `card-body` is a sibling of the card frame,
+    // so a clip on the frame would never reach the rows' text.
+    clip: true;
     frame := Rectangle {
         x: 0px; y: 0px; width: parent.width; height: parent.height;
         border-radius: Theme.radius-lg; background: Theme.surface;
         border-width: 1px; border-color: Theme.border;
-        clip: true;
     }
     card-body := VerticalLayout {
         padding-left: 10px; padding-right: 8px; padding-top: 6px; padding-bottom: 6px;
@@ -1552,13 +1556,16 @@ export component Composer inherits Rectangle {
     // the strip above the input shows it. What still blocks is a slash command
     // in flight or a thread that is still loading.
     private property <bool> send-blocked: root.busy;
-    // Exact card height: 6+6 padding, a 20px header, 28px rows, the optional
-    // overflow line and 2px between every item.
+    // Exact card height: 6+6 padding, a 20px header, 28px rows, 2px between
+    // every item and the optional overflow line. It has to match
+    // `QueueStrip`'s content height exactly — the editor card below is placed
+    // from this number, so an extra pixel term here leaves a stray gap (it used
+    // to count the bottom padding twice).
     private property <int> queue-items: root.queue-open
         ? 1 + root.queue-turns.length + (root.queue-overflow > 0 ? 1 : 0) : 0;
     private property <length> queue-height: root.queue-open
         ? 12px + 20px + root.queue-turns.length * 28px
-            + (root.queue-overflow > 0 ? 16px : 0px) + (root.queue-items - 1) * 2px + 6px
+            + (root.queue-overflow > 0 ? 16px : 0px) + (root.queue-items - 1) * 2px
         : 0px;
     // Desktop keeps the action band compact and directly below the editor gap.
     // Mobile keeps its touch band.

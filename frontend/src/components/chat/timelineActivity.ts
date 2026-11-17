@@ -3,7 +3,11 @@ import type { TimelineReasoningEntry, TimelineToolEntry } from './toolTimelineMo
 export type ProcessActivity = { kind: string; item_id?: string; tool?: string; created_seq?: number; model_round?: number };
 type Translate = (key: string, params?: Record<string, unknown>) => string;
 
-/** A bounded tail keeps a one-line live preview moving after a long thought. */
+/**
+ * 思考内容的一行预览：只供收起状态下的批次条（过程/批次标题右侧）使用。
+ * 思考条目行内不渲染摘要，避免流式增量反复改写文本造成整行抖动。
+ * A bounded tail keeps the collapsed batch line from copying a long thought.
+ */
 export const reasoningPreview = (text: string): string => {
   let start = Math.max(0, text.length - 640);
   const unit = text.charCodeAt(start);

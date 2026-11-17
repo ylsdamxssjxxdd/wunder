@@ -74,22 +74,18 @@ test('new live reasoning is appended after durable process entries', async ({ pa
 
     const thoughts = bubble.locator('.tl-thinking');
     await expect(thoughts).toHaveCount(2);
-    await expect(thoughts.nth(0)).toContainText('Earlier completed thought.');
+    // 行内不再渲染摘要与省略号动画：收起的思考行只有标签与右侧指标。
+    await expect(thoughts.locator('.tl-thinking-summary')).toHaveCount(0);
+    await expect(thoughts.locator('.tl-thinking-ellipsis')).toHaveCount(0);
+    await expect(thoughts.nth(0)).not.toContainText('Earlier completed thought.');
     await expect(thoughts.nth(0)).not.toContainText('New live thought.');
-    await expect(thoughts.nth(1)).toContainText('New live thought.');
     await expect(thoughts.nth(1)).toHaveClass(/is-streaming/);
-    const completedDots = thoughts.nth(0).locator('.tl-thinking-ellipsis');
-    await expect(completedDots).toHaveCount(1);
-    await expect(completedDots).toBeHidden();
     await expect(thoughts.locator('.tl-thinking-metrics')).toHaveCount(2);
-    const waitingDots = thoughts.nth(1).locator('.tl-thinking-summary .tl-thinking-ellipsis');
-    await expect(waitingDots).toBeVisible();
-    await expect(waitingDots).toHaveText('...');
-    await expect(waitingDots.locator('span').first()).toHaveCSS('animation-name', /^tl-thinking-dot/);
-    const completedDotsWidth = await completedDots.evaluate(el => el.getBoundingClientRect().width);
-    const waitingDotsWidth = await waitingDots.evaluate(el => el.getBoundingClientRect().width);
-    expect(completedDotsWidth).toBeGreaterThan(0);
-    expect(waitingDotsWidth).toBe(completedDotsWidth);
+    await thoughts.nth(0).locator('.tl-thinking-head').click();
+    await expect(thoughts.nth(0).locator('.tl-thinking-text')).toContainText('Earlier completed thought.');
+    await expect(thoughts.nth(0).locator('.tl-thinking-text')).not.toContainText('New live thought.');
+    await thoughts.nth(1).locator('.tl-thinking-head').click();
+    await expect(thoughts.nth(1).locator('.tl-thinking-text')).toContainText('New live thought.');
     const metricWidths = await thoughts.locator('.tl-thinking-metrics').evaluateAll(nodes =>
       nodes.map(node => node.getBoundingClientRect().width));
     expect(new Set(metricWidths).size).toBe(1);

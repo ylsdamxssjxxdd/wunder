@@ -5,7 +5,9 @@
 //!   最多两层、过滤隐藏项与 `node_modules`/`__pycache__`；
 //! - `create`：仅在目标不存在时新建；
 //! - `str_replace` 在统一入口与默认字面替换复用同一执行实现；
-//! - `insert`：把 `new_string` 插入到第 `insert_line` 行之后。
+//! - `insert`：把 `new_string` 插入到第 `insert_line` 行之后；
+//! - `undo_edit`：把目标文件恢复成最近一次快照（上一次写入前的内容），
+//!   恢复前也存一份快照，所以回滚本身还能再撤回。
 //!
 //! 输出超过 `MAX_OUTPUT_CHARS` 时按字符截断并追加 `<response clipped>` 说明。
 //! 路径沿用 workspace 记账，工作区外的允许根走能力 seam。
@@ -17,9 +19,10 @@
 use super::capabilities::{local_fs, FsCapability};
 use super::context::collect_allow_roots;
 use super::line_diff::{
-    diff_added_file, diff_replaced, diff_source_too_large, insert_diff_fields, LineDiff,
-    DIFF_UNAVAILABLE_OVERSIZE,
+    diff_added_file, diff_replaced, diff_source_too_large, insert_diff_fields, unified_diff,
+    LineDiff, DIFF_UNAVAILABLE_OVERSIZE, MAX_UNIFIED_DIFF_LINES,
 };
+use super::{file_history, write_receipt};
 use super::{
     build_model_tool_success,
     command_options::parse_dry_run,
@@ -49,7 +52,7 @@ const MAX_OUTPUT_CHARS: usize = 16_000;
 
 const TRUNCATED_MESSAGE: &str = "\n<response clipped>Use search_content to locate relevant lines, then view with a narrower view_range.";
 
-const VALID_COMMANDS: [&str; 3] = ["view", "create", "insert"];
+const VALID_COMMANDS: [&str; 4] = ["view", "create", "insert", "undo_edit"];
 
 struct EditorOutcome {
     value: Value,
@@ -120,13 +123,22 @@ fn not_regular_file(path: &str) -> Value {
 }
 
 pub(crate) async fn str_replace_editor(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    if let Some(result) =
-        super::execute_in_sandbox(context, super::edit_tool::TOOL_EDIT, args).await
-    {
-        if super::edit_tool::sandbox_edit_mutated(&result, args) {
-            context.workspace.mark_tree_dirty(context.workspace_id);
+    // `undo_edit` 依赖本机 temp/.history 快照，而沙盒的文件写入在沙盒侧完成、
+    // 不落这套快照；直接下发给它只会得到「未知命令」，所以这一条始终走本机。
+    let host_only = args
+        .get("command")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| value == "undo_edit");
+    if !host_only {
+        if let Some(result) =
+            super::execute_in_sandbox(context, super::edit_tool::TOOL_EDIT, args).await
+        {
+            if super::edit_tool::sandbox_edit_mutated(&result, args) {
+                context.workspace.mark_tree_dirty(context.workspace_id);
+            }
+            return Ok(result);
         }
-        return Ok(result);
     }
 
     let command = args
@@ -140,11 +152,11 @@ pub(crate) async fn str_replace_editor(context: &ToolContext<'_>, args: &Value) 
     if !VALID_COMMANDS.contains(&command) {
         return Ok(editor_failure(
             &format!(
-                "Unknown command `{command}`. Allowed options are: `view`, `create`, `str_replace`, `insert`."
+                "Unknown command `{command}`. Allowed options are: `view`, `create`, `str_replace`, `insert`, `undo_edit`."
             ),
             json!({ "command": command }),
             "TOOL_SRE_COMMAND_INVALID",
-            "使用 view、create、str_replace 或 insert。",
+            "使用 view、create、str_replace、insert 或 undo_edit。",
         ));
     }
     // 别名已在统一入口归一化，此处只处理主参数。
@@ -211,11 +223,12 @@ fn run_editor(
         "view" => view_command(ws, &user_id, &target, path, args),
         "create" => create_command(ws, &user_id, &target, path, args),
         "insert" => insert_command(ws, &user_id, &target, path, args),
+        "undo_edit" => undo_edit_command(ws, &user_id, &target, path, args),
         _ => Ok(fail(editor_failure(
             &format!("Unknown command `{command}`."),
             json!({ "command": command }),
             "TOOL_SRE_COMMAND_INVALID",
-            "使用 view、create、str_replace 或 insert。",
+            "使用 view、create、str_replace、insert 或 undo_edit。",
         ))),
     }
 }
@@ -308,22 +321,16 @@ fn create_command(
         )));
     }
     let dry_run = parse_dry_run(args);
+    let verify = parse_verify(args);
     if !dry_run {
         write_target(ws, user_id, target, path, &file_text)?;
     }
-    Ok(write_outcome(
-        "create",
-        path,
-        build_create_data(path, &file_text),
-        dry_run,
-        true,
-    ))
-}
-
-/// 新建文件的 `data`：与 `写入文件` 命中不存在路径时逐字一致，整份内容一个
-/// `new file` 块、每行 `kind:"add"`。热路径只扫一遍新内容，行数/文本各自有界。
-fn build_create_data(path: &str, content: &str) -> Value {
-    build_edit_data(path, "add", &diff_added_file(content), None)
+    let diff = diff_added_file(&file_text);
+    let data = build_edit_data(path, "add", &diff, None);
+    let data = with_receipt(
+        path, "", &file_text, &diff, None, None, verify, data,
+    );
+    Ok(write_outcome("create", path, data, dry_run, true))
 }
 
 /// 组装写类子命令的结果 `data`：保留既有 `path` 键，追加 diff 家族键。
@@ -414,17 +421,92 @@ fn insert_command(
     updated.push_str(&inserted);
     updated.push_str(&before[offset..]);
     let dry_run = parse_dry_run(args);
+    let verify = parse_verify(args);
     let changed = updated != before;
+    // 覆盖前快照：写坏了能 diff 回滚；失败只是没有历史，不影响写入。
+    let snapshot = if !dry_run && changed {
+        file_history::snapshot(target, &ws.workspace_root(user_id), &before)
+    } else {
+        None
+    };
     if !dry_run && changed {
         write_target(ws, user_id, target, path, &updated)?;
     }
-    Ok(write_outcome(
-        "insert",
+    let (diff, unavailable) = if diff_source_too_large(&before, &updated) {
+        (LineDiff::default(), Some(DIFF_UNAVAILABLE_OVERSIZE))
+    } else {
+        (diff_replaced(&before, &updated), None)
+    };
+    let data = build_edit_data(path, "update", &diff, unavailable);
+    let data = with_receipt(
         path,
-        build_insert_data(path, &before, &updated),
-        dry_run,
-        changed,
-    ))
+        &before,
+        &updated,
+        &diff,
+        unavailable,
+        snapshot.as_ref(),
+        verify,
+        data,
+    );
+    Ok(write_outcome("insert", path, data, dry_run, changed))
+}
+
+/// 回滚：把目标文件写回最近一次快照（即上一次写入前的内容）。
+///
+/// 语义是「退一步」而不是「清空历史」：回滚前先把当前内容存成新快照，
+/// 所以连续调用会一步步往回走，误回滚也能再 undo 回来。
+fn undo_edit_command(
+    ws: &WorkspaceManager,
+    user_id: &str,
+    target: &Path,
+    path: &str,
+    args: &Value,
+) -> Result<EditorOutcome> {
+    if target.is_dir() {
+        return Ok(fail(not_regular_file(path)));
+    }
+    let workspace_root = ws.workspace_root(user_id);
+    let Some(snapshot) = file_history::latest(target, &workspace_root) else {
+        return Ok(fail(no_history(path)));
+    };
+    let Some(restored) = file_history::read_snapshot(&snapshot, &workspace_root) else {
+        return Ok(fail(no_history(path)));
+    };
+    let fs_cap = local_fs();
+    let before = if target.is_file() {
+        fs_cap.read_text(target)?
+    } else {
+        String::new()
+    };
+    let dry_run = parse_dry_run(args);
+    let verify = parse_verify(args);
+    let changed = restored != before;
+    if !dry_run && changed {
+        // 快照本身也可能写坏，所以只把它当增强：失败不影响回滚。
+        let _ = file_history::snapshot(target, &workspace_root, &before);
+        write_target(ws, user_id, target, path, &restored)?;
+    }
+    let (diff, unavailable) = if diff_source_too_large(&before, &restored) {
+        (LineDiff::default(), Some(DIFF_UNAVAILABLE_OVERSIZE))
+    } else {
+        (diff_replaced(&before, &restored), None)
+    };
+    let data = build_edit_data(path, "update", &diff, unavailable);
+    let mut data = with_receipt(path, &before, &restored, &diff, unavailable, None, verify, data);
+    if let Some(map) = data.as_object_mut() {
+        map.insert("restored_from".to_string(), json!(snapshot.display));
+        map.insert("restored_rev".to_string(), json!(snapshot.rev));
+    }
+    Ok(write_outcome("undo_edit", path, data, dry_run, changed))
+}
+
+fn no_history(path: &str) -> Value {
+    editor_failure(
+        &format!("{path} 没有可回滚的快照；未修改文件。"),
+        json!({ "path": path, "history_missing": true }),
+        "TOOL_SRE_NO_HISTORY",
+        "快照只在改写已有文件时生成：直接写回目标内容即可，不需要回滚。",
+    )
 }
 
 fn write_outcome(
@@ -461,21 +543,44 @@ fn write_outcome(
     )
 }
 
-/// 插入的 `data`：纯插入在公共前后缀裁剪后天然只剩一个区间，因此一个
-/// `kind:"add"` 块、`hunks` = 1（本命令一次调用只有一处插入点）、
-/// `deleted_lines` = 0，`start_line_after` 即插入点在新文中的行号。
-/// 两侧任一超出 diff 源上限时与 `写入文件` 同样降级为只有计数。
-fn build_insert_data(path: &str, before: &str, after: &str) -> Value {
-    if diff_source_too_large(before, after) {
-        return build_edit_data(
-            path,
-            "update",
-            &LineDiff::default(),
-            Some(DIFF_UNAVAILABLE_OVERSIZE),
+/// 写类子命令的公共收尾：回执（行数/sha256/符号/语法）+ unified diff + 历史快照。
+///
+/// 与 `写入文件`、字面替换共用同一份口径，模型不必因为换了子命令就再回读一次。
+fn with_receipt(
+    path: &str,
+    before: &str,
+    after: &str,
+    diff: &LineDiff,
+    unavailable: Option<&'static str>,
+    snapshot: Option<&file_history::Snapshot>,
+    verify: bool,
+    mut data: Value,
+) -> Value {
+    let receipt = write_receipt::build(path, after, verify);
+    let (unified, unified_truncated) =
+        unified_diff(path, before, after, diff, MAX_UNIFIED_DIFF_LINES);
+    if let Some(map) = data.as_object_mut() {
+        if let Some(snapshot) = snapshot {
+            map.insert("history".to_string(), json!(snapshot.display));
+            map.insert("history_rev".to_string(), json!(snapshot.rev));
+        }
+        write_receipt::insert_fields(map, &receipt);
+        map.insert("unified_diff".to_string(), json!(unified));
+        map.insert(
+            "unified_diff_truncated".to_string(),
+            json!(unified_truncated),
         );
+        if let Some(reason) = unavailable {
+            map.insert("diff_unavailable".to_string(), json!(reason));
+        }
     }
-    build_edit_data(path, "update", &diff_replaced(before, after), None)
+    data
 }
+
+fn parse_verify(args: &Value) -> bool {
+    args.get("verify").and_then(Value::as_bool).unwrap_or(true)
+}
+
 
 fn write_target(
     ws: &WorkspaceManager,
@@ -637,401 +742,5 @@ fn maybe_truncate(content: &str, max_chars: usize) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn command_requested_only_for_non_empty_command() {
-        assert!(command_requested(&json!({"command": "view"})));
-        assert!(!command_requested(&json!({"command": "   "})));
-        assert!(!command_requested(&json!({"command": null})));
-        assert!(!command_requested(&json!({})));
-    }
-
-    #[test]
-    fn view_range_parser_rejects_non_pairs() {
-        assert!(parse_view_range(&json!({})).unwrap().is_none());
-        assert!(parse_view_range(&json!({"view_range": null}))
-            .unwrap()
-            .is_none());
-        assert!(parse_view_range(&json!({"view_range": [11, 12]}))
-            .unwrap()
-            .is_some());
-        assert!(parse_view_range(&json!({"view_range": [11]})).is_err());
-        assert!(parse_view_range(&json!({"view_range": [11, "x"]})).is_err());
-    }
-
-    #[test]
-    fn file_view_numbers_lines_and_applies_range() {
-        let rendered = format_file_view("f.txt", "alpha\nbeta\ngamma\n", None).unwrap();
-        assert!(rendered.contains("     1  alpha"));
-        assert!(rendered.contains("     3  gamma"));
-        let ranged = format_file_view("f.txt", "alpha\nbeta\ngamma\n", Some(vec![2, 3])).unwrap();
-        assert!(ranged.contains("with view_range=[2, 3]"));
-        assert!(ranged.contains("     2  beta"));
-        assert!(!ranged.contains("alpha"));
-    }
-
-    #[test]
-    fn file_view_uses_actual_lines_and_bounds_long_line_rendering() {
-        let rendered = format_file_view("sample.txt", "alpha\r\nbeta\r\n", None).unwrap();
-        assert!(rendered.contains("total of 2 lines"));
-        assert!(!rendered.contains('\r'));
-        assert!(format_file_view("sample.txt", "alpha\n", Some(vec![2, -1])).is_err());
-        assert!(format_file_view("sample.txt", "", None)
-            .unwrap()
-            .contains("total of 0 lines"));
-        let long = "文".repeat(MAX_OUTPUT_CHARS * 4);
-        let clipped = format_file_view("sample.txt", &long, None).unwrap();
-        assert!(clipped.ends_with(TRUNCATED_MESSAGE));
-        assert_eq!(
-            clipped.chars().count(),
-            MAX_OUTPUT_CHARS + TRUNCATED_MESSAGE.chars().count()
-        );
-    }
-
-    #[test]
-    fn truncation_appends_marker() {
-        let out = maybe_truncate("0123456789", 4);
-        assert!(out.starts_with("0123"));
-        assert!(out.contains("<response clipped>"));
-    }
-
-    #[test]
-    fn str_replace_data_carries_the_diff_contract() {
-        let before = "alpha\nbeta\ngamma\n";
-        let after = "alpha\nBETA\ngamma\n";
-        let (diff, unavailable) = super::super::line_diff::diff_literal_replaces(
-            before,
-            after,
-            &[6],
-            "beta".len(),
-            "BETA",
-        );
-        assert!(unavailable.is_none());
-        let data = build_edit_data("f.txt", "update", &diff, unavailable);
-        let mut keys: Vec<&str> = data
-            .as_object()
-            .expect("object")
-            .keys()
-            .map(String::as_str)
-            .collect();
-        keys.sort_unstable();
-        assert_eq!(
-            keys,
-            vec![
-                "added",
-                "added_lines",
-                "changed_files",
-                "deleted",
-                "deleted_lines",
-                "diff_lines_omitted",
-                "files",
-                "hunks_applied",
-                "moved",
-                "path",
-                "updated",
-            ]
-        );
-        assert_eq!(data["files"][0]["action"], json!("update"));
-        assert_eq!(data["added_lines"], json!(1));
-        assert_eq!(data["deleted_lines"], json!(1));
-        assert_eq!(data["hunks_applied"], json!(1));
-        let block = &data["files"][0]["diff_blocks"][0];
-        assert_eq!(block["header"], json!("@@ -2,1 +2,1 @@"));
-        assert_eq!(block["lines"][0]["kind"], json!("delete"));
-        assert_eq!(block["lines"][0]["old_line"], json!(2));
-        assert!(block["lines"][0]["new_line"].is_null());
-        assert_eq!(block["lines"][0]["text"], json!("beta"));
-        assert_eq!(block["lines"][1]["kind"], json!("add"));
-        assert_eq!(block["lines"][1]["new_line"], json!(2));
-        assert_eq!(block["lines"][1]["text"], json!("BETA"));
-    }
-
-    use crate::storage::SqliteStorage;
-    use std::collections::HashMap;
-    use tempfile::tempdir;
-
-    fn sorted_keys(value: &Value) -> Vec<String> {
-        let mut keys: Vec<String> = value.as_object().expect("object").keys().cloned().collect();
-        keys.sort();
-        keys
-    }
-
-    /// 真实工作区夹具：直接跑 `run_editor` 分派，覆盖写盘与 diff 组装全链路。
-    fn editor_workspace(root: &Path) -> Arc<WorkspaceManager> {
-        let storage = Arc::new(SqliteStorage::new(
-            root.join("state.sqlite3").to_string_lossy().to_string(),
-        ));
-        Arc::new(WorkspaceManager::new(
-            root.join("workspaces").to_string_lossy().as_ref(),
-            storage,
-            0,
-            &HashMap::new(),
-        ))
-    }
-
-    fn run(ws: &Arc<WorkspaceManager>, command: &str, args: &Value) -> Value {
-        debug_assert_eq!(args["command"].as_str(), Some(command));
-        run_editor(
-            Arc::clone(ws),
-            "tester".to_string(),
-            Vec::new(),
-            command,
-            args.get("file_path").and_then(Value::as_str).unwrap_or(""),
-            args,
-        )
-        .expect("editor dispatch")
-        .value
-    }
-
-    fn create_args(path: &str, text: &str) -> Value {
-        json!({ "command": "create", "file_path": path, "file_text": text })
-    }
-
-    #[test]
-    fn create_emits_one_all_add_block_with_new_side_numbering() {
-        let dir = tempdir().expect("tempdir");
-        let ws = editor_workspace(dir.path());
-        let result = run(
-            &ws,
-            "create",
-            &create_args("notes.txt", "one\ntwo\nthree\n"),
-        );
-        assert_eq!(result["action"], json!("create"));
-        assert_eq!(result["ok"], json!(true));
-        let data = &result["data"];
-        assert_eq!(data["path"], json!("notes.txt"));
-        assert_eq!(data["added_lines"], json!(3));
-        assert_eq!(data["deleted_lines"], json!(0));
-        assert_eq!(data["changed_files"], json!(1));
-        assert_eq!(data["added"], json!(1));
-        assert_eq!(data["updated"], json!(0));
-        assert_eq!(data["deleted"], json!(0));
-        assert_eq!(data["moved"], json!(0));
-        assert_eq!(data["hunks_applied"], json!(1));
-        assert_eq!(data["diff_lines_omitted"], json!(0));
-        assert!(data.get("diff_unavailable").is_none());
-        let file = &data["files"][0];
-        assert_eq!(file["action"], json!("add"));
-        assert_eq!(file["path"], json!("notes.txt"));
-        assert!(file["to_path"].is_null());
-        assert_eq!(file["hunks"], json!(1));
-        assert_eq!(file["diff_blocks"].as_array().expect("blocks").len(), 1);
-        let block = &file["diff_blocks"][0];
-        assert_eq!(block["header"], json!("new file"));
-        assert_eq!(block["start_line_before"], json!(0));
-        assert_eq!(block["end_line_before"], json!(0));
-        assert_eq!(block["start_line_after"], json!(1));
-        assert_eq!(block["end_line_after"], json!(3));
-        let rows = block["lines"].as_array().expect("rows");
-        assert_eq!(rows.len(), 3);
-        for (index, row) in rows.iter().enumerate() {
-            assert_eq!(row["kind"], json!("add"));
-            assert!(row["old_line"].is_null());
-            assert_eq!(row["new_line"], json!(index + 1));
-        }
-        assert_eq!(rows[0]["text"], json!("one"));
-        assert_eq!(rows[2]["text"], json!("three"));
-
-        // 落盘内容不变：view 仍能看到整份文件。
-        let viewed = run(
-            &ws,
-            "view",
-            &json!({ "command": "view", "file_path": "notes.txt" }),
-        );
-        assert!(viewed["data"]["content"]
-            .as_str()
-            .expect("content")
-            .contains("     1  one"));
-    }
-
-    #[test]
-    fn create_refuses_existing_path_without_claiming_a_diff() {
-        let dir = tempdir().expect("tempdir");
-        let ws = editor_workspace(dir.path());
-        run(&ws, "create", &create_args("notes.txt", "a\n"));
-        let again = run(&ws, "create", &create_args("notes.txt", "b\n"));
-        assert_eq!(again["ok"], json!(false));
-        assert_eq!(again["error_meta"]["code"], json!("TOOL_SRE_FILE_EXISTS"));
-        assert!(again["data"].get("files").is_none());
-    }
-
-    #[test]
-    fn insert_emits_add_only_block_at_the_insertion_point() {
-        let dir = tempdir().expect("tempdir");
-        let ws = editor_workspace(dir.path());
-        run(
-            &ws,
-            "create",
-            &create_args("notes.txt", "alpha\nbeta\ngamma\n"),
-        );
-        let result = run(
-            &ws,
-            "insert",
-            &json!({
-                "command": "insert",
-                "file_path": "notes.txt",
-                "insert_line": 2,
-                "new_string": "X\nY",
-            }),
-        );
-        assert_eq!(result["action"], json!("insert"));
-        let data = &result["data"];
-        assert_eq!(data["path"], json!("notes.txt"));
-        assert_eq!(data["added_lines"], json!(2));
-        assert_eq!(data["deleted_lines"], json!(0));
-        assert_eq!(data["updated"], json!(1));
-        assert_eq!(data["added"], json!(0));
-        assert_eq!(data["hunks_applied"], json!(1));
-        assert_eq!(data["changed_files"], json!(1));
-        let file = &data["files"][0];
-        assert_eq!(file["action"], json!("update"));
-        assert_eq!(file["hunks"], json!(1));
-        assert_eq!(file["deleted_lines"], json!(0));
-        let block = &file["diff_blocks"][0];
-        assert_eq!(file["diff_blocks"].as_array().expect("blocks").len(), 1);
-        assert_eq!(block["header"], json!("@@ -3,0 +3,2 @@"));
-        assert_eq!(block["start_line_after"], json!(3));
-        assert_eq!(block["end_line_after"], json!(4));
-        let rows = block["lines"].as_array().expect("rows");
-        assert_eq!(rows.len(), 2);
-        for row in rows.iter() {
-            assert_eq!(row["kind"], json!("add"));
-            assert!(row["old_line"].is_null());
-        }
-        assert_eq!(rows[0]["new_line"], json!(3));
-        assert_eq!(rows[0]["text"], json!("X"));
-        assert_eq!(rows[1]["new_line"], json!(4));
-        assert_eq!(rows[1]["text"], json!("Y"));
-
-        let viewed = run(
-            &ws,
-            "view",
-            &json!({ "command": "view", "file_path": "notes.txt" }),
-        );
-        let content = viewed["data"]["content"].as_str().expect("content");
-        assert!(content.contains("     3  X"), "{content}");
-        assert!(content.contains("     5  gamma"), "{content}");
-    }
-
-    /// `create` 不允许覆盖既有路径（见 `create_refuses_existing_path_*`），
-    /// 覆盖写语义属于 `写入文件`；这里钉住家族里 `update` 动作两侧编号的形态，
-    /// 保证若日后放开覆盖，渲染侧契约不需要再改。
-    #[test]
-    fn update_action_numbers_both_sides_for_an_overwrite_shape() {
-        let data = build_edit_data(
-            "notes.txt",
-            "update",
-            &diff_replaced("alpha\nbeta\ngamma\n", "alpha\nBETA\ngamma\nDELTA\n"),
-            None,
-        );
-        assert_eq!(data["updated"], json!(1));
-        assert_eq!(data["added"], json!(0));
-        assert_eq!(data["deleted_lines"], json!(2));
-        assert_eq!(data["added_lines"], json!(3));
-        let file = &data["files"][0];
-        assert_eq!(file["action"], json!("update"));
-        let rows = file["diff_blocks"][0]["lines"].as_array().expect("rows");
-        let deletes: Vec<&Value> = rows
-            .iter()
-            .filter(|row| row["kind"] == json!("delete"))
-            .collect();
-        let adds: Vec<&Value> = rows
-            .iter()
-            .filter(|row| row["kind"] == json!("add"))
-            .collect();
-        assert_eq!(deletes.len(), 2);
-        assert_eq!(adds.len(), 3);
-        for (index, row) in deletes.iter().enumerate() {
-            assert_eq!(row["old_line"], json!(index + 2));
-            assert!(row["new_line"].is_null());
-        }
-        for (index, row) in adds.iter().enumerate() {
-            assert_eq!(row["new_line"], json!(index + 2));
-            assert!(row["old_line"].is_null());
-        }
-    }
-
-    #[test]
-    fn create_and_insert_data_pin_the_patch_family_key_set() {
-        let dir = tempdir().expect("tempdir");
-        let ws = editor_workspace(dir.path());
-        let created = run(&ws, "create", &create_args("a.txt", "one\n"));
-        let expected = vec![
-            "added",
-            "added_lines",
-            "changed_files",
-            "deleted",
-            "deleted_lines",
-            "diff_lines_omitted",
-            "dry_run",
-            "files",
-            "hunks_applied",
-            "moved",
-            "path",
-            "updated",
-        ];
-        assert_eq!(sorted_keys(&created["data"]), expected);
-        let inserted = run(
-            &ws,
-            "insert",
-            &json!({
-                "command": "insert",
-                "file_path": "a.txt",
-                "insert_line": 1,
-                "new_string": "two",
-            }),
-        );
-        assert_eq!(sorted_keys(&inserted["data"]), expected);
-        let block = &inserted["data"]["files"][0]["diff_blocks"][0];
-        assert_eq!(
-            sorted_keys(block),
-            vec![
-                "end_line_after",
-                "end_line_before",
-                "header",
-                "lines",
-                "start_line_after",
-                "start_line_before"
-            ]
-        );
-        assert_eq!(
-            sorted_keys(&block["lines"][0]),
-            vec!["kind", "new_line", "old_line", "text"]
-        );
-        for row in block["lines"].as_array().expect("rows") {
-            let kind = row["kind"].as_str().expect("kind");
-            assert!(matches!(kind, "meta" | "add" | "delete"), "{kind}");
-            let text = row["text"].as_str().expect("text");
-            assert!(!text.starts_with('+') && !text.starts_with('-'), "{text}");
-        }
-    }
-
-    #[test]
-    fn insert_degrades_to_counts_only_for_oversized_sources() {
-        use super::super::line_diff::MAX_DIFF_SOURCE_BYTES;
-        let dir = tempdir().expect("tempdir");
-        let ws = editor_workspace(dir.path());
-        let big = "x\n".repeat(MAX_DIFF_SOURCE_BYTES / 2 + 1);
-        run(&ws, "create", &create_args("big.txt", &big));
-        let result = run(
-            &ws,
-            "insert",
-            &json!({
-                "command": "insert",
-                "file_path": "big.txt",
-                "insert_line": 1,
-                "new_string": "y",
-            }),
-        );
-        let data = &result["data"];
-        assert_eq!(data["diff_unavailable"], json!("oversize"));
-        assert_eq!(data["files"][0]["action"], json!("update"));
-        assert_eq!(data["files"][0]["added_lines"], json!(0));
-        assert!(data["files"][0]["diff_blocks"]
-            .as_array()
-            .expect("blocks")
-            .is_empty());
-    }
-}
+#[path = "str_replace_editor_tests.rs"]
+mod editor_tests;

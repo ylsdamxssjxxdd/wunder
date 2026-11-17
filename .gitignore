@@ -8,6 +8,10 @@ EVA_BACKEND
 参考项目
 参考/
 测试
+node_modules/
+# deps:use 把 node_modules 做成指向 node_modules-<profile> 的符号链接，
+# 目录规则（node_modules/）匹配不到链接本身。
+/node_modules
 package
 modelcontextprotocol-sdk-1.21.1.tgz
 streamable-http.html

@@ -1,44 +1,41 @@
 import { expect, test } from '@playwright/test';
 
-test('thinking previews follow live output and preserve a reader scrolling upward', async ({ page }) => {
+test('expanded thought follows live output without any inline preview and preserves a reader scrolling upward', async ({ page }) => {
   await page.goto('/__e2e/composer-b4');
   const result = await page.evaluate(async () => {
     const source = await (await fetch('/src/components/chat/MessageTimelineThinkingEntry.vue')).text();
     const runtimeUrl = source.match(/from\s+["']([^"']*\/vue\.js[^"']*)["']/)?.[1];
     if (!runtimeUrl) throw new Error('Missing fixture Vue runtime');
-    const [{ createApp, reactive, nextTick, h }, { default: Thinking }, { reasoningPreview }] = await Promise.all([
-      import(runtimeUrl), import('/src/components/chat/MessageTimelineThinkingEntry.vue'),
-      import('/src/components/chat/timelineActivity.ts')
+    const [{ createApp, reactive, nextTick, h }, { default: Thinking }] = await Promise.all([
+      import(runtimeUrl), import('/src/components/chat/MessageTimelineThinkingEntry.vue')
     ]);
     const host = document.createElement('div');
     host.style.cssText = 'position:fixed;inset:0;z-index:10000;padding:20px;background:#fbfaf8';
     document.body.append(host);
     const model = reactive({ open: true, entry: {
       kind: 'reasoning', key: 'fixture', streaming: true,
-      text: 'fixture thought\n'.repeat(80), summary: ''
+      text: 'fixture thought\n'.repeat(80), summary: 'fixture summary'
     } });
-    model.entry.summary = reasoningPreview(model.entry.text);
     const app = createApp({ setup: () => () => h(Thinking, model) });
     app.mount(host);
     await nextTick();
     model.entry.text += 'fixture latest';
-    model.entry.summary = reasoningPreview(model.entry.text);
     await nextTick(); await nextTick();
     const body = host.querySelector<HTMLElement>('.tl-thinking-text')!;
-    const summary = host.querySelector<HTMLElement>('.tl-thinking-summary')!;
     const followed = body.scrollTop > 0 && body.scrollHeight - body.clientHeight - body.scrollTop < 2;
-    const previewFollowed = summary.scrollLeft > 0 && summary.scrollWidth - summary.clientWidth - summary.scrollLeft < 2;
+    // 行内摘要与随流抖动的省略号已移除：条目只有标签与右侧指标。
+    const noPreview = host.querySelector('.tl-thinking-summary') === null
+      && host.querySelector('.tl-thinking-ellipsis') === null;
     body.scrollTop = 0;
     body.dispatchEvent(new Event('scroll'));
     model.entry.text += '\nfixture after scroll';
-    model.entry.summary = reasoningPreview(model.entry.text);
     await nextTick(); await nextTick();
-    const result = { followed, previewFollowed, preserved: body.scrollTop === 0,
+    const result = { followed, noPreview, preserved: body.scrollTop === 0,
       latest: body.textContent?.endsWith('fixture after scroll') };
     app.unmount(); host.remove();
     return result;
   });
-  expect(result).toEqual({ followed: true, previewFollowed: true, preserved: true, latest: true });
+  expect(result).toEqual({ followed: true, noPreview: true, preserved: true, latest: true });
 });
 
 test('projection timeline paints one thought when a live handoff repeats its item in two activity blocks', async ({ page }) => {
@@ -65,15 +62,19 @@ test('projection timeline paints one thought when a live handoff repeats its ite
     try {
       app.mount(host);
       await nextTick(); await nextTick();
+      host.querySelector<HTMLButtonElement>('.tl-thinking-head')?.click();
+      await nextTick(); await nextTick();
+      const texts = Array.from(host.querySelectorAll('.tl-thinking-text'))
+        .filter((node) => node.textContent?.includes('durable thought'));
       return {
         entries: host.querySelectorAll('.tl-thinking-head').length,
-        text: host.querySelector('.tl-thinking-summary')?.textContent?.includes('durable thought') ?? false
+        texts: texts.length
       };
     } finally {
       app.unmount(); host.remove();
     }
   });
-  expect(result).toEqual({ entries: 1, text: true });
+  expect(result).toEqual({ entries: 1, texts: 1 });
 });
 
 test('process header shows phase and steps without output, failure counts or entry metrics', async ({ page }) => {
@@ -189,11 +190,12 @@ test('a durable thought and a live preview share one canonical process identity'
       app.mount(host); await nextTick();
       host.querySelector<HTMLButtonElement>('.timeline-process-head')!.click();
       await until(() => host.querySelectorAll('.tl-thinking-head').length === 1);
+      host.querySelector<HTMLButtonElement>('.tl-thinking-head')!.click();
       model.reasoning = `${durable} extended`;
-      await until(() => host.querySelector('.tl-thinking-summary')?.textContent?.includes('extended') ?? false);
+      await until(() => host.querySelector('.tl-thinking-text')?.textContent?.includes('extended') ?? false);
       return {
         entries: host.querySelectorAll('.tl-thinking-head').length,
-        updated: host.querySelector('.tl-thinking-summary')?.textContent?.includes('extended') ?? false
+        updated: host.querySelector('.tl-thinking-text')?.textContent?.includes('extended') ?? false
       };
     } finally {
       app.unmount(); host.remove(); api.defaults.adapter = originalAdapter;
@@ -248,8 +250,12 @@ test('continuous work events refresh within a bounded window and never overwrite
         await new Promise(resolve => setTimeout(resolve, 30));
       }
       const entries = host.querySelectorAll('.tl-thinking');
-      return { entries: entries.length, oldUntouched: entries[0]?.textContent?.includes('Fixture shared completed') ?? false,
-        liveAtEnd: entries[1]?.textContent?.includes('Fixture shared') ?? false, requests, firstRefresh, onlineToolVisible, onlineLatencyMs };
+      // 行内摘要已移除：思考内容只在展开后的正文里，逐条点开再断言。
+      host.querySelectorAll<HTMLButtonElement>('.tl-thinking-head').forEach((head) => head.click());
+      await nextTick(); await nextTick();
+      const texts = host.querySelectorAll('.tl-thinking-text');
+      return { entries: entries.length, oldUntouched: texts[0]?.textContent?.includes('Fixture shared completed') ?? false,
+        liveAtEnd: texts[1]?.textContent?.includes('Fixture shared') ?? false, requests, firstRefresh, onlineToolVisible, onlineLatencyMs };
     } finally { app.unmount(); host.remove(); api.defaults.adapter = originalAdapter; }
   });
   expect(result.entries).toBe(2);
@@ -297,9 +303,11 @@ test('a bounded live thought binds to the same model round as its full durable p
       app.mount(host); await nextTick();
       host.querySelector<HTMLButtonElement>('.timeline-process-head')!.click();
       await until(() => host.querySelectorAll('.tl-thinking-head').length === 1);
+      host.querySelector<HTMLButtonElement>('.tl-thinking-head')!.click();
+      await nextTick(); await nextTick();
       return {
         entries: host.querySelectorAll('.tl-thinking-head').length,
-        text: host.querySelector('.tl-thinking-summary')?.textContent?.includes('durable tail') ?? false
+        text: host.querySelector('.tl-thinking-text')?.textContent?.includes('durable tail') ?? false
       };
     } finally {
       app.unmount(); host.remove(); api.defaults.adapter = originalAdapter;

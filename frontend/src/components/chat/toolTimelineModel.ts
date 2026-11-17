@@ -97,7 +97,7 @@ export type TimelineReasoningEntry = {
   kind: 'reasoning';
   key: string;
   streaming: boolean;
-  /** 一行摘要（超长由渲染层省略）。 */
+  /** 一行摘要（仅用于收起状态的批次条，条目行内不渲染）。 */
   summary: string;
   /** 完整思考内容（展开后限高滚动）。 */
   text: string;

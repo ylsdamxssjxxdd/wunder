@@ -964,7 +964,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 super::schema::string("content")
                     .desc(t("tool.spec.write.args.content")),
                 super::schema::boolean("dry_run")
-                    .desc("Preview write target and size changes without writing to disk.")
+                    .desc(t("tool.spec.write.args.dry_run"))
                     .optional(),
             ]),
         },
@@ -991,9 +991,15 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 super::schema::boolean("dry_run")
                     .desc(t("tool.spec.text_edit.args.dry_run"))
                     .optional(),
+                super::schema::integer("start_line")
+                    .desc(t("tool.spec.text_edit.args.start_line"))
+                    .optional(),
+                super::schema::integer("end_line")
+                    .desc(t("tool.spec.text_edit.args.end_line"))
+                    .optional(),
                 super::schema::string("command")
                     .desc(t("tool.spec.text_edit.args.command"))
-                    .enums(vec!["view", "create", "str_replace", "insert"])
+                    .enums(vec!["view", "create", "str_replace", "insert", "undo_edit"])
                     .optional(),
                 super::schema::string("file_text")
                     .desc(t("tool.spec.text_edit.args.file_text"))

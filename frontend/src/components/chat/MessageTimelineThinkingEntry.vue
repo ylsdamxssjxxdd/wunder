@@ -17,10 +17,10 @@
       <span class="tl-thinking-label">
         {{ entry.streaming ? t('chat.timeline.thinkingRunning') : t('chat.timeline.thinkingDone') }}
       </span>
-      <span v-if="entry.summary" ref="summaryRef" class="tl-thinking-summary" :title="entry.summary">{{ entry.summary }}<span class="tl-thinking-ellipsis" :class="{ 'is-active': entry.streaming }" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span></span>
-      <span v-else-if="entry.streaming" class="tl-thinking-ellipsis is-active" aria-hidden="true">
-        <span>.</span><span>.</span><span>.</span>
-      </span>
+      <!--
+        行内不再渲染思考摘要：摘要随流式增量改写会让整行宽度与文本反复抖动，
+        且每帧都要测宽滚动。需要看内容的用户点开后查看完整正文。
+      -->
       <!-- 与工具条目同一套右侧列：模型轮次 + 该轮请求的上下文占用 + 思考耗时。 -->
       <span class="tl-thinking-metrics" :class="{ 'is-empty': !roundLabel && !tokenMetric && !durationMetric }">
         <span>{{ roundLabel }}</span>
@@ -55,7 +55,6 @@ const roundLabel = computed(() => {
 });
 
 const textRef = ref<HTMLElement | null>(null);
-const summaryRef = ref<HTMLElement | null>(null);
 const followTail = ref(true);
 
 const handleTextScroll = (): void => {
@@ -71,22 +70,15 @@ const scrollToLatest = async (): Promise<void> => {
   element.scrollTop = element.scrollHeight;
 };
 
-const scrollSummaryToLatest = (): void => {
-  const summary = summaryRef.value;
-  if (summary && props.entry.streaming) summary.scrollLeft = summary.scrollWidth;
-};
-
 onMounted(() => {
   void scrollToLatest();
-  scrollSummaryToLatest();
 });
 
 watch(
-  () => [props.open, props.entry.text, props.entry.streaming] as const,
+  () => [props.open, props.entry.text] as const,
   ([open], [wasOpen]) => {
     if (open && !wasOpen) followTail.value = true;
     if (open) void scrollToLatest();
-    scrollSummaryToLatest();
   },
   { flush: 'post' }
 );
@@ -184,64 +176,8 @@ const { t } = useI18n();
   flex: 0 0 auto;
   color: var(--mz-text-muted, #8a8f99);
   font-size: 13px;
-  /* 与工具条目同口径：标签和右侧摘要共用 18px 行高，混排时落在同一水平线。 */
+  /* 与工具条目同口径：18px 行高，混排时与右侧指标落在同一水平线。 */
   line-height: 18px;
-}
-
-.tl-thinking-ellipsis {
-  flex: 0 0 2ch;
-  display: inline-flex;
-  visibility: hidden;
-  color: var(--mz-text-muted, #8a8f99);
-  font-size: 13px;
-  line-height: 18px;
-}
-
-.tl-thinking-ellipsis.is-active {
-  visibility: visible;
-}
-
-.tl-thinking-ellipsis span {
-  opacity: 0;
-}
-
-.tl-thinking-ellipsis.is-active span {
-  animation: tl-thinking-dot 1.2s ease-in-out infinite;
-}
-
-.tl-thinking-ellipsis span:nth-child(2) {
-  animation-delay: 0.16s;
-}
-
-.tl-thinking-ellipsis span:nth-child(3) {
-  animation-delay: 0.32s;
-}
-
-@keyframes tl-thinking-dot {
-  0%, 60%, 100% { opacity: 0.25; }
-  30% { opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .tl-thinking-ellipsis.is-active span {
-    animation: none;
-    opacity: 1;
-  }
-}
-
-.tl-thinking-summary {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: var(--mz-timeline-entry-soft, #9ba0a8);
-  font-size: 12px;
-  line-height: 18px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.is-streaming .tl-thinking-summary {
-  text-overflow: clip;
 }
 
 /* 右侧三列与工具条目完全同宽同字：轮次 / token / 耗时跨条目从同一位置起排。 */
