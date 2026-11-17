@@ -17,12 +17,12 @@
       <span class="tl-thinking-label">
         {{ entry.streaming ? t('chat.timeline.thinkingRunning') : t('chat.timeline.thinkingDone') }}
       </span>
-      <span v-if="entry.summary" ref="summaryRef" class="tl-thinking-summary" :title="entry.summary">{{ entry.summary }}<span v-if="entry.streaming" class="tl-thinking-ellipsis" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span></span>
-      <span v-else-if="entry.streaming" class="tl-thinking-ellipsis" aria-hidden="true">
+      <span v-if="entry.summary" ref="summaryRef" class="tl-thinking-summary" :title="entry.summary">{{ entry.summary }}<span class="tl-thinking-ellipsis" :class="{ 'is-active': entry.streaming }" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span></span>
+      <span v-else-if="entry.streaming" class="tl-thinking-ellipsis is-active" aria-hidden="true">
         <span>.</span><span>.</span><span>.</span>
       </span>
       <!-- 与工具条目同一套右侧列：模型轮次 + 该轮请求的上下文占用 + 思考耗时。 -->
-      <span v-if="roundLabel || tokenMetric || durationMetric" class="tl-thinking-metrics">
+      <span class="tl-thinking-metrics" :class="{ 'is-empty': !roundLabel && !tokenMetric && !durationMetric }">
         <span>{{ roundLabel }}</span>
         <span>{{ tokenMetric }}</span>
         <span>{{ durationMetric }}</span>
@@ -191,12 +191,21 @@ const { t } = useI18n();
 .tl-thinking-ellipsis {
   flex: 0 0 2ch;
   display: inline-flex;
+  visibility: hidden;
   color: var(--mz-text-muted, #8a8f99);
   font-size: 13px;
   line-height: 18px;
 }
 
+.tl-thinking-ellipsis.is-active {
+  visibility: visible;
+}
+
 .tl-thinking-ellipsis span {
+  opacity: 0;
+}
+
+.tl-thinking-ellipsis.is-active span {
   animation: tl-thinking-dot 1.2s ease-in-out infinite;
 }
 
@@ -214,7 +223,7 @@ const { t } = useI18n();
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tl-thinking-ellipsis span {
+  .tl-thinking-ellipsis.is-active span {
     animation: none;
     opacity: 1;
   }
@@ -248,6 +257,10 @@ const { t } = useI18n();
   font-size: 11px;
   line-height: 18px;
   white-space: nowrap;
+}
+
+.tl-thinking-metrics.is-empty {
+  visibility: hidden;
 }
 
 /* 展开内容左内边距保持 24px（沟槽 20px + 24px = 44px）。 */

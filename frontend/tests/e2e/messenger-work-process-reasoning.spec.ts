@@ -78,11 +78,21 @@ test('new live reasoning is appended after durable process entries', async ({ pa
     await expect(thoughts.nth(0)).not.toContainText('New live thought.');
     await expect(thoughts.nth(1)).toContainText('New live thought.');
     await expect(thoughts.nth(1)).toHaveClass(/is-streaming/);
-    await expect(thoughts.nth(0).locator('.tl-thinking-ellipsis')).toHaveCount(0);
+    const completedDots = thoughts.nth(0).locator('.tl-thinking-ellipsis');
+    await expect(completedDots).toHaveCount(1);
+    await expect(completedDots).toBeHidden();
+    await expect(thoughts.locator('.tl-thinking-metrics')).toHaveCount(2);
     const waitingDots = thoughts.nth(1).locator('.tl-thinking-summary .tl-thinking-ellipsis');
     await expect(waitingDots).toBeVisible();
     await expect(waitingDots).toHaveText('...');
     await expect(waitingDots.locator('span').first()).toHaveCSS('animation-name', /^tl-thinking-dot/);
+    const completedDotsWidth = await completedDots.evaluate(el => el.getBoundingClientRect().width);
+    const waitingDotsWidth = await waitingDots.evaluate(el => el.getBoundingClientRect().width);
+    expect(completedDotsWidth).toBeGreaterThan(0);
+    expect(waitingDotsWidth).toBe(completedDotsWidth);
+    const metricWidths = await thoughts.locator('.tl-thinking-metrics').evaluateAll(nodes =>
+      nodes.map(node => node.getBoundingClientRect().width));
+    expect(new Set(metricWidths).size).toBe(1);
   } finally {
     await service.dispose();
   }
