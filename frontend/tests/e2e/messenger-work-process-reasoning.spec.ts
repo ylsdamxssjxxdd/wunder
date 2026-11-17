@@ -79,7 +79,7 @@ test('new live reasoning is appended after durable process entries', async ({ pa
     await expect(thoughts.nth(1)).toContainText('New live thought.');
     await expect(thoughts.nth(1)).toHaveClass(/is-streaming/);
     await expect(thoughts.nth(0).locator('.tl-thinking-ellipsis')).toHaveCount(0);
-    const waitingDots = thoughts.nth(1).locator('.tl-thinking-ellipsis');
+    const waitingDots = thoughts.nth(1).locator('.tl-thinking-summary .tl-thinking-ellipsis');
     await expect(waitingDots).toBeVisible();
     await expect(waitingDots).toHaveText('...');
     await expect(waitingDots.locator('span').first()).toHaveCSS('animation-name', /^tl-thinking-dot/);
