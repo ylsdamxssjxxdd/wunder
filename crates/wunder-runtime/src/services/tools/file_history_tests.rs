@@ -44,6 +44,19 @@ fn stored_cursor_rev(dir: &Path, name: &str) -> Option<u32> {
     read_cursor(dir, name).map(|cursor| cursor.rev().unwrap_or(0))
 }
 
+/// 历史目录里快照文件的个数与逻辑总字节（不含游标与标记文件）。
+fn history_usage(root: &Path) -> (usize, u64) {
+    let mut entries = Vec::new();
+    let mut protected = HashSet::new();
+    collect_entries(root, 0, &mut entries, &mut protected);
+    (entries.len(), entries.iter().map(|entry| entry.1).sum())
+}
+
+/// 多栈场景的栈名（`f0.txt`…）；用拼接而不是 `format!`，省得花括号在传输里被吃掉。
+fn stack_name(index: u32) -> String {
+    "f".to_string() + &index.to_string() + ".txt"
+}
+
 #[test]
 fn snapshots_increment_and_stay_under_temp_history() {
     let root = tempfile::tempdir().expect("tempdir");
@@ -332,7 +345,7 @@ fn sweep_drops_versions_older_than_the_retention_window() {
     let fresh = history.join("stale.py@2");
     fs::write(&fresh, "y\n").expect("seed");
 
-    sweep(&history);
+    sweep(&history, workspace);
     // 过期的那格被删，剩下的编号压实：原来的 @2 变成 @1，内容不变。
     assert_eq!(
         fs::read_to_string(history.join("stale.py@1")).expect("survivor"),
@@ -350,16 +363,20 @@ fn cursor_names_the_snapshot_file_instead_of_an_index() {
     let target = seed(workspace, "temp/named.css", "A\n");
     commit(&target, workspace, "A\n", "B\n");
     commit(&target, workspace, "B\n", "C\n");
-    let (dir, name) = locate(&target, workspace).expect("locate");
+    let (_dir, name) = locate(&target, workspace).expect("locate");
 
     let back = step_back(&target, workspace, "C\n").expect("undo");
-    let expected_file = name.clone() + "@1-" + &short_hash("A\n");
+    // 游标与回执统一成「工作区相对路径」，写脚本解析时只有一种形态。
+    let expected_file = "temp/.history/".to_string() + &name + "@1-" + &short_hash("A\n");
     assert_eq!(
         back.cursor, expected_file,
         "游标要落成快照文件名，而不是会漂移的下标"
     );
-    assert!(dir.join(&back.cursor).exists(), "游标指向的文件必须真的在");
-    let expected_display = "temp/.history/".to_string() + &expected_file;
+    assert!(
+        workspace.join(&back.cursor).exists(),
+        "游标写的是工作区相对路径，能直接落到文件"
+    );
+    let expected_display = expected_file.clone();
     assert_eq!(
         back.cursor_display.as_deref(),
         Some(expected_display.as_str()),
@@ -370,7 +387,8 @@ fn cursor_names_the_snapshot_file_instead_of_an_index() {
 #[test]
 fn global_cap_drops_the_oldest_versions_until_it_fits() {
     let root = tempfile::tempdir().expect("tempdir");
-    let history = history_root(root.path());
+    let workspace = root.path();
+    let history = history_root(workspace);
     fs::create_dir_all(&history).expect("mkdir");
     let base = SystemTime::now() - Duration::from_secs(600);
     for rev in 1..=6u32 {
@@ -383,7 +401,7 @@ fn global_cap_drops_the_oldest_versions_until_it_fits() {
         set_mtime(&path, base + Duration::from_secs(rev as u64));
     }
 
-    sweep_with_cap(&history, 2_500);
+    sweep_with_limits(&history, workspace, 2_500, 10_000);
 
     let revs = revs_in(&history, "big.py");
     assert_eq!(revs, vec![1, 2], "超出上限先砍最旧，剩下的编号要压实");
@@ -399,7 +417,8 @@ fn global_cap_drops_the_oldest_versions_until_it_fits() {
 #[test]
 fn written_bytes_trigger_a_sweep_before_the_interval_expires() {
     let root = tempfile::tempdir().expect("tempdir");
-    let history = history_root(root.path());
+    let workspace = root.path();
+    let history = history_root(workspace);
     fs::create_dir_all(&history).expect("mkdir");
     let stale = history.join("old.py@1");
     fs::write(&stale, "x\n").expect("seed");
@@ -410,15 +429,127 @@ fn written_bytes_trigger_a_sweep_before_the_interval_expires() {
     // 刚扫过：时间间隔还没到，此时只有累计写入量能把回收叫起来。
     fs::write(history.join(SWEEP_MARKER), "1").expect("marker");
 
-    maybe_sweep(&history, 1);
+    maybe_sweep(&history, workspace, 1);
     assert!(stale.exists(), "写入量小、间隔也没到，不该扫全目录");
 
-    maybe_sweep(&history, SWEEP_BYTES_TRIGGER);
+    maybe_sweep(&history, workspace, SWEEP_BYTES_TRIGGER);
     assert!(!stale.exists(), "累计写入越过阈值必须马上回收，不能等 6 小时");
     assert_eq!(
         fs::read_to_string(history.join(WRITTEN_MARKER)).expect("counter"),
         "0",
         "回收后计数清零，下一次重新累计"
+    );
+}
+
+#[test]
+fn byte_cap_reclaims_the_oldest_snapshots() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let workspace = root.path();
+    let history = history_root(workspace);
+    fs::create_dir_all(&history).expect("mkdir");
+    let base = SystemTime::now() - Duration::from_secs(600);
+    for rev in 1..=3u32 {
+        let path = history.join(format!("huge.bin@{rev}"));
+        // 稀疏文件：逻辑大小 30 MiB，不真占盘。
+        let file = fs::File::create(&path).expect("create");
+        file.set_len(30 * 1024 * 1024).expect("len");
+        set_mtime(&path, base + Duration::from_secs(rev as u64));
+    }
+
+    sweep_with_limits(&history, workspace, MAX_TOTAL_BYTES, 10_000);
+
+    let revs = revs_in(&history, "huge.bin");
+    assert_eq!(revs.len(), 2, "90 MiB 越过 64 MiB，最旧的一版必须回收");
+    let total: u64 = revs
+        .iter()
+        .filter_map(|rev| rev_bytes(&history, "huge.bin", *rev))
+        .sum();
+    assert!(total <= MAX_TOTAL_BYTES, "回收后要落回字节上限内，实际 {total}");
+}
+
+#[test]
+fn file_count_cap_reclaims_many_small_snapshots() {
+    // 对照「40 个文件 × 20 版」那种形态：字节数不高，但文件数一直在涨。
+    let root = tempfile::tempdir().expect("tempdir");
+    let workspace = root.path();
+    let history = history_root(workspace);
+    fs::create_dir_all(&history).expect("mkdir");
+    let base = SystemTime::now() - Duration::from_secs(3600);
+    let body = "x".repeat(10 * 1024);
+    for file in 0..8u32 {
+        for rev in 1..=20u32 {
+            let path = history.join(stack_name(file) + "@" + &rev.to_string());
+            fs::write(&path, &body).expect("seed");
+            // 修改时间递增，回收顺序才确定。
+            set_mtime(&path, base + Duration::from_secs(u64::from(file * 20 + rev)));
+        }
+    }
+    assert_eq!(revs_in(&history, "f0.txt").len(), 20, "每文件正好 20 版，单文件上限不触发");
+
+    sweep_with_limits(&history, workspace, MAX_TOTAL_BYTES, 40);
+
+    let left: usize = (0..8u32)
+        .map(|file| revs_in(&history, &stack_name(file)).len())
+        .sum();
+    assert!(left <= 40, "文件数上限必须生效，实际留下 {left}");
+    assert!(left > 0, "不能把历史删空");
+}
+
+#[test]
+fn history_within_budget_is_left_alone() {
+    // 复刻「40 个文件 × 20 版 × 50 KB」：约 40 MB / 800 份。稀疏文件，不真占盘。
+    let root = tempfile::tempdir().expect("tempdir");
+    let workspace = root.path();
+    let history = history_root(workspace);
+    fs::create_dir_all(&history).expect("mkdir");
+    for file in 0..40u32 {
+        for rev in 1..=20u32 {
+            let path = history.join(stack_name(file) + "@" + &rev.to_string());
+            let handle = fs::File::create(&path).expect("create");
+            handle.set_len(50 * 1024).expect("len");
+        }
+    }
+    assert_eq!(history_usage(&history), (800, 800 * 50 * 1024));
+
+    // 预算之内：一份都不动。这正是「42 MB 触发 sweep 却什么也没发生」的原因。
+    sweep_with_limits(&history, workspace, MAX_TOTAL_BYTES, MAX_TOTAL_FILES);
+    assert_eq!(history_usage(&history), (800, 800 * 50 * 1024));
+
+    // 把预算收紧到 32 MiB：按 mtime 从旧到新砍，直到装得下。
+    sweep_with_limits(&history, workspace, 32 * 1024 * 1024, MAX_TOTAL_FILES);
+    let (left_files, left_bytes) = history_usage(&history);
+    assert!(left_bytes <= 32 * 1024 * 1024, "总量要落回收紧后的预算");
+    assert!(left_files < 800, "必须真的删掉一些版本");
+}
+
+#[test]
+fn sweep_keeps_the_snapshot_the_cursor_points_at() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let workspace = root.path();
+    let target = seed(workspace, "temp/pin.py", "A\n");
+    commit(&target, workspace, "A\n", "B\n");
+    commit(&target, workspace, "B\n", "C\n");
+    let (dir, name) = locate(&target, workspace).expect("locate");
+    // 游标指向 @2（B）：这一版是下一次撤销的唯一入口。
+    let pinned = read_cursor(&dir, &name).expect("cursor");
+    assert_eq!(pinned.rev(), Some(2), "游标原本指向 @2");
+    let stamp = SystemTime::now() - Duration::from_secs(MAX_AGE_SECS + 60);
+    for rev in revs_in(&dir, &name) {
+        let entry = existing_entry(&dir, &name, rev).expect("entry");
+        set_mtime(&entry, stamp);
+    }
+
+    // 全部过期、上限压到 0：除了游标指向的那一版，其余都该被回收。
+    sweep_with_limits(&history_root(workspace), workspace, 0, 0);
+
+    let revs = revs_in(&dir, &name);
+    assert_eq!(revs.len(), 1, "只该留下游标指向的那一版");
+    assert_eq!(read_snapshot(&dir, &name, revs[0]).expect("survivor").content, "B\n");
+    // 压实之后游标要跟着改名，仍然指向那一版，而不是指着一个不存在的文件。
+    assert_eq!(
+        stored_cursor_rev(&dir, &name),
+        Some(1),
+        "游标要随压实改成 @1"
     );
 }
 

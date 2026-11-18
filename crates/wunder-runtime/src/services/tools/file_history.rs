@@ -5,9 +5,10 @@
 //! 短 sha 是内容 sha256 的前 8 位，读快照时先核对：内容与文件名不符就当损坏丢弃，
 //! 绝不把被污染的内容「恢复」进用户文件。快照路径本身仍可被 `read_file` / `edit`
 //! 直接使用，也不会污染用户的项目目录。
-//! 同目录下的 `@cursor` 记的是「下一次撤销要用的那个快照文件名」（如
-//! `pelican.py@3-1a2b3c4d`），不是下标：删掉/压实某一版时下标会漂移，文件名是
-//! 稳定身份；`0` 表示已经退回最早一态。
+//! 同目录下的 `@cursor` 记的是「下一次撤销要用的那个快照」的工作区相对路径（如
+//! `temp/.history/pelican.py@3-1a2b3c4d`），不是下标：删掉/压实某一版时下标会
+//! 漂移，路径是稳定身份，而且与 undo/redo 回执给的字符串完全一致；`0` 表示已经
+//! 退回最早一态。旧目录里只写文件名的形态仍然能读。
 //!
 //! 编号约定：`@k` 存的是「第 k-1 态」的内容，所以第 s 态 = `@(s+1)`。
 //!
@@ -20,15 +21,17 @@
 //!
 //! 回收策略：
 //! - 每文件保留 [`KEEP_PER_FILE`] 版，且整份历史不超过 [`MAX_FILE_BYTES`]；
-//! - 整个历史目录不超过 [`MAX_TOTAL_BYTES`]，超过则按修改时间从旧到新回收；
+//! - 整个历史目录不超过 [`MAX_TOTAL_BYTES`] 字节、也不超过 [`MAX_TOTAL_FILES`] 个
+//!   文件，超出就按修改时间从旧到新回收（游标指向的那一版除外）；
 //! - 超过 [`MAX_AGE_SECS`] 的版本直接回收；累计新写入超过
 //!   [`SWEEP_BYTES_TRIGGER`] 或距上次回收超过 [`SWEEP_INTERVAL_SECS`] 就扫一次；
+//!   两个上限可用 `WUNDER_FILE_HISTORY_MAX_MB` / `WUNDER_FILE_HISTORY_MAX_FILES` 调；
 //! - 超过 [`MAX_SNAPSHOT_BYTES`] 的大文件不记快照，避免把仓库撑爆；
 //! - `WUNDER_FILE_HISTORY=0` 可整体关掉。
 
 use crate::core::atomic_write::atomic_write_text;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -41,6 +44,10 @@ const KEEP_PER_FILE: u32 = 20;
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 /// 整个历史目录的字节上限。
 const MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
+/// 历史目录里的文件数上限（约等于「多少份快照」）。
+///
+/// 只按字节算不够：几十 KB 的小文件能把 inode 和目录扫描拖垮，字节数却还很低。
+const MAX_TOTAL_FILES: usize = 4096;
 /// 超过这个年龄的版本直接回收。
 const MAX_AGE_SECS: u64 = 14 * 24 * 3600;
 /// 全局回收的最短间隔。
@@ -130,7 +137,7 @@ fn discard_block(
         SnapshotError::Missing => StepBlock::NoHistory,
         SnapshotError::Corrupt(path) => {
             let display = workspace_relative(&path, workspace_root);
-            drop_revision(dir, name, rev);
+            drop_revision(dir, name, rev, workspace_root);
             StepBlock::Corrupt { display }
         }
     }
@@ -191,9 +198,13 @@ pub(crate) fn snapshot(
     let entry = dir.join(entry_name(&name, rev, previous));
     atomic_write_text(&entry, previous).ok()?;
     // 游标记的是文件名，不是下标。
-    write_cursor_at(&dir, &name, Some(rev))?;
+    write_cursor_at(&dir, &name, Some(rev), workspace_root)?;
     prune(&dir, &name, rev);
-    maybe_sweep(&history_root(workspace_root), previous.len() as u64);
+    maybe_sweep(
+        &history_root(workspace_root),
+        workspace_root,
+        previous.len() as u64,
+    );
     Some(Snapshot {
         display: workspace_relative(&entry, workspace_root),
         rev,
@@ -239,7 +250,7 @@ pub(crate) fn step_back(
     } else {
         // 离开的那一态（= 当前文件内容）落在游标之上，redo 才有内容可写。
         keep_forward_state(&dir, &name, from + 1, current, &revs);
-        cursor_at(&dir, &name, from - 1)
+        cursor_at(&dir, &name, from - 1, workspace_root)
     };
     Ok(StepBack {
         display: workspace_relative(&read.path, workspace_root),
@@ -269,7 +280,7 @@ pub(crate) fn step_forward(target: &Path, workspace_root: &Path) -> Result<StepB
     let read = read_snapshot(&dir, &name, rev)
         .map_err(|err| discard_block(&dir, &name, rev, err, workspace_root))?;
     // 重做之后，下一次撤销要用的是刚离开的那一格 `@(rev-1)`。
-    let next = cursor_at(&dir, &name, rev - 1);
+    let next = cursor_at(&dir, &name, rev - 1, workspace_root);
     Ok(StepBack {
         display: workspace_relative(&read.path, workspace_root),
         rev,
@@ -329,7 +340,9 @@ enum Cursor {
     AtOldest,
     /// 旧版历史留下的下标（读旧目录时兼容）。
     Index(u32),
-    /// 快照文件名，例如 `v6_ok.css@2-0fd445b0`。
+    /// 快照文件的工作区相对路径，例如 `temp/.history/v6_ok.css@2-0fd445b0`。
+    ///
+    /// 回执里给出的也是同一个字符串：游标文件与回执不再有两种写法。
     File(String),
 }
 
@@ -358,6 +371,8 @@ impl Cursor {
             Cursor::AtOldest => None,
             // 旧版下标没有对应文件，回执里原样给出数字，别假装是路径。
             Cursor::Index(index) => Some(index.to_string()),
+            // 老游标只存了文件名，回执还要补成工作区相对路径；新游标原样返回。
+            Cursor::File(file) if file.contains('/') => Some(file.clone()),
             Cursor::File(file) => Some(workspace_relative(&dir.join(file), workspace_root)),
         }
     }
@@ -403,14 +418,21 @@ fn nearest_at_or_below(revs: &[u32], cursor: u32) -> Option<u32> {
 ///
 /// 文件不在（被删/被改名）时退回下标形式，让后续查找继续往下探，而不是
 /// 直接宣布到底。
-fn cursor_at(dir: &Path, name: &str, rev: u32) -> Cursor {
+fn cursor_at(dir: &Path, name: &str, rev: u32, workspace_root: &Path) -> Cursor {
     if rev == 0 {
         return Cursor::AtOldest;
     }
     match entry_file_name(dir, name, rev) {
-        Some(file) => Cursor::File(file),
+        Some(file) => Cursor::File(workspace_relative(&dir.join(file), workspace_root)),
         None => Cursor::Index(rev),
     }
+}
+
+/// 游标文本 → 末段文件名；兼容「工作区相对路径」与旧版「只写文件名」两种形态。
+fn cursor_basename(text: &str) -> Option<&str> {
+    text.rsplit(['/', '\\'])
+        .next()
+        .filter(|part| !part.is_empty())
 }
 
 /// 快照文件名 → 编号：`v6_ok.css@2-0fd445b0` → 2。
@@ -447,12 +469,19 @@ fn write_cursor(dir: &Path, name: &str, text: &str) -> Option<()> {
 }
 
 /// 把游标写成某一版的文件名；`None` 表示已到最早。
-fn write_cursor_at(dir: &Path, name: &str, rev: Option<u32>) -> Option<()> {
+fn write_cursor_at(
+    dir: &Path,
+    name: &str,
+    rev: Option<u32>,
+    workspace_root: &Path,
+) -> Option<()> {
     match rev {
         None => write_cursor(dir, name, CURSOR_AT_OLDEST),
         Some(rev) => {
             let file = entry_file_name(dir, name, rev)?;
-            write_cursor(dir, name, &file)
+            // 与回执同一种写法：工作区相对路径。
+            let text = workspace_relative(&dir.join(file), workspace_root);
+            write_cursor(dir, name, &text)
         }
     }
 }
@@ -566,7 +595,7 @@ fn read_snapshot(dir: &Path, name: &str, rev: u32) -> Result<SnapshotRead, Snaps
 ///
 /// 快照按编号落盘、游标按下标记位：中间少一格就会错位，所以删除必须压实，
 /// 否则 `@k` 与「第 k-1 态」的约定就断了。
-fn drop_revision(dir: &Path, name: &str, rev: u32) {
+fn drop_revision(dir: &Path, name: &str, rev: u32, workspace_root: &Path) {
     let revs = revs_in(dir, name);
     remove_rev(dir, name, rev);
     for later in revs.iter().copied().filter(|candidate| *candidate > rev) {
@@ -578,14 +607,14 @@ fn drop_revision(dir: &Path, name: &str, rev: u32) {
         };
         let _ = fs::rename(&path, &target);
     }
-    rebase_cursor(dir, name);
+    rebase_cursor(dir, name, workspace_root);
 }
 
 /// 删除/压实之后修正游标。
 ///
-/// 新版游标记的是文件名：文件被改名或删掉就失效，此时退到「编号不超过它的
+/// 新版游标记的是快照路径：文件被改名或删掉就失效，此时退到「编号不超过它的
 /// 最近一版」，实在没有就落 `0`。旧版下标则按剩下还在的版本重新对齐。
-fn rebase_cursor(dir: &Path, name: &str) {
+fn rebase_cursor(dir: &Path, name: &str, workspace_root: &Path) {
     let Some(cursor) = read_cursor(dir, name) else {
         return;
     };
@@ -602,12 +631,13 @@ fn rebase_cursor(dir: &Path, name: &str) {
             }
         },
         Cursor::File(file) => {
-            if dir.join(&file).exists() {
+            let base = cursor_basename(&file).unwrap_or_default();
+            if dir.join(base).exists() {
                 return;
             }
             let rev = rev_in_file_name(&file).unwrap_or(0);
             let next = nearest_at_or_below(&revs, rev);
-            let _ = write_cursor_at(dir, name, next);
+            let _ = write_cursor_at(dir, name, next, workspace_root);
         }
     }
 }
@@ -697,7 +727,7 @@ fn prune(dir: &Path, name: &str, current: u32) {
 /// 只看时间会留一个空档——两次扫描之间的 6 小时里可以灌进任意量历史；只看累计
 /// 写入则长时间不写时旧快照永远不回收。两个条件任取其一，代价是每次写入多做一次
 /// 几十字节的计数写，不做全目录扫描。
-fn maybe_sweep(root: &Path, added: u64) {
+fn maybe_sweep(root: &Path, workspace_root: &Path, added: u64) {
     if fs::create_dir_all(root).is_err() {
         return;
     }
@@ -710,7 +740,7 @@ fn maybe_sweep(root: &Path, added: u64) {
     if atomic_write_text(&root.join(SWEEP_MARKER), "1").is_err() {
         return;
     }
-    sweep(root);
+    sweep(root, workspace_root);
     reset_written(root);
 }
 
@@ -740,15 +770,39 @@ fn reset_written(root: &Path) {
     let _ = atomic_write_text(&root.join(WRITTEN_MARKER), "0");
 }
 
-/// 真正清扫：先删过旧的版本，再按总量从旧到新回收。
-fn sweep(root: &Path) {
-    sweep_with_cap(root, MAX_TOTAL_BYTES)
+
+/// 真正清扫：过老的版本先删，再按总量与文件数从旧到新回收。
+fn sweep(root: &Path, workspace_root: &Path) {
+    sweep_with_limits(root, workspace_root, total_bytes_limit(), file_count_limit());
 }
 
-/// 带显式总量上限的清扫：超出上限时按修改时间从旧到新删，直到装得下。
-fn sweep_with_cap(root: &Path, cap: u64) {
+/// 总量上限（默认 [`MAX_TOTAL_BYTES`]，可用 `WUNDER_FILE_HISTORY_MAX_MB` 调）。
+fn total_bytes_limit() -> u64 {
+    std::env::var("WUNDER_FILE_HISTORY_MAX_MB")
+        .ok()
+        .and_then(|text| text.trim().parse::<u64>().ok())
+        .filter(|mb| *mb > 0)
+        .map(|mb| mb.saturating_mul(1024 * 1024))
+        .unwrap_or(MAX_TOTAL_BYTES)
+}
+
+/// 文件数上限（默认 [`MAX_TOTAL_FILES`]，可用 `WUNDER_FILE_HISTORY_MAX_FILES` 调）。
+fn file_count_limit() -> usize {
+    std::env::var("WUNDER_FILE_HISTORY_MAX_FILES")
+        .ok()
+        .and_then(|text| text.trim().parse::<usize>().ok())
+        .filter(|count| *count > 0)
+        .unwrap_or(MAX_TOTAL_FILES)
+}
+
+/// 带显式上限的清扫：按修改时间从旧到新删，直到总量与文件数都装得下。
+///
+/// 游标指向的那一版受保护：它是「下一次撤销」的唯一入口，删掉就等于让用户
+/// 按一次撤销悄悄跳过一步。其余一律最旧优先。
+fn sweep_with_limits(root: &Path, workspace_root: &Path, max_bytes: u64, max_files: usize) {
     let mut entries: Vec<(PathBuf, u64, SystemTime)> = Vec::new();
-    collect_entries(root, 0, &mut entries);
+    let mut protected: HashSet<PathBuf> = HashSet::new();
+    collect_entries(root, 0, &mut entries, &mut protected);
     if entries.is_empty() {
         return;
     }
@@ -757,33 +811,37 @@ fn sweep_with_cap(root: &Path, cap: u64) {
     let mut alive: Vec<(PathBuf, u64, SystemTime)> = Vec::new();
     let mut removed: Vec<PathBuf> = Vec::new();
     for (path, bytes, modified) in entries {
-        let age = now.duration_since(modified).unwrap_or(Duration::ZERO);
-        if age.as_secs() > MAX_AGE_SECS && fs::remove_file(&path).is_ok() {
+        // 时钟回拨时 duration_since 会报错：按「不算过期」处理，别拿它当回收依据。
+        let expired = now.duration_since(modified).unwrap_or(Duration::ZERO).as_secs() > MAX_AGE_SECS;
+        if expired && !protected.contains(&path) && fs::remove_file(&path).is_ok() {
             removed.push(path);
             continue;
         }
         total = total.saturating_add(bytes);
         alive.push((path, bytes, modified));
     }
-    if total > cap {
-        alive.sort_by(|left, right| left.2.cmp(&right.2));
-        for (path, bytes, _) in alive {
-            if total <= cap {
-                break;
-            }
-            if fs::remove_file(&path).is_ok() {
-                total = total.saturating_sub(bytes);
-                removed.push(path);
-            }
+    alive.sort_by(|left, right| left.2.cmp(&right.2));
+    let mut alive_count = alive.len();
+    for (path, bytes, _) in alive {
+        if total <= max_bytes && alive_count <= max_files {
+            break;
+        }
+        if protected.contains(&path) {
+            continue;
+        }
+        if fs::remove_file(&path).is_ok() {
+            total = total.saturating_sub(bytes);
+            alive_count = alive_count.saturating_sub(1);
+            removed.push(path);
         }
     }
     // 回收掉的是「某一版」而不是随便一个文件：不压实编号，历史中间就会留洞。
-    compact_removed(&removed);
+    compact_removed(&removed, workspace_root);
 }
 
 /// 回收后压实受影响的栈。按版本号从大到小处理：`drop_revision` 只会把更大的
 /// 编号往前挪，所以大号先删，小号的编号不会被打乱。
-fn compact_removed(paths: &[PathBuf]) {
+fn compact_removed(paths: &[PathBuf], workspace_root: &Path) {
     if paths.is_empty() {
         return;
     }
@@ -797,7 +855,7 @@ fn compact_removed(paths: &[PathBuf]) {
     for ((dir, name), mut revs) in stacks {
         revs.sort_unstable_by(|left, right| right.cmp(left));
         for rev in revs {
-            drop_revision(&dir, &name, rev);
+            drop_revision(&dir, &name, rev, workspace_root);
         }
     }
 }
@@ -810,7 +868,13 @@ fn split_entry_path(path: &Path) -> Option<(PathBuf, String, u32)> {
     Some((path.parent()?.to_path_buf(), stem.to_string(), rev))
 }
 
-fn collect_entries(dir: &Path, depth: usize, out: &mut Vec<(PathBuf, u64, SystemTime)>) {
+/// 收集历史目录下的快照文件，同时把「游标指向的那一版」记进 `protected`。
+fn collect_entries(
+    dir: &Path,
+    depth: usize,
+    out: &mut Vec<(PathBuf, u64, SystemTime)>,
+    protected: &mut HashSet<PathBuf>,
+) {
     if depth > MAX_SWEEP_DEPTH {
         return;
     }
@@ -823,15 +887,23 @@ fn collect_entries(dir: &Path, depth: usize, out: &mut Vec<(PathBuf, u64, System
             continue;
         };
         if meta.is_dir() {
-            collect_entries(&path, depth + 1, out);
+            collect_entries(&path, depth + 1, out, protected);
             continue;
         }
         let name = entry.file_name();
         let Some(name) = name.to_str() else {
             continue;
         };
-        // 游标与标记文件不是历史内容，不参与回收。
-        if name.ends_with(CURSOR_SUFFIX) || name == SWEEP_MARKER || name == WRITTEN_MARKER {
+        // 游标与标记文件不是历史内容，不参与回收；游标指向的那一版要护住。
+        if name.ends_with(CURSOR_SUFFIX) {
+            if let Ok(text) = fs::read_to_string(&path) {
+                if let Some(base) = cursor_basename(text.trim()) {
+                    protected.insert(dir.join(base));
+                }
+            }
+            continue;
+        }
+        if name == SWEEP_MARKER || name == WRITTEN_MARKER {
             continue;
         }
         let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
