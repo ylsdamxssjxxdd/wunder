@@ -2648,3 +2648,29 @@ fn write_receipt_and_unified_diff_survive_the_projection() {
         .contains("+x = 2"));
     assert_eq!(projected["changed"], json!(true));
 }
+
+#[test]
+fn structured_check_and_undo_source_survive_the_projection() {
+    // `check` 是给程序判定的结构化结论，`restored_*` 是撤销的来源；
+    // 二者都必须在写入类观测压缩后仍然可见，否则模型只看到一行 syntax。
+    let projected = project_file_write_success(&json!({
+        "action": "undo_edit",
+        "state": "completed",
+        "data": {
+            "path": "temp/sketch.py",
+            "changed_files": 1,
+            "syntax": "OK (py_compile)",
+            "check": { "tool": "py_compile", "status": "ok" },
+            "restored_from": "temp/.history/sketch.py@2",
+            "restored_rev": 2,
+            "restored_cursor": 1
+        }
+    }))
+    .expect("projection");
+    assert_eq!(projected["check"]["status"], json!("ok"));
+    assert_eq!(projected["check"]["tool"], json!("py_compile"));
+    assert_eq!(projected["syntax"], json!("OK (py_compile)"));
+    assert_eq!(projected["restored_from"], json!("temp/.history/sketch.py@2"));
+    assert_eq!(projected["restored_rev"], json!(2));
+    assert_eq!(projected["restored_cursor"], json!(1));
+}

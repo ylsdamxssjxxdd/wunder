@@ -88,6 +88,7 @@
             <img
               class="timeline-greeting-mark"
               :src="greetingMarkUrl"
+              :srcset="greetingMarkSrcset"
               alt=""
               aria-hidden="true"
               draggable="false"
@@ -296,8 +297,13 @@ const props = defineProps<{
 const controller = props.controller;
 const translate = controller.t;
 const t = (key: string, params?: Record<string, unknown>): string => String(translate(key, params) ?? key);
-// 问候语左侧的 eva01 头部图标（与桌面版共用同一份素材，静态放在 public 下）。
-const greetingMarkUrl = `${(import.meta.env.BASE_URL || '/').replace(/\/+$/, '/')}eva01-mark.png`;
+// 问候语左侧的 eva01 头部图标（与桌面版同源，静态放在 public 下）。
+// 源素材是 512px 级的细密像素画，直接缩到 40px 槽位会糊成一片灰；这里按目标像素
+// 密度出两档网格图（1x 40 格、2x 80 格），配 image-rendering: pixelated 让一格
+// 正好落在一个设备像素上，脚本见 scripts/generate_eva01_mark.py。
+const greetingMarkBase = (import.meta.env.BASE_URL || '/').replace(/\/+$/, '/');
+const greetingMarkUrl = `${greetingMarkBase}eva01-mark.png`;
+const greetingMarkSrcset = `${greetingMarkUrl} 1x, ${greetingMarkBase}eva01-mark@2x.png 2x`;
 const chatStore = controller.chatStore;
 const message = computed<Record<string, any>>(() => props.item.message);
 
@@ -686,6 +692,8 @@ watch(
   height: 40px;
   margin-top: calc((1.7 * 14px * var(--messenger-font-scale, 1) - 40px) / 2);
   object-fit: contain;
+  /* 素材是按像素网格重制的徽标：禁止插值，一格网格严格对应一个设备像素。 */
+  image-rendering: pixelated;
   pointer-events: none;
   user-select: none;
 }

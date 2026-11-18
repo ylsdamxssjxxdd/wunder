@@ -319,6 +319,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(_) => return Err("旧 bridge 参数已移除；请直接启动桌面程序".into()),
     }
     tray::install(&app);
+    // 截图快捷键：F1 先隐藏窗口再截图，F2 保留窗口截图。装在窗口层，
+    // 因此不依赖托盘是否可用。
+    screenshot::install_shortcuts(&app);
     // 输入区底部的本机硬件状态网格。采样在独立线程，这里只装定时投影，
     // 因此放在窗口显示之前即可，首帧显示占位符、约一秒后落成真实读数。
     host_hud::install(&app);

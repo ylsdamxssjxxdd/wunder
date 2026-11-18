@@ -24,6 +24,11 @@ pub(crate) struct PostgresThreadLog<'a> {
     pub(super) store: Arc<PostgresThreadStore>,
 }
 
+/// Default item budget of one preview page (roughly 60 user turns of a dense
+/// agent thread). Paging continues through `before_turn_index`, so this bounds
+/// a single response, not how far back an operator can read.
+const PREVIEW_PAGE_MAX_ITEMS: usize = 1_500;
+
 /// Extract the bounded question text from a stored user_message preview.
 fn first_user_question_text(raw: &str) -> Option<String> {
     let item: Value = serde_json::from_str(raw).ok()?;
@@ -262,7 +267,7 @@ impl<'a> PostgresThreadLog<'a> {
         ) SELECT r.ordinal,r.record_json FROM sized s JOIN service_thread_records r
             ON r.thread_id=$1 AND r.ordinal=s.ordinal WHERE s.bytes<=16777216 OR s.n=1
             ORDER BY r.ordinal {order}"),
-            &[&session,&root,&before,&after,&internal,&chat_only,&limit.clamp(1,501)])?;
+            &[&session,&root,&before,&after,&internal,&chat_only,&limit.clamp(1,20_001)])?;
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
             if let Some(mut item) = Self::record_item(&row.get::<_, String>(1), row.get(0))? {
@@ -1005,7 +1010,21 @@ impl<'a> PostgresThreadLog<'a> {
         self.thread_snapshot_window(user, session, &ThreadSnapshotWindow::default())
     }
     pub(crate) fn thread_preview_snapshot(&self, user: &str, session: &str) -> Result<Value> {
-        self.snapshot_window(user, session, &ThreadSnapshotWindow::default(), true)
+        // The inspection surface pages; keep its default page close to what a
+        // screen can consume instead of the recovery-sized default window.
+        let window = ThreadSnapshotWindow {
+            max_items: PREVIEW_PAGE_MAX_ITEMS,
+            ..ThreadSnapshotWindow::default()
+        };
+        self.snapshot_window(user, session, &window, true)
+    }
+    pub(crate) fn thread_preview_snapshot_window(
+        &self,
+        user: &str,
+        session: &str,
+        w: &ThreadSnapshotWindow,
+    ) -> Result<Value> {
+        self.snapshot_window(user, session, w, true)
     }
     pub(crate) fn thread_snapshot_window(
         &self,
@@ -1035,7 +1054,12 @@ impl<'a> PostgresThreadLog<'a> {
             .map(|r| r.get::<_, i64>(0))
             .unwrap_or(0);
         let max_turns = w.max_turns.clamp(1, 200);
-        let max_items = w.max_items.clamp(1, 500);
+        // A preview page is bounded per REQUEST, not per thread: the previous
+        // 500-item ceiling stopped the admin trajectory view after a couple of
+        // dozen turns, and older windows were unreachable. `before_turn_index`
+        // now walks the whole thread one complete page at a time.
+        let max_items = w.max_items.clamp(1, if preview { 20_000 } else { 500 });
+        let item_bytes_cap = if preview { 8 * 1024 * 1024 } else { 16 * 1024 * 1024 };
         let rows = tx.query("SELECT root.turn_id,root.root_turn_id,root.user_round,head.status,root.client_message_id,root.created_at_ms,head.updated_at_ms
             FROM (SELECT * FROM service_thread_admissions WHERE thread_id=$1 AND turn_id=root_turn_id
                 AND ($2::bigint IS NULL OR user_round<$2) ORDER BY user_round DESC LIMIT $3) root
@@ -1043,84 +1067,106 @@ impl<'a> PostgresThreadLog<'a> {
                 ORDER BY created_at_ms DESC,turn_id DESC LIMIT 1) head ON TRUE
             ORDER BY root.user_round DESC", &[&session,&w.before_turn_index,&((max_turns+1) as i64)])?;
         let mut more = rows.len() > max_turns;
-        let mut turns = rows.into_iter().take(max_turns).map(|r|json!({"turn_id":r.get::<_,String>(0),"root_turn_id":r.get::<_,String>(1),"user_turn_index":r.get::<_,i64>(2),"status":r.get::<_,String>(3),"client_message_id":r.get::<_,Option<String>>(4),"created_time":r.get::<_,i64>(5) as f64/1000.0,"updated_time":r.get::<_,i64>(6) as f64/1000.0})).collect::<Vec<_>>();
-        let mut items = if preview {
-            let roots = turns
-                .iter()
-                .filter_map(|turn| turn["root_turn_id"].as_str().map(str::to_owned))
-                .collect::<Vec<_>>();
-            let rows = tx.query("WITH candidates AS MATERIALIZED (
-            SELECT item.ordinal FROM unnest($2::text[]) root(root_turn_id)
-            CROSS JOIN LATERAL (SELECT ordinal FROM service_thread_items_v2
-                WHERE thread_id=$1 AND root_turn_id=root.root_turn_id AND visible ORDER BY ordinal DESC LIMIT $3) item
-            ORDER BY item.ordinal DESC LIMIT $3
-        ), sized AS (SELECT item.ordinal,item.preview_json,SUM(octet_length(item.preview_json)) OVER(ORDER BY item.ordinal DESC) AS bytes
-            FROM candidates JOIN service_thread_items_v2 item ON item.thread_id=$1 AND item.ordinal=candidates.ordinal)
-        SELECT ordinal,preview_json FROM sized WHERE bytes<=524288 ORDER BY ordinal DESC", &[&session,&roots,&((max_items+1) as i64)])?;
-            more |= rows.len() > max_items;
-            let items = rows
-                .into_iter()
-                .take(max_items)
-                .map(|row| {
-                    let item: CanonicalItem = serde_json::from_str(&row.get::<_, String>(1))?;
-                    let mut wire = Self::item_wire(&item, row.get::<_, i64>(0).max(0) as u64);
-                    wire["session_id"] = json!(session);
-                    wire["preview_only"] = json!(true);
-                    Self::redact_item(&mut wire, false);
-                    Ok(wire)
-                })
-                .collect::<Result<Vec<_>>>()?;
-            items
-        } else {
-            let mut items = Vec::new();
-            let mut bytes = 0usize;
-            for turn in &turns {
-                let remaining = max_items.saturating_sub(items.len());
-                if remaining == 0 {
-                    more = true;
-                    break;
-                }
-                let root = turn["root_turn_id"].as_str().unwrap_or_default();
-                let mut page = Self::items_in_tx(
+        let candidates = rows.into_iter().take(max_turns).map(|r|json!({"turn_id":r.get::<_,String>(0),"root_turn_id":r.get::<_,String>(1),"user_turn_index":r.get::<_,i64>(2),"status":r.get::<_,String>(3),"client_message_id":r.get::<_,Option<String>>(4),"created_time":r.get::<_,i64>(5) as f64/1000.0,"updated_time":r.get::<_,i64>(6) as f64/1000.0})).collect::<Vec<_>>();
+        // Page over WHOLE turns (newest first). A trailing half-turn renders as
+        // a thread that simply stops mid-step, so an unaffordable turn is left
+        // to the next page instead of being split. The very newest turn is
+        // always emitted, otherwise a single huge turn would wedge paging.
+        let mut turns: Vec<Value> = Vec::new();
+        let mut items: Vec<Value> = Vec::new();
+        let mut item_bytes = 0usize;
+        for turn in candidates {
+            let remaining = max_items.saturating_sub(items.len());
+            if remaining == 0 {
+                more = true;
+                break;
+            }
+            let root = turn["root_turn_id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            let limit = remaining as i64 + 1;
+            let mut page = if preview {
+                Self::preview_items_in_tx(&mut tx, session, &root, limit)?
+            } else {
+                Self::items_in_tx(
                     &mut tx,
                     session,
-                    Some(root),
+                    Some(root.as_str()),
                     None,
                     None,
-                    remaining as i64 + 1,
+                    limit,
                     false,
                     false,
                     true,
-                )?;
-                if page.len() > remaining {
-                    page.truncate(remaining);
-                    more = true;
-                }
-                if let Some(first) = page.last().and_then(|item| item["item_index"].as_i64()) {
-                    more |= tx.query_one("SELECT EXISTS(SELECT 1 FROM service_thread_items_v2 WHERE thread_id=$1 AND root_turn_id=$2 AND ordinal<$3 AND visible)", &[&session,&root,&first])?.get::<_,bool>(0);
-                }
-                for item in page {
-                    let size = serde_json::to_vec(&item)?.len();
-                    if bytes.saturating_add(size) > 16 * 1024 * 1024 && !items.is_empty() {
-                        more = true;
-                        break;
-                    }
-                    bytes = bytes.saturating_add(size);
-                    items.push(item);
-                }
-                if bytes >= 16 * 1024 * 1024 {
-                    break;
-                }
+                )?
+            };
+            let complete = (page.len() as i64) < limit;
+            if !complete && !turns.is_empty() {
+                more = true;
+                break;
             }
-            items
-        };
+            let page_bytes = page
+                .iter()
+                .map(|item| serde_json::to_vec(item).map(|raw| raw.len()))
+                .collect::<std::result::Result<Vec<_>, _>>()?
+                .into_iter()
+                .sum::<usize>();
+            if item_bytes.saturating_add(page_bytes) > item_bytes_cap && !turns.is_empty() {
+                more = true;
+                break;
+            }
+            let mut turn = turn;
+            if !complete {
+                // Only reachable for the newest turn: keep what fits and tell
+                // the reader its own turn is clipped rather than pretending the
+                // page ended cleanly.
+                page.truncate(remaining);
+                turn["items_truncated"] = json!(true);
+                more = true;
+            }
+            item_bytes = item_bytes.saturating_add(page_bytes);
+            turns.push(turn);
+            items.extend(page);
+        }
         turns.reverse();
         items.sort_by_key(|i| i["item_index"].as_i64().unwrap_or(0));
         let total = super::thread_display::counts(&mut tx, session, false)?.1;
-        more |= total > items.len() as i64;
+        // `truncated` keeps its recovery meaning (this snapshot dropped data);
+        // `has_older` is the paging signal and must never claim an older window
+        // when the cursor already reached the oldest turn, or the reader would
+        // keep asking for a page that cannot exist.
+        let truncated = more || total > items.len() as i64;
         Ok(
-            json!({"cursor":seq,"window_start_turn_index":turns.first().map(|t|&t["user_turn_index"]),"window_end_turn_index":turns.last().map(|t|&t["user_turn_index"]),"turns":turns,"item_total":total,"items":items,"truncated":more,"has_older":more}),
+            json!({"cursor":seq,"window_start_turn_index":turns.first().map(|t|&t["user_turn_index"]),"window_end_turn_index":turns.last().map(|t|&t["user_turn_index"]),"turns":turns,"item_total":total,"items":items,"truncated":truncated,"has_older":more}),
         )
+    }
+    /// Bounded preview rows for one turn, newest first.
+    ///
+    /// Previews are read instead of full records so paging a long thread never
+    /// materializes megabytes of tool output just to count turns.
+    fn preview_items_in_tx(
+        tx: &mut PgTx<'_>,
+        session: &str,
+        root_turn_id: &str,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        let rows = tx.query(
+            "SELECT ordinal,preview_json FROM service_thread_items_v2
+             WHERE thread_id=$1 AND root_turn_id=$2 AND visible
+             ORDER BY ordinal DESC LIMIT $3",
+            &[&session, &root_turn_id, &limit.clamp(1, 20_001)],
+        )?;
+        let mut items = Vec::with_capacity(rows.len());
+        for row in rows {
+            let item: CanonicalItem = serde_json::from_str(&row.get::<_, String>(1))?;
+            let mut wire = Self::item_wire(&item, row.get::<_, i64>(0).max(0) as u64);
+            wire["session_id"] = json!(session);
+            wire["preview_only"] = json!(true);
+            Self::redact_item(&mut wire, false);
+            items.push(wire);
+        }
+        Ok(items)
     }
     pub(crate) fn fork_thread_log(
         &self,

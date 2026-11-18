@@ -1807,3 +1807,100 @@ fn fold_turn_id(turn: &Value) -> String {
         .expect("turn id")
         .to_owned()
 }
+
+/// 管理端轨迹视图靠 `before_turn_index` 一页页往上翻。回归点：
+/// 每页只交付完整轮次，游标严格前移，连续翻页能覆盖到最早一轮且不重不漏。
+#[tokio::test]
+async fn snapshot_window_pages_whole_turns_back_to_the_oldest_round() {
+    use wunder_core::storage_backend::ThreadSnapshotWindow;
+
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalThreadStore::open(root.path()).unwrap();
+    let user_rounds = 24;
+    let spec = super::stress_model::StressThreadSpec {
+        session_id: THREAD.into(),
+        title: "fixture".into(),
+        workspace_id: None,
+        user_rounds,
+        model_rounds_per_turn: 3,
+        seed: Some(11),
+        scenario: crate::storage::StressThreadScenario::Typical,
+    };
+    store
+        .generate_stress_thread(USER, &spec, |_, _| {})
+        .await
+        .unwrap();
+    let db = SqliteStorage::new(
+        root.path()
+            .join("state_1.sqlite")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    db.ensure_initialized().unwrap();
+
+    let mut cursor = None;
+    let mut seen = Vec::new();
+    for page_index in 0..64 {
+        let window = ThreadSnapshotWindow {
+            max_turns: 200,
+            max_items: 12,
+            before_turn_index: cursor,
+        };
+        let page = db.thread_snapshot_window(USER, THREAD, &window).unwrap();
+        let turns = page["turns"].as_array().expect("turns").clone();
+        assert!(!turns.is_empty(), "page {page_index} must not be empty");
+        let mut page_rounds = Vec::new();
+        let mut page_items = 0usize;
+        for turn in &turns {
+            let turn_id = fold_turn_id(turn);
+            let expected = db
+                .get_thread_turn_page(USER, THREAD, &turn_id, None, None, 5_000, false)
+                .unwrap()
+                .expect("owned turn");
+            let total = expected["items"].as_array().unwrap().len();
+            let landed = page["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|item| {
+                    item["item_id"].as_str().is_some_and(|id| {
+                        id.strip_prefix(turn_id.as_str())
+                            .is_some_and(|rest| rest.starts_with(':'))
+                    })
+                })
+                .count();
+            if page_index == 0 && turn["items_truncated"].as_bool() == Some(true) {
+                assert!(landed < total, "truncated turn must be flagged");
+            } else {
+                assert_eq!(landed, total, "turn {turn_id} must arrive whole");
+            }
+            page_items += landed;
+            page_rounds.push(turn["user_turn_index"].as_i64().expect("round"));
+        }
+        // 单轮可能超出整页预算（首轮例外），其余情况不得越过预算。
+        assert!(
+            page_items <= 12 || turns.len() == 1,
+            "page {page_index} overspent its item budget: {page_items}"
+        );
+        seen.extend(page_rounds.iter().copied());
+        let next = page["window_start_turn_index"].as_i64();
+        if !page["has_older"].as_bool().unwrap_or(false) {
+            break;
+        }
+        let next = next.expect("older pages must publish a cursor");
+        assert!(
+            cursor.is_none_or(|previous| next < previous),
+            "cursor must move strictly older"
+        );
+        cursor = Some(next);
+    }
+    seen.sort_unstable();
+    seen.dedup();
+    assert_eq!(
+        seen.len(),
+        user_rounds as usize,
+        "paging must reach every user round"
+    );
+    assert_eq!(seen.first().copied(), Some(1));
+    assert_eq!(seen.last().copied(), Some(user_rounds as i64));
+}

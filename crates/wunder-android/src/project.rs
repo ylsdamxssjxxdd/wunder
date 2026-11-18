@@ -822,6 +822,8 @@ pub(crate) fn tool_target(entry: &NativeWorkflowEntry) -> String {
             | "read_image"
             | "view_image"
             | "读图"
+            | "读图工具"
+            | "查看图片"
     ) && entry.preview.chars().count() < 640
     {
         return entry.preview.clone();

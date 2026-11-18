@@ -253,7 +253,9 @@ export component WorkspaceFilesPanel inherits Rectangle {
                         if event.text == Key.Home { root.key-action(4); return accept; }
                         if event.text == Key.End { root.key-action(5); return accept; }
                         if event.text == "\n" { root.key-action(6); return accept; }
-                        if event.text == Key.F2 { root.key-action(7); return accept; }
+                        // F2 已归截图快捷键（保留窗口截图），重命名退到 Ctrl+F2，
+                        // 右键菜单里的「重命名」仍是主入口。
+                        if event.modifiers.control && event.text == Key.F2 { root.key-action(7); return accept; }
                         if event.text == Key.Delete { root.key-action(8); return accept; }
                         if event.text == Key.F5 { root.key-action(9); return accept; }
                         return reject;

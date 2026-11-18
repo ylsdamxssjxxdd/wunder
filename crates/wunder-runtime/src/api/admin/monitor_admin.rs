@@ -867,20 +867,49 @@ async fn admin_thread_turn(
     Ok(Json(json!({"data":{"session_id":session_id,"turn":turn}})))
 }
 
+/// Window for one admin trajectory page.
+///
+/// The trajectory page keeps scrolling into older turns, so each request is a
+/// bounded page and `before_turn_index` walks strictly older windows. Without
+/// the cursor the reader only ever saw the newest few dozen turns.
+#[derive(Debug, Deserialize, Default)]
+struct AdminThreadSnapshotQuery {
+    #[serde(default)]
+    before_turn_index: Option<i64>,
+    #[serde(default)]
+    max_turns: Option<i64>,
+    #[serde(default)]
+    max_items: Option<i64>,
+}
+
+/// Items per admin trajectory page. Dense agent threads spend ~20 items per
+/// user turn, so this yields several dozen turns per page while still bounding
+/// one response.
+const ADMIN_TRAJECTORY_PAGE_MAX_ITEMS: i64 = 1_500;
+
 async fn admin_thread_snapshot(
     State(state): State<Arc<AppState>>,
     AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<AdminThreadSnapshotQuery>,
 ) -> Result<Json<Value>, Response> {
     let session_id = session_id.trim().to_string();
     let user_id = monitor_user_id(&state, &session_id)?;
     let storage = state.storage.clone();
     let lookup = session_id.clone();
+    let window = wunder_core::storage_backend::ThreadSnapshotWindow {
+        max_turns: query.max_turns.unwrap_or(200).max(1) as usize,
+        max_items: query
+            .max_items
+            .unwrap_or(ADMIN_TRAJECTORY_PAGE_MAX_ITEMS)
+            .max(1) as usize,
+        before_turn_index: query.before_turn_index.filter(|value| *value > 0),
+    };
     let snapshot = crate::core::blocking::run_db("api.admin.thread_log.snapshot", move || {
-        storage.thread_preview_snapshot(&user_id, &lookup)
+        storage.thread_preview_snapshot_window(&user_id, &lookup, &window)
     })
     .await
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({"data": snapshot})))
+    Ok(Json(json!({ "data": snapshot })))
 }
 
 async fn admin_thread_item(

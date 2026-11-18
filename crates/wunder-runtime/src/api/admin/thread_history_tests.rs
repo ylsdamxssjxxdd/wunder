@@ -179,11 +179,31 @@ async fn verify_admin_thread_details(dsn: Option<String>) {
     } else {
         assert_eq!(item["payload"]["content"], content);
     }
+    // 管理端轨迹视图向上翻页：游标已经越过最旧轮次时必须明确停下，
+    // 否则前端会反复请求一个不存在的更早窗口。
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/wunder/admin/monitor/sample-thread/thread-log/snapshot?before_turn_index=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = serde_json::from_slice(
+        &to_bytes(response.into_body(), 2 * 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body["data"]["has_older"], false);
+    assert!(body["data"]["turns"].as_array().unwrap().is_empty());
     for path in [
         "/wunder/admin/monitor/sample-other/thread-log/items/sample-body",
         "/wunder/admin/monitor/sample-missing/thread-log/items/sample-body",
-    ] {
-        let response = app
+    ] {        let response = app
             .clone()
             .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
             .await

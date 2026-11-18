@@ -455,6 +455,10 @@ fn insert_command(
 ///
 /// 语义是「退一步」而不是「清空历史」：回滚前先把当前内容存成新快照，
 /// 所以连续调用会一步步往回走，误回滚也能再 undo 回来。
+/// 撤销：把目标文件写回栈里上一态的内容，只移动游标、不压新快照。
+///
+/// 与「回滚到最近一版」不同，连续调用会一路往回退（C → B → A），退到最初
+/// 之后返回无历史；撤销之后再写入会砍掉 redo 分支，所以两条时间线不会互串。
 fn undo_edit_command(
     ws: &WorkspaceManager,
     user_id: &str,
@@ -466,10 +470,7 @@ fn undo_edit_command(
         return Ok(fail(not_regular_file(path)));
     }
     let workspace_root = ws.workspace_root(user_id);
-    let Some(snapshot) = file_history::latest(target, &workspace_root) else {
-        return Ok(fail(no_history(path)));
-    };
-    let Some(restored) = file_history::read_snapshot(&snapshot, &workspace_root) else {
+    let Some(step) = file_history::step_back(target, &workspace_root) else {
         return Ok(fail(no_history(path)));
     };
     let fs_cap = local_fs();
@@ -478,13 +479,14 @@ fn undo_edit_command(
     } else {
         String::new()
     };
+    let restored = step.content.clone();
     let dry_run = parse_dry_run(args);
     let verify = parse_verify(args);
     let changed = restored != before;
     if !dry_run && changed {
-        // 快照本身也可能写坏，所以只把它当增强：失败不影响回滚。
-        let _ = file_history::snapshot(target, &workspace_root, &before);
         write_target(ws, user_id, target, path, &restored)?;
+        // 写盘成功才落游标：写失败时栈不动，模型可以重试同一步。
+        file_history::commit_cursor(target, &workspace_root, step.cursor);
     }
     let (diff, unavailable) = if diff_source_too_large(&before, &restored) {
         (LineDiff::default(), Some(DIFF_UNAVAILABLE_OVERSIZE))
@@ -494,8 +496,9 @@ fn undo_edit_command(
     let data = build_edit_data(path, "update", &diff, unavailable);
     let mut data = with_receipt(path, &before, &restored, &diff, unavailable, None, verify, data);
     if let Some(map) = data.as_object_mut() {
-        map.insert("restored_from".to_string(), json!(snapshot.display));
-        map.insert("restored_rev".to_string(), json!(snapshot.rev));
+        map.insert("restored_from".to_string(), json!(step.display));
+        map.insert("restored_rev".to_string(), json!(step.rev));
+        map.insert("restored_cursor".to_string(), json!(step.cursor));
     }
     Ok(write_outcome("undo_edit", path, data, dry_run, changed))
 }

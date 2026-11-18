@@ -396,7 +396,7 @@ impl<'a> CanonicalThreadLog<'a> {
         let Some(rollout) = snapshot.rollout.as_deref() else {
             return Ok(ItemPage::default());
         };
-        let limit = usize::try_from(limit.clamp(1, 501))?;
+        let limit = usize::try_from(limit.clamp(1, 20_001))?;
         let (low, high) = match turn {
             Some(root) => Self::turn_ordinal_range(snapshot, rollout, root)?,
             None => (0, i64::MAX),
@@ -2294,12 +2294,19 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
             w.max_turns.min(200) as i64 + 1,
         )?;
         let max_turns = w.max_turns.clamp(1, 200);
-        let max_items = w.max_items.clamp(1, 500);
+        // Bound one inspection page, not the readable thread: a 500-item ceiling
+        // made older user turns unreachable from the admin trajectory view.
+        let max_items = w.max_items.clamp(1, 20_000);
+        let item_bytes_cap = 16 * 1024 * 1024;
         let mut more = turns.len() > max_turns;
         turns.truncate(max_turns);
+        // Page over WHOLE turns: an unaffordable turn goes to the next window
+        // instead of being split, so a page never renders a turn that stops
+        // mid-step. The newest turn is always emitted to keep paging moving.
+        let mut kept_turns: Vec<Value> = Vec::new();
         let mut items = Vec::new();
         let mut item_bytes = 0usize;
-        for turn in &turns {
+        for turn in turns.clone() {
             let id = turn["turn_id"].as_str().unwrap_or("");
             let remaining = max_items.saturating_sub(items.len());
             if remaining == 0 {
@@ -2317,23 +2324,32 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
                 false,
                 false,
             )?;
-            // The reader reports continuation itself (window overflow, byte
-            // cap or canonical re-read), so a short page never claims that an
-            // early turn was complete.
-            more |= page.more;
-            for item in page.items {
-                let bytes = serde_json::to_vec(&item)?.len();
-                if item_bytes.saturating_add(bytes) > 16 * 1024 * 1024 && !items.is_empty() {
-                    more = true;
-                    break;
-                }
-                item_bytes += bytes;
-                items.push(item);
-            }
-            if item_bytes >= 16 * 1024 * 1024 {
+            let complete = !page.more;
+            if !complete && !kept_turns.is_empty() {
+                more = true;
                 break;
             }
+            let page_bytes = page
+                .items
+                .iter()
+                .map(|item| serde_json::to_vec(item).map(|raw| raw.len()))
+                .collect::<std::result::Result<Vec<_>, _>>()?
+                .into_iter()
+                .sum::<usize>();
+            if item_bytes.saturating_add(page_bytes) > item_bytes_cap && !kept_turns.is_empty() {
+                more = true;
+                break;
+            }
+            item_bytes = item_bytes.saturating_add(page_bytes);
+            let mut turn = turn;
+            if !complete {
+                turn["items_truncated"] = json!(true);
+                more = true;
+            }
+            kept_turns.push(turn);
+            items.extend(page.items);
         }
+        turns = kept_turns;
         turns.reverse();
         items.sort_by_key(|i| i["item_index"].as_i64().unwrap_or(0));
         let total: i64 = conn.query_row(
@@ -2341,9 +2357,12 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
             [rollout],
             |r| r.get(0),
         )?;
-        more |= total > items.len() as i64;
+        // `truncated` keeps its recovery meaning (this snapshot dropped data);
+        // `has_older` is the paging signal, so it must not stay true once the
+        // cursor reached the oldest turn.
+        let truncated = more || total > items.len() as i64;
         Ok(
-            json!({"cursor":seq,"window_start_turn_index":turns.first().map(|t|&t["user_turn_index"]),"window_end_turn_index":turns.last().map(|t|&t["user_turn_index"]),"turns":turns,"item_total":total,"items":items,"truncated":more,"has_older":more}),
+            json!({"cursor":seq,"window_start_turn_index":turns.first().map(|t|&t["user_turn_index"]),"window_end_turn_index":turns.last().map(|t|&t["user_turn_index"]),"turns":turns,"item_total":total,"items":items,"truncated":truncated,"has_older":more}),
         )
     }
     fn delete_thread_log_by_session(&self, u: &str, s: &str) -> Result<i64> {

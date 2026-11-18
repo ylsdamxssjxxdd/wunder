@@ -70,11 +70,6 @@ pub fn install(app: &MainWindow) {
     // operation. Window-close exit shares the same boundary.
     tray.on_quit_requested(crate::shutdown::request_exit);
     TRAY.with(|slot| *slot.borrow_mut() = Some(tray));
-    let weak = app.as_weak();
-    crate::hotkey::install(move || {
-        let weak = weak.clone();
-        let _ = slint::invoke_from_event_loop(move || crate::screenshot::capture(weak, false));
-    });
 }
 
 pub fn uninstall() {

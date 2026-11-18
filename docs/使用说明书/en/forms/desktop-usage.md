@@ -2,7 +2,7 @@
 title: Desktop Usage
 nav_title: Usage
 summary: Desktop usage: first launch, model setup, sending messages and reading a run, plus capabilities and boundaries.
-updated_at: 2026-11-14
+updated_at: 2026-11-18
 ---
 
 # Desktop Usage
@@ -23,12 +23,23 @@ updated_at: 2026-11-14
 - Sending another message while a turn runs queues it above the composer and sends it once the current turn settles.
 - Trajectory, working directory, terminal view, tool management and subagent details are all separate panels, opened from the chat page.
 
+### Shortcuts
+
+The screenshot shortcuts only apply while the workbench window has focus, so `F1` / `F2` keep their meaning in other programs:
+
+| Key | What it does |
+| --- | --- |
+| `F1` | Hide the workbench first, then open the region selector over what it covered |
+| `F2` | Open the region selector with the workbench left in place |
+
+The confirmed region drops into the composer as an attachment and is copied to the system clipboard as well. The tray menu and the composer's `+` → Screenshot entry are the same as `F1`.
+
 ## Desktop-only capabilities
 
 | Capability | What it is |
 | --- | --- |
 | Interactive terminal | Run commands in a real terminal view (winpty on Windows, PTY on Linux) |
-| Screenshot capture | Capture a region or the whole screen and drop it back into the composer; the desktop shell also copies it to the system clipboard for pasting into other apps |
+| Screenshot capture | Press `F1` to hide the workbench and capture the region underneath, `F2` to capture with it in place; the result drops back into the composer and is also copied to the system clipboard. Both keys only apply while the workbench window has focus |
 | Tray and notifications | Keep running in the background and get told when a task finishes |
 | Global hotkey | Wake the window from anywhere |
 | Voice input | Dictate instead of typing |

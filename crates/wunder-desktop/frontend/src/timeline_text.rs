@@ -185,6 +185,8 @@ pub fn tool_target(entry: &NativeWorkflowEntry) -> (String, bool) {
             | "read_image"
             | "view_image"
             | "读图"
+            | "读图工具"
+            | "查看图片"
     ) {
         // A bounded preview at its limit may contain only a path prefix.
         // Keep it as summary text rather than opening an incomplete resource.
@@ -909,10 +911,9 @@ pub fn tool_summary(entry: &NativeWorkflowEntry) -> String {
 /// the row keeps the chip (it opens the resource) and leaves the outcome slot
 /// empty. The folded batch bar has no chip and keeps reading `tool_summary`.
 pub fn tool_row_summary(entry: &NativeWorkflowEntry, target: &str) -> String {
-    // 读图的折叠行不能只剩文件名：引擎的展示文本按「动作 · 状态」「目标」
-    // 「事实」排列，这里取事实部分，直接说出读了哪一块画面。
+    // 读图的折叠行由文件芯片给出图片名，摘要只补这次读法与默认读法的差别。
     if is_read_image_entry(entry) {
-        let facts = read_image_fact_summary(entry);
+        let facts = read_image_fact_summary(entry, target);
         if !facts.is_empty() {
             return facts;
         }
@@ -931,18 +932,38 @@ fn is_read_image_entry(entry: &NativeWorkflowEntry) -> bool {
     )
 }
 
-/// 读图条目折叠行的「读了哪一部分」：跳过动作/状态与目标两行，取事实行。
-fn read_image_fact_summary(entry: &NativeWorkflowEntry) -> String {
-    let facts = entry
-        .detail
-        .lines()
-        .skip(2)
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .take(3)
-        .collect::<Vec<_>>()
-        .join(" · ");
-    facts.chars().take(160).collect()
+/// 读图条目折叠行的摘要：文件名由文件芯片承担（点击可打开原图），摘要只说
+/// 这次读法和默认读法的差别（裁切、缩放、查看比例、统计、抽帧、对比、未变）。
+/// 画面尺寸与体积是每张图都有的默认事实，展开后的详情里仍完整保留，折叠行再
+/// 复述一遍只会把「这次读了哪一块」挤出去。芯片拿不到目标的老行则由摘要先给出
+/// 文件名，保证这一行始终能认出是哪张图。
+fn read_image_fact_summary(entry: &NativeWorkflowEntry, target: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if target.is_empty() {
+        let name = file_name(&entry.preview).chars().take(64).collect::<String>();
+        if !name.is_empty() {
+            parts.push(name);
+        }
+    }
+    parts.extend(
+        entry
+            .detail
+            .lines()
+            .skip(2)
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !is_default_media_fact(line))
+            .take(3)
+            .map(str::to_string),
+    );
+    parts.join(" · ").chars().take(160).collect()
+}
+
+/// 默认事实行：画面尺寸与体积。它们开头由引擎的读图展示统一生成，这里按标签
+/// 识别，英文行同样处理。
+fn is_default_media_fact(line: &str) -> bool {
+    ["图像", "image", "体积", "size"].iter().any(|label| {
+        line == *label || line.strip_prefix(label).is_some_and(|rest| rest.starts_with(' '))
+    })
 }
 
 /// Either side may be the bounded one: the chip clips long paths to 64 chars
@@ -1183,20 +1204,12 @@ mod tests {
     }
 
     #[test]
-    fn a_read_image_row_states_the_region_it_read() {
-        let entry = NativeWorkflowEntry {
+    fn a_read_image_row_names_the_file_and_states_only_what_differs() {
+        let entry = |detail: &str| NativeWorkflowEntry {
             id: "fixture-image".into(),
             title: "读图工具".into(),
             preview: "fixture/shot.png".into(),
-            detail: [
-                "读图工具 · 完成",
-                "fixture/shot.png",
-                "图像 1536×1024",
-                "体积 313 KB · PNG",
-                "裁切 0,0,400,300",
-                "缩放 0.5×",
-            ]
-            .join("\n"),
+            detail: detail.into(),
             state: "completed".into(),
             tokens: String::new(),
             duration: String::new(),
@@ -1207,11 +1220,35 @@ mod tests {
             patch_files: Vec::new(),
             round: 0,
         };
-        let (target, _) = tool_target(&entry);
+        // 运行时把读图工具注册成中文规范名，芯片必须照样认出它是文件类工具，
+        // 否则折叠行只剩「图像 1536×1024 · 体积 313 KB」而看不出看的是哪张图。
+        let cropped = entry(&[
+            "读图工具 · 完成",
+            "fixture/shot.png",
+            "图像 1536×1024",
+            "体积 313 KB · PNG",
+            "裁切 0,0,400,300",
+            "缩放 0.5×",
+        ]
+        .join("\n"));
+        let (target, _) = tool_target(&cropped);
+        assert_eq!(target, "fixture/shot.png");
+        assert_eq!(target_label(&target), "shot.png");
         assert_eq!(
-            tool_row_summary(&entry, &target),
-            "图像 1536×1024 · 体积 313 KB · PNG · 裁切 0,0,400,300"
+            tool_row_summary(&cropped, &target),
+            "裁切 0,0,400,300 · 缩放 0.5×"
         );
+
+        // 默认读法没有差别可说：折叠行是「看图 + 文件名」，尺寸与体积留在详情里。
+        let plain = entry(&[
+            "读图工具 · 完成",
+            "fixture/shot.png",
+            "图像 1536×1024",
+            "体积 313 KB · PNG",
+        ]
+        .join("\n"));
+        let (target, _) = tool_target(&plain);
+        assert_eq!(tool_row_summary(&plain, &target), "");
     }
 
     #[test]

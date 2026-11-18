@@ -601,6 +601,22 @@ thread_local! {
     static PENDING: RefCell<Option<(screen_capture::ScreenCapture, f32)>> = const { RefCell::new(None) };
 }
 
+/// Install the workbench screenshot shortcuts: F1 hides the window first, F2
+/// captures it as it stands. Both stay scoped to the workbench window (see
+/// [`crate::hotkey`]), so they never take F1/F2 away from other programs.
+pub fn install_shortcuts(app: &MainWindow) {
+    let weak = app.as_weak();
+    crate::hotkey::install(app, move |action| {
+        let weak = weak.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(app) = weak.upgrade() {
+                let hide_window = action == crate::hotkey::Action::HideAndCapture;
+                capture(app.as_weak(), hide_window);
+            }
+        });
+    });
+}
+
 /// Start an interactive primary-screen capture. Repeated hotkey presses while
 /// the selector is visible are ignored to keep the in-memory frame bounded.
 pub fn capture(app: slint::Weak<MainWindow>, hide_window: bool) {

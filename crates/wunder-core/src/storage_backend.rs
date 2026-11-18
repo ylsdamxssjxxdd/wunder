@@ -352,6 +352,20 @@ pub trait ThreadLogStore {
     fn thread_preview_snapshot(&self, user_id: &str, session_id: &str) -> Result<Value> {
         self.thread_snapshot(user_id, session_id)
     }
+    /// Preview snapshot with an explicit (paged) window.
+    ///
+    /// Inspection surfaces page a long thread instead of loading its tail
+    /// once: `before_turn_index` walks strictly older windows, and previews
+    /// carry bounded `preview_json` payloads rather than full item bodies.
+    fn thread_preview_snapshot_window(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        window: &ThreadSnapshotWindow,
+    ) -> Result<Value> {
+        let _ = window;
+        self.thread_snapshot_window(user_id, session_id, window)
+    }
     fn delete_thread_log_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
 }
 

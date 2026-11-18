@@ -178,6 +178,15 @@ impl ThreadLogStore for PostgresStorage {
         super::thread_log_facade::PostgresThreadLog::new(self)?
             .thread_preview_snapshot(user_id, session_id)
     }
+    fn thread_preview_snapshot_window(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        window: &ThreadSnapshotWindow,
+    ) -> Result<Value> {
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .thread_preview_snapshot_window(user_id, session_id, window)
+    }
     fn thread_snapshot_window(
         &self,
         user_id: &str,

@@ -34,10 +34,11 @@ export component ChatGreeting inherits Rectangle {
         y: root.mark-y;
         width: root.mark; height: root.mark;
         // The asset is prepared for this slot: trimmed to the artwork, 85 %
-        // fill inside its square and a faded neckline (see
-        // scripts/generate_eva01_mark.py), which is what keeps the cropped
-        // neck and fins from reading as a cut picture.
+        // fill inside its square, a faded neckline and a 40-cell grid blown up
+        // 4x (see scripts/generate_eva01_mark.py). Pixelated rendering maps one
+        // grid cell to one device pixel instead of smearing the cells together.
         source: @image-url("../assets/eva01-mark.png");
+        image-rendering: pixelated;
     }
     greeting-row := HorizontalLayout {
         x: Theme.timeline-padding + root.mark + root.mark-gap; y: root.top;

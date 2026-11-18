@@ -72,17 +72,44 @@ const adminExportLabel = (key, message = "") => {
 /* 数据获取                                                          */
 /* ---------------------------------------------------------------- */
 
-/** 拉取线程日志快照（管理端点），返回挂好 items 的轮次数组。 */
-export const fetchThreadLogSnapshot = async (sessionId) => {
+/** 单页轨迹快照的默认条目预算，与服务端管理端页大小保持一致。 */
+export const TRAJECTORY_PAGE_MAX_ITEMS = 1500;
+
+/**
+ * 拉取一页线程日志快照（管理端点）。
+ *
+ * 长线程不再一次性下发：服务端按「完整轮次」切页，`beforeTurnIndex` 取更早
+ * 的一页，直到 `hasOlder` 为假。返回已挂好 items 的轮次数组与分页游标。
+ */
+export const fetchThreadLogSnapshot = async (sessionId, options = {}) => {
+  const params = new URLSearchParams();
+  const before = Number(options.beforeTurnIndex);
+  if (Number.isFinite(before) && before > 0) {
+    params.set("before_turn_index", String(Math.trunc(before)));
+  }
+  const maxItems = Number(options.maxItems);
+  params.set(
+    "max_items",
+    String(Number.isFinite(maxItems) && maxItems > 0 ? Math.trunc(maxItems) : TRAJECTORY_PAGE_MAX_ITEMS)
+  );
   const endpoint = `${getWunderBase()}/admin/monitor/${encodeURIComponent(
     sessionId
-  )}/thread-log/snapshot`;
+  )}/thread-log/snapshot?${params.toString()}`;
   const response = await fetch(endpoint, { headers: getAuthHeaders() });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
   const result = await response.json();
-  return attachTurnItems(result?.data ?? null);
+  const data = result?.data ?? null;
+  const turns = attachTurnItems(data);
+  const windowStart = Number(data?.window_start_turn_index);
+  return {
+    turns,
+    // 空页或无游标必须停：否则滚到最早一页会反复请求同一个窗口。
+    hasOlder: data?.has_older === true && turns.length > 0,
+    beforeTurnIndex: Number.isFinite(windowStart) ? windowStart : null,
+    itemTotal: Number(data?.item_total) || null,
+  };
 };
 
 /* ---------------------------------------------------------------- */
@@ -250,6 +277,8 @@ export function createTrajectoryView(host, options = {}) {
   }
   const showBackButton = options.showBack === true;
   const onBack = typeof options.onBack === "function" ? options.onBack : null;
+  // 台账滚到最早一页时由调用方继续向前翻页；没有回调表示数据已全量注入。
+  const onLoadOlder = typeof options.onLoadOlder === "function" ? options.onLoadOlder : null;
   let sessionId = String(options.sessionId || "").trim();
 
   /* ---------- 状态 ---------- */
@@ -258,6 +287,10 @@ export function createTrajectoryView(host, options = {}) {
     turnsKey: 0,
     loading: true,
     loadError: false,
+    // 更早轮次的分页状态：hasMore 由服务端 has_older 驱动。
+    olderHasMore: false,
+    olderLoading: false,
+    olderError: false,
     showDuration: true,
     // 消耗直方图两种状态："total" 展示每步全部消耗，"delta" 展示新增占用。
     tokenMode: "total",
@@ -293,6 +326,10 @@ export function createTrajectoryView(host, options = {}) {
   let turnsMemoKey = -1;
   let previousRows = [];
   let previousFoldSignature = "";
+  let pendingAnchor = null;
+  let pendingScrollBottom = false;
+  let olderRequestAt = 0;
+  let olderRetryAt = 0;
   let ledgerRenderKey = "";
   let detailItem = null;
   let detailCell = null;
@@ -435,6 +472,10 @@ export function createTrajectoryView(host, options = {}) {
   const tooltipEl = h("div", "tt-tooltip");
   tooltipEl.style.display = "none";
 
+  // 更早轮次的分页提示：滚到最早一页时告知还能继续向上加载。
+  const olderHintEl = h("div", "tt-older-hint");
+  olderHintEl.style.display = "none";
+
   const bodyEl = h("div", "tt-body");
   const ledgerEl = h("div", "tt-ledger");
   const ledgerCanvas = h("div", "tt-ledger-canvas");
@@ -458,6 +499,7 @@ export function createTrajectoryView(host, options = {}) {
   root.appendChild(toolbar);
   root.appendChild(timelineEl);
   root.appendChild(tokenbarsEl);
+  root.appendChild(olderHintEl);
   root.appendChild(bodyEl);
   root.appendChild(tooltipEl);
   host.textContent = "";
@@ -564,6 +606,16 @@ export function createTrajectoryView(host, options = {}) {
       if (at < 0) at = rows.findIndex(row => row.record.turn === anchor.turn);
       st.scrollTop = at < 0 ? 0 : Math.max(0, prefix[at] + st.scrollTop - offset);
     }
+    // 前插更早轮次后把视口钉在原来那条记录上：否则整段历史会突然跳到别处。
+    if (pendingAnchor) {
+      const at = rows.findIndex(row => row.record.cell.recordId === pendingAnchor.recordId);
+      if (at >= 0) st.scrollTop = Math.max(0, prefix[at] + pendingAnchor.delta);
+      pendingAnchor = null;
+    }
+    if (pendingScrollBottom) {
+      pendingScrollBottom = false;
+      st.scrollTop = Math.max(0, ledgerHeight - st.ledgerViewport);
+    }
     st.scrollTop = Math.min(st.scrollTop, Math.max(0, ledgerHeight - st.ledgerViewport));
     previousRows = rows;
     previousFoldSignature = signature;
@@ -602,6 +654,7 @@ export function createTrajectoryView(host, options = {}) {
       : null;
 
     renderToolbar();
+    renderOlderHint();
     renderTimeline(timeline, domain, matched, focusSet);
     renderTokenbars(requests, matched);
     renderLedger({
@@ -624,6 +677,44 @@ export function createTrajectoryView(host, options = {}) {
       renderScheduled = false;
       render();
     });
+  };
+
+  const renderOlderHint = () => {
+    const zh = getCurrentLanguage().startsWith("zh");
+    let text = "";
+    if (st.olderError) {
+      text = zh ? "更早的轮次加载失败，向上滚动重试" : "Failed to load older turns — scroll up to retry";
+    } else if (st.olderLoading) {
+      text = zh ? "正在加载更早的轮次…" : "Loading older turns…";
+    } else if (st.olderHasMore) {
+      text = zh ? "↑ 继续向上滚动加载更早的轮次" : "↑ Scroll up to load older turns";
+    }
+    olderHintEl.textContent = text;
+    olderHintEl.classList.toggle("tt-older-hint-error", st.olderError);
+    olderHintEl.style.display = text ? "" : "none";
+  };
+
+  /** 台账顶部记录锚点：前插历史后用它还原滚动位置。 */
+  const topAnchor = () => {
+    let offset = 0;
+    for (const row of previousRows) {
+      if (offset + row.height > st.scrollTop) {
+        return { recordId: row.record.cell.recordId, delta: st.scrollTop - offset };
+      }
+      offset += row.height;
+    }
+    return null;
+  };
+
+  /** 滚到最早一页时请求更早的窗口；失败后退避重试，避免滚动时狂刷。 */
+  const requestOlderTurns = () => {
+    if (!onLoadOlder || !st.olderHasMore || st.olderLoading) return;
+    if (Date.now() < olderRetryAt) return;
+    if (ledgerEl.scrollTop > 96) return;
+    const now = Date.now();
+    if (now - olderRequestAt < 200) return;
+    olderRequestAt = now;
+    onLoadOlder();
   };
 
   const renderToolbar = () => {
@@ -1946,6 +2037,7 @@ export function createTrajectoryView(host, options = {}) {
     st.scrollTop = ledgerEl.scrollTop;
     st.ledgerViewport = ledgerEl.clientHeight;
     scheduleRender();
+    requestOlderTurns();
   }, { passive: true });
   ledgerEl.addEventListener("pointerdown", (event) => {
     if (event.target === ledgerEl) clearSelection();
@@ -2023,12 +2115,17 @@ export function createTrajectoryView(host, options = {}) {
         st.selectedIndex = null;
         st.scrollTop = 0;
         st.viewSpan = 0;
+        st.olderHasMore = false;
+        st.olderLoading = false;
+        st.olderError = false;
+        pendingAnchor = null;
       }
       sessionId = next;
       scheduleRender();
     },
     setRawTurns(turns) {
       const selectedId = st.selectedIndex === null ? null : findCell(computeTurns(), st.selectedIndex)?.recordId;
+      pendingAnchor = null;
       st.rawTurns = Array.isArray(turns) ? turns : [];
       st.turnsKey += 1;
       st.loading = false;
@@ -2038,8 +2135,9 @@ export function createTrajectoryView(host, options = {}) {
       st.selection = null;
       // Live debug refresh must preserve user folds; render prunes evicted IDs.
       if (previousRows.length === 0) {
-        ledgerEl.scrollTop = 0;
-        st.scrollTop = 0;
+        // 首屏落在最新活动处（与云端版一致）：历史通过向上滚动继续加载，
+        // 打开就把视口钉在最早一页会让「向上加载」无从触发。
+        pendingScrollBottom = true;
         st.viewSpan = 0;
       }
       scheduleRender();
@@ -2051,6 +2149,35 @@ export function createTrajectoryView(host, options = {}) {
     setLoadError(loadError) {
       st.loadError = Boolean(loadError);
       st.loading = false;
+      scheduleRender();
+    },
+    /** 更早轮次的分页状态：由调用方在取完一页后回报。 */
+    setOlderState({ hasMore, loading, error } = {}) {
+      if (hasMore !== undefined) st.olderHasMore = Boolean(hasMore);
+      if (loading !== undefined) st.olderLoading = Boolean(loading);
+      if (error !== undefined) {
+        st.olderError = Boolean(error);
+        // 失败后退避两秒：滚动仍能重试，但不会每帧打一次请求。
+        if (st.olderError) olderRetryAt = Date.now() + 2000;
+      }
+      scheduleRender();
+      // 一屏都填不满时没有可滚动的历史入口，补一页；否则等用户真的滚到顶。
+      if (st.olderHasMore && !st.olderLoading && !st.olderError) {
+        requestAnimationFrame(() => {
+          if (ledgerEl.scrollHeight <= ledgerEl.clientHeight + 1) requestOlderTurns();
+        });
+      }
+    },
+    /** 把更早的一页前插到台账顶部，并保持当前阅读位置。 */
+    prependOlderTurns(turns) {
+      const incoming = Array.isArray(turns) ? turns.filter(Boolean) : [];
+      if (!incoming.length) return;
+      const seen = new Set(st.rawTurns.map(turn => String(turn.turn_id ?? "")));
+      const fresh = incoming.filter(turn => !seen.has(String(turn.turn_id ?? "")));
+      if (!fresh.length) return;
+      pendingAnchor = topAnchor();
+      st.rawTurns = [...fresh, ...st.rawTurns];
+      st.turnsKey += 1;
       scheduleRender();
     },
     refreshSizes() {
@@ -2079,10 +2206,48 @@ export function createTrajectoryView(host, options = {}) {
 
 let pageView = null;
 let pageRequestId = 0;
+// 轨迹页面的分页游标：`beforeTurnIndex` 指向本页最早的用户轮次，向前取更早窗口。
+let pageSessionId = "";
+let pageOlderCursor = null;
+let pageOlderHasMore = false;
+let pageOlderBusy = false;
 
 export const closeTrajectoryPage = () => {
   pageRequestId += 1;
+  pageOlderCursor = null;
+  pageOlderHasMore = false;
+  pageOlderBusy = false;
   elements.trajectoryModal?.classList.remove("active");
+};
+
+const loadOlderTrajectoryPage = async () => {
+  const view = pageView;
+  if (!view || pageOlderBusy || !pageOlderHasMore || pageOlderCursor === null) return;
+  const requestId = pageRequestId;
+  const sessionId = pageSessionId;
+  const cursor = pageOlderCursor;
+  pageOlderBusy = true;
+  view.setOlderState?.({ loading: true, hasMore: true, error: false });
+  try {
+    const page = await fetchThreadLogSnapshot(sessionId, { beforeTurnIndex: cursor });
+    if (requestId !== pageRequestId || view !== pageView) return;
+    view.prependOlderTurns?.(page.turns);
+    // 游标必须严格前移，否则同一次「加载更多」会原地打转。
+    const next = page.beforeTurnIndex;
+    const advanced = Number.isFinite(next) && next < cursor;
+    pageOlderCursor = advanced ? next : null;
+    pageOlderHasMore = page.hasOlder && advanced;
+    view.setOlderState?.({
+      loading: false,
+      hasMore: pageOlderHasMore,
+      error: false,
+    });
+  } catch {
+    if (requestId !== pageRequestId || view !== pageView) return;
+    view.setOlderState?.({ loading: false, hasMore: pageOlderHasMore, error: true });
+  } finally {
+    pageOlderBusy = false;
+  }
 };
 
 export const openTrajectoryPage = async (sessionId, options = {}) => {
@@ -2099,6 +2264,7 @@ export const openTrajectoryPage = async (sessionId, options = {}) => {
       showBack: true,
       onBack: closeTrajectoryPage,
       sessionId: cleaned,
+      onLoadOlder: () => void loadOlderTrajectoryPage(),
     });
     elements.trajectoryModal.addEventListener("click", (event) => {
       if (event.target === elements.trajectoryModal) {
@@ -2106,18 +2272,30 @@ export const openTrajectoryPage = async (sessionId, options = {}) => {
       }
     });
   }
+  pageSessionId = cleaned;
+  pageOlderCursor = null;
+  pageOlderHasMore = false;
+  pageOlderBusy = false;
   pageView.setSessionId?.(cleaned);
   // A reused page instance must not retain the previous thread's rows while
   // the next snapshot is in flight.
   pageView.setRawTurns?.([]);
+  pageView.setOlderState?.({ hasMore: false, loading: false, error: false });
   const requestId = ++pageRequestId;
   elements.trajectoryModal.classList.add("active");
   pageView.refreshSizes();
   pageView.setLoading(true);
   try {
-    const turns = await fetchThreadLogSnapshot(cleaned);
+    const page = await fetchThreadLogSnapshot(cleaned);
     if (requestId !== pageRequestId) return;
-    pageView.setRawTurns(turns);
+    pageView.setRawTurns(page.turns);
+    pageOlderCursor = page.beforeTurnIndex;
+    pageOlderHasMore = page.hasOlder && pageOlderCursor !== null;
+    pageView.setOlderState?.({
+      loading: false,
+      hasMore: pageOlderHasMore,
+      error: false,
+    });
   } catch {
     if (requestId !== pageRequestId) return;
     pageView.setLoadError(true);

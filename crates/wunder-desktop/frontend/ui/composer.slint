@@ -2107,7 +2107,9 @@ export component Composer inherits Rectangle {
                                 background: shot-row-touch.has-hover ? Theme.hover : transparent;
                                 accessible-role: list-item; accessible-label: I18n.cp_screenshot;
                                 Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/lc-camera.svg"); colorize: Theme.text-secondary; image-fit: contain; }
-                                Text { x: 32px; width: parent.width - 44px; height: parent.height; text: I18n.cp_screenshot; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
+                                Text { x: 32px; width: parent.width - 74px; height: parent.height; text: I18n.cp_screenshot; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
+                                // 快捷键提示：F1 隐藏窗口截图，F2 保留窗口截图。
+                                Text { x: parent.width - 40px; width: 32px; height: parent.height; text: "F1/F2"; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; horizontal-alignment: right; overflow: elide; }
                                 shot-row-touch := TouchArea {
                                     mouse-cursor: pointer;
                                     changed has-hover => {
