@@ -426,8 +426,9 @@ fn written_bytes_trigger_a_sweep_before_the_interval_expires() {
         &stale,
         SystemTime::now() - Duration::from_secs(MAX_AGE_SECS + 60),
     );
-    // 刚扫过：时间间隔还没到，此时只有累计写入量能把回收叫起来。
+    // 刚量过、刚扫过：时间间隔还没到，此时只有累计写入量能把回收叫起来。
     fs::write(history.join(SWEEP_MARKER), "1").expect("marker");
+    write_usage(&history, Usage::default());
 
     maybe_sweep(&history, workspace, 1);
     assert!(stale.exists(), "写入量小、间隔也没到，不该扫全目录");
@@ -435,9 +436,9 @@ fn written_bytes_trigger_a_sweep_before_the_interval_expires() {
     maybe_sweep(&history, workspace, SWEEP_BYTES_TRIGGER);
     assert!(!stale.exists(), "累计写入越过阈值必须马上回收，不能等 6 小时");
     assert_eq!(
-        fs::read_to_string(history.join(WRITTEN_MARKER)).expect("counter"),
-        "0",
-        "回收后计数清零，下一次重新累计"
+        read_usage(&history).expect("usage").written,
+        0,
+        "实测之后重新累计"
     );
 }
 
@@ -456,7 +457,8 @@ fn byte_cap_reclaims_the_oldest_snapshots() {
         set_mtime(&path, base + Duration::from_secs(rev as u64));
     }
 
-    sweep_with_limits(&history, workspace, MAX_TOTAL_BYTES, 10_000);
+    // 显式给 64 MiB：90 MiB 里砍掉最旧那一版正好装得下，留下两版。
+    sweep_with_limits(&history, workspace, 64 * 1024 * 1024, 10_000);
 
     let revs = revs_in(&history, "huge.bin");
     assert_eq!(revs.len(), 2, "90 MiB 越过 64 MiB，最旧的一版必须回收");
@@ -464,7 +466,7 @@ fn byte_cap_reclaims_the_oldest_snapshots() {
         .iter()
         .filter_map(|rev| rev_bytes(&history, "huge.bin", *rev))
         .sum();
-    assert!(total <= MAX_TOTAL_BYTES, "回收后要落回字节上限内，实际 {total}");
+    assert!(total <= 64 * 1024 * 1024, "回收后要落回字节上限内，实际 {total}");
 }
 
 #[test]
@@ -511,15 +513,46 @@ fn history_within_budget_is_left_alone() {
     }
     assert_eq!(history_usage(&history), (800, 800 * 50 * 1024));
 
-    // 预算之内：一份都不动。这正是「42 MB 触发 sweep 却什么也没发生」的原因。
-    sweep_with_limits(&history, workspace, MAX_TOTAL_BYTES, MAX_TOTAL_FILES);
+    // 宽预算之内：一份都不动。预算没超时回收不该动任何东西。
+    sweep_with_limits(&history, workspace, 64 * 1024 * 1024, 4096);
     assert_eq!(history_usage(&history), (800, 800 * 50 * 1024));
 
-    // 把预算收紧到 32 MiB：按 mtime 从旧到新砍，直到装得下。
-    sweep_with_limits(&history, workspace, 32 * 1024 * 1024, MAX_TOTAL_FILES);
+    // 换成默认预算（32 MiB / 1024 份）：按 mtime 从旧到新砍，直到装得下。
+    sweep_with_limits(&history, workspace, MAX_TOTAL_BYTES, MAX_TOTAL_FILES);
     let (left_files, left_bytes) = history_usage(&history);
     assert!(left_bytes <= 32 * 1024 * 1024, "总量要落回收紧后的预算");
     assert!(left_files < 800, "必须真的删掉一些版本");
+}
+
+#[test]
+fn over_budget_history_is_trimmed_on_the_next_write() {
+    // 复刻「手工造 42 MB / 800 份，然后编辑一次」：第一次写入就要压回预算。
+    let root = tempfile::tempdir().expect("tempdir");
+    let workspace = root.path();
+    let target = seed(workspace, "temp/live.py", "A\n");
+    let history = history_root(workspace);
+    fs::create_dir_all(&history).expect("mkdir");
+    for file in 0..40u32 {
+        for rev in 1..=20u32 {
+            let path = history.join(stack_name(file) + "@" + &rev.to_string());
+            let handle = fs::File::create(&path).expect("create");
+            handle.set_len(50 * 1024).expect("len");
+        }
+    }
+    let (before_files, before_bytes) = history_usage(&history);
+    assert!(before_bytes > MAX_TOTAL_BYTES, "前提：目录已经超预算");
+
+    // 没有用量记录 → 当次写入就实测并回收，不等 6 小时的时间闸门。
+    snapshot(&target, workspace, "A\n").expect("snapshot");
+
+    let (after_files, after_bytes) = history_usage(&history);
+    assert!(
+        after_bytes <= MAX_TOTAL_BYTES,
+        "写入后必须压回预算内，实际 {after_bytes}"
+    );
+    assert!(after_files < before_files, "必须真的删掉一些版本");
+    // 刚写的那一版不能被自己回收掉。
+    assert_eq!(revs_of(workspace, "temp/live.py").len(), 1);
 }
 
 #[test]

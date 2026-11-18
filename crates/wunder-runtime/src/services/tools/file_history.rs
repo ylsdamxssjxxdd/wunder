@@ -21,11 +21,14 @@
 //!
 //! 回收策略：
 //! - 每文件保留 [`KEEP_PER_FILE`] 版，且整份历史不超过 [`MAX_FILE_BYTES`]；
-//! - 整个历史目录不超过 [`MAX_TOTAL_BYTES`] 字节、也不超过 [`MAX_TOTAL_FILES`] 个
-//!   文件，超出就按修改时间从旧到新回收（游标指向的那一版除外）；
-//! - 超过 [`MAX_AGE_SECS`] 的版本直接回收；累计新写入超过
-//!   [`SWEEP_BYTES_TRIGGER`] 或距上次回收超过 [`SWEEP_INTERVAL_SECS`] 就扫一次；
-//!   两个上限可用 `WUNDER_FILE_HISTORY_MAX_MB` / `WUNDER_FILE_HISTORY_MAX_FILES` 调；
+//! - 整个历史目录不超过 [`MAX_TOTAL_BYTES`]（默认 32 MiB）字节、也不超过
+//!   [`MAX_TOTAL_FILES`]（默认 1024）个文件，超出就按修改时间从旧到新回收
+//!   （游标指向的那一版除外）；两个上限可用 `WUNDER_FILE_HISTORY_MAX_MB` /
+//!   `WUNDER_FILE_HISTORY_MAX_FILES` 调；
+//! - 回收闸门看账本（`@wrote` 记着上次实测的总量 + 之后写了多少）：用量不明、
+//!   或账本一越过预算，当次写入就立刻实测回收；此外累计新写入超过
+//!   [`SWEEP_BYTES_TRIGGER`]、距上次回收超过 [`SWEEP_INTERVAL_SECS`] 也会扫一次；
+//! - 超过 [`MAX_AGE_SECS`] 的版本直接回收；
 //! - 超过 [`MAX_SNAPSHOT_BYTES`] 的大文件不记快照，避免把仓库撑爆；
 //! - `WUNDER_FILE_HISTORY=0` 可整体关掉。
 
@@ -43,11 +46,15 @@ const KEEP_PER_FILE: u32 = 20;
 /// 单个目标文件的历史总字节上限。
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 /// 整个历史目录的字节上限。
-const MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
+///
+/// 历史是「改坏了能退回一步」的保险，不是备份仓库：32 MiB 已经覆盖几十个文件的
+/// 二十版内容，再占下去只是白吃本地磁盘（尤其老机器）。可用
+/// `WUNDER_FILE_HISTORY_MAX_MB` 调大或调小。
+const MAX_TOTAL_BYTES: u64 = 32 * 1024 * 1024;
 /// 历史目录里的文件数上限（约等于「多少份快照」）。
 ///
 /// 只按字节算不够：几十 KB 的小文件能把 inode 和目录扫描拖垮，字节数却还很低。
-const MAX_TOTAL_FILES: usize = 4096;
+const MAX_TOTAL_FILES: usize = 1024;
 /// 超过这个年龄的版本直接回收。
 const MAX_AGE_SECS: u64 = 14 * 24 * 3600;
 /// 全局回收的最短间隔。
@@ -66,8 +73,11 @@ const CURSOR_SUFFIX: &str = "@cursor";
 const CURSOR_AT_OLDEST: &str = "0";
 /// 全局回收的时间戳标记文件。
 const SWEEP_MARKER: &str = "@swept";
-/// 自上次回收以来新写入的字节计数（跨写入累加，避免每次都扫全目录）。
-const WRITTEN_MARKER: &str = "@wrote";
+/// 用量记录：`<总字节> <文件数> <自上次实测以来写入的字节>`。
+///
+/// 每次都扫全目录太贵，于是记一份账：写入时累加，超预算就直接实测并回收。
+/// 记账只会偏大（`prune` 删掉的那些没来得及扣），偏大只会多扫一次，不会漏。
+const USAGE_MARKER: &str = "@wrote";
 /// 累计写入超过这个量就直接回收一次，不等时间间隔到期。
 ///
 /// 时间间隔只能保证「最坏 6 小时扫一次」，两次扫描之间可能灌进远超上限的历史；
@@ -722,17 +732,35 @@ fn prune(dir: &Path, name: &str, current: u32) {
     }
 }
 
-/// 全局回收的触发条件：时间到了，或者自上次回收累计写入够多了。
+/// 目录用量：总字节、文件数，以及自上次实测以来写入的字节。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct Usage {
+    bytes: u64,
+    files: usize,
+    written: u64,
+}
+
+/// 全局回收的触发条件：用量不明、超预算、写入够多，或时间到了。
 ///
-/// 只看时间会留一个空档——两次扫描之间的 6 小时里可以灌进任意量历史；只看累计
-/// 写入则长时间不写时旧快照永远不回收。两个条件任取其一，代价是每次写入多做一次
-/// 几十字节的计数写，不做全目录扫描。
+/// 只看时间会留一个空档——两次扫描之间可以灌进任意量历史，所以还要看账本：
+/// 账本记着「上次实测的总量 + 之后又写了多少」，一旦越过预算就立刻实测回收。
+/// 完全没有账本（第一次、或目录是别人手造/拷进来的）就直接实测一次。
 fn maybe_sweep(root: &Path, workspace_root: &Path, added: u64) {
     if fs::create_dir_all(root).is_err() {
         return;
     }
-    let written = add_written(root, added);
-    let due = written > SWEEP_BYTES_TRIGGER || marker_age_secs(root) >= SWEEP_INTERVAL_SECS;
+    let cap_bytes = total_bytes_limit();
+    let cap_files = file_count_limit();
+    let usage = bump_usage(root, added);
+    let due = match &usage {
+        None => true,
+        Some(usage) => {
+            usage.bytes > cap_bytes
+                || usage.files > cap_files
+                || usage.written > SWEEP_BYTES_TRIGGER
+                || marker_age_secs(root) >= SWEEP_INTERVAL_SECS
+        }
+    };
     if !due {
         return;
     }
@@ -740,8 +768,8 @@ fn maybe_sweep(root: &Path, workspace_root: &Path, added: u64) {
     if atomic_write_text(&root.join(SWEEP_MARKER), "1").is_err() {
         return;
     }
-    sweep(root, workspace_root);
-    reset_written(root);
+    let measured = sweep_with_limits(root, workspace_root, cap_bytes, cap_files);
+    write_usage(root, measured);
 }
 
 /// 距上次回收过了多久；没有标记文件时按「很久以前」处理。
@@ -754,26 +782,44 @@ fn marker_age_secs(root: &Path) -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-/// 累计自上次回收以来写入的字节数，返回累加后的值。
-fn add_written(root: &Path, added: u64) -> u64 {
-    let path = root.join(WRITTEN_MARKER);
-    let previous = fs::read_to_string(&path)
-        .ok()
-        .and_then(|text| text.trim().parse::<u64>().ok())
+/// 把这次写入累加进账本；账本缺失或读不懂就返回 `None`（调用方据此实测一次）。
+fn bump_usage(root: &Path, added: u64) -> Option<Usage> {
+    let mut usage = read_usage(root)?;
+    usage.bytes = usage.bytes.saturating_add(added);
+    usage.files = usage.files.saturating_add(1);
+    usage.written = usage.written.saturating_add(added);
+    write_usage(root, usage);
+    Some(usage)
+}
+
+/// 读账本：`<总字节> <文件数> [自上次实测以来写入]`；旧格式只有字节数，当作未知。
+fn read_usage(root: &Path) -> Option<Usage> {
+    let text = fs::read_to_string(root.join(USAGE_MARKER)).ok()?;
+    let mut parts = text.split_whitespace();
+    let bytes = parts.next()?.parse::<u64>().ok()?;
+    let files = parts.next()?.parse::<usize>().ok()?;
+    let written = parts
+        .next()
+        .and_then(|token| token.parse::<u64>().ok())
         .unwrap_or(0);
-    let total = previous.saturating_add(added);
-    let _ = atomic_write_text(&path, &total.to_string());
-    total
+    Some(Usage {
+        bytes,
+        files,
+        written,
+    })
 }
 
-fn reset_written(root: &Path) {
-    let _ = atomic_write_text(&root.join(WRITTEN_MARKER), "0");
+fn write_usage(root: &Path, usage: Usage) {
+    let text = format!("{} {} {}", usage.bytes, usage.files, usage.written);
+    let _ = atomic_write_text(&root.join(USAGE_MARKER), &text);
 }
-
 
 /// 真正清扫：过老的版本先删，再按总量与文件数从旧到新回收。
 fn sweep(root: &Path, workspace_root: &Path) {
-    sweep_with_limits(root, workspace_root, total_bytes_limit(), file_count_limit());
+    let cap_bytes = total_bytes_limit();
+    let cap_files = file_count_limit();
+    let measured = sweep_with_limits(root, workspace_root, cap_bytes, cap_files);
+    write_usage(root, measured);
 }
 
 /// 总量上限（默认 [`MAX_TOTAL_BYTES`]，可用 `WUNDER_FILE_HISTORY_MAX_MB` 调）。
@@ -799,12 +845,17 @@ fn file_count_limit() -> usize {
 ///
 /// 游标指向的那一版受保护：它是「下一次撤销」的唯一入口，删掉就等于让用户
 /// 按一次撤销悄悄跳过一步。其余一律最旧优先。
-fn sweep_with_limits(root: &Path, workspace_root: &Path, max_bytes: u64, max_files: usize) {
+fn sweep_with_limits(
+    root: &Path,
+    workspace_root: &Path,
+    max_bytes: u64,
+    max_files: usize,
+) -> Usage {
     let mut entries: Vec<(PathBuf, u64, SystemTime)> = Vec::new();
     let mut protected: HashSet<PathBuf> = HashSet::new();
     collect_entries(root, 0, &mut entries, &mut protected);
     if entries.is_empty() {
-        return;
+        return Usage::default();
     }
     let now = SystemTime::now();
     let mut total = 0u64;
@@ -837,6 +888,11 @@ fn sweep_with_limits(root: &Path, workspace_root: &Path, max_bytes: u64, max_fil
     }
     // 回收掉的是「某一版」而不是随便一个文件：不压实编号，历史中间就会留洞。
     compact_removed(&removed, workspace_root);
+    Usage {
+        bytes: total,
+        files: alive_count,
+        written: 0,
+    }
 }
 
 /// 回收后压实受影响的栈。按版本号从大到小处理：`drop_revision` 只会把更大的
@@ -903,7 +959,7 @@ fn collect_entries(
             }
             continue;
         }
-        if name == SWEEP_MARKER || name == WRITTEN_MARKER {
+        if name == SWEEP_MARKER || name == USAGE_MARKER {
             continue;
         }
         let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
