@@ -1991,12 +1991,7 @@ fn run(
                 Ok(settings) => match desktop.save_runtime(
                     &settings.workspace_root,
                     &language,
-                    &settings.python_path,
-                    &settings.git_path,
-                    &settings.rg_path,
-                    &settings.ffmpeg_path,
-                    &settings.browser_path,
-                    &settings.shell_path,
+                    &runtime_tool_paths(&settings),
                 ) {
                     Ok(_) => {
                         let active = shared.lock().unwrap().session_id.clone();
@@ -3156,20 +3151,30 @@ fn refresh_companion(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
     state.touch();
 }
 
+/// Runtime tool paths as stored in the settings; `save_runtime` takes them as
+/// one form value so a partial save cannot reset the other fields.
+fn runtime_tool_paths(
+    settings: &wunder_desktop::DesktopSettings,
+) -> wunder_desktop::RuntimeToolPaths {
+    wunder_desktop::RuntimeToolPaths {
+        python: settings.python_path.clone(),
+        git: settings.git_path.clone(),
+        rg: settings.rg_path.clone(),
+        ffmpeg: settings.ffmpeg_path.clone(),
+        browser: settings.browser_path.clone(),
+        node: settings.node_path.clone(),
+        bash: settings.bash_path.clone(),
+        shell: settings.shell_path.clone(),
+    }
+}
+
 /// Persist only the shell override; every other runtime path stays as the
 /// user configured it.
 fn save_shell_path(desktop: &NativeDesktop, shell_path: &str) -> anyhow::Result<()> {
     let settings = desktop.get_desktop_settings()?;
-    desktop.save_runtime(
-        &settings.workspace_root,
-        &settings.language,
-        &settings.python_path,
-        &settings.git_path,
-        &settings.rg_path,
-        &settings.ffmpeg_path,
-        &settings.browser_path,
-        shell_path,
-    )?;
+    let mut tools = runtime_tool_paths(&settings);
+    tools.shell = shell_path.trim().to_string();
+    desktop.save_runtime(&settings.workspace_root, &settings.language, &tools)?;
     Ok(())
 }
 
