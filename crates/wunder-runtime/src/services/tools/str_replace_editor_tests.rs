@@ -527,6 +527,63 @@ fn undo_reports_a_tampered_snapshot_instead_of_restoring_it() {
 }
 
 #[test]
+fn corrupt_snapshot_in_the_middle_keeps_earlier_undo_reachable() {
+    let dir = tempdir().expect("tempdir");
+    let ws = editor_workspace(dir.path());
+    run(&ws, "create", &create_args("v5_ok.css", "A\n"));
+    let target = ws.resolve_path("tester", "v5_ok.css").expect("path");
+    let read = || std::fs::read_to_string(&target).expect("read");
+    let step = |command: &str| {
+        run(
+            &ws,
+            command,
+            &json!({ "command": command, "file_path": "v5_ok.css" }),
+        )
+    };
+    run(
+        &ws,
+        "insert",
+        &json!({ "command": "insert", "file_path": "v5_ok.css", "insert_line": 1, "new_string": "B" }),
+    );
+    run(
+        &ws,
+        "insert",
+        &json!({ "command": "insert", "file_path": "v5_ok.css", "insert_line": 2, "new_string": "C" }),
+    );
+    assert_eq!(read(), "A\nB\nC\n");
+
+    // 篡改中间那一版（@2）：撤销时会被判定损坏并删除。
+    let history = ws.workspace_root("tester").join("temp/.history");
+    let middle = std::fs::read_dir(&history)
+        .expect("history")
+        .flatten()
+        .map(|item| item.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.starts_with("v5_ok.css@2-"))
+                .unwrap_or(false)
+        })
+        .expect("middle snapshot");
+    std::fs::write(&middle, "fake-40\n").expect("tamper");
+
+    let corrupt = step("undo_edit");
+    assert_eq!(corrupt["error_meta"]["code"], json!("TOOL_SRE_HISTORY_CORRUPT"));
+    assert_eq!(read(), "A\nB\nC\n", "损坏时不动文件");
+
+    // 关键点：@1 仍然可达，不能被「已到最早」挡住。
+    let back = step("undo_edit");
+    assert_eq!(back["ok"], json!(true), "{back}");
+    assert_eq!(back["data"]["cursor"], json!(0));
+    assert_eq!(read(), "A\n");
+
+    // 撤销过的当前内容不能丢：redo 回到 C。
+    let forward = step("redo");
+    assert_eq!(forward["ok"], json!(true), "{forward}");
+    assert_eq!(read(), "A\nB\nC\n");
+}
+
+#[test]
 fn undo_edit_without_history_fails_cleanly() {
     let dir = tempdir().expect("tempdir");
     let ws = editor_workspace(dir.path());

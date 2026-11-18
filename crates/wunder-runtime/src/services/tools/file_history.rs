@@ -25,6 +25,7 @@
 
 use crate::core::atomic_write::atomic_write_text;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -101,12 +102,22 @@ struct SnapshotRead {
     content: String,
 }
 
-fn block_from(err: SnapshotError, workspace_root: &Path) -> StepBlock {
+/// 读快照失败时统一收口：损坏的一版要连带压实编号与游标，否则下标与文件编号
+/// 错位，之后的 undo 会读到错位内容，或者干脆宣布「已到最早」跳过更早的历史。
+fn discard_block(
+    dir: &Path,
+    name: &str,
+    rev: u32,
+    err: SnapshotError,
+    workspace_root: &Path,
+) -> StepBlock {
     match err {
         SnapshotError::Missing => StepBlock::NoHistory,
-        SnapshotError::Corrupt(path) => StepBlock::Corrupt {
-            display: workspace_relative(&path, workspace_root),
-        },
+        SnapshotError::Corrupt(path) => {
+            let display = workspace_relative(&path, workspace_root);
+            drop_revision(dir, name, rev);
+            StepBlock::Corrupt { display }
+        }
     }
 }
 
@@ -190,13 +201,20 @@ pub(crate) fn step_back(
     if revs.is_empty() {
         return Err(StepBlock::NoHistory);
     }
-    let from = state.cursor;
-    if from == 0 || !revs.contains(&from) {
+    // 中间某一版可能已经被删（损坏回收、手工清理）：退到游标之下最近还在的一版，
+    // 不能直接宣布「已到最早」，那会把更早的历史永久跳过。
+    let from = if state.cursor == 0 {
+        None
+    } else {
+        revs.iter().copied().filter(|rev| *rev <= state.cursor).max()
+    };
+    let Some(from) = from else {
         return Err(StepBlock::AtOldest {
             revisions: revs.len() as u32,
         });
-    }
-    let read = read_snapshot(&dir, &name, from).map_err(|err| block_from(err, workspace_root))?;
+    };
+    let read = read_snapshot(&dir, &name, from)
+        .map_err(|err| discard_block(&dir, &name, from, err, workspace_root))?;
     let cursor = if state.legacy {
         // 旧版历史没有游标文件，无法判断真实时间线：只允许退一步。
         0
@@ -229,7 +247,8 @@ pub(crate) fn step_forward(target: &Path, workspace_root: &Path) -> Result<StepB
         .checked_add(2)
         .filter(|rev| revs.contains(rev))
         .ok_or(StepBlock::AtNewest)?;
-    let read = read_snapshot(&dir, &name, rev).map_err(|err| block_from(err, workspace_root))?;
+    let read = read_snapshot(&dir, &name, rev)
+        .map_err(|err| discard_block(&dir, &name, rev, err, workspace_root))?;
     Ok(StepBack {
         display: workspace_relative(&read.path, workspace_root),
         rev,
@@ -418,11 +437,41 @@ fn read_snapshot(dir: &Path, name: &str, rev: u32) -> Result<SnapshotRead, Snaps
         .map(str::to_string);
     if let Some(expected) = expected {
         if short_hash(&content) != expected {
-            let _ = fs::remove_file(&path);
+            // 读的时候不删：删一格必须连带压实编号和游标，交给调用方统一处理。
             return Err(SnapshotError::Corrupt(path));
         }
     }
     Ok(SnapshotRead { path, content })
+}
+
+/// 删掉某一版并把后面的编号整体前移一格，游标同步减一。
+///
+/// 快照按编号落盘、游标按下标记位：中间少一格就会错位，所以删除必须压实，
+/// 否则 `@k` 与「第 k-1 态」的约定就断了。
+fn drop_revision(dir: &Path, name: &str, rev: u32) {
+    let revs = revs_in(dir, name);
+    remove_rev(dir, name, rev);
+    for later in revs.iter().copied().filter(|candidate| *candidate > rev) {
+        let Some(path) = existing_entry(dir, name, later) else {
+            continue;
+        };
+        let Some(target) = renumbered_path(&path, name, later, later - 1) else {
+            continue;
+        };
+        let _ = fs::rename(&path, &target);
+    }
+    if let Some(cursor) = read_cursor(dir, name) {
+        if cursor >= rev {
+            let _ = write_cursor(dir, name, cursor - 1);
+        }
+    }
+}
+
+/// `name@7-1a2b3c4d` → `name@6-1a2b3c4d`：只改编号，短 sha 与其他后缀原样保留。
+fn renumbered_path(path: &Path, name: &str, from: u32, to: u32) -> Option<PathBuf> {
+    let file_name = path.file_name()?.to_str()?;
+    let rest = file_name.strip_prefix(&format!("{}@{}", name, from))?;
+    Some(path.with_file_name(format!("{}@{}{}", name, to, rest)))
 }
 
 /// 删掉某一版的全部文件（新旧两种命名都算）。
@@ -529,28 +578,59 @@ fn sweep(root: &Path) {
     let now = SystemTime::now();
     let mut total = 0u64;
     let mut alive: Vec<(PathBuf, u64, SystemTime)> = Vec::new();
+    let mut removed: Vec<PathBuf> = Vec::new();
     for (path, bytes, modified) in entries {
         let age = now.duration_since(modified).unwrap_or(Duration::ZERO);
-        if age.as_secs() > MAX_AGE_SECS {
-            if fs::remove_file(&path).is_ok() {
-                continue;
-            }
+        if age.as_secs() > MAX_AGE_SECS && fs::remove_file(&path).is_ok() {
+            removed.push(path);
+            continue;
         }
         total = total.saturating_add(bytes);
         alive.push((path, bytes, modified));
     }
-    if total <= MAX_TOTAL_BYTES {
+    if total > MAX_TOTAL_BYTES {
+        alive.sort_by(|left, right| left.2.cmp(&right.2));
+        for (path, bytes, _) in alive {
+            if total <= MAX_TOTAL_BYTES {
+                break;
+            }
+            if fs::remove_file(&path).is_ok() {
+                total = total.saturating_sub(bytes);
+                removed.push(path);
+            }
+        }
+    }
+    // 回收掉的是「某一版」而不是随便一个文件：不压实编号，历史中间就会留洞。
+    compact_removed(&removed);
+}
+
+/// 回收后压实受影响的栈。按版本号从大到小处理：`drop_revision` 只会把更大的
+/// 编号往前挪，所以大号先删，小号的编号不会被打乱。
+fn compact_removed(paths: &[PathBuf]) {
+    if paths.is_empty() {
         return;
     }
-    alive.sort_by(|left, right| left.2.cmp(&right.2));
-    for (path, bytes, _) in alive {
-        if total <= MAX_TOTAL_BYTES {
-            break;
-        }
-        if fs::remove_file(&path).is_ok() {
-            total = total.saturating_sub(bytes);
+    let mut stacks: HashMap<(PathBuf, String), Vec<u32>> = HashMap::new();
+    for path in paths {
+        let Some((dir, name, rev)) = split_entry_path(path) else {
+            continue;
+        };
+        stacks.entry((dir, name)).or_default().push(rev);
+    }
+    for ((dir, name), mut revs) in stacks {
+        revs.sort_unstable_by(|left, right| right.cmp(left));
+        for rev in revs {
+            drop_revision(&dir, &name, rev);
         }
     }
+}
+
+/// `…/name@7-1a2b3c4d` 或旧版 `…/name@7` →（目录, name, 7）。
+fn split_entry_path(path: &Path) -> Option<(PathBuf, String, u32)> {
+    let file_name = path.file_name()?.to_str()?;
+    let (stem, rest) = file_name.rsplit_once('@')?;
+    let rev = rest.split('-').next()?.parse::<u32>().ok()?;
+    Some((path.parent()?.to_path_buf(), stem.to_string(), rev))
 }
 
 fn collect_entries(dir: &Path, depth: usize, out: &mut Vec<(PathBuf, u64, SystemTime)>) {
@@ -589,268 +669,5 @@ fn workspace_relative(path: &Path, workspace_root: &Path) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn seed(workspace: &Path, name: &str, content: &str) -> PathBuf {
-        let target = workspace.join(name);
-        fs::create_dir_all(target.parent().expect("parent")).expect("mkdir");
-        fs::write(&target, content).expect("seed");
-        target
-    }
-
-    fn read(target: &Path) -> String {
-        fs::read_to_string(target).expect("read")
-    }
-
-    fn revs_of(workspace: &Path, name: &str) -> Vec<u32> {
-        let (dir, file) = locate(&workspace.join(name), workspace).expect("locate");
-        revs_in(&dir, &file)
-    }
-
-    /// 写一次文件：先压栈再落盘，和真实调用方的顺序一致。
-    fn commit(target: &Path, workspace: &Path, before: &str, after: &str) {
-        snapshot(target, workspace, before).expect("snapshot");
-        fs::write(target, after).expect("write");
-    }
-
-    #[test]
-    fn snapshots_increment_and_stay_under_temp_history() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let workspace = root.path();
-        let target = workspace.join("temp/pelican.py");
-        fs::create_dir_all(target.parent().expect("parent")).expect("mkdir");
-
-        let first = snapshot(&target, workspace, "v1\n").expect("first snapshot");
-        assert_eq!(first.rev, 1);
-        // 文件名带内容短 sha：读取时能核对内容有没有被换掉。
-        assert_eq!(
-            first.display,
-            format!("temp/.history/pelican.py@1-{}", short_hash("v1\n"))
-        );
-        assert!(workspace.join(&first.display).exists());
-
-        let second = snapshot(&target, workspace, "v2\n").expect("second snapshot");
-        assert_eq!(second.rev, 2);
-        assert_eq!(
-            second.display,
-            format!("temp/.history/pelican.py@2-{}", short_hash("v2\n"))
-        );
-        assert_eq!(
-            fs::read_to_string(workspace.join(&second.display)).expect("read"),
-            "v2\n"
-        );
-    }
-
-    #[test]
-    fn outside_workspace_files_land_in_external_bucket() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let workspace = root.path().join("ws");
-        fs::create_dir_all(&workspace).expect("mkdir");
-        let outside = root.path().join("elsewhere/sketch.py");
-
-        let snap = snapshot(&outside, &workspace, "x = 1\n").expect("snapshot");
-        assert!(snap.display.starts_with("temp/.history/_external/"));
-        assert!(snap.display.contains("elsewhere"));
-    }
-
-    #[test]
-    fn pruning_keeps_the_newest_versions() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let workspace = root.path();
-        let target = workspace.join("a.txt");
-        fs::create_dir_all(workspace.join("temp/.history")).expect("mkdir");
-        for rev in 1..=24u32 {
-            fs::write(
-                workspace.join(format!("temp/.history/a.txt@{}", rev)),
-                "old\n",
-            )
-            .expect("seed");
-        }
-        // 没有 @cursor 的旧目录：游标取最新一版（24），新写入落在 25 并淘汰到 20 版。
-        let snap = snapshot(&target, workspace, "new\n").expect("snapshot");
-        assert_eq!(snap.rev, 25);
-        assert_eq!(revs_of(workspace, "a.txt").len(), KEEP_PER_FILE as usize);
-    }
-
-    #[test]
-    fn undo_walks_the_whole_stack_and_redo_walks_it_back() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let workspace = root.path();
-        let target = seed(workspace, "temp/seq.py", "A\n");
-
-        // A → B → C：栈里是 A、B，游标 2，文件是 C。
-        commit(&target, workspace, "A\n", "B\n");
-        commit(&target, workspace, "B\n", "C\n");
-
-        // 撤销：C → B → A，不新增历史态。
-        let first = step_back(&target, workspace, "C\n").expect("undo 1");
-        assert_eq!(first.content, "B\n");
-        assert_eq!(first.cursor, 1);
-        fs::write(&target, &first.content).expect("write back");
-        commit_cursor(&target, workspace, first.cursor).expect("cursor");
-        assert_eq!(read(&target), "B\n");
-
-        let second = step_back(&target, workspace, "B\n").expect("undo 2");
-        assert_eq!(second.content, "A\n");
-        assert_eq!(second.cursor, 0);
-        fs::write(&target, &second.content).expect("write back");
-        commit_cursor(&target, workspace, second.cursor).expect("cursor");
-        assert_eq!(read(&target), "A\n");
-        assert_eq!(
-            step_back(&target, workspace, "A\n").unwrap_err(),
-            // A、B 两态 + 补出来的 redo 态 C，一共 3 份快照文件。
-            StepBlock::AtOldest { revisions: 3 },
-            "栈底必须停住，并说明已经是最早版本"
-        );
-
-        // 重做原路返回：A → B → C，同样不新增历史态。
-        let back = step_forward(&target, workspace).expect("redo 1");
-        assert_eq!(back.content, "B\n");
-        assert_eq!(back.cursor, 1);
-        fs::write(&target, &back.content).expect("write back");
-        commit_cursor(&target, workspace, back.cursor).expect("cursor");
-        assert_eq!(read(&target), "B\n");
-
-        let back = step_forward(&target, workspace).expect("redo 2");
-        assert_eq!(back.content, "C\n");
-        assert_eq!(back.cursor, 2);
-        fs::write(&target, &back.content).expect("write back");
-        commit_cursor(&target, workspace, back.cursor).expect("cursor");
-        assert_eq!(read(&target), "C\n");
-        assert_eq!(
-            step_forward(&target, workspace).unwrap_err(),
-            StepBlock::AtNewest,
-            "栈顶必须停住"
-        );
-    }
-
-    #[test]
-    fn writing_after_undo_drops_the_redo_branch() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let workspace = root.path();
-        let target = seed(workspace, "temp/branch.py", "A\n");
-
-        commit(&target, workspace, "A\n", "B\n");
-        commit(&target, workspace, "B\n", "C\n");
-
-        // 退回到 B：C 从此是可丢弃的 redo 分支。
-        let back = step_back(&target, workspace, "C\n").expect("undo");
-        assert_eq!(back.content, "B\n");
-        fs::write(&target, &back.content).expect("restore B");
-        commit_cursor(&target, workspace, back.cursor).expect("cursor");
-
-        // 从 B 另起一版 D：redo 分支被砍掉，重做无处可去。
-        commit(&target, workspace, "B\n", "D\n");
-        assert_eq!(
-            step_forward(&target, workspace).unwrap_err(),
-            StepBlock::AtNewest,
-            "分支应已丢弃"
-        );
-        assert_eq!(revs_of(workspace, "temp/branch.py"), vec![1, 2]);
-    }
-
-    #[test]
-    fn identical_content_is_not_recorded_twice() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let workspace = root.path();
-        let target = seed(workspace, "temp/same.css", ".a { color: red; }\n");
-
-        let first = snapshot(&target, workspace, &read(&target)).expect("rev1");
-        assert_eq!(first.rev, 1);
-        // 同内容再压一次：复用栈顶，不多占一版。
-        let again = snapshot(&target, workspace, &read(&target)).expect("dedup");
-        assert_eq!(again.rev, 1);
-        assert_eq!(revs_of(workspace, "temp/same.css"), vec![1]);
-    }
-
-    #[test]
-    fn legacy_history_without_cursor_steps_back_once() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let workspace = root.path();
-        let target = seed(workspace, "temp/legacy.py", "C\n");
-        fs::create_dir_all(workspace.join("temp/.history")).expect("mkdir");
-        fs::write(workspace.join("temp/.history/legacy.py@1"), "A\n").expect("rev1");
-        fs::write(workspace.join("temp/.history/legacy.py@2"), "B\n").expect("rev2");
-
-        // 旧目录没有 @cursor：只允许退一步，之后就按「没有更多历史」处理。
-        let back = step_back(&target, workspace, "C\n").expect("undo");
-        assert_eq!(back.content, "B\n");
-        assert_eq!(back.cursor, 0);
-        fs::write(&target, &back.content).expect("write back");
-        commit_cursor(&target, workspace, back.cursor).expect("cursor");
-        assert_eq!(
-            step_back(&target, workspace, "B\n").unwrap_err(),
-            StepBlock::AtOldest { revisions: 2 }
-        );
-    }
-
-    #[test]
-    fn tampered_snapshot_is_dropped_instead_of_restored() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let workspace = root.path();
-        let target = seed(workspace, "temp/fake.py", "A\n");
-        commit(&target, workspace, "A\n", "B\n");
-        let (dir, name) = locate(&target, workspace).expect("locate");
-
-        // 名字是对的（sha 取自真内容），里面的内容被换成假的。
-        let path = dir.join(entry_name(&name, 1, "A\n"));
-        assert_eq!(read_snapshot(&dir, &name, 1).expect("intact").content, "A\n");
-        fs::write(&path, "fake-40\n").expect("forge");
-        assert_eq!(
-            read_snapshot(&dir, &name, 1).unwrap_err(),
-            SnapshotError::Corrupt(path.clone())
-        );
-        assert!(!path.exists(), "损坏的快照必须删掉，不能留着下次再恢复");
-        assert!(matches!(
-            step_back(&target, workspace, "B\n"),
-            Err(StepBlock::NoHistory)
-        ));
-        assert_eq!(read(&target), "B\n", "用户文件不能被伪造内容覆盖");
-    }
-
-    #[test]
-    fn forged_high_revision_does_not_drag_the_numbering_along() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let workspace = root.path();
-        let target = seed(workspace, "temp/gap.py", "A\n");
-        commit(&target, workspace, "A\n", "B\n");
-        let (dir, name) = locate(&target, workspace).expect("locate");
-
-        // 伪造一份 @41：写入只接着游标编号，并把游标之上的一切（含伪造件）清掉。
-        let forged = dir.join(entry_name(&name, 41, "fake-40\n"));
-        fs::write(&forged, "fake-40\n").expect("forge");
-        let snap = snapshot(&target, workspace, "B\n").expect("snapshot");
-        assert_eq!(snap.rev, 2, "新版本号只能接着游标走");
-        assert_eq!(revs_of(workspace, "temp/gap.py"), vec![1, 2]);
-        assert!(!forged.exists(), "游标之上的伪造版本要清掉");
-    }
-
-    #[test]
-    fn sweep_drops_versions_older_than_the_retention_window() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let workspace = root.path();
-        let history = history_root(workspace);
-        fs::create_dir_all(&history).expect("mkdir");
-        let old = history.join("stale.py@1");
-        fs::write(&old, "x\n").expect("seed");
-        // 把修改时间推到保留窗口之外。
-        let stamp = SystemTime::now() - Duration::from_secs(MAX_AGE_SECS + 60);
-        set_mtime(&old, stamp);
-
-        let fresh = history.join("stale.py@2");
-        fs::write(&fresh, "y\n").expect("seed");
-
-        sweep(&history);
-        assert!(!old.exists(), "过期版本应被回收");
-        assert!(fresh.exists(), "新版本必须留着");
-    }
-
-    fn set_mtime(path: &Path, at: SystemTime) {
-        let file = fs::File::options()
-            .write(true)
-            .open(path)
-            .expect("open for mtime");
-        file.set_modified(at).expect("set mtime");
-    }
-}
+#[path = "file_history_tests.rs"]
+mod tests;
