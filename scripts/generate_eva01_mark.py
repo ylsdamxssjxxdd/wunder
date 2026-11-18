@@ -3,21 +3,21 @@
 
 The greeting sits at the head of every chat transcript, right before the
 14 px greeting line, in a 40 x 40 px slot. ``images/eva01-head.png`` is a
-512 px render where every pixel is its own cell: at 40 px the picture is
-compressed 12:1, so a plain downscale melts into a soft grey smear — that
-is exactly what "the icon looks blurry" was on the cloud client.
+512 px render where every pixel is its own cell, so a plain downscale to
+40 px melts into a grey smear — that is what "the icon looks blurry" was.
 
-The mark is therefore rendered on a pixel grid instead of being smooth
-scaled:
+The mark is therefore rebuilt on a pixel grid instead of being smooth scaled:
 
-- the artwork is trimmed to its bbox and resampled once onto an integer
-  grid (one cell per device pixel at the target density);
+- the artwork is trimmed to its bbox and resampled onto an integer grid
+  (one cell per device pixel at the target density). Each cell takes the
+  **maximum** alpha of its source box and an alpha-weighted mean colour:
+  averaging alpha is what erased the thin fins and the shoulder edges;
+- cells below alpha 4 are dropped, and connected patches of one or two
+  cells are dropped too, so the source edge does not leave dust;
+- the silhouette is never faded: the source art is complete down to its
+  V-shaped chest, so a fade only made the sides and the bottom look cut;
 - the delivered file is a nearest-neighbour blow-up of that grid, so the
   browser never invents half-transparent pixels between cells;
-- the bottom 14 % fades out and the outer fins fade 6 %, so the flat neck
-  and fin cuts dissolve instead of ending on a hard stroke;
-- cells below alpha 24 are dropped and only the largest blob is kept, so
-  the fade does not leave dust around the silhouette;
 - ``image-rendering: pixelated`` in the front ends maps one grid cell to
   one device pixel.
 
@@ -45,27 +45,49 @@ SOURCE = ROOT / "images" / "eva01-head.png"
 WEB = ROOT / "frontend" / "public"
 DESKTOP = ROOT / "crates" / "wunder-desktop" / "frontend" / "assets"
 
-FILL = 0.85  # artwork width inside the square canvas
-FADE = 0.14  # share of the artwork height that dissolves at the bottom
-SIDE_FADE = 0.06  # share of the artwork width that dissolves at each fin
-MIN_ALPHA = 24  # ringing / fade dust below this is dropped
+FILL = 0.92  # artwork width inside the square canvas
+MIN_ALPHA = 4  # cells below this only carry source antialiasing
 
 
-def _largest_blob(alpha: np.ndarray) -> np.ndarray:
-    """Keep the main silhouette, drop cells that the fade isolated."""
+def _downsample_max(art: Image.Image, width: int, height: int) -> np.ndarray:
+    """One cell per target pixel: max alpha in the box, weighted-mean colour."""
+    src = np.array(art, dtype=np.float32)
+    src_h, src_w = src.shape[:2]
+    xs = np.linspace(0, src_w, width + 1)
+    ys = np.linspace(0, src_h, height + 1)
+    out = np.zeros((height, width, 4), dtype=np.float32)
+    for gy in range(height):
+        y0 = int(round(ys[gy]))
+        y1 = max(int(round(ys[gy + 1])), y0 + 1)
+        for gx in range(width):
+            x0 = int(round(xs[gx]))
+            x1 = max(int(round(xs[gx + 1])), x0 + 1)
+            block = src[y0:y1, x0:x1]
+            alpha = block[..., 3]
+            peak = alpha.max()
+            if peak <= 0:
+                continue
+            weight = alpha / alpha.sum()
+            out[gy, gx, :3] = (block[..., :3] * weight[..., None]).sum(axis=(0, 1))
+            out[gy, gx, 3] = peak
+    return out
+
+
+def _drop_small_patches(alpha: np.ndarray, min_area: int) -> np.ndarray:
+    """Keep only patches of at least ``min_area`` cells (8-connected)."""
     height, width = alpha.shape
     seen = np.zeros_like(alpha, dtype=bool)
-    best: list[tuple[int, int]] = []
+    keep = np.zeros_like(alpha, dtype=bool)
     for start_y in range(height):
         for start_x in range(width):
             if alpha[start_y, start_x] == 0 or seen[start_y, start_x]:
                 continue
             queue = deque([(start_y, start_x)])
             seen[start_y, start_x] = True
-            blob: list[tuple[int, int]] = []
+            patch: list[tuple[int, int]] = []
             while queue:
                 y, x = queue.popleft()
-                blob.append((y, x))
+                patch.append((y, x))
                 for dy in (-1, 0, 1):
                     for dx in (-1, 0, 1):
                         ny, nx = y + dy, x + dx
@@ -77,41 +99,31 @@ def _largest_blob(alpha: np.ndarray) -> np.ndarray:
                         ):
                             seen[ny, nx] = True
                             queue.append((ny, nx))
-            if len(blob) > len(best):
-                best = blob
-    mask = np.zeros_like(alpha, dtype=bool)
-    for y, x in best:
-        mask[y, x] = True
-    return mask
+            if len(patch) >= min_area:
+                for y, x in patch:
+                    keep[y, x] = True
+    return keep
 
 
 def build(cells: int) -> Image.Image:
-    """One grid cell per pixel, ``cells`` wide, artwork filled to 85 %."""
+    """One grid cell per pixel, ``cells`` wide, artwork filled to ``FILL``."""
     art = Image.open(SOURCE).convert("RGBA")
     art = art.crop(art.split()[3].getbbox())
 
     width = round(cells * FILL)
     height = round(art.height * width / art.width)
-    pixels = np.array(art.resize((width, height), Image.LANCZOS), dtype=np.float32)
+    pixels = _downsample_max(art, width, height)
 
-    ramp = np.linspace(1.0, 0.0, max(1, round(height * FADE)), dtype=np.float32) ** 1.15
-    pixels[height - ramp.size :, :, 3] *= ramp[:, None]
-    side = np.linspace(1.0, 0.0, max(1, round(width * SIDE_FADE)), dtype=np.float32) ** 1.15
-    pixels[:, : side.size, 3] *= side[None, :]
-    pixels[:, width - side.size :, 3] *= side[None, ::-1]
+    canvas = np.zeros((cells, cells, 4), dtype=np.float32)
+    ox, oy = (cells - width) // 2, (cells - height) // 2
+    canvas[oy : oy + height, ox : ox + width] = pixels
 
-    canvas = Image.new("RGBA", (cells, cells), (0, 0, 0, 0))
-    canvas.alpha_composite(
-        Image.fromarray(np.clip(pixels, 0, 255).astype("uint8")),
-        ((cells - width) // 2, (cells - height) // 2),
-    )
-
-    data = np.array(canvas)
-    alpha = data[..., 3]
+    alpha = canvas[..., 3]
     alpha[alpha < MIN_ALPHA] = 0
-    alpha[~_largest_blob(alpha)] = 0
-    data[..., 3] = alpha
-    return Image.fromarray(data, "RGBA")
+    min_area = max(2, round(cells * 0.05))  # 1-2 cell specks only
+    alpha[~_drop_small_patches(alpha, min_area)] = 0
+    canvas[..., 3] = alpha
+    return Image.fromarray(np.clip(canvas, 0, 255).astype("uint8"), "RGBA")
 
 
 def save(cells: int, scale: int, target: Path) -> None:

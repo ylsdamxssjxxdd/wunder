@@ -52,7 +52,7 @@ const MAX_OUTPUT_CHARS: usize = 16_000;
 
 const TRUNCATED_MESSAGE: &str = "\n<response clipped>Use search_content to locate relevant lines, then view with a narrower view_range.";
 
-const VALID_COMMANDS: [&str; 4] = ["view", "create", "insert", "undo_edit"];
+const VALID_COMMANDS: [&str; 5] = ["view", "create", "insert", "undo_edit", "redo"];
 
 struct EditorOutcome {
     value: Value,
@@ -123,13 +123,13 @@ fn not_regular_file(path: &str) -> Value {
 }
 
 pub(crate) async fn str_replace_editor(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    // `undo_edit` 依赖本机 temp/.history 快照，而沙盒的文件写入在沙盒侧完成、
+    // `undo_edit` / `redo` 依赖本机 temp/.history 快照，而沙盒的文件写入在沙盒侧完成、
     // 不落这套快照；直接下发给它只会得到「未知命令」，所以这一条始终走本机。
     let host_only = args
         .get("command")
         .and_then(Value::as_str)
         .map(str::trim)
-        .is_some_and(|value| value == "undo_edit");
+        .is_some_and(|value| value == "undo_edit" || value == "redo");
     if !host_only {
         if let Some(result) =
             super::execute_in_sandbox(context, super::edit_tool::TOOL_EDIT, args).await
@@ -152,11 +152,11 @@ pub(crate) async fn str_replace_editor(context: &ToolContext<'_>, args: &Value) 
     if !VALID_COMMANDS.contains(&command) {
         return Ok(editor_failure(
             &format!(
-                "Unknown command `{command}`. Allowed options are: `view`, `create`, `str_replace`, `insert`, `undo_edit`."
+                "Unknown command `{command}`. Allowed options are: `view`, `create`, `str_replace`, `insert`, `undo_edit`, `redo`."
             ),
             json!({ "command": command }),
             "TOOL_SRE_COMMAND_INVALID",
-            "使用 view、create、str_replace、insert 或 undo_edit。",
+            "使用 view、create、str_replace、insert、undo_edit 或 redo。",
         ));
     }
     // 别名已在统一入口归一化，此处只处理主参数。
@@ -224,11 +224,12 @@ fn run_editor(
         "create" => create_command(ws, &user_id, &target, path, args),
         "insert" => insert_command(ws, &user_id, &target, path, args),
         "undo_edit" => undo_edit_command(ws, &user_id, &target, path, args),
+        "redo" => redo_edit_command(ws, &user_id, &target, path, args),
         _ => Ok(fail(editor_failure(
             &format!("Unknown command `{command}`."),
             json!({ "command": command }),
             "TOOL_SRE_COMMAND_INVALID",
-            "使用 view、create、str_replace、insert 或 undo_edit。",
+            "使用 view、create、str_replace、insert、undo_edit 或 redo。",
         ))),
     }
 }
@@ -470,37 +471,76 @@ fn undo_edit_command(
         return Ok(fail(not_regular_file(path)));
     }
     let workspace_root = ws.workspace_root(user_id);
-    let Some(step) = file_history::step_back(target, &workspace_root) else {
+    let before = read_current(target)?;
+    let Some(step) = file_history::step_back(target, &workspace_root, &before) else {
         return Ok(fail(no_history(path)));
     };
-    let fs_cap = local_fs();
-    let before = if target.is_file() {
-        fs_cap.read_text(target)?
-    } else {
-        String::new()
+    apply_history_step(ws, user_id, target, path, args, &before, step, "undo_edit")
+}
+
+fn redo_edit_command(
+    ws: &WorkspaceManager,
+    user_id: &str,
+    target: &Path,
+    path: &str,
+    args: &Value,
+) -> Result<EditorOutcome> {
+    if target.is_dir() {
+        return Ok(fail(not_regular_file(path)));
+    }
+    let workspace_root = ws.workspace_root(user_id);
+    let before = read_current(target)?;
+    let Some(step) = file_history::step_forward(target, &workspace_root) else {
+        return Ok(fail(no_redo(path)));
     };
+    apply_history_step(ws, user_id, target, path, args, &before, step, "redo")
+}
+
+fn read_current(target: &Path) -> Result<String> {
+    let fs_cap = local_fs();
+    if target.is_file() {
+        fs_cap.read_text(target)
+    } else {
+        Ok(String::new())
+    }
+}
+
+/// 撤销/重做共用的落盘收尾：写回内容、挪游标、回执与 diff。
+///
+/// 游标只在真正写盘后提交；`dry_run` 连游标都不动，预演不会破坏栈。
+fn apply_history_step(
+    ws: &WorkspaceManager,
+    user_id: &str,
+    target: &Path,
+    path: &str,
+    args: &Value,
+    before: &str,
+    step: file_history::StepBack,
+    action: &str,
+) -> Result<EditorOutcome> {
     let restored = step.content.clone();
     let dry_run = parse_dry_run(args);
     let verify = parse_verify(args);
     let changed = restored != before;
-    if !dry_run && changed {
-        write_target(ws, user_id, target, path, &restored)?;
-        // 写盘成功才落游标：写失败时栈不动，模型可以重试同一步。
-        file_history::commit_cursor(target, &workspace_root, step.cursor);
+    if !dry_run {
+        if changed {
+            write_target(ws, user_id, target, path, &restored)?;
+        }
+        // 内容已经等于目标态时也要挪游标，否则下一次进退会卡在原地。
+        let _ = file_history::commit_cursor(target, &ws.workspace_root(user_id), step.cursor);
     }
-    let (diff, unavailable) = if diff_source_too_large(&before, &restored) {
+    let (diff, unavailable) = if diff_source_too_large(before, &restored) {
         (LineDiff::default(), Some(DIFF_UNAVAILABLE_OVERSIZE))
     } else {
-        (diff_replaced(&before, &restored), None)
+        (diff_replaced(before, &restored), None)
     };
     let data = build_edit_data(path, "update", &diff, unavailable);
-    let mut data = with_receipt(path, &before, &restored, &diff, unavailable, None, verify, data);
+    let mut data = with_receipt(path, before, &restored, &diff, unavailable, None, verify, data);
     if let Some(map) = data.as_object_mut() {
         map.insert("restored_from".to_string(), json!(step.display));
-        map.insert("restored_rev".to_string(), json!(step.rev));
-        map.insert("restored_cursor".to_string(), json!(step.cursor));
+        map.insert("cursor".to_string(), json!(step.cursor));
     }
-    Ok(write_outcome("undo_edit", path, data, dry_run, changed))
+    Ok(write_outcome(action, path, data, dry_run, changed))
 }
 
 fn no_history(path: &str) -> Value {
@@ -511,6 +551,16 @@ fn no_history(path: &str) -> Value {
         "快照只在改写已有文件时生成：直接写回目标内容即可，不需要回滚。",
     )
 }
+
+fn no_redo(path: &str) -> Value {
+    editor_failure(
+        &format!("{path} 没有可重做的步骤；未修改文件。"),
+        json!({ "path": path, "redo_missing": true }),
+        "TOOL_SRE_NO_REDO",
+        "redo 只在撤销之后可用；撤销之后再写入会丢弃 redo 分支，需要重新改一次。",
+    )
+}
+
 
 fn write_outcome(
     action: &str,

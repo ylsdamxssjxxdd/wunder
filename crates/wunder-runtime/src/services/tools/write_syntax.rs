@@ -14,21 +14,29 @@
 
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::{Mutex, MutexGuard, OnceLock, TryLockError};
 use std::time::{Duration, Instant};
 
 /// 子进程校验的等待上限；超时即降级，不让一次写入被校验卡住。
 const SYNTAX_TIMEOUT: Duration = Duration::from_secs(5);
+/// 同时只跑一个校验子进程：node 单次常驻约 42 MiB，并发写入叠加会把进程树内存
+/// 推到数百 MiB。一次校验通常 20 ms 上下，所以排队等 1 s 足够排掉几十个请求而不
+/// 影响结论；只有解释器卡死这种异常才会等不到，届时降级 `skipped (checker busy)`。
+const GATE_POLL: Duration = Duration::from_millis(2);
+const GATE_WAIT: Duration = Duration::from_millis(1000);
 /// 报错摘要的字符上限，避免把整段堆栈塞进回执。
 const MAX_DETAIL_CHARS: usize = 160;
 
 /// 子进程路失败的原因，拼成 `skipped (<tool> <reason>)`。
+#[derive(Debug)]
 enum RunError {
     Unavailable,
     StdinClosed,
     Timeout,
     WaitFailed,
     OutputUnreadable,
+    /// 闸门被别的校验占着，等不到空闲；写入照常进行。
+    Busy,
 }
 
 impl RunError {
@@ -39,6 +47,7 @@ impl RunError {
             RunError::Timeout => "timeout",
             RunError::WaitFailed => "wait failed",
             RunError::OutputUnreadable => "output unreadable",
+            RunError::Busy => "checker busy",
         }
     }
 }
@@ -402,12 +411,52 @@ fn first_working(candidates: &[String], check_args: &[&str]) -> Option<&'static 
     None
 }
 
+/// 全局闸门：语法校验的单次子进程内存是解释器的固定开销，同时跑多个只是把
+/// 峰值乘上去，结论却完全一样。用一个 `Mutex` 限流，等不到就降级。
+static CHECKER_GATE: OnceLock<Mutex<()>> = OnceLock::new();
+
+struct CheckerGate {
+    _guard: MutexGuard<'static, ()>,
+}
+
+impl CheckerGate {
+    fn acquire() -> Result<Self, RunError> {
+        let gate = CHECKER_GATE.get_or_init(|| Mutex::new(()));
+        Ok(Self {
+            _guard: acquire_gate(gate, GATE_WAIT)?,
+        })
+    }
+}
+
+/// 轮询拿锁：不阻塞在 `lock()` 上，等待有上限，超时就返回 [`RunError::Busy`]。
+fn acquire_gate(
+    gate: &'static Mutex<()>,
+    wait: Duration,
+) -> Result<MutexGuard<'static, ()>, RunError> {
+    let deadline = Instant::now() + wait;
+    loop {
+        match gate.try_lock() {
+            Ok(guard) => return Ok(guard),
+            // 上一次校验 panic 把锁毒化了也算可用，`()` 里没有需要恢复的状态。
+            Err(TryLockError::Poisoned(poisoned)) => return Ok(poisoned.into_inner()),
+            Err(TryLockError::WouldBlock) => {
+                if Instant::now() >= deadline {
+                    return Err(RunError::Busy);
+                }
+                std::thread::sleep(GATE_POLL);
+            }
+        }
+    }
+}
+
 /// 把源码写进子进程 stdin 并等它退出；超时就 kill，不阻塞写入路径。
+/// 调用期间独占闸门，同一时刻只有一个解释器在校验。
 fn run_with_stdin(
     program: &str,
     args: &[&str],
     content: &str,
 ) -> Result<(bool, String, String), RunError> {
+    let _gate = CheckerGate::acquire()?;
     let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::piped())
@@ -612,6 +661,27 @@ mod tests {
         }
         let missing_colon = python("class A\n    pass\n").render();
         assert!(has(&missing_colon, "line 1"), "{missing_colon}");
+    }
+
+    fn checker_gate_serializes_and_degrades_instead_of_queueing() {
+        // 用函数内静态锁验证语义，不去碰真实校验用的全局闸门，免得并行测试互相排队。
+        static GATE: Mutex<()> = Mutex::new(());
+        let held = acquire_gate(&GATE, Duration::from_millis(5)).expect("first acquire");
+        let started = Instant::now();
+        match acquire_gate(&GATE, Duration::from_millis(40)) {
+            Ok(_) => panic!("闸门被占用时第二次取锁必须被拒绝，而不是排队等下去"),
+            Err(RunError::Busy) => {}
+            Err(_) => panic!("只允许 Busy 这一种拒绝"),
+        }
+        assert!(started.elapsed() >= Duration::from_millis(40));
+        drop(held);
+        assert!(acquire_gate(&GATE, Duration::from_millis(5)).is_ok());
+        // 降级文案：调用方拼成 `skipped (node checker busy)`，文件照常落盘。
+        assert_eq!(RunError::Busy.reason(), "checker busy");
+        assert_eq!(
+            Verdict::skipped("node --check", "node ".to_string() + RunError::Busy.reason()).render(),
+            "skipped (node checker busy)"
+        );
     }
 
     #[test]

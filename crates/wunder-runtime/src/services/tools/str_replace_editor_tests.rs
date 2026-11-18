@@ -407,17 +407,17 @@ fn insert_degrades_to_counts_only_for_oversized_sources() {
         .is_empty());
 }
 #[test]
-fn undo_edit_walks_back_every_write_instead_of_toggling() {
+fn undo_and_redo_walk_the_history_instead_of_toggling() {
     let dir = tempdir().expect("tempdir");
     let ws = editor_workspace(dir.path());
     run(&ws, "create", &create_args("notes.txt", "A\n"));
     let target = ws.resolve_path("tester", "notes.txt").expect("path");
     let read = || std::fs::read_to_string(&target).expect("read");
-    let undo = || {
+    let step = |command: &str| {
         run(
             &ws,
-            "undo_edit",
-            &json!({ "command": "undo_edit", "file_path": "notes.txt" }),
+            command,
+            &json!({ "command": command, "file_path": "notes.txt" }),
         )
     };
 
@@ -435,40 +435,40 @@ fn undo_edit_walks_back_every_write_instead_of_toggling() {
     assert_eq!(read(), "A\nB\nC\n");
 
     // 撤销是退游标，不是两版翻转：C → A,B → A。
-    let first = undo();
+    let first = step("undo_edit");
     assert_eq!(first["ok"], json!(true));
     assert_eq!(first["data"]["changed_files"], json!(1));
-    assert_eq!(first["data"]["restored_rev"], json!(2));
-    assert_eq!(first["data"]["restored_cursor"], json!(1));
+    assert_eq!(first["data"]["cursor"], json!(1));
     assert!(first["data"]["restored_from"]
         .as_str()
         .expect("snapshot")
         .starts_with("temp/.history/"));
     assert_eq!(read(), "A\nB\n");
 
-    let second = undo();
+    let second = step("undo_edit");
     assert_eq!(second["ok"], json!(true));
     assert_eq!(read(), "A\n");
 
     // 到栈底就停住，不再翻回上一态。
-    let third = undo();
+    let third = step("undo_edit");
     assert_eq!(third["ok"], json!(false));
     assert_eq!(third["error_meta"]["code"], json!("TOOL_SRE_NO_HISTORY"));
     assert_eq!(read(), "A\n");
 
-    // 撤销没有写新版本：目录里仍然只有 A、A,B 两版。
-    let history_dir = ws.workspace_root("tester").join("temp/.history");
-    let revs = std::fs::read_dir(&history_dir)
-        .expect("read_dir")
-        .flatten()
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_str()
-                .is_some_and(|name| name.starts_with("notes.txt@") && !name.ends_with("cursor"))
-        })
-        .count();
-    assert_eq!(revs, 2);
+    // 重做原路返回：A → A,B → A,B,C，再往后到顶停住。
+    let redo = step("redo");
+    assert_eq!(redo["ok"], json!(true));
+    assert_eq!(redo["data"]["cursor"], json!(1));
+    assert_eq!(read(), "A\nB\n");
+
+    let redo = step("redo");
+    assert_eq!(redo["data"]["cursor"], json!(2));
+    assert_eq!(read(), "A\nB\nC\n");
+
+    let done = step("redo");
+    assert_eq!(done["ok"], json!(false));
+    assert_eq!(done["error_meta"]["code"], json!("TOOL_SRE_NO_REDO"));
+    assert_eq!(read(), "A\nB\nC\n");
 }
 
 #[test]

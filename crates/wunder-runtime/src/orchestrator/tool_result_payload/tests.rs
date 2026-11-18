@@ -2662,8 +2662,7 @@ fn structured_check_and_undo_source_survive_the_projection() {
             "syntax": "OK (py_compile)",
             "check": { "tool": "py_compile", "status": "ok" },
             "restored_from": "temp/.history/sketch.py@2",
-            "restored_rev": 2,
-            "restored_cursor": 1
+            "cursor": 1
         }
     }))
     .expect("projection");
@@ -2671,6 +2670,5 @@ fn structured_check_and_undo_source_survive_the_projection() {
     assert_eq!(projected["check"]["tool"], json!("py_compile"));
     assert_eq!(projected["syntax"], json!("OK (py_compile)"));
     assert_eq!(projected["restored_from"], json!("temp/.history/sketch.py@2"));
-    assert_eq!(projected["restored_rev"], json!(2));
-    assert_eq!(projected["restored_cursor"], json!(1));
+    assert_eq!(projected["cursor"], json!(1));
 }

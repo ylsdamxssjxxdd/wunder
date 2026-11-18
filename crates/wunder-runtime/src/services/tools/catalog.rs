@@ -999,7 +999,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .optional(),
                 super::schema::string("command")
                     .desc(t("tool.spec.text_edit.args.command"))
-                    .enums(vec!["view", "create", "str_replace", "insert", "undo_edit"])
+                    .enums(vec!["view", "create", "str_replace", "insert", "undo_edit", "redo"])
                     .optional(),
                 super::schema::string("file_text")
                     .desc(t("tool.spec.text_edit.args.file_text"))
