@@ -1343,6 +1343,11 @@
   gap: 12px;
   contain: layout style;
   overscroll-behavior: contain;
+  /* 跟随位置由 JS 独占：流式逐帧把底部钉住，虚拟占位和正文重排会改变可视区
+     上方的高度。浏览器自带的滚动锚定此时会再补一次 scrollTop，与 JS 的钉底
+     竞争，长会话里表现为内容被画到旧偏移（工作过程头重影），关掉后只保留
+     一套滚动位置。 */
+  overflow-anchor: none;
 }
 
 .messenger-message-panel {

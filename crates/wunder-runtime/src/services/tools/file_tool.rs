@@ -15,7 +15,7 @@ use super::{
     MAX_READ_BUDGET_FILES, MAX_READ_BYTES, MAX_READ_LINES, MAX_READ_OUTPUT_BUDGET_BYTES,
     MAX_READ_TIME_BUDGET_MS, MIN_READ_OUTPUT_BUDGET_BYTES,
 };
-use super::{file_history, write_receipt};
+use super::{file_history, write_guard, write_receipt};
 use crate::core::atomic_write::atomic_write_text;
 use crate::core::blocking;
 use crate::i18n;
@@ -2438,6 +2438,8 @@ struct WriteFileOutcome {
     previous_bytes: u64,
     /// 覆盖写前的旧内容（有界），只给回执与 unified diff 用。
     previous_text: Option<String>,
+    /// 真正落盘的文本：可能在旧文件有 BOM 时补回了 BOM。
+    written: String,
     diff: WriteDiff,
     snapshot: Option<file_history::Snapshot>,
     receipt: write_receipt::Receipt,
@@ -2541,6 +2543,36 @@ pub(crate) fn validate_write_file_args(args: &Value) -> Option<Value> {
         ));
     };
 
+    // 已知二进制路径：文本写入必然毁掉文件，必须先显式确认。
+    if let Some(kind) = write_guard::binary_kind(path) {
+        let confirmed = args
+            .get("overwrite_binary")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if !confirmed {
+            return Some(build_failed_tool_result(
+                "拒绝写入二进制文件：".to_string() + path,
+                json!({
+                    "path": path,
+                    "binary_kind": kind,
+                    "overwrite_binary_required": true,
+                }),
+                ToolErrorMeta::new(
+                    "TOOL_WRITE_BINARY_GUARD",
+                    Some(
+                        "该扩展名是二进制文件（".to_string()
+                            + kind
+                            + "），文本写入会直接损坏它。确认要覆盖请显式传 overwrite_binary: true；"
+                            + "要生成图片请改用图片生成工具，不要用写入文件。",
+                    ),
+                    false,
+                    None,
+                ),
+                false,
+            ));
+        }
+    }
+
     if !args.get("content").is_some_and(Value::is_string) {
         return Some(build_failed_tool_result(
             "缺少 content",
@@ -2587,7 +2619,6 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
         .unwrap_or_default();
     let path = path.to_string();
     let content = content.to_string();
-    let bytes = content.len();
     let workspace = context.workspace.clone();
     let user_id = context.workspace_id.to_string();
     let path_for_write = path.clone();
@@ -2621,6 +2652,8 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
             (true, false, Some(text)) => file_history::snapshot(&target, &workspace_root, text),
             _ => None,
         };
+        // 旧文件带 BOM 就继续带：写入不该静默改掉文件的编码标记。
+        let content_for_write = write_guard::preserve_bom(previous_text.as_deref(), &content_for_write);
         if !dry_run {
             let default_workspace_target = workspace.resolve_path(&user_id, &path_for_write)?;
             if is_within_root(&workspace_root, &target)
@@ -2643,6 +2676,7 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
             existed,
             previous_bytes,
             previous_text,
+            written: content_for_write,
             diff,
             snapshot,
             receipt,
@@ -2674,16 +2708,17 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
         touch_lsp_file(context, &write_outcome.target, true).await
     };
     let previous_text = write_outcome.previous_text.as_deref().unwrap_or("");
+    // diff 与回执都以「真正落盘的字节」为准（可能补回了 BOM）。
     let (unified, unified_truncated) = unified_diff(
         &path,
         previous_text,
-        &content,
+        &write_outcome.written,
         &write_outcome.diff.diff,
         MAX_UNIFIED_DIFF_LINES,
     );
     let data = build_write_data(
         &path,
-        bytes,
+        write_outcome.written.len(),
         dry_run,
         write_outcome.existed,
         write_outcome.previous_bytes,
@@ -3112,6 +3147,42 @@ mod read_behavior_tests {
 #[cfg(test)]
 mod write_result_tests {
     use super::*;
+
+    /// 造一份 `write_file` 参数（不用字面量 JSON，避开转义与花括号）。
+    fn write_args(path: &str, overwrite_binary: Option<bool>) -> Value {
+        let mut map = Map::new();
+        map.insert("path".to_string(), json!(path));
+        map.insert("content".to_string(), json!("hello"));
+        if let Some(flag) = overwrite_binary {
+            map.insert("overwrite_binary".to_string(), json!(flag));
+        }
+        Value::Object(map)
+    }
+
+    #[test]
+    fn binary_extensions_need_an_explicit_confirmation() {
+        // 误把图片当文本写：直接拒，并给出可程序化判断的错误码。
+        let refused = validate_write_file_args(&write_args("assets/logo.png", None))
+            .expect("二进制路径必须被拦下");
+        assert_eq!(
+            refused["error_meta"]["code"],
+            json!("TOOL_WRITE_BINARY_GUARD")
+        );
+        assert_eq!(refused["data"]["binary_kind"], json!("png"));
+
+        // 明确确认过才放行；文本文件不受影响。
+        assert!(validate_write_file_args(&write_args("assets/logo.png", Some(true))).is_none());
+        assert!(validate_write_file_args(&write_args("notes.txt", None)).is_none());
+    }
+
+    #[test]
+    fn bom_survives_an_overwrite() {
+        // 旧文件带 BOM、新内容没带：写入不该静默把编码标记弄丢。
+        let bom = char::from_u32(0xFEFF).unwrap().to_string();
+        let previous = bom.clone() + "alpha\n";
+        let written = write_guard::preserve_bom(Some(&previous), "beta\n");
+        assert_eq!(written, bom + "beta\n");
+    }
 
     #[test]
     fn new_file_write_reports_all_added_lines() {

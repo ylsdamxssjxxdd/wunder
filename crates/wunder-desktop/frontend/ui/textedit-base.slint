@@ -12,6 +12,9 @@ export component TextEditBase inherits Rectangle {
     in property <InputMethodHints> input-method-hints <=> text-input.input-method-hints;
     in property <bool> read-only <=> text-input.read-only;
     in property <length> font-size <=> text-input.font-size;
+    // Caret thickness. Touch shells widen it so the caret stays findable under
+    // a finger; desktop keeps the renderer default.
+    in property <length> cursor-width <=> text-input.text-cursor-width;
     in property <string> font-family <=> text-input.font-family;
     in property <bool> font-italic <=> text-input.font-italic;
     in property <bool> enabled <=> text-input.enabled;

@@ -69,6 +69,18 @@ export type MessageViewportRuntime = {
 
 const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
 
+// 底部钉住是一次与布局耦合的写入：流式期间多数帧容器已在底部，再赋一次
+// scrollTop 只会多提交一次滚动，长会话里容易让合成器画出上一偏移的内容
+// （工作过程头重影）。只有真正落后于底部时才写。
+const pinToBottom = (container: HTMLElement): boolean => {
+  const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+  if (container.scrollTop >= maxTop) {
+    return false;
+  }
+  container.scrollTop = maxTop;
+  return true;
+};
+
 // Measurements are disposable UI state; retain only a bounded recent working set.
 export const MESSAGE_VIRTUAL_HEIGHT_CACHE_LIMIT = 384;
 const MESSAGE_RESIZE_REFRESH_DELAY_MS = 64;
@@ -955,7 +967,7 @@ export const createMessageViewportRuntime = (
       const container = options.messageListRef.value;
       if (disposed || !container || intentVersion !== followIntentVersion || conversationKey !== options.activeConversationKey.value ||
           (!forced && !options.autoStickToBottom.value)) return;
-      container.scrollTop = container.scrollHeight;
+      pinToBottom(container);
       syncMessageVirtualMetrics();
       updateMessageScrollState();
       rememberCurrentScroll();
@@ -996,7 +1008,7 @@ export const createMessageViewportRuntime = (
     if (!container || typeof ResizeObserver === 'undefined') return;
     viewportResizeObserver = new ResizeObserver(() => {
       if (disposed || options.showChatSettingsView.value) return;
-      if (options.autoStickToBottom.value) container.scrollTop = container.scrollHeight;
+      if (options.autoStickToBottom.value) pinToBottom(container);
       syncMessageVirtualMetrics();
     });
     viewportResizeObserver.observe(container);

@@ -32,6 +32,7 @@ mod knowledge_tool;
 mod line_diff;
 mod edit_recovery;
 mod file_history;
+mod write_guard;
 mod write_receipt;
 mod write_syntax;
 mod lsp_support;

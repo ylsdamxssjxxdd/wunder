@@ -632,6 +632,9 @@ fn preview_trajectory_audit() -> (
 fn create_window() -> (MobileWindow, Rc<VecModel<TimelineRow>>) {
     crate::fonts::install();
     let ui = MobileWindow::new().expect("create the mobile window");
+    // 手机默认字号 16px（设置页里的同一数值），首帧就按它排版，
+    // 免得设置投影到达前先闪一帧 14px 的小字。
+    ui.global::<Theme>().set_font_scale(16.0 / 14.0);
     let model = Rc::new(VecModel::<TimelineRow>::default());
     ui.set_rows(ModelRc::from(model.clone()));
     ui.set_greeting("".into());
@@ -3828,7 +3831,7 @@ pub fn install_preview_data(
     // Settings-page fixtures: enough rows to review the index, the catalogue
     // and the editor on a workstation without starting the engine.
     ui.set_settings_theme("terracotta".into());
-    ui.set_settings_font_size(14);
+    ui.set_settings_font_size(16);
     ui.set_settings_send_key("enter".into());
     ui.set_settings_language("zh-CN".into());
     // The preview has no engine, so nothing else would deliver the derived

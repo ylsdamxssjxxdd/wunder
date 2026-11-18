@@ -99,6 +99,7 @@ fn str_replace_data_carries_the_diff_contract() {
             "deleted",
             "deleted_lines",
             "diff_lines_omitted",
+            "diff_omitted",
             "files",
             "hunks_applied",
             "moved",
@@ -341,6 +342,7 @@ fn create_and_insert_data_pin_the_patch_family_key_set() {
         "deleted",
         "deleted_lines",
         "diff_lines_omitted",
+        "diff_omitted",
         "dry_run",
         "files",
         "hunks_applied",
@@ -356,8 +358,9 @@ fn create_and_insert_data_pin_the_patch_family_key_set() {
     ];
     assert_eq!(sorted_keys(&created["data"]), base);
     let mut expected = base.clone();
-    expected.insert(9, "history");
-    expected.insert(10, "history_rev");
+    // `history`/`history_rev` 排在最前面的 `files` 之前（`diff_omitted` 之后算起）。
+    expected.insert(10, "history");
+    expected.insert(11, "history_rev");
     let inserted = run(
         &ws,
         "insert",

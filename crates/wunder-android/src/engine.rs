@@ -408,7 +408,7 @@ impl Default for SettingsView {
     fn default() -> Self {
         Self {
             theme: "terracotta".into(),
-            font_size: 14,
+            font_size: 16,
             send_key: "enter".into(),
             language: "zh-CN".into(),
             workspace_root: String::new(),

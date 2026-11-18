@@ -320,13 +320,19 @@ let anchorFrame: number | null = null;
 let restoredScrollTop = 0;
 let followLatest = true;
 let liveFrame: number | null = null;
+// 过程区自带内滚动：只在真正落后于底部时才钉底，避免每帧重复提交滚动，
+// 与外层消息列表的跟随叠成两套滚动位置。
+const pinBodyToBottom = (body: HTMLElement): void => {
+  const maxTop = Math.max(0, body.scrollHeight - body.clientHeight);
+  if (body.scrollTop < maxTop) body.scrollTop = maxTop;
+};
 const followLiveTail = (): void => {
   if (!open.value || hasNewerItems.value || !followLatest || liveFrame !== null) return;
   liveFrame = window.requestAnimationFrame(() => {
     liveFrame = null;
     const body = processBodyRef.value;
     if (!body || !followLatest) return;
-    body.scrollTop = body.scrollHeight;
+    pinBodyToBottom(body);
     restoredScrollTop = body.scrollTop;
   });
 };
@@ -339,7 +345,7 @@ const restorePageAnchor = (): void => {
     anchorFrame = null;
     const body = processBodyRef.value;
     if (!body || !pageAnchor) return;
-    if (pageAnchor.follow) body.scrollTop = body.scrollHeight;
+    if (pageAnchor.follow) pinBodyToBottom(body);
     else {
       const row = [...body.querySelectorAll<HTMLElement>('[data-process-key]')]
         .find(node => node.dataset.processKey === pageAnchor?.key);
@@ -425,7 +431,7 @@ const loadPage = async (direction: ProcessPageDirection): Promise<void> => {
     loaded.value = true;
     await nextTick();
     if (controller.signal.aborted || !body) return;
-    if (follow) body.scrollTop = body.scrollHeight;
+    if (follow) pinBodyToBottom(body);
     else if (anchorKey) {
       const restored = [...body.querySelectorAll<HTMLElement>('[data-process-key]')]
         .find(node => node.dataset.processKey === anchorKey);

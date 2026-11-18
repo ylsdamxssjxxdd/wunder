@@ -1,18 +1,28 @@
-//! 需要外部解释器或状态机的语法校验：Python 编译、JS/TS 解析、CSS 括号配平。
+//! 需要外部解释器或状态机的语法校验：Python 编译、JS/TS 解析、Shell 解析、CSS 括号配平。
 //!
 //! 与写入回执同一条铁律：只给结论，绝不阻断写入。任何一步失败——解释器缺失、
 //! `WUNDER_SYNTAX_CHECK` 关掉、超时、输出不可读——都降级成 `skipped (...)`，
 //! 由调用方原样放进回执的 `syntax` 字段，文件照常落盘。
 //!
-//! 解释器只探测一次（`OnceLock`），之后复用结论；`WUNDER_PYTHON` / `WUNDER_NODE`
-//! 可显式指定可执行文件。校验内容一律走 stdin，不落临时文件：
+//! 解释器只探测一次（`OnceLock`），之后复用结论；`WUNDER_PYTHON` / `WUNDER_NODE` /
+//! `WUNDER_BASH` 可显式指定可执行文件。校验内容一律走 stdin，不落临时文件：
 //! - `.py`/`.pyi`：`python -I -c <compile>`，只编译不执行；
 //! - `.js`/`.mjs`/`.cjs`：`node --check -`；命中模块专用语法时用
 //!   `--input-type=module --check -` 再验一次，ESM/CJS 都不用先猜；
-//! - `.ts`/`.mts`/`.cts`：node 里 `stripTypeScriptTypes` 去掉类型后再交给 vm 解析；
+//! - `.ts`/`.mts`/`.cts`：项目里能解析到 typescript 时用 tsc 自己的语法诊断
+//!   （只报文法/语法错，不做类型检查，标签 `tsc syntax`）；找不到 typescript
+//!   时退回 `stripTypeScriptTypes` 去类型后交给 vm 解析（标签 `ts strip-types`，
+//!   能抓大部分语法错，但 `<>` 空类型参数、空 extends/implements 这类文法错误
+//!   会漏判，回执标签本身说明这是弱校验）；
+//! - `.sh`/`.bash`：`bash -n` 只解析不执行（没有 bash 时退到 `sh -n`）；
 //! - `.css`/`.scss`/`.less`：纯 Rust 扫掉注释与字符串后配平花括号。
+//!
+//! TypeScript 的语法检查必须用 tsc 自己的诊断：`stripTypeScriptTypes` 基于 SWC，
+//! 对 `function f<>() {}`、`class A implements {}`、`class A extends {}`、八进制
+//! 转义这些 tsc 报 TS1097/TS1098/TS1487 的写法会静默通过，回执里却是 OK。
 
 use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, MutexGuard, OnceLock, TryLockError};
 use std::time::{Duration, Instant};
@@ -219,32 +229,78 @@ pub(crate) fn javascript(content: &str) -> Verdict {
     }
 }
 
-/// TypeScript：node 的 `stripTypeScriptTypes` 去类型（`transform` 模式支持
-/// `enum`/命名空间），再交给 `vm` 解析。没有该 API 的老 node 直接降级。
-pub(crate) fn typescript(content: &str) -> Verdict {
+/// TypeScript：优先用项目里的 typescript 做 tsc 自己的语法诊断（只报文法/语法错，
+/// 不做类型检查）；解析不到 typescript 时退回 node 的 `stripTypeScriptTypes` 去类型
+/// 再交给 `vm` 解析。两条路径的结论标签不同，模型能看出这一份是不是弱校验。
+pub(crate) fn typescript(content: &str, path: &str) -> Verdict {
     if env_disabled() {
-        return Verdict::skipped("ts check", "disabled");
+        return Verdict::skipped("ts syntax", "disabled");
     }
     let Some(node) = node_interpreter() else {
-        return Verdict::skipped("ts check", "no node");
+        return Verdict::skipped("ts syntax", "no node");
     };
+    let search_dir = typescript_search_dir(path);
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("ts")
+        .to_ascii_lowercase();
     let args = [
         "--experimental-vm-modules",
         "--no-warnings",
         "-e",
         TS_CHECK_SCRIPT,
+        search_dir.as_str(),
+        ext.as_str(),
     ];
+    let tool_for = |name: &str| {
+        if name == "tsc" {
+            "tsc syntax"
+        } else {
+            "ts strip-types"
+        }
+    };
     match run_with_stdin(node, &args, content) {
-        Ok((true, _, _)) => Verdict::ok("ts check"),
+        Ok((true, stdout, _)) => {
+            let tool = ts_result(&stdout)
+                .map(|result| tool_for(&result.tool))
+                .unwrap_or("ts syntax");
+            Verdict::ok(tool)
+        }
         // exit 2 = 这个 node 没有去类型的 API，属于环境不支持，不是语法错。
-        Ok((false, stdout, _)) if stdout.trim() == "unsupported" => {
-            Verdict::skipped("ts check", "node too old")
-        }
+        Ok((false, stdout, _)) => match ts_result(&stdout) {
+            Some(result) if result.message.as_deref() == Some("unsupported") => {
+                Verdict::skipped("ts strip-types", "node too old")
+            }
+            Some(result) => Verdict::error(
+                tool_for(&result.tool),
+                result.line,
+                result.message.unwrap_or_else(|| "unknown error".to_string()),
+            ),
+            // 检查脚本自己挂了（stdout 不是 JSON）：不能让模型以为是源码错。
+            None => Verdict::skipped("ts syntax", "ts checker failed"),
+        },
+        Err(err) => Verdict::skipped("ts syntax", "node ".to_string() + err.reason()),
+    }
+}
+
+/// Shell：`bash -n` 只解析不执行；没有 bash 时用 `sh -n` 兜底（POSIX 脚本
+/// 同样能验，标签会写明是 `sh -n`）。`LC_ALL=C` 让报错固定是 `line N:` 格式，
+/// 不受宿主语言环境影响。
+pub(crate) fn shell(content: &str) -> Verdict {
+    if env_disabled() {
+        return Verdict::skipped("bash -n", "disabled");
+    }
+    let Some((program, tool)) = shell_checker() else {
+        return Verdict::skipped("bash -n", "no bash");
+    };
+    match run_with_stdin_env(program, &["-n"], content, &[("LC_ALL", "C"), ("LANG", "C")]) {
+        Ok((true, _, _)) => Verdict::ok(tool),
         Ok((false, stdout, stderr)) => {
-            let text = if stdout.trim().is_empty() { stderr } else { stdout };
-            node_error_verdict("ts check", &text)
+            let text = if stderr.trim().is_empty() { stdout } else { stderr };
+            shell_error_verdict(tool, &text)
         }
-        Err(err) => Verdict::skipped("ts check", "node ".to_string() + err.reason()),
+        Err(err) => Verdict::skipped(tool, "shell ".to_string() + err.reason()),
     }
 }
 
@@ -319,29 +375,131 @@ const PY_CHECK_SCRIPT: &str = concat!(
     "    sys.exit(1)\n",
 );
 
-/// TypeScript 的去类型 + 解析脚本；同样逐行拼接，缩进不会被吞。
+/// TypeScript 检查脚本：能解析到项目里的 typescript 就用 tsc 自己的诊断（语法 +
+/// 文法错误，过滤掉 2xxx 及之后的类型/解析错误）；否则退回 strip-types。
+/// 结论统一用 JSON 输出，退出码区分 OK(0)/ERROR(1)/unsupported(2)/检查器失败(3)。
+/// 同样逐行拼接，缩进不会被吞。
 const TS_CHECK_SCRIPT: &str = concat!(
     "const fs = require('node:fs');\n",
+    "const path = require('node:path');\n",
     "const vm = require('node:vm');\n",
     "const mod = require('node:module');\n",
     "const src = fs.readFileSync(0, 'utf8');\n",
-    "if (typeof mod.stripTypeScriptTypes !== 'function') { console.log('unsupported'); process.exit(2); }\n",
+    "const searchDir = process.argv[1] || process.cwd();\n",
+    "const ext = process.argv[2] || 'ts';\n",
+    "function emit(tool, line, message) {\n",
+    "  console.log(JSON.stringify({ tool, line: line || null, message: message || null }));\n",
+    "}\n",
+    "function loadTypeScript() {\n",
+    "  try { return require(require.resolve('typescript', { paths: [searchDir] })); }\n",
+    "  catch (err) { return null; }\n",
+    "}\n",
+    "const ts = loadTypeScript();\n",
+    "if (ts && typeof ts.createProgram === 'function' && ts.ScriptKind) {\n",
+    "  try {\n",
+    "    const file = path.join(searchDir, '__wunder_write_check__.' + ext);\n",
+    "    const kind = ts.ScriptKind[ext.toUpperCase()] || ts.ScriptKind.TS;\n",
+    "    const options = {\n",
+    "      noLib: true, noResolve: true, noEmit: true, skipLibCheck: true,\n",
+    "      experimentalDecorators: true,\n",
+    "      target: ts.ScriptTarget.Latest,\n",
+    "      module: ts.ModuleKind.Preserve || ts.ModuleKind.ESNext,\n",
+    "    };\n",
+    "    if (ts.ModuleDetectionKind && ts.ModuleDetectionKind.Force !== undefined) {\n",
+    "      options.moduleDetection = ts.ModuleDetectionKind.Force;\n",
+    "    }\n",
+    "    const host = {\n",
+    "      getSourceFile: (name, version) => name === file ? ts.createSourceFile(name, src, version, true, kind) : undefined,\n",
+    "      getDefaultLibFileName: () => path.join(searchDir, '__wunder_lib__.d.ts'),\n",
+    "      writeFile: () => {},\n",
+    "      getCurrentDirectory: () => searchDir,\n",
+    "      getCanonicalFileName: (name) => name,\n",
+    "      useCaseSensitiveFileNames: () => true,\n",
+    "      getNewLine: () => '\\n',\n",
+    "      fileExists: (name) => name === file,\n",
+    "      readFile: (name) => name === file ? src : undefined,\n",
+    "    };\n",
+    "    const program = ts.createProgram([file], options, host);\n",
+    "    const source = program.getSourceFile(file);\n",
+    "    const diags = program.getSyntacticDiagnostics(source)\n",
+    "      .concat(program.getSemanticDiagnostics(source))\n",
+    "      .filter((item) => item.code < 2000)\n",
+    "      .sort((a, b) => (a.start || 0) - (b.start || 0));\n",
+    "    if (diags.length) {\n",
+    "      const first = diags[0];\n",
+    "      const at = first.start != null ? source.getLineAndCharacterOfPosition(first.start) : null;\n",
+    "      const message = 'TS' + first.code + ': ' + ts.flattenDiagnosticMessageText(first.messageText, ' ');\n",
+    "      emit('tsc', at ? at.line + 1 : null, message);\n",
+    "      process.exit(1);\n",
+    "    }\n",
+    "    emit('tsc');\n",
+    "    process.exit(0);\n",
+    "  } catch (err) {\n",
+    "    console.error(String((err && err.stack) || err));\n",
+    "    process.exit(3);\n",
+    "  }\n",
+    "}\n",
+    "if (typeof mod.stripTypeScriptTypes !== 'function') { emit('strip', null, 'unsupported'); process.exit(2); }\n",
     "let js;\n",
     "try { js = mod.stripTypeScriptTypes(src, { mode: 'transform' }); }\n",
-    "catch (err) { console.log(String((err && err.message) || err)); process.exit(1); }\n",
+    "catch (err) { emit('strip', null, String((err && err.message) || err)); process.exit(1); }\n",
     "let moduleErr = null;\n",
     "if (typeof vm.SourceTextModule === 'function') {\n",
-    "  try { new vm.SourceTextModule(js); process.exit(0); }\n",
+    "  try { new vm.SourceTextModule(js); emit('strip'); process.exit(0); }\n",
     "  catch (err) { moduleErr = err; }\n",
     "}\n",
-    "try { new vm.Script(js); process.exit(0); }\n",
+    "try { new vm.Script(js); emit('strip'); process.exit(0); }\n",
     "catch (err) {\n",
     "  const chosen = moduleErr || err;\n",
-    "  const at = chosen && chosen.lineNumber ? chosen.lineNumber + ': ' : '';\n",
-    "  console.log(at + String((chosen && chosen.message) || chosen));\n",
+    "  const line = chosen && chosen.lineNumber ? chosen.lineNumber : null;\n",
+    "  emit('strip', line, String((chosen && chosen.message) || chosen));\n",
     "  process.exit(1);\n",
     "}\n",
 );
+
+/// TypeScript 检查脚本的 JSON 结论；解析失败说明检查器自身出了问题。
+struct TsCheckResult {
+    tool: String,
+    line: Option<u32>,
+    message: Option<String>,
+}
+
+fn ts_result(stdout: &str) -> Option<TsCheckResult> {
+    let value: serde_json::Value = serde_json::from_str(stdout.trim()).ok()?;
+    Some(TsCheckResult {
+        tool: value.get("tool")?.as_str()?.to_string(),
+        line: value
+            .get("line")
+            .and_then(serde_json::Value::as_u64)
+            .map(|line| line as u32),
+        message: value
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+    })
+}
+
+/// 给 TypeScript 查找 typescript 包的起点：被写文件所在目录。相对路径按当前
+/// 工作目录展开；目录不存在也没关系，node 会从它开始逐级向上找 node_modules。
+fn typescript_search_dir(path: &str) -> String {
+    let candidate = Path::new(path);
+    let absolute = if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        match std::env::current_dir() {
+            Ok(cwd) => cwd.join(candidate),
+            Err(_) => candidate.to_path_buf(),
+        }
+    };
+    absolute
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("."))
+        .to_string_lossy()
+        .to_string()
+}
 
 /// 找到可用的 Python 解释器：只探测一次，之后复用结论。
 fn python_interpreter() -> Option<&'static str> {
@@ -379,6 +537,29 @@ fn node_interpreter() -> Option<&'static str> {
     })
     .as_ref()
     .copied()
+}
+
+/// 找到可用的 shell：`WUNDER_BASH` → PATH 的 bash → PATH 的 sh。只有 bash 不可用
+/// 时才用 sh 兜底，标签会写成 `sh -n`，模型能看出解析器不同。
+fn shell_checker() -> Option<(&'static str, &'static str)> {
+    static SHELL: OnceLock<Option<(&'static str, &'static str)>> = OnceLock::new();
+    SHELL
+        .get_or_init(|| {
+            if let Ok(value) = std::env::var("WUNDER_BASH") {
+                let value = value.trim();
+                if !value.is_empty() {
+                    if let Some(program) = first_working(&[value.to_string()], &["-c", ":"]) {
+                        return Some((program, "bash -n"));
+                    }
+                }
+            }
+            if let Some(program) = first_working(&["bash".to_string()], &["-c", ":"]) {
+                return Some((program, "bash -n"));
+            }
+            first_working(&["sh".to_string()], &["-c", ":"]).map(|program| (program, "sh -n"))
+        })
+        .as_ref()
+        .copied()
 }
 
 fn env_and_path_candidates(env_name: &str, fallback: &[&str]) -> Vec<String> {
@@ -456,14 +637,28 @@ fn run_with_stdin(
     args: &[&str],
     content: &str,
 ) -> Result<(bool, String, String), RunError> {
+    run_with_stdin_env(program, args, content, &[])
+}
+
+/// 同 [`run_with_stdin`]，额外给子进程设置固定环境变量（如 shell 的 C locale，
+/// 让报错行号格式不受宿主语言影响）。
+fn run_with_stdin_env(
+    program: &str,
+    args: &[&str],
+    content: &str,
+    envs: &[(&str, &str)],
+) -> Result<(bool, String, String), RunError> {
     let _gate = CheckerGate::acquire()?;
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|_| RunError::Unavailable)?;
+        .stderr(Stdio::piped());
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    let mut child = command.spawn().map_err(|_| RunError::Unavailable)?;
     if let Some(stdin) = child.stdin.as_mut() {
         if stdin.write_all(content.as_bytes()).is_err() {
             let _ = child.kill();
@@ -528,10 +723,33 @@ fn node_error_parts(text: &str) -> (Option<u32>, String) {
     (line_no, truncate_chars(&text, MAX_DETAIL_CHARS))
 }
 
-/// node 的结构化结论：工具名由调用方给（`node --check` / `ts check`）。
+/// node 的结构化结论：工具名由调用方给（`node --check`）。
 fn node_error_verdict(tool: &'static str, text: &str) -> Verdict {
     let (line, message) = node_error_parts(text);
     Verdict::error(tool, line, message)
+}
+
+/// bash 的报错形如 `bash: line 3: syntax error near unexpected token ...`。
+/// `LC_ALL=C` 已固定输出语言；没有 `line N:` 的形态（如 dash 的 `sh: 1: ...`）
+/// 就只给消息，不硬猜行号。
+fn shell_error_verdict(tool: &'static str, text: &str) -> Verdict {
+    let first = first_non_empty_line(text).unwrap_or("unknown error").trim();
+    let parsed = first
+        .split_once("line ")
+        .and_then(|(_, rest)| rest.split_once(':'))
+        .and_then(|(number, message)| {
+            number
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .map(|line| (line, message.trim().to_string()))
+        });
+    match parsed {
+        Some((line, message)) => {
+            Verdict::error(tool, Some(line), truncate_chars(&message, MAX_DETAIL_CHARS))
+        }
+        None => Verdict::error(tool, None, truncate_chars(first, MAX_DETAIL_CHARS)),
+    }
 }
 
 /// 这些错误只在「按脚本解析」时出现，说明该文件其实是模块语法。
@@ -624,14 +842,70 @@ mod tests {
 
     #[test]
     fn typescript_accepts_types_or_skips_without_node() {
-        let code = typescript("interface A { a: number }\nexport const f = (x: A): number => x.a;\n").render();
+        let code = typescript(
+            "interface A { a: number }\nexport const f = (x: A): number => x.a;\n",
+            "temp/a.ts",
+        )
+        .render();
         if code.starts_with("skipped") {
-            assert!(has(&code, "node"), "{code}");
+            assert!(has(&code, "node") || has(&code, "busy"), "{code}");
             return;
         }
-        assert_eq!(code, "OK (ts check)");
-        let broken = typescript("const f = (x: number) => {\n").render();
-        assert!(has(&broken, "(ts check)"), "{broken}");
+        assert!(
+            code == "OK (tsc syntax)" || code == "OK (ts strip-types)",
+            "{code}"
+        );
+        let broken = typescript("const f = (x: number) => {\n", "temp/a.ts").render();
+        assert!(
+            has(&broken, "(tsc syntax)") || has(&broken, "(ts strip-types)"),
+            "{broken}"
+        );
+        assert!(broken.starts_with("ERROR"), "{broken}");
+    }
+
+    #[test]
+    fn typescript_tsc_path_catches_grammar_errors_strip_types_misses() {
+        // stripTypeScriptTypes 对空类型参数列表、空 extends/implements 会静默通过，
+        // 但 tsc 报 TS1097/TS1098；找到 typescript 时必须能报出来。环境里没有
+        // typescript 时退回弱校验，属于已知降级，不在这里断言。
+        for source in [
+            "function f<>() {}\n",
+            "class A implements {}\n",
+            "interface B extends {}\n",
+        ] {
+            let code = typescript(source, "temp/a.ts").render();
+            if code.starts_with("skipped") || code.starts_with("OK (ts strip-types)") {
+                continue;
+            }
+            assert!(code.starts_with("ERROR line 1"), "{source} => {code}");
+            assert!(has(&code, "TS109"), "{source} => {code}");
+        }
+        if typescript("class A { accessor x = 1; }\n", "temp/a.ts").render() == "OK (tsc syntax)" {
+            // tsc 接受 decorator 与 accessor；strip-types 会把它们当语法错。
+            let decorator = typescript("@dec\nclass A {}\n", "temp/a.ts").render();
+            assert_eq!(decorator, "OK (tsc syntax)");
+        }
+    }
+
+    #[test]
+    fn shell_accepts_scripts_and_reports_syntax_errors() {
+        let valid =
+            shell("#!/bin/bash\nset -e\nf() { echo hi; }\nif [[ -n \"$1\" ]]; then f; fi\n").render();
+        if valid.starts_with("skipped") {
+            assert!(has(&valid, "no bash") || has(&valid, "disabled"), "{valid}");
+            return;
+        }
+        assert!(
+            valid == "OK (bash -n)" || valid == "OK (sh -n)",
+            "{valid}"
+        );
+        let broken = shell("if true; then\n  echo hi\n").render();
+        assert!(broken.starts_with("ERROR"), "{broken}");
+        assert!(has(&broken, "-n)"), "{broken}");
+        // bash 固定 C locale 后应能给出 `line 3:`；sh 兜底时允许没有行号。
+        if broken.contains("bash -n") {
+            assert!(has(&broken, "line 3"), "{broken}");
+        }
     }
 
     #[test]

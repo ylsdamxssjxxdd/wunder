@@ -1066,7 +1066,9 @@ fn default_send_key() -> String {
 }
 
 fn default_font_size() -> i32 {
-    14
+    // 手机屏幕更小、握持距离更远，安卓版首次启动的聊天字号从 16 起步；
+    // 桌面版沿用 14，两边都由设置页的同一枚 +/- 调整。
+    if cfg!(target_os = "android") { 16 } else { 14 }
 }
 
 fn default_python_runtime_mode() -> String {

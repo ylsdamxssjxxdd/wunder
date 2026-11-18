@@ -13,6 +13,7 @@
 //! - 输出有硬上限：符号最多 [`MAX_SYMBOLS`] 个，回执整体不超过约 700 字符。
 
 use super::write_syntax::{self, Verdict};
+use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -593,7 +594,11 @@ fn shell_symbols(content: &str) -> Vec<Symbol> {
 // ---------------------------------------------------------------------------
 
 /// 语法校验：只覆盖能低成本、确定性判定的格式；其余明确写 `skipped`。
+///
+/// 先剥掉开头的 BOM 再判：BOM 是「文件编码的标记」，不是内容的一部分，JSON/Python
+/// 解析器不认它。写入与撤销都可能带着 BOM 落盘，校验必须给出同一个结论。
 pub(crate) fn check_syntax(path: &str, content: &str) -> Verdict {
+    let content = super::write_guard::strip_bom(content);
     if content.len() > MAX_SCAN_BYTES {
         return Verdict::skipped("none", "file too large");
     }
@@ -605,16 +610,50 @@ pub(crate) fn check_syntax(path: &str, content: &str) -> Verdict {
     match ext.as_str() {
         "py" | "pyi" => write_syntax::python(content),
         "js" | "mjs" | "cjs" => write_syntax::javascript(content),
-        "ts" | "mts" | "cts" => write_syntax::typescript(content),
+        "ts" | "mts" | "cts" => write_syntax::typescript(content, path),
+        "sh" | "bash" => write_syntax::shell(content),
         "css" | "scss" | "less" => write_syntax::css(content),
         // JSX/TSX 需要 esbuild/tsc 才能解析，缺了就明说，绝不用 node 硬解析。
         "jsx" | "tsx" => Verdict::skipped("none", "no jsx checker"),
         "json" => json_syntax(content),
+        "yml" | "yaml" => yaml_syntax(content),
         "svg" => tag_syntax(content, MarkupKind::Xml),
         "xml" | "xhtml" => tag_syntax(content, MarkupKind::Xml),
         "html" | "htm" => tag_syntax(content, MarkupKind::Html),
         _ => Verdict::skipped("none", "no checker"),
     }
+}
+
+/// YAML：逐份文档用 serde_yaml 解析（支持 `---` 多文档、锚点与自定义标签），
+/// 抓缩进、未闭合引号/括号、非法结构这类解析错误；不校验业务 schema。
+/// 只解析第一份会漏掉 `---` 之后的错误，所以用 Deserializer 迭代每份文档。
+fn yaml_syntax(content: &str) -> Verdict {
+    for document in serde_yaml::Deserializer::from_str(content) {
+        if let Err(err) = serde_yaml::Value::deserialize(document) {
+            let detail = yaml_detail(&err);
+            // 重复键严格来说不合 YAML 规范，但真实配置里是有意写法（同一个
+            // `task:` 键重复多份是 Cirrus CI 的标准格式），实际工具也能跑；
+            // 把它当成写坏文件只会制造误报，这里放行。
+            if detail.starts_with("duplicate entry ") {
+                continue;
+            }
+            let location = err.location();
+            let line = location.as_ref().map(|value| value.line() as u32);
+            let message = match location {
+                Some(value) => format!("column {}: {}", value.column(), detail),
+                None => detail,
+            };
+            return Verdict::error("yaml", line, message);
+        }
+    }
+    Verdict::ok("yaml")
+}
+
+/// serde_yaml 的 Display 会带 ` at line X column Y`，位置已经单独给出，去掉重复。
+fn yaml_detail(err: &serde_yaml::Error) -> String {
+    let text = err.to_string();
+    let head = text.split(" at line ").next().unwrap_or(&text);
+    truncate_chars(head.trim(), 120)
 }
 
 fn json_syntax(content: &str) -> Verdict {
@@ -916,6 +955,15 @@ mod tests {
         );
         let css = check_syntax("a.css", ".a { color: red; }").render();
         assert_eq!(css, "OK (css braces)");
+        // YAML 走纯 Rust 解析，任何时候都能给出结论。
+        assert_eq!(check_syntax("a.yml", "name: ci\njobs: {}\n").render(), "OK (yaml)");
+        assert_eq!(check_syntax("a.yaml", "a: 1\n---\nb: 2\n").render(), "OK (yaml)");
+        // Shell 交给 bash/sh 解析；一个都没有时只能 skipped。
+        let sh = check_syntax("a.sh", "set -e\nf() { echo hi; }\nf\n").render();
+        assert!(
+            sh == "OK (bash -n)" || sh == "OK (sh -n)" || sh.starts_with("skipped"),
+            "{sh}"
+        );
         // JSX/TSX 不硬猜：没有专用解析器就明说跳过。
         assert_eq!(
             check_syntax("a.jsx", "const a = <div/>;").render(),
@@ -928,6 +976,38 @@ mod tests {
     }
 
     #[test]
+    fn yaml_syntax_accepts_anchors_tags_and_reports_breakage() {
+        let anchors = "base: &b\n  x: 1\nuse: *b\n";
+        assert_eq!(check_syntax("a.yml", anchors).render(), "OK (yaml)");
+        // 合并键 `<<` 在编排/部署配置里常用，按普通键解析即可，不能报错。
+        assert_eq!(
+            check_syntax("a.yml", "base: &b\n  a: 1\nchild:\n  <<: *b\n  b: 2\n").render(),
+            "OK (yaml)"
+        );
+        // 自定义标签在部署/编排文件里很常见，解析器不能把它当成错误。
+        assert_eq!(
+            check_syntax("a.yaml", "value: !Ref Thing\nlist: !GetAtt [A, B]\n").render(),
+            "OK (yaml)"
+        );
+        // Cirrus CI 这类配置会用重复的 task 键写多份任务，严格解析会报重复键，
+        // 但这是有意写法，不能判成写坏。
+        assert_eq!(
+            check_syntax("a.yml", "task:\n  name: a\ntask:\n  name: b\n").render(),
+            "OK (yaml)"
+        );
+        let broken_indent = "a: 1\n b: 2\n";
+        let out = check_syntax("bad.yml", broken_indent).render();
+        assert!(out.starts_with("ERROR line "), "{out}");
+        assert!(out.contains("(yaml)"), "{out}");
+        // 多文档只看第一份会把 `---` 之后的错误漏掉；报错位置落在文件末尾/第二份
+        // 文档内都算命中，关键是必须真的解析到了第二份。
+        let multi_broken = "a: 1\n---\nb: [\n";
+        let multi = check_syntax("multi.yaml", multi_broken).render();
+        assert!(multi.starts_with("ERROR line "), "{multi}");
+        assert!(multi.contains("(yaml)"), "{multi}");
+    }
+
+    #[test]
     fn css_symbols_span_rule_blocks() {
         let content = ".card {\n  color: red;\n}\n\n@media (max-width: 640px) {\n  .card {\n    color: blue;\n  }\n}\n";
         let symbols = css_symbols(content);
@@ -936,6 +1016,17 @@ mod tests {
         assert_eq!(names, vec![".card", "@media (max-width: 640px)", ".card"]);
         assert_eq!((symbols[0].start, symbols[0].end), (1, 3));
         assert_eq!((symbols[2].start, symbols[2].end), (6, 8));
+    }
+
+    #[test]
+    fn bom_does_not_make_valid_json_look_broken() {
+        // 带 BOM 的 JSON 是合法文件：解析器不认识 BOM，校验要自己剥掉。
+        let bom = char::from_u32(0xFEFF).unwrap().to_string();
+        let text = bom.clone() + "[]";
+        assert_eq!(check_syntax("bom.json", &text).render(), "OK (json)");
+        // 剥 BOM 之后仍按真实内容判错的地方要照常报错。
+        let broken = bom + "[1,]";
+        assert!(check_syntax("broken.json", &broken).render().starts_with("ERROR"));
     }
 
     #[test]

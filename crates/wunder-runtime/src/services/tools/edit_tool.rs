@@ -977,6 +977,7 @@ mod tests {
                 "deleted",
                 "deleted_lines",
                 "diff_lines_omitted",
+                "diff_omitted",
                 "dry_run",
                 "files",
                 "hunks_applied",
@@ -1010,6 +1011,7 @@ mod tests {
                 "deleted_lines",
                 "diff_blocks",
                 "diff_lines_omitted",
+                "diff_omitted",
                 "hunks",
                 "path",
                 "to_path"

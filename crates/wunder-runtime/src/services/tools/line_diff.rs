@@ -31,6 +31,11 @@ pub(super) const DIFF_UNAVAILABLE_OVERSIZE: &str = "oversize";
 pub(super) const DIFF_UNAVAILABLE_BINARY: &str = "binary";
 pub(super) const DIFF_UNAVAILABLE_UNREADABLE: &str = "unreadable";
 
+/// `diff_omitted` 的短原因串：单行太长，正文放不下。
+pub(super) const OMITTED_LINE_TOO_LONG: &str = "line_too_long";
+/// `diff_omitted` 的短原因串：行数/块数预算用完。
+pub(super) const OMITTED_BUDGET: &str = "budget";
+
 #[derive(Debug, Clone)]
 struct DiffLine {
     kind: &'static str,
@@ -60,6 +65,8 @@ pub(super) struct LineDiff {
     hunks: usize,
     visible_lines: usize,
     text_bytes: usize,
+    /// 因为「单行太长」被丢掉的正文行；与块预算/行预算区分开，回执要说清原因。
+    long_lines: usize,
 }
 
 /// 一个变更区域；一侧行数为 0 表示纯插入/纯删除。
@@ -78,11 +85,29 @@ impl LineDiff {
         self
     }
 
+    /// 有没有「看得见的 diff 被省掉了」；返回省掉的原因。
+    ///
+    /// 调用方必须据此显式告诉用户「这里没有完整的 diff」，否则只有 `---`/`+++`
+    /// 头的 `unified_diff` 会被读成「没有改动」。
+    pub(super) fn omission(&self) -> Option<&'static str> {
+        if self.long_lines > 0 {
+            return Some(OMITTED_LINE_TOO_LONG);
+        }
+        if self.omitted_lines > 0 {
+            return Some(OMITTED_BUDGET);
+        }
+        None
+    }
+
     /// 行正文预算：超预算的整行省略，只累加 `omitted_lines`。
     fn push_row(&mut self, rows: &mut Vec<DiffLine>, kind: &'static str, line: usize, text: &str) {
-        if self.visible_lines >= MAX_DIFF_LINES
-            || text.len() > MAX_DIFF_TEXT_BYTES.saturating_sub(self.text_bytes)
-        {
+        // 单行超预算：不是「截断了」，而是这一行根本放不下，回执要单独说明。
+        if text.len() > MAX_DIFF_TEXT_BYTES.saturating_sub(self.text_bytes) {
+            self.long_lines += 1;
+            self.omitted_lines += 1;
+            return;
+        }
+        if self.visible_lines >= MAX_DIFF_LINES {
             self.omitted_lines += 1;
             return;
         }
@@ -420,6 +445,7 @@ fn file_entry(action: &str, path: &str, diff: &LineDiff, unknown: bool) -> Value
         "added_lines": count(diff.added_lines),
         "deleted_lines": count(diff.deleted_lines),
         "diff_lines_omitted": count(diff.omitted_lines),
+        "diff_omitted": if unknown { Value::Null } else { json!(diff.omission()) },
         "diff_blocks": diff.blocks.iter().map(block_json).collect::<Vec<_>>(),
     })
 }
@@ -453,6 +479,8 @@ pub(super) fn insert_diff_fields(
     map.insert("moved".to_string(), json!(0usize));
     map.insert("hunks_applied".to_string(), count(diff.hunks));
     map.insert("diff_lines_omitted".to_string(), count(diff.omitted_lines));
+    // 省了就要说：只给 `---`/`+++` 头的 diff 会被读成「没有改动」。
+    map.insert("diff_omitted".to_string(), json!(diff.omission()));
     map.insert(
         "files".to_string(),
         json!([file_entry(action, path, diff, unknown)]),
@@ -566,7 +594,9 @@ pub(super) fn unified_diff(
     if truncated {
         out.push("… diff truncated (read the file or rerun with a narrower range)".to_string());
     }
-    (out.join("\n"), truncated)
+    // 有行被省掉时，文本同样不是完整的：`truncated` 必须为真，否则「只有 ---/+++
+    // 头却说没截断」会被读成「没有改动」。
+    (out.join("\n"), truncated || diff.omission().is_some())
 }
 
 /// 行数预算守卫：超预算返回 `false`，由调用方标记截断并停止。
@@ -582,6 +612,30 @@ fn push_unified_line(out: &mut Vec<String>, line: String, max_lines: usize) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_single_huge_line_is_reported_as_omitted_instead_of_no_change() {
+        // 200 KB 单行：放不进正文预算，绝不能表现成「没有改动」。
+        let before = "x".repeat(200 * 1024);
+        let after = "y".repeat(200 * 1024);
+        let diff = diff_replaced(&before, &after);
+        assert_eq!(diff.added_lines, 1);
+        assert_eq!(diff.deleted_lines, 1);
+        assert_eq!(diff.hunks, 1);
+        assert!(diff.blocks.is_empty(), "放不下的行不能硬塞半行");
+        assert_eq!(diff.omission(), Some(OMITTED_LINE_TOO_LONG));
+        assert_eq!(diff.omitted_lines, 2);
+
+        let (text, truncated) = unified_diff(
+            "longline.txt",
+            &before,
+            &after,
+            &diff,
+            MAX_UNIFIED_DIFF_LINES,
+        );
+        assert!(!text.contains("@@"), "没有块时只能给 ---/+++ 头");
+        assert!(truncated, "省掉正文必须报 truncated，否则会被读成无改动");
+    }
 
     #[test]
     fn unified_diff_shows_context_and_change_lines() {
@@ -786,6 +840,7 @@ mod tests {
                 "deleted",
                 "deleted_lines",
                 "diff_lines_omitted",
+                "diff_omitted",
                 "files",
                 "hunks_applied",
                 "moved",
@@ -801,6 +856,7 @@ mod tests {
                 "deleted_lines",
                 "diff_blocks",
                 "diff_lines_omitted",
+                "diff_omitted",
                 "hunks",
                 "path",
                 "to_path"

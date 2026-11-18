@@ -493,12 +493,14 @@ component MobileTextArea inherits Rectangle {
                 read-only: root.read-only;
                 wrap: word-wrap;
                 font-size: Theme.font-sm;
+                cursor-width: 2px;
                 foreground: Theme.text;
                 placeholder-text: root.placeholder;
                 placeholder-color: Theme.muted;
                 scroll-view-padding: 8px;
-                selection-background-color: Theme.accent-soft;
-                selection-foreground-color: Theme.text;
+                // 手机端光标用选区背景色绘制，浅色 accent-soft 在白底上看不见。
+                selection-background-color: Theme.accent-ink;
+                selection-foreground-color: #ffffff;
                 edited(text) => { root.edited(); }
             }
         }
@@ -898,10 +900,12 @@ component ToolFileSheet inherits Rectangle {
                 read-only: root.read-only;
                 wrap: word-wrap;
                 font-size: Theme.font-sm;
+                cursor-width: 2px;
                 foreground: Theme.text;
                 scroll-view-padding: 4px;
-                selection-background-color: Theme.accent-soft;
-                selection-foreground-color: Theme.text;
+                // 手机端光标用选区背景色绘制，浅色 accent-soft 在白底上看不见。
+                selection-background-color: Theme.accent-ink;
+                selection-foreground-color: #ffffff;
                 init => {
                     if !root.read-only { edit.focus(); }
                 }
@@ -3076,7 +3080,7 @@ component GeneralPage inherits Rectangle {
     in property <length> inset-top: 0px;
     in property <length> inset-bottom: 0px;
     in property <string> theme: "terracotta";
-    in property <int> font-size: 14;
+    in property <int> font-size: 16;
     in property <string> send-key: "enter";
     in property <string> language: "zh-CN";
     callback back();
@@ -5087,7 +5091,7 @@ export component MobileSettings inherits Rectangle {
     in property <length> ime-height: 0px;
     in-out property <int> page: 0;
     in property <string> theme: "terracotta";
-    in property <int> font-size: 14;
+    in property <int> font-size: 16;
     in property <string> send-key: "enter";
     in property <string> language: "zh-CN";
     in property <string> current-model: "";

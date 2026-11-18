@@ -801,3 +801,64 @@ test('near-top reading keeps follow mode off when top and bottom thresholds over
     else (globalThis as Record<string, unknown>).ResizeObserver = originalResizeObserver;
   }
 });
+
+test('message viewport runtime only writes scrollTop when the container is behind the bottom', async () => {
+  const originalWindow = (globalThis as Record<string, unknown>).window;
+  const originalResizeObserver = (globalThis as Record<string, unknown>).ResizeObserver;
+  let scrollTop = 500;
+  let writes = 0;
+  const container = {
+    clientHeight: 500,
+    scrollHeight: 1000,
+    get scrollTop() {
+      return scrollTop;
+    },
+    set scrollTop(value: number) {
+      writes += 1;
+      scrollTop = value;
+    },
+    querySelectorAll: () => [],
+    getBoundingClientRect: () => ({ top: 0, height: 500 }),
+    addEventListener: () => {},
+    removeEventListener: () => {}
+  } as unknown as HTMLElement;
+
+  try {
+    (globalThis as Record<string, unknown>).window = {
+      requestAnimationFrame: () => 0,
+      cancelAnimationFrame: () => {}
+    };
+    (globalThis as Record<string, unknown>).ResizeObserver = FakeResizeObserver;
+    FakeResizeObserver.instances = [];
+    const runtime = createMessageViewportRuntime({
+      messageListRef: ref(container), showChatSettingsView: ref(false), autoStickToBottom: ref(true),
+      showScrollTopButton: ref(false), showScrollBottomButton: ref(false),
+      isAgentConversationActive: ref(true), isWorldConversationActive: ref(false),
+      activeConversationKey: ref('fixture-pinned-thread'), shouldVirtualizeMessages: ref(false),
+      agentRenderableMessages: ref([]), worldRenderableMessages: ref([]), messageVirtualHeightCache: new Map(),
+      messageVirtualLayoutVersion: ref(0), messageVirtualScrollTop: ref(0), messageVirtualViewportHeight: ref(0),
+      estimateVirtualOffsetTop: () => 0, resolveVirtualMessageHeight: () => 0
+    });
+
+    // Already at the bottom: a redundant pin would be an extra scroll commit.
+    await runtime.scrollMessagesToBottom();
+    assert.equal(writes, 0);
+    assert.equal(scrollTop, 500);
+
+    // Stream growth moves the bottom; the pin catches up exactly once and then idles.
+    (container as unknown as { scrollHeight: number }).scrollHeight = 1400;
+    await runtime.scrollMessagesToBottom();
+    assert.equal(writes, 1);
+    assert.equal(scrollTop, 900);
+    await runtime.scrollMessagesToBottom();
+    assert.equal(writes, 1);
+    assert.equal(scrollTop, 900);
+
+    runtime.dispose();
+  } finally {
+    if (originalWindow === undefined) delete (globalThis as Record<string, unknown>).window;
+    else (globalThis as Record<string, unknown>).window = originalWindow;
+    if (originalResizeObserver === undefined) delete (globalThis as Record<string, unknown>).ResizeObserver;
+    else (globalThis as Record<string, unknown>).ResizeObserver = originalResizeObserver;
+  }
+});

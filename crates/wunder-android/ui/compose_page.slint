@@ -103,11 +103,14 @@ export component ComposePage inherits Rectangle {
             text <=> root.draft;
             wrap: word-wrap;
             font-size: 16px;
+            cursor-width: 2px;
             foreground: Theme.text;
             // 提示已经在顶栏常显，输入区留白即可，避免同一句话出现两遍。
             placeholder-text: "";
-            selection-background-color: Theme.accent-soft;
-            selection-foreground-color: Theme.text;
+            // 安卓/iOS/macOS 的光标用选区背景色绘制，浅色的 accent-soft 在白底上
+            // 等于消失，所以手机端选区用实心 accent-ink 配白字，光标清晰可见。
+            selection-background-color: Theme.accent-ink;
+            selection-foreground-color: #ffffff;
             scroll-view-padding: 16px;
             // 进页即聚焦：键盘是这一页的常态，不该再点一次才弹出来。
             init => { self.focus-input(); }
