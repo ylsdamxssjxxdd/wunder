@@ -4,19 +4,20 @@
     :data-turn-id="String(message.__runtime_user_turn_id || message.user_turn_id || message.root_turn_id || '')"
   >
     <MessageTimelineTurnProcess
-      v-if="!hasProjectionBlocks && (Number(message.process_count ?? message.workflow_count)>0 || Boolean(String(message.reasoning || '').trim()))"
+      v-if="!hasProjectionBlocks && (processCount > 0 || processReasoning.trim() !== '')"
       :session-id="activeSessionId"
       :turn-id="processTurnId"
-      :count="Number(message.process_count ?? message.workflow_count)||0"
-      :activity="message.process_activity"
+      :count="processCount"
+      :activity="processActivity"
       :process-items="message.process_items"
-      :process-revision="message.process_revision"
-      :refresh-revision="message.process_refresh_revision"
-      :status="String(message.status || '')"
-      :reasoning="String(message.reasoning || '')"
-      :reasoning-item-id="String(message.reasoning_item_id || '')"
-      :reasoning-streaming="Boolean(message.reasoningStreaming)"
-      :final-item-id="String(message.item_id || message.assistant_item_id || '')"
+      :process-revision="processRevision"
+      :refresh-revision="processRefreshRevision"
+      :status="processStatus"
+      :reasoning="processReasoning"
+      :reasoning-item-id="processReasoningItemId"
+      :reasoning-streaming="processReasoningStreaming"
+      :live-tail="processLiveTail"
+      :final-item-id="processFinalItemId"
       :duration-label="processDurationLabel"
       :default-open="Boolean(defaultProcessOpen)"
       @open-change="processOpen = $event"
@@ -77,7 +78,7 @@
       </template>
     </MessageTimelineBlocks>
     <div
-      v-else-if="hasBody"
+      v-else-if="hasBody || hasUserImageAttachments(message) || hasUserAudioAttachments(message)"
       class="timeline-body-block"
       :class="{ 'is-streaming': bodyStreaming }"
       data-turn-slot="body"
@@ -386,20 +387,97 @@ const runtimeContentVersion = computed(() => {
     runtimeModelTurnId: runtimeModelTurnId.value,
     message: message.value
   });
-  const messageScopedVersion = messageIds.reduce(
-    (sum, messageId) => sum + Number(chatStore.runtimeProjectionContentVersionByMessage?.[messageId] || 0),
-    0
-  );
-  return `${structureVersion}:${messageScopedVersion}`;
+  // The durable reducer bumps its clocks under the turn-level assistant row id
+  // (`tturn:<root>:assistant`), while the projection can key its own message ids
+  // differently. Read both: a thread whose ids never matched kept the thought
+  // frozen until an unrelated content delta landed, which is exactly the
+  // "stalls mid-sentence, then dumps everything" report — and why some threads
+  // looked fine and others did not.
+  const clockIds = new Set(messageIds);
+  const rootTurnId = String(message.value.root_turn_id || message.value.turn_id || '').trim();
+  if (rootTurnId) clockIds.add(`tturn:${rootTurnId}:assistant`);
+  let messageScopedVersion = 0;
+  let reasoningVersion = 0;
+  for (const messageId of clockIds) {
+    messageScopedVersion += Number(chatStore.runtimeProjectionContentVersionByMessage?.[messageId] || 0);
+    reasoningVersion += Number(chatStore.runtimeProjectionReasoningVersionByMessage?.[messageId] || 0);
+  }
+  return `${structureVersion}:${messageScopedVersion}:${reasoningVersion}`;
 });
 
+/**
+ * Clock-bound projections for the fold.
+ *
+ * The row object is reused in place and is not reactive, so a value read straight
+ * off it in the template only refreshes when some *other* rendered value happens
+ * to change. A computed that returns the same primitive does not invalidate the
+ * render either — which is why a thought-only tick left the fold on a stale
+ * `reasoning` prop until the next content delta dumped everything at once.
+ * Reading the clock inside each projection makes that value itself the signal.
+ */
+const clocked = <T>(read: () => T) =>
+  computed<T>(() => {
+    void runtimeContentVersion.value;
+    return read();
+  });
+const processCount = clocked(() => Number(message.value.process_count ?? message.value.workflow_count ?? 0) || 0);
+const processActivity = clocked(() => message.value.process_activity ?? null);
+const processRevision = clocked(() => message.value.process_revision);
+const processRefreshRevision = clocked(() => message.value.process_refresh_revision);
+const processStatus = clocked(() => String(message.value.status || ''));
+const processReasoning = clocked(() => String(message.value.reasoning || ''));
+const processReasoningItemId = clocked(() => String(message.value.reasoning_item_id || ''));
+const processReasoningStreaming = clocked(() => Boolean(message.value.reasoningStreaming));
+const processFinalItemId = clocked(() => String(message.value.item_id || message.value.assistant_item_id || ''));
+
 /** 预览与连续正文分离：流式期间保留已读前缀，终态等待全文补齐。 */
+/**
+ * A turn that called tools prints intermediate prose between calls. That prose
+ * belongs to the work-process panel; the reply bubble must only show the
+ * durable answer. Without this gate the live tail (which is per model round)
+ * leaked planning text into the final reply area.
+ */
+const hasWorkflowTools = computed(() => Number(message.value.workflow_count || 0) > 0);
+const bodyStreaming = computed(() =>
+  Boolean(message.value.streaming || message.value.stream_incomplete || message.value.workflowStreaming || message.value.reasoningStreaming)
+);
+/**
+ * 流式尾巴只属于「还在生成」的轮次。轮次落定后正文区已经渲染了同一段文字，
+ * 过程区若继续挂着 live-tail，同一份回答就会在折叠面板里再出现一次，并带着
+ * 那条闪烁光标（`.timeline-live-print::after`）。因此这里以流式时钟为准：
+ * 一旦流结束，live-tail 立即交还给正文区，唯一渲染正文的地方。
+ *
+ * 内容时钟（`runtimeContentVersion`）必须订阅：线程视图行按 id 复用并原地改写，
+ * 只依赖行对象会让这个计算属性停在首帧。
+ */
+const processLiveTail = computed(() => {
+  void runtimeContentVersion.value;
+  if (!hasWorkflowTools.value) return '';
+  if (!bodyStreaming.value) return '';
+  return String(message.value.__thread_live || '');
+});
 const resolveThreadBodyText = (): string => {
   const preview = String(message.value.content || '');
-  if (!message.value.streaming && !message.value.__thread_body) return preview;
+  if (hasWorkflowTools.value) {
+    // A turn that called tools prints prose between calls, so its reply text may
+    // still turn out to be intermediate work. Two rules keep both halves right:
+    //  · while the model is writing (`responding`) it streams in the reply area,
+    //    so the reader sees the answer grow instead of popping in at the end;
+    //  · once the phase is thinking / tool / processing, that text is work in
+    //    progress: it belongs to the process panel only, and the reply area
+    //    yields (it used to keep printing the intermediate round here).
+    if (!bodyStreaming.value) return preview;
+    const phase = String(message.value.process_activity?.kind || '');
+    if (phase === 'thinking' || phase === 'tool' || phase === 'processing') return '';
+    return preview;
+  }
   // A missed window keeps its readable prefix while the body reader heals the
   // gap. Never concatenate a disconnected rolling tail into that prefix.
   const live = String(message.value.__thread_live || '');
+  // A settled row renders the durable answer. Its buffer survives only when it
+  // still holds more text than a capped preview (see `settleLiveStream`), so an
+  // empty buffer — the normal case — must not reach for a stale tail.
+  if (!message.value.streaming && !live) return preview;
   return live.length > preview.length ? live : preview;
 };
 const displayContent = computed(() => {
@@ -410,9 +488,6 @@ const displayContent = computed(() => {
   return String(controller.buildAssistantDisplayContent?.(message.value, translate, body) || '');
 });
 const hasBody = computed(() => Boolean(controller.hasMessageContent?.(displayContent.value)));
-const bodyStreaming = computed(() =>
-  Boolean(message.value.streaming || message.value.stream_incomplete || message.value.workflowStreaming || message.value.reasoningStreaming)
-);
 // 过程条右侧的本轮耗时：运行中逐秒推进，结束后落回权威统计值。
 const processDurationLabel = useTurnDurationLabel(message, bodyStreaming);
 

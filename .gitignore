@@ -134,3 +134,4 @@ metadata_win7.err
 metadata_win7.json
 videos/
 .venv*/
+frontend/dist-new/

@@ -45,8 +45,7 @@ fn bind_model_probes(app: &MainWindow, api: Arc<NativeDesktop>) {
         let model = app.get_model_name_draft().trim().to_string();
         let base_url = app.get_model_base_url_draft().trim().to_string();
         let token = app.get_model_token_draft().trim().to_string();
-        let known_key = !key.is_empty()
-            && app.get_models().iter().any(|entry| entry.key == key);
+        let known_key = !key.is_empty() && app.get_models().iter().any(|entry| entry.key == key);
         let token_override = (!token.is_empty()).then(|| token.clone());
         let weak = app.as_weak();
         let api = context_api.clone();
@@ -87,8 +86,7 @@ fn bind_model_probes(app: &MainWindow, api: Arc<NativeDesktop>) {
         let model = app.get_model_name_draft().trim().to_string();
         let base_url = app.get_model_base_url_draft().trim().to_string();
         let token = app.get_model_token_draft().trim().to_string();
-        let known_key = !key.is_empty()
-            && app.get_models().iter().any(|entry| entry.key == key);
+        let known_key = !key.is_empty() && app.get_models().iter().any(|entry| entry.key == key);
         let token_override = (!token.is_empty()).then(|| token.clone());
         let weak = app.as_weak();
         let api = voice_api.clone();
@@ -1473,7 +1471,10 @@ mod tests {
             presets.invoke_default_provider("llm".into()),
             "openai_compatible"
         );
-        assert_eq!(presets.invoke_default_provider("".into()), "openai_compatible");
+        assert_eq!(
+            presets.invoke_default_provider("".into()),
+            "openai_compatible"
+        );
     }
 
     #[test]

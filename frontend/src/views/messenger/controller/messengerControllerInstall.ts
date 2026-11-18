@@ -884,7 +884,7 @@ function installMessengerControllerStateRefs(ctx: MessengerControllerContext): v
 
   ctx.MARKDOWN_CACHE_LIMIT = 280;
 
-  ctx.MARKDOWN_STREAM_THROTTLE_MS = 80;
+  ctx.MARKDOWN_STREAM_THROTTLE_MS = 32;
 
   ctx.CONTACT_VIRTUAL_ITEM_HEIGHT = 60;
 

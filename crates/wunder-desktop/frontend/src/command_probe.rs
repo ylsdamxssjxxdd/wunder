@@ -20,7 +20,9 @@ compact_command_result_for_model services::tools::command 2>&1 | tail -8";
 fn entry(lines: usize) -> wunder_desktop::NativeWorkflowEntry {
     let output = (0..lines)
         .map(|index| {
-            format!("test services::tools::command::case_{index} ... ok  第 {index} 行把面板撑长一点")
+            format!(
+                "test services::tools::command::case_{index} ... ok  第 {index} 行把面板撑长一点"
+            )
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -42,16 +44,14 @@ fn entry(lines: usize) -> wunder_desktop::NativeWorkflowEntry {
     )
 }
 
-pub fn run(
-    app: &crate::MainWindow,
-    directory: PathBuf,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(app: &crate::MainWindow, directory: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&directory)?;
     crate::demo::install(app);
     if let Ok(requested) = std::env::var("WUNDER_COMMAND_PROBE_SIZE") {
         if let Some((width, height)) = requested.split_once('x') {
             if let (Ok(width), Ok(height)) = (width.parse::<f32>(), height.parse::<f32>()) {
-                app.window().set_size(slint::LogicalSize::new(width, height));
+                app.window()
+                    .set_size(slint::LogicalSize::new(width, height));
             }
         }
     }
@@ -78,11 +78,7 @@ pub fn run(
     fold.summary = "执行中 · 1 项".into();
     rows.push(fold);
     let base = rows.len();
-    let mut bar = crate::demo::fixture_row(
-        crate::timeline::KIND_GROUP,
-        base,
-        "执行工具 2 次",
-    );
+    let mut bar = crate::demo::fixture_row(crate::timeline::KIND_GROUP, base, "执行工具 2 次");
     bar.payload = base as i32;
     bar.open = true;
     bar.group_open = true;

@@ -54,9 +54,22 @@ VK.film({{
 }})();
 """
 
+def cli_flags(argv):
+    """--help 一定有用；不带工程目录算用法错误；打错的开关直接报错，别悄悄建出一个默认外观的工程。"""
+    sys.path.insert(0, str(ROOT / "engine"))
+    from render import HELP_TOKENS, print_help, reject_flags
+    if any(tok in HELP_TOKENS for tok in argv): print_help(0, __doc__)
+    reject_flags(argv, known={"--world", "--force"}, scan=False)
+    if not argv: print_help(2, __doc__)
+    if argv[0].startswith("-"):
+        sys.exit("第一个参数是工程目录，例如：python new_film.py <工程目录> --world C")
+    if "--world" in argv and argv.index("--world") + 1 >= len(argv):
+        sys.exit("--world 后面写 C 或 B")
+
+
 if __name__ == "__main__":
     a = sys.argv[1:]
-    if len(a) < 1 or a[0].startswith("-"): sys.exit(__doc__)
+    cli_flags(a)
     proj = Path(a[0]).resolve(); world = (a[a.index("--world") + 1] if "--world" in a else "C").upper()
     if world not in WORLD: sys.exit("--world 只能是 C 或 B")
     proj.mkdir(parents=True, exist_ok=True)

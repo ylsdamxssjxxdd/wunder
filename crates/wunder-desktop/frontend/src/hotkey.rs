@@ -76,10 +76,10 @@ mod platform {
     };
     // windows-sys 只给 64 位架构提供 `SetWindowLongPtrW`，32 位（Win7 x86）必须
     // 用 `SetWindowLongW`；两者返回的都是旧过程地址。
-    #[cfg(target_pointer_width = "32")]
-    use windows_sys::Win32::UI::WindowsAndMessaging::SetWindowLongW;
     #[cfg(target_pointer_width = "64")]
     use windows_sys::Win32::UI::WindowsAndMessaging::SetWindowLongPtrW;
+    #[cfg(target_pointer_width = "32")]
+    use windows_sys::Win32::UI::WindowsAndMessaging::SetWindowLongW;
 
     const VK_F1: usize = 0x70;
     const VK_F2: usize = 0x71;

@@ -26,6 +26,9 @@
   python render.py <工程> --check-band [间隔]   只做像素检查；手写 ctx 也查，--band-strict 连辉光一起查
   python render.py <工程> --overlap [间隔]      遮挡检查：按实际相交面积报告，可用 fr.mark(..., {allow:'名字'}) 放行
   python render.py --diff A.mp4 B.mp4           两版逐帧差分 → A_diff.jpg + 时刻表
+  python render.py --help                       打印这份用法就退出（不读工程、不渲染）
+  python render.py <工程> --resume              兼容旧命令：续渲本来就是默认行为，加不加一样
+  python render.py <工程> --keep-parts          兼容旧命令：分段默认保留，加不加一样
   python render.py <工程> --serve               起本地预览 http://127.0.0.1:8765/?play；?t=41 冻结在 41 秒
                                                 （8765 被占用时自动换端口；页面出错会显示错误层）
 
@@ -337,6 +340,75 @@ def as_int(text, label, default):
     if text is None: return default
     try: return int(float(text))
     except (TypeError, ValueError): sys.exit(f"{label} 需要整数，收到：{text!r}")
+
+# ---------- 用法自检：--help 一定有回应，打错的开关不许静默开渲 ----------
+LONG_FLAG_RE = re.compile(r'"(--[A-Za-z][A-Za-z0-9-]*)"')
+HELP_TOKENS = {"-h", "--help", "help"}
+# 旧版命令里的写法，现在等于默认行为：照收，不报错，也不再偷偷改渲染范围。
+COMPAT_FLAGS = {"--resume", "--keep-parts"}
+
+def source_flags(path=None):
+    """本文件里作为开关出现过的 "--名字" 字面量。
+
+    新增开关只要写进代码就被认可，不用另维护一份白名单；单横线的 ffmpeg 参数不算开关。
+    """
+    try:
+        text = Path(path or __file__).read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    return set(LONG_FLAG_RE.findall(text))
+
+def flag_tokens(argv):
+    """命令行里真正像开关的 token（--名字 / -字母）；负数和普通取值不算。"""
+    out = []
+    for tok in argv:
+        if not isinstance(tok, str) or not tok.startswith("-"): continue
+        if re.fullmatch(r"-\d+(?:\.\d+)?", tok): continue
+        out.append(tok.split("=", 1)[0])
+    return out
+
+def print_help(code=0, doc=None):
+    """打印用法：--help / 不带参数时走 stdout 并退 0；用法出错时走 stderr 并退非零。
+
+    doc 用调用方自己的 __doc__——audio.py、new_film.py 共用这套自检，不能打出 render.py 的用法。
+    """
+    print(((doc if doc is not None else __doc__) or "").strip(), file=sys.stdout if code == 0 else sys.stderr)
+    sys.exit(code)
+
+def reject_flags(argv, requires=None, known=(), scan=True):
+    """不认识的开关、少了下文的开关一律报错退出，绝不落到「渲整片」的默认分支。
+
+    `--help`、手滑打错的开关以前都被静默忽略，然后从头渲整片。
+    """
+    import difflib
+    allowed = set(known) | (source_flags() if scan else set()) | HELP_TOKENS
+    given = flag_tokens(argv)
+    problems = []
+    for tok in dict.fromkeys(given):
+        if tok in allowed: continue
+        near = difflib.get_close_matches(tok, sorted(allowed), n=2, cutoff=0.6)
+        problems.append(f"  {tok} 不是可用开关" + (f"，是不是 {' 或 '.join(near)}？" if near else ""))
+    for flag, hosts in (requires or {}).items():
+        if flag in given and not hosts & set(given):
+            problems.append(f"  {flag} 要跟 {' 或 '.join(sorted(hosts))} 一起用")
+    if problems:
+        print("参数有误，没有开始渲染：", *problems, sep="\n", file=sys.stderr)
+        print(f"\n用 python {Path(sys.argv[0]).name} --help 看全部命令", file=sys.stderr)
+        sys.exit(2)
+
+# 只有配着主命令才有意义的开关：单独出现说明用户想干别的，别顺手把整片渲一遍。
+USAGE_REQUIRES = {
+    "--mark": {"--stills"},
+    "--from": {"--sheet"},
+    "--samples": {"--diff"},
+    "--out": {"--diff", "--clips"},
+    "--safe-y": {"--check-safe", "--check-band"},
+    "--band-diff": {"--check-safe", "--check-band"},
+    "--band-ratio": {"--check-safe", "--check-band"},
+    "--band-strict": {"--check-safe", "--check-band"},
+    "--kb": {"--web"},
+    "--force": {"--concat"},
+}
 
 # ---------- 进度与视频信息 ----------
 class Progress:
@@ -1695,7 +1767,9 @@ def diff_videos(a, b, samples=8, out=None):
 # ---------- 主入口 ----------
 if __name__ == "__main__":
     a = sys.argv[1:]
-    if not a: sys.exit(__doc__)
+    if any(tok in HELP_TOKENS for tok in a): print_help(0)
+    reject_flags(a, USAGE_REQUIRES, COMPAT_FLAGS)
+    if not a: print_help(0)
     crf = as_float(flag_value(a, "--crf", "14"), "--crf")
     preset = flag_value(a, "--preset", "medium")
     clean = "--clean-parts" in a

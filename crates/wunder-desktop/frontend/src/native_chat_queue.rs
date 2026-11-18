@@ -564,7 +564,10 @@ mod tests {
     fn a_strip_label_is_always_one_line() {
         // A pasted block arrives with its own newlines; the row is a fixed
         // 28px line and must not lay them out as a tall text block.
-        assert_eq!(strip_label("第一行\n第二行\t第三行"), "第一行 第二行 第三行");
+        assert_eq!(
+            strip_label("第一行\n第二行\t第三行"),
+            "第一行 第二行 第三行"
+        );
         assert_eq!(strip_label("  前导空白\n\n  收尾\n"), "前导空白 收尾");
         assert_eq!(strip_label(""), "");
         assert_eq!(strip_label(" \n\t "), "");

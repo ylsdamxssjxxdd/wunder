@@ -75,7 +75,6 @@ const LABELS: Record<string, string> = {
   'compact': '压缩',
   // 英文界面下压缩条目的标题来自 i18n 文案，不是工具标识名。
   'context compaction': '压缩',
-  'context_compaction': '压缩',
   '子智能体控制': '子代理',
   'subagent_control': '子代理',
   '会话线程控制': '线程',

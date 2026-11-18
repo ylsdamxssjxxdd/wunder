@@ -59,7 +59,10 @@ const bumpSessionClock = (store: ProjectionVersionStore, sessionId: string) => {
 
 const DEFAULT_PROJECTION_INVALIDATION_DELAY_MS = 24;
 const DEFAULT_PROJECTION_CONTENT_INVALIDATION_DELAY_MS = 24;
-const DEFAULT_PROJECTION_REASONING_INVALIDATION_DELAY_MS = 150;
+// Thinking is a plain text body, not Markdown: a two-frame window keeps the
+// thought growing continuously (≈30 updates/s) at the cost of one text-node
+// swap per tick, instead of landing in visible lumps.
+const DEFAULT_PROJECTION_REASONING_INVALIDATION_DELAY_MS = 33;
 const STREAM_CONTENT_DEBUG_SLOW_MS = 48;
 
 const flushRuntimeProjectionContentVersion = (store: ProjectionVersionStore) => {

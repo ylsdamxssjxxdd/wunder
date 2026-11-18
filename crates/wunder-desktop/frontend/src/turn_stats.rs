@@ -154,7 +154,12 @@ pub fn with_status(metrics: Vec<Metric>, state: &str) -> Vec<Metric> {
     });
     // The round badge sits right next to the state so it stays put while the
     // status chip changes during a long turn.
-    result.extend(metrics.iter().filter(|metric| metric.key == "round").cloned());
+    result.extend(
+        metrics
+            .iter()
+            .filter(|metric| metric.key == "round")
+            .cloned(),
+    );
     result.extend(metrics.into_iter().filter(|metric| metric.key != "round"));
     result
 }
@@ -347,7 +352,10 @@ mod tests {
         // The reader must see which user round a running answer belongs to;
         // a status frame may reorder the footer but must never drop the round.
         let live = with_status(with_user_round(Vec::new(), 57), "tool_running");
-        assert_eq!(values(&live), vec![("status", "使用工具中"), ("round", "57")]);
+        assert_eq!(
+            values(&live),
+            vec![("status", "使用工具中"), ("round", "57")]
+        );
 
         let settled = with_status(with_user_round(Vec::new(), 57), "任务完成");
         assert_eq!(values(&settled), vec![("round", "57")]);

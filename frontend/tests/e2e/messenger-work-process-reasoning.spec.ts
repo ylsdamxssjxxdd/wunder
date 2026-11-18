@@ -74,11 +74,10 @@ test('new live reasoning is appended after durable process entries', async ({ pa
 
     const thoughts = bubble.locator('.tl-thinking');
     await expect(thoughts).toHaveCount(2);
-    // 行内不再渲染摘要与省略号动画：收起的思考行只有标签与右侧指标。
+    // 收起行不再显示右侧摘要或省略号：只有标签与右侧指标，正文只在展开区。
     await expect(thoughts.locator('.tl-thinking-summary')).toHaveCount(0);
     await expect(thoughts.locator('.tl-thinking-ellipsis')).toHaveCount(0);
-    await expect(thoughts.nth(0)).not.toContainText('Earlier completed thought.');
-    await expect(thoughts.nth(0)).not.toContainText('New live thought.');
+    await expect(thoughts.nth(0).locator('.tl-thinking-text')).toHaveCount(0);
     await expect(thoughts.nth(1)).toHaveClass(/is-streaming/);
     await expect(thoughts.locator('.tl-thinking-metrics')).toHaveCount(2);
     await thoughts.nth(0).locator('.tl-thinking-head').click();

@@ -44,6 +44,7 @@
               <span class="composer-task-elapsed">{{ elapsed(task) }}</span>
             </button>
             <button
+              v-if="!task.synthetic"
               class="composer-task-stop"
               type="button"
               :disabled="terminatingTaskIds.has(task.commandSessionId)"
@@ -106,7 +107,9 @@ import { ElMessage } from 'element-plus';
 
 import MessageSubagentPanel from '@/components/chat/MessageSubagentPanel.vue';
 import { getSessionCommandSessions, terminateSessionCommandSession } from '@/api/chat';
+import { registerWsGlobalEventHandler } from '@/utils/ws';
 import { getSessionMessages } from '@/stores/chatRuntimeState';
+import { threadViewSlots } from '@/realtime/chat/threadViewStore';
 import { useI18n } from '@/i18n';
 import { useChatStore } from '@/stores/chat';
 import {
@@ -128,7 +131,86 @@ const { t } = useI18n();
 const chatStore = useChatStore();
 const commandStore = useCommandSessionStore();
 const sessionId = computed(() => String(props.sessionId || chatStore.activeSessionId || '').trim());
-const tasks = computed(() => commandStore.listBySession(sessionId.value).filter(task => task.status === 'running'));
+/**
+ * 命令会话事件在云端可能以“无请求归属”的方式到达，broker 列表也可能只在
+ * 结束时才更新；这里额外从当前会话的进行中工具条目推断正在执行的命令，
+ * 让底部指示器在命令一开始就显示计数。
+ */
+type ComposerTaskRow = CommandSessionRuntimeEntry & { synthetic?: boolean };
+const runningCommandRuns = computed<ComposerTaskRow[]>(() => {
+  const cached = sessionId.value === String(chatStore.activeSessionId || '').trim()
+    ? chatStore.messages
+    : getSessionMessages(sessionId.value);
+  const slots = threadViewSlots(sessionId.value) || [];
+  const fromView = slots.flatMap(slot => [slot.assistant]).filter(Boolean);
+  const rows: ComposerTaskRow[] = [];
+  const seenItems = new Set<string>();
+  for (const message of [...fromView, ...(Array.isArray(cached) ? cached : [])]) {
+    const items = Array.isArray(message?.process_items) ? message.process_items : [];
+    for (const item of items) {
+      if (!item || item.kind !== 'tool_call' || String(item.status || '') !== 'running') continue;
+      const payload = item.payload || {};
+      const itemId = String(item.item_id || '');
+      if (itemId && seenItems.has(itemId)) continue;
+      if (itemId) seenItems.add(itemId);
+      const tool = String(payload.tool || payload.tool_name || item.tool || '');
+      if (!/exec|command|shell|terminal|bash/i.test(tool)) continue;
+      const command = String(payload.command || payload.cmd || payload.args?.command || payload.args?.cmd || '').trim();
+      rows.push({
+        synthetic: true,
+        commandSessionId: `tool:${String(item.item_id || command || rows.length)}`,
+        toolCallId: String(item.tool_call_id || payload.tool_call_id || ''),
+        userId: '', sessionId: sessionId.value, workspaceId: '',
+        commandIndex: null,
+        command: command || t('chat.composer.backgroundTasksCount', { count: 1 }),
+        cwd: String(payload.cwd || ''),
+        shell: '', launchMode: '', tty: false, interactive: false,
+        status: 'running', seq: 0, startedAt: '', updatedAt: '', endedAt: '',
+        exitCode: null, timedOut: false, error: '',
+        stdoutBytes: 0, stderrBytes: 0, ptyBytes: 0,
+        stdoutDroppedBytes: 0, stderrDroppedBytes: 0, ptyDroppedBytes: 0,
+        stdoutTail: '', stderrTail: '', ptyTail: '', outputTail: ''
+      });
+    }
+  }
+  return rows;
+});
+const tasks = computed<ComposerTaskRow[]>(() => {
+  const known = commandStore.listBySession(sessionId.value).filter(task => task.status === 'running');
+  const knownToolCalls = new Set(
+    known.map(task => String(task.toolCallId || '').trim()).filter(Boolean)
+  );
+  const inferred = runningCommandRuns.value.filter(run => {
+    const toolCallId = String(run.toolCallId || '').trim();
+    return !toolCallId || !knownToolCalls.has(toolCallId);
+  });
+  return [...known, ...inferred];
+});
+/**
+ * 命令会话的 start/delta/exit 可能以“无请求归属”的方式到达（broker 重放、
+ * 请求切换），多路复用找不到 request 时会把它们交给这个全局处理器，
+ * 指示器才不会长期停在 0。
+ */
+const unregisterCommandEvents = registerWsGlobalEventHandler((type, dataText) => {
+  if (!String(type || '').startsWith('command_session_')) return;
+  let payload: any = null;
+  try { payload = JSON.parse(dataText); } catch { return; }
+  const inner = payload?.data && typeof payload.data === 'object' ? payload.data : payload;
+  if (!inner || typeof inner !== 'object') return;
+  const target = String(payload?.session_id || inner.session_id || sessionId.value || '').trim();
+  if (!target) return;
+  if (type === 'command_session_delta') {
+    commandStore.appendDelta(
+      target,
+      inner.command_session_id || inner.commandSessionId,
+      inner.stream,
+      inner.delta,
+      inner
+    );
+    return;
+  }
+  commandStore.upsertSnapshot(target, inner);
+});
 const visibleTasks = computed(() => tasks.value.slice(0, MAX_ROWS));
 const taskCount = computed(() => tasks.value.length);
 const loadedSubagents = ref<Record<string, unknown>[]>([]);
@@ -269,6 +351,10 @@ const removeSubagentListener = onSubagentPoolChanged(changedSession => {
 const clock = setInterval(() => {
   if (taskCount.value > 0) nowMs.value = Date.now();
 }, 1000);
+/*
+ * 运行态只由事件与进行中工具条目推断，不用 broker 列表回灌：云端在命令
+ * 运行期返回的快照仍是 exited，回灌会把刚出现的 running 立刻抹掉。
+ */
 const subagentReconcile = setInterval(() => {
   if (subagents.value.some(item => isSubagentItemActive(item)) && sessionId.value) {
     void loadSubagents(sessionId.value, true);
@@ -283,6 +369,7 @@ watch(sessionId, target => {
   void loadSubagents(target);
 }, { immediate: true });
 onBeforeUnmount(() => {
+  unregisterCommandEvents();
   clearInterval(clock);
   clearInterval(subagentReconcile);
   clearCloseTimer('tasks');

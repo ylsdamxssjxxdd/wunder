@@ -25,10 +25,16 @@ pub fn tool_label(tool: &str) -> String {
     let mapped = match tool.trim() {
         "读取文件" | "read_file" | "read files" => "读取",
         "写入文件" | "write_file" => "写入",
-        "文本编辑" | "编辑文件" | "apply_patch" | "应用补丁" | "edit_file" | "edit_file2"
-        | "text_editor" | "text_edit" | "str_replace_editor" | "str_replace_based_edit_tool" => {
-            "编辑"
-        }
+        "文本编辑"
+        | "编辑文件"
+        | "apply_patch"
+        | "应用补丁"
+        | "edit_file"
+        | "edit_file2"
+        | "text_editor"
+        | "text_edit"
+        | "str_replace_editor"
+        | "str_replace_based_edit_tool" => "编辑",
         "列出文件" | "list_files" | "list_file" => "列出",
         "文件名匹配" | "glob" | "glob_files" => "匹配",
         "搜索内容" | "search_content" | "search_files" => "搜索",
@@ -81,7 +87,8 @@ pub fn is_command_tool(tool: &str) -> bool {
 /// 同一条命令的动作，右侧已经给出命令文本与轮询序号，行首再分叉只会让一件事读成
 /// 三件事。命令行侧仍按动作细分（引擎的 `tool_verbs`），那是终端里的说明词。
 pub fn tool_label_for_entry(entry: &NativeWorkflowEntry) -> String {
-    if is_command_tool(&entry.title) || wunder_server::tools::is_command_session_tool(&entry.title) {
+    if is_command_tool(&entry.title) || wunder_server::tools::is_command_session_tool(&entry.title)
+    {
         return "执行".into();
     }
     tool_label(&entry.title)
@@ -246,7 +253,11 @@ fn glyph_width(ch: char) -> f32 {
             | 0xFFE0..=0xFFE6
             | 0x20000..=0x2FFFD
     );
-    if wide { 12.0 } else { 6.2 }
+    if wide {
+        12.0
+    } else {
+        6.2
+    }
 }
 
 /// Shorten a chip label to what the chip can actually print. The chip keeps
@@ -729,9 +740,7 @@ pub fn restore_folds(rows: &mut [TimelineRow], previous: &VecModel<TimelineRow>)
     // The root is the durable identity of that same fold, so fall back to it.
     let old_by_root: std::collections::HashMap<_, _> = previous
         .iter()
-        .filter(|row| {
-            row.kind == crate::timeline::KIND_PROCESS && !row.process_root.is_empty()
-        })
+        .filter(|row| row.kind == crate::timeline::KIND_PROCESS && !row.process_root.is_empty())
         .map(|row| (row.process_root.clone(), row))
         .collect();
     for row in rows.iter_mut() {
@@ -778,7 +787,9 @@ pub fn restore_folds(rows: &mut [TimelineRow], previous: &VecModel<TimelineRow>)
             // The same fold under its durable identity: carry the reader's
             // choice only. The previous row's entries belong to the other key
             // and stay with it; the page this row requests supplies its own.
-            let open = old_by_root.get(&row.process_root).map(|previous| previous.open);
+            let open = old_by_root
+                .get(&row.process_root)
+                .map(|previous| previous.open);
             if let Some(open) = open {
                 row.open = open;
             }
@@ -940,7 +951,10 @@ fn is_read_image_entry(entry: &NativeWorkflowEntry) -> bool {
 fn read_image_fact_summary(entry: &NativeWorkflowEntry, target: &str) -> String {
     let mut parts: Vec<String> = Vec::new();
     if target.is_empty() {
-        let name = file_name(&entry.preview).chars().take(64).collect::<String>();
+        let name = file_name(&entry.preview)
+            .chars()
+            .take(64)
+            .collect::<String>();
         if !name.is_empty() {
             parts.push(name);
         }
@@ -962,7 +976,10 @@ fn read_image_fact_summary(entry: &NativeWorkflowEntry, target: &str) -> String 
 /// 识别，英文行同样处理。
 fn is_default_media_fact(line: &str) -> bool {
     ["图像", "image", "体积", "size"].iter().any(|label| {
-        line == *label || line.strip_prefix(label).is_some_and(|rest| rest.starts_with(' '))
+        line == *label
+            || line
+                .strip_prefix(label)
+                .is_some_and(|rest| rest.starts_with(' '))
     })
 }
 
@@ -1222,15 +1239,17 @@ mod tests {
         };
         // 运行时把读图工具注册成中文规范名，芯片必须照样认出它是文件类工具，
         // 否则折叠行只剩「图像 1536×1024 · 体积 313 KB」而看不出看的是哪张图。
-        let cropped = entry(&[
-            "读图工具 · 完成",
-            "fixture/shot.png",
-            "图像 1536×1024",
-            "体积 313 KB · PNG",
-            "裁切 0,0,400,300",
-            "缩放 0.5×",
-        ]
-        .join("\n"));
+        let cropped = entry(
+            &[
+                "读图工具 · 完成",
+                "fixture/shot.png",
+                "图像 1536×1024",
+                "体积 313 KB · PNG",
+                "裁切 0,0,400,300",
+                "缩放 0.5×",
+            ]
+            .join("\n"),
+        );
         let (target, _) = tool_target(&cropped);
         assert_eq!(target, "fixture/shot.png");
         assert_eq!(target_label(&target), "shot.png");
@@ -1240,13 +1259,15 @@ mod tests {
         );
 
         // 默认读法没有差别可说：折叠行是「看图 + 文件名」，尺寸与体积留在详情里。
-        let plain = entry(&[
-            "读图工具 · 完成",
-            "fixture/shot.png",
-            "图像 1536×1024",
-            "体积 313 KB · PNG",
-        ]
-        .join("\n"));
+        let plain = entry(
+            &[
+                "读图工具 · 完成",
+                "fixture/shot.png",
+                "图像 1536×1024",
+                "体积 313 KB · PNG",
+            ]
+            .join("\n"),
+        );
         let (target, _) = tool_target(&plain);
         assert_eq!(tool_row_summary(&plain, &target), "");
     }

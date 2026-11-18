@@ -6,12 +6,12 @@ use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     rc::Rc,
-    sync::{Arc, mpsc::sync_channel},
+    sync::{mpsc::sync_channel, Arc},
     time::Duration,
 };
 use wunder_desktop::{
-    NativeDesktop,
     native::{NativeProcessItem, NativeProcessPage},
+    NativeDesktop,
 };
 
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
@@ -622,7 +622,10 @@ mod tests {
         apply_page(
             &mut row,
             NativeProcessPage {
-                items: vec![item("fixture-running", "running"), item("fixture-done", "completed")],
+                items: vec![
+                    item("fixture-running", "running"),
+                    item("fixture-done", "completed"),
+                ],
                 ..Default::default()
             },
             2,
@@ -651,7 +654,10 @@ mod tests {
         apply_page(
             &mut row,
             NativeProcessPage {
-                items: vec![item("fixture-running", "completed"), item("fixture-done", "completed")],
+                items: vec![
+                    item("fixture-running", "completed"),
+                    item("fixture-done", "completed"),
+                ],
                 ..Default::default()
             },
             2,

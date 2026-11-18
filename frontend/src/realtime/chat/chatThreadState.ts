@@ -481,8 +481,13 @@ function applyTailFrame(state: ChatThreadState, frame: ThreadItemTailFrame): Cha
     : completed.length;
   if (frame.offset !== -1 && frame.offset !== position) {
     // offset < position: already covered by a completed item or an earlier
-    // append; offset > position: hole — wait for the next completed item.
-    return DROPPED_TAIL;
+    // append (replay) — idempotent drop.
+    if (frame.offset < position) return DROPPED_TAIL;
+    // offset > position: a chunk was lost upstream (lossy online queue or a
+    // coalesced frame). Re-anchor at the server cursor so the rest of the
+    // answer keeps streaming; the completed item heals the missing range.
+    writeFieldTail(state, itemId, field, frame.offset, text);
+    return CHANGED_CONTENT;
   }
   const baseOffset = current && current.text ? current.offset : position;
   writeFieldTail(state, itemId, field, baseOffset, (current ? current.text : '') + text);

@@ -6,7 +6,7 @@ export const WORKSPACE_RESOURCE_PREVIEW_TEXT_MAX_BYTES = 512 * 1024;
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'wmf', 'emf']);
 const PDF_EXTENSIONS = new Set(['pdf']);
-const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a']);
+const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'flac', 'aac', 'ogg', 'oga', 'opus', 'm4a', 'weba']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm']);
 const MODEL_EXTENSIONS = new Set(['glb', 'gltf']);
 const DRAWIO_EXTENSIONS = new Set(['dio', 'drawio', 'drawio.xml']);
@@ -220,8 +220,11 @@ const AUDIO_MIME_TYPES: Record<string, string> = {
   flac: 'audio/flac',
   m4a: 'audio/mp4',
   mp3: 'audio/mpeg',
+  oga: 'audio/ogg',
   ogg: 'audio/ogg',
-  wav: 'audio/wav'
+  opus: 'audio/ogg',
+  wav: 'audio/wav',
+  weba: 'audio/webm'
 };
 
 const VIDEO_MIME_TYPES: Record<string, string> = {

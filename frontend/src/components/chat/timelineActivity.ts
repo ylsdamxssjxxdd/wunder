@@ -4,9 +4,9 @@ export type ProcessActivity = { kind: string; item_id?: string; tool?: string; c
 type Translate = (key: string, params?: Record<string, unknown>) => string;
 
 /**
- * 思考内容的一行预览：只供收起状态下的批次条（过程/批次标题右侧）使用。
- * 思考条目行内不渲染摘要，避免流式增量反复改写文本造成整行抖动。
- * A bounded tail keeps the collapsed batch line from copying a long thought.
+ * 思考内容的一行预览：供收起状态下的条目行与批次条右侧摘要使用。
+ * 只取有界尾部并压平空白，行内再用 CSS 省略，避免整段思考进入 DOM。
+ * A bounded tail keeps the collapsed row from copying a long thought.
  */
 export const reasoningPreview = (text: string): string => {
   let start = Math.max(0, text.length - 640);

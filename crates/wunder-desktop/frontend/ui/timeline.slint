@@ -1020,6 +1020,14 @@ export component TimelineView inherits Rectangle {
     // Live scroll offset of the timeline viewport, published for the native
     // smoke checks (they assert the position holds while the user reads back).
     out property <length> scroll-y: rows-scroll.content-y;
+    // Per-thread viewport memory, restored by the native layer when a thread is
+    // reopened: the offset the reader left it at, or a request to land on its
+    // tail (a thread never scrolled back). The revision — not the value — is the
+    // trigger, because two threads can hold the same offset and the request must
+    // still land instead of looking like "nothing changed".
+    in property <int> scroll-restore-revision: 0;
+    in property <length> scroll-restore-y: 0px;
+    in property <bool> scroll-restore-tail: false;
     callback load-older();
     /// Right-click on transcript text. The menu is drawn at window level so it
     /// can paint over the whole chat column instead of being clipped by a row.
@@ -1047,6 +1055,19 @@ export component TimelineView inherits Rectangle {
     }
     pure function at-tail() -> bool {
         rows-scroll.content-y - root.tail-y() >= -1px && rows-scroll.content-y - root.tail-y() <= 1px
+    }
+    // Viewport restore in flight: the target offset and the bounded number of
+    // frames left to settle it. `restore-pending` also keeps the scrolled
+    // handler from mistaking the restoration's own intermediate offsets for the
+    // reader scrolling.
+    private property <length> restore-target: 0px;
+    private property <bool> restore-pending: false;
+    private property <int> restore-passes: 0;
+    pure function clamp-scroll(y: length) -> length {
+        clamp(y, root.tail-y(), 0px)
+    }
+    function apply-restore() {
+        rows-scroll.content-y = root.clamp-scroll(root.restore-target);
     }
     // Push the viewport to the newest content on request; the projection calls
     // this when it follows the stream, and the "back to latest" action does too.
@@ -1102,6 +1123,38 @@ export component TimelineView inherits Rectangle {
             root.scroll-to-end();
         }
     }
+    // The restored rows reach the model before Slint has laid them out, so the
+    // first application clamps against the previous transcript height. A few
+    // 16 ms passes settle the offset on the real transcript; the height hook
+    // below catches the layout that lands after the request.
+    restore-timer := Timer {
+        interval: 16ms; running: root.restore-pending && root.restore-passes > 0;
+        triggered => {
+            root.restore-passes -= 1;
+            root.apply-restore();
+            if root.restore-passes <= 0 { root.restore-pending = false; }
+        }
+    }
+    changed scroll-restore-revision => {
+        // Any follow pass still queued belongs to the thread being left; it
+        // must not drag the freshly restored viewport to another thread's tail.
+        root.follow-pending = false;
+        root.follow-output = root.scroll-restore-tail;
+        if root.scroll-restore-tail {
+            // Land on the newest row with the same bounded retries the stream
+            // follow uses, so a thread left at its tail reopens at the tail
+            // instead of at whatever offset the previous thread held.
+            root.restore-pending = false;
+            root.follow-passes = 2;
+            root.follow-pending = true;
+            root.follow-scrolled = false;
+        } else {
+            root.restore-target = root.scroll-restore-y;
+            root.restore-passes = 4;
+            root.restore-pending = true;
+            root.apply-restore();
+        }
+    }
     changed stream-revision => {
         if root.follow-output {
             root.follow-passes = 2;
@@ -1119,6 +1172,12 @@ export component TimelineView inherits Rectangle {
             root.follow-passes = 2;
             root.follow-pending = true;
             root.follow-scrolled = false;
+        }
+        // The transcript just changed size under a pending restore (its rows
+        // landed, or the loading row left): the clamped target is meaningful
+        // again, so apply it against the new height.
+        if root.restore-pending {
+            root.apply-restore();
         }
     }
     changed transcript-visible-height => {
@@ -1189,13 +1248,19 @@ export component TimelineView inherits Rectangle {
             }
         }
         scrolled => {
-            root.follow-output = self.visible-height - self.content-height - self.content-y >= -32px;
-            if self.content-y >= -8px && !root.loading && root.rows.length > 0 && !root.older-requested {
-                root.older-requested = true;
-                root.load-older();
-            }
-            if self.content-y < -24px {
-                root.older-requested = false;
+            // While a restore is settling, these offsets are the viewport being
+            // placed on the position its thread was left at — not the reader
+            // scrolling. Treating them as scrolling would flip follow on (and
+            // snap to the tail) or page older history in on its own.
+            if !root.restore-pending {
+                root.follow-output = self.visible-height - self.content-height - self.content-y >= -32px;
+                if self.content-y >= -8px && !root.loading && root.rows.length > 0 && !root.older-requested {
+                    root.older-requested = true;
+                    root.load-older();
+                }
+                if self.content-y < -24px {
+                    root.older-requested = false;
+                }
             }
         }
     }

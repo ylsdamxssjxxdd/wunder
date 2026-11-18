@@ -15,8 +15,8 @@ use slint::{Model, ModelRc, VecModel};
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
-use wunder_desktop::NativeDesktop;
 use wunder_desktop::native::{NativeSubagentCard, NativeWorkflowEntry};
+use wunder_desktop::NativeDesktop;
 
 /// Row kinds; keep in sync with `EntryKind` in ui/timeline.slint.
 pub const KIND_USER: i32 = 0;
@@ -241,6 +241,63 @@ fn blank(kind: i32, id: String) -> TimelineRow {
         error_title: slint::SharedString::default(),
         error_hint: slint::SharedString::default(),
     }
+}
+
+/// Move the already decoded pictures of one block model onto the matching
+/// image cards of another.
+///
+/// The live echo paints the composer's `data:` URLs while the durable row holds
+/// the stored path a click can open, so a handoff between the two must keep the
+/// pixels and take the snapshot's source. Without it a settled bubble either
+/// flashed its "loading" placeholder again or kept a card whose source is the
+/// base64 payload itself.
+fn carry_image_pixels(from: &ModelRc<MdBlock>, to: &ModelRc<MdBlock>) {
+    let pixels: Vec<slint::Image> = from
+        .iter()
+        .filter(|block| block.kind == crate::message_blocks::KIND_IMAGE)
+        .map(|block| block.image)
+        .collect();
+    // Cards pair up by position, so an undecoded picture stays in the list and
+    // is skipped at assignment instead of shifting every later card.
+    if pixels.iter().all(|image| image.size().width == 0) {
+        return;
+    }
+    let mut image_index = 0usize;
+    for index in 0..to.row_count() {
+        let Some(mut block) = to.row_data(index) else {
+            continue;
+        };
+        if block.kind != crate::message_blocks::KIND_IMAGE {
+            continue;
+        }
+        if let Some(image) = pixels.get(image_index) {
+            if block.image.size().width == 0 && image.size().width > 0 {
+                block.image = image.clone();
+                to.set_row_data(index, block);
+            }
+        }
+        image_index += 1;
+    }
+}
+
+/// Block model for one settled user bubble: the snapshot owns the card
+/// sources, the echo keeps the pictures it already decoded. A snapshot that
+/// lost the card (its stored path never persisted) leaves the echo's card in
+/// place so the picture the reader sent stays visible — a `data:` source opens
+/// the inline bytes now, so that fallback is no longer a dead end.
+fn settled_user_blocks(echo: &ModelRc<MdBlock>, durable: &ModelRc<MdBlock>) -> ModelRc<MdBlock> {
+    if image_card_count(durable) == 0 && image_card_count(echo) > 0 {
+        return echo.clone();
+    }
+    carry_image_pixels(echo, durable);
+    durable.clone()
+}
+
+fn image_card_count(blocks: &ModelRc<MdBlock>) -> usize {
+    blocks
+        .iter()
+        .filter(|block| block.kind == crate::message_blocks::KIND_IMAGE)
+        .count()
 }
 
 /// One body block streamed by a model round and frozen when the round ends.
@@ -2159,7 +2216,17 @@ impl Timeline {
                     continue;
                 };
                 if old.text == row.text && old.status_kind == row.status_kind {
-                    row.blocks = old.blocks.clone();
+                    // A user bubble is the one row whose blocks must follow the
+                    // snapshot: the live echo paints the composer's `data:`
+                    // URLs and the durable twin holds the stored path a click
+                    // opens. Reusing the echo wholesale kept the bubble on a
+                    // source that only encodes bytes, so a settled message
+                    // pasted base64 instead of opening its picture.
+                    if row.kind == KIND_USER {
+                        row.blocks = settled_user_blocks(&old.blocks, &row.blocks);
+                    } else {
+                        row.blocks = old.blocks.clone();
+                    }
                 }
                 if old.detail == row.detail {
                     row.sections = old.sections.clone();
@@ -2178,21 +2245,36 @@ impl Timeline {
             // empty images and reparse styling. Rows whose identity and text
             // survived keep their decoded blocks, so a topology change never
             // blinks a picture back to its label.
+            //
+            // User bubbles are the exception: their live echo paints the
+            // composer's `data:` URLs while the snapshot carries the stored
+            // path a click opens, so only the decoded pixels move over.
             let previous: std::collections::HashMap<
                 (slint::SharedString, slint::SharedString),
-                ModelRc<MdBlock>,
+                (i32, ModelRc<MdBlock>),
             > = self
                 .model
                 .iter()
                 .filter(|row| row.blocks.row_count() > 0)
-                .map(|row| ((row.id.clone(), row.text.clone()), row.blocks.clone()))
+                .map(|row| {
+                    (
+                        (row.id.clone(), row.text.clone()),
+                        (row.kind, row.blocks.clone()),
+                    )
+                })
                 .collect();
             if !previous.is_empty() {
                 for row in rows.iter_mut() {
                     if row.blocks.row_count() == 0 {
                         continue;
                     }
-                    if let Some(blocks) = previous.get(&(row.id.clone(), row.text.clone())) {
+                    let Some((kind, blocks)) = previous.get(&(row.id.clone(), row.text.clone()))
+                    else {
+                        continue;
+                    };
+                    if row.kind == KIND_USER || *kind == KIND_USER {
+                        row.blocks = settled_user_blocks(blocks, &row.blocks);
+                    } else {
                         row.blocks = blocks.clone();
                     }
                 }
@@ -2216,15 +2298,6 @@ impl Timeline {
         else {
             return;
         };
-        let pixels: Vec<slint::Image> = old
-            .blocks
-            .iter()
-            .filter(|block| block.kind == crate::message_blocks::KIND_IMAGE)
-            .map(|block| block.image)
-            .collect();
-        if pixels.is_empty() || pixels.iter().all(|image| image.size().width == 0) {
-            return;
-        }
         let Some(target) = rows.iter().rposition(|row| {
             row.kind == KIND_USER
                 && row.text == old.text
@@ -2232,23 +2305,7 @@ impl Timeline {
         }) else {
             return;
         };
-        let blocks = rows[target].blocks.clone();
-        let mut image_index = 0usize;
-        for index in 0..blocks.row_count() {
-            let Some(mut block) = blocks.row_data(index) else {
-                continue;
-            };
-            if block.kind != crate::message_blocks::KIND_IMAGE {
-                continue;
-            }
-            if let Some(image) = pixels.get(image_index) {
-                if image.size().width > 0 {
-                    block.image = image.clone();
-                }
-            }
-            image_index += 1;
-            blocks.set_row_data(index, block);
-        }
+        carry_image_pixels(&old.blocks, &rows[target].blocks);
     }
 
     /// Whether the snapshot's tail is no longer the durable tail the model
@@ -3228,12 +3285,10 @@ mod tests {
         let row = timeline.model.row_data(timeline.footer.get()).unwrap();
         assert_eq!(row.stats.row_data(0).unwrap().key, "status-stopped");
         // 气泡底部只留耗时、速度、额度与积分：工具次数与上下文占用不再出现。
-        assert!(
-            !row
-                .stats
-                .iter()
-                .any(|stat| stat.key == "screwdriver-wrench" || stat.key == "layer-group")
-        );
+        assert!(!row
+            .stats
+            .iter()
+            .any(|stat| stat.key == "screwdriver-wrench" || stat.key == "layer-group"));
         assert_eq!(row.kind, KIND_FOOTER);
         assert_eq!(
             timeline
@@ -3446,11 +3501,9 @@ mod tests {
             .append_reasoning_item("fixture-exec:text-1", "想了")
             .unwrap();
         // 第二段在 delta 通道丢了，第三段带着自己的 offset 到达。
-        assert!(
-            timeline
-                .apply_reasoning_tail("fixture-exec:text-1", 2, "再动手")
-                .unwrap()
-        );
+        assert!(timeline
+            .apply_reasoning_tail("fixture-exec:text-1", 2, "再动手")
+            .unwrap());
         timeline.flush();
         let index = timeline.thinking.as_ref().unwrap().index;
         let row = timeline.model.row_data(index).unwrap();
@@ -3465,11 +3518,9 @@ mod tests {
         timeline
             .append_reasoning_item("fixture-exec:text-1", "想了")
             .unwrap();
-        assert!(
-            !timeline
-                .apply_reasoning_tail("fixture-exec:text-1", 9, "再动手")
-                .unwrap()
-        );
+        assert!(!timeline
+            .apply_reasoning_tail("fixture-exec:text-1", 9, "再动手")
+            .unwrap());
         timeline
             .reconcile_reasoning("fixture-exec:text-1", "想了想，再动手")
             .unwrap();
@@ -4189,13 +4240,11 @@ mod tests {
         let process = timeline.process_bar;
         let first = timeline.thinking.as_ref().unwrap().index;
         assert!(timeline.model.row_data(process).unwrap().visible);
-        assert!(
-            timeline
-                .model
-                .iter()
-                .filter(|row| row.kind == KIND_GROUP)
-                .all(|row| !row.visible)
-        );
+        assert!(timeline
+            .model
+            .iter()
+            .filter(|row| row.kind == KIND_GROUP)
+            .all(|row| !row.visible));
         assert!(
             timeline.model.row_data(first).unwrap().process_open,
             "first reveal unfolds the fold and its rows mirror it"
@@ -4647,6 +4696,120 @@ mod tests {
         );
     }
 
+    /// The live echo's card source is the composer's data URL. A settled bubble
+    /// that kept it looked fine but opened nothing: a click pasted the base64
+    /// payload. Whenever the refresh pairs the durable row with the echo — both
+    /// the patched and the swapped topology pair by id and text — the stored
+    /// path has to win and only the decoded pixels travel.
+    #[test]
+    fn a_paired_refresh_swaps_the_data_url_for_the_stored_attachment_path() {
+        use slint::Model;
+        let pixel = || {
+            slint::Image::from_rgba8(slint::SharedPixelBuffer::clone_from_slice(
+                &[255, 0, 0, 255],
+                1,
+                1,
+            ))
+        };
+        let mut timeline = Timeline::new();
+
+        // Live echo under the id the durable turn will reuse.
+        let row = timeline.begin_turn("fixture-client", "Fixture input");
+        let echo = crate::message_blocks::with_image_cards(
+            "Fixture input",
+            &[("shot.png".into(), "data:image/png;base64,AAAA".into())],
+        );
+        let held = echo.as_any().downcast_ref::<VecModel<MdBlock>>().unwrap();
+        let mut card = held.row_data(held.row_count() - 1).unwrap();
+        card.image = pixel();
+        held.set_row_data(held.row_count() - 1, card);
+        timeline.set_user_blocks(row, echo);
+        timeline.finish(Settle::Done);
+
+        // The snapshot repeats the id and text, then adds the answer row so both
+        // rows are rebuilt (the swap path).
+        let mut durable_user = blank(KIND_USER, "user-turn-fixture-client".into());
+        durable_user.text = "Fixture input".into();
+        durable_user.blocks = crate::message_blocks::with_image_cards(
+            "Fixture input",
+            &[(
+                "shot.png".into(),
+                "workspaces/fixture/chat_attachments/shot.png".into(),
+            )],
+        );
+        let mut answer = blank(KIND_BODY, "answer-fixture".into());
+        answer.text = "done".into();
+        timeline.publish_history(vec![durable_user, answer]);
+
+        let model = timeline.model();
+        let bubble = model
+            .iter()
+            .find(|row| row.id == "user-turn-fixture-client")
+            .expect("settled bubble");
+        let card = bubble
+            .blocks
+            .iter()
+            .find(|block| block.kind == crate::message_blocks::KIND_IMAGE)
+            .expect("attachment card");
+        assert_eq!(
+            card.image_source, "workspaces/fixture/chat_attachments/shot.png",
+            "a settled bubble must open its stored attachment"
+        );
+        assert_eq!(card.image.size().width, 1, "the decoded pixels still carry");
+
+        // A refresh that patches the same row in place keeps the same rule.
+        let mut patched = blank(KIND_USER, "user-turn-fixture-client".into());
+        patched.text = "Fixture input".into();
+        patched.blocks = crate::message_blocks::with_image_cards(
+            "Fixture input",
+            &[(
+                "shot.png".into(),
+                "workspaces/fixture/chat_attachments/shot.png".into(),
+            )],
+        );
+        let mut echo_again = blank(KIND_USER, "user-turn-fixture-client".into());
+        echo_again.text = "Fixture input".into();
+        echo_again.blocks = crate::message_blocks::with_image_cards(
+            "Fixture input",
+            &[("shot.png".into(), "data:image/png;base64,AAAA".into())],
+        );
+        timeline.publish_history(vec![echo_again]);
+        timeline.publish_history(vec![patched]);
+        let bubble = timeline
+            .model()
+            .iter()
+            .find(|row| row.id == "user-turn-fixture-client")
+            .expect("patched bubble");
+        let card = bubble
+            .blocks
+            .iter()
+            .find(|block| block.kind == crate::message_blocks::KIND_IMAGE)
+            .expect("attachment card");
+        assert_eq!(
+            card.image_source, "workspaces/fixture/chat_attachments/shot.png",
+            "an in-place refresh keeps the snapshot's source"
+        );
+
+        // A snapshot that lost the card (its stored path never persisted) keeps
+        // the echo's picture instead of blanking the bubble.
+        let mut lost = blank(KIND_USER, "user-turn-fixture-client".into());
+        lost.text = "Fixture input".into();
+        lost.blocks = crate::message_blocks::from_text("Fixture input");
+        timeline.publish_history(vec![lost]);
+        let bubble = timeline
+            .model()
+            .iter()
+            .find(|row| row.id == "user-turn-fixture-client")
+            .expect("bubble without a durable card");
+        assert!(
+            bubble
+                .blocks
+                .iter()
+                .any(|block| block.kind == crate::message_blocks::KIND_IMAGE),
+            "the echo's picture survives a card the snapshot dropped"
+        );
+    }
+
     /// A fold that already loaded its durable page still has to accept the
     /// row the engine is writing: the page cannot carry a step that has not
     /// been committed, so dropping it left the fold showing only older rounds
@@ -4783,11 +4946,9 @@ mod tests {
             .as_any()
             .downcast_ref::<VecModel<crate::ProcessEntry>>()
             .unwrap();
-        assert!(
-            !children
-                .iter()
-                .any(|entry| entry.detail == "Settled thought")
-        );
+        assert!(!children
+            .iter()
+            .any(|entry| entry.detail == "Settled thought"));
     }
 
     /// Two threads, two reducers. The thread that is off screen keeps its live

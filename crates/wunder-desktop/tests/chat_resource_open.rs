@@ -168,3 +168,39 @@ fn transcript_cards_map_onto_the_workspace_provider_route() {
         Some((workspace.workspace_id.clone(), "notes/plan.md".into()))
     );
 }
+
+/// A bubble can still show the composer's own `data:` URL — the turn is
+/// running, or a parked send never became durable. Clicking that card used to
+/// copy the whole base64 payload to the clipboard; the bytes have to land in a
+/// temp file whose extension lets the system viewer open them instead.
+#[test]
+fn inline_attachments_materialise_into_an_openable_file() {
+    let _serial = serial();
+    let (runtime, _home) = start_isolated().expect("isolated runtime");
+    // The PNG signature, base64 encoded exactly as the composer inlines it.
+    let payload = "iVBORw0KGgo=";
+    let source = format!("data:image/png;base64,{}", payload);
+
+    let path = runtime
+        .inline_resource_target(&source)
+        .expect("inline picture materialises");
+    assert_eq!(
+        path.extension().and_then(|value| value.to_str()),
+        Some("png"),
+        "the extension comes from the media type"
+    );
+    assert_eq!(std::fs::read(&path).unwrap().len(), 8);
+
+    // Repeated clicks reuse one file instead of growing the temp folder.
+    let again = runtime.inline_resource_target(&source).unwrap();
+    assert_eq!(again, path);
+
+    // Anything the composer never sends stays an explicit error instead of a
+    // guess: a non-base64 payload has no bytes, and a plain path is not inline.
+    assert!(runtime
+        .inline_resource_target("data:image/png,pixels")
+        .is_err());
+    assert!(runtime
+        .inline_resource_target("workspaces/pic.png")
+        .is_err());
+}

@@ -343,19 +343,28 @@
             :title="preview.entry?.name || t('workspace.preview.dialogTitle')"
           />
           <audio
-            v-else-if="preview.embed && preview.type === 'audio'"
+            v-else-if="preview.embed && preview.type === 'audio' && preview.url"
             class="workspace-preview-audio"
             :src="preview.url"
             controls
             preload="metadata"
+            @error="handlePreviewMediaError"
           ></audio>
           <video
-            v-else-if="preview.embed && preview.type === 'video'"
+            v-else-if="preview.embed && preview.type === 'video' && preview.url"
             class="workspace-preview-video"
             :src="preview.url"
             controls
             preload="metadata"
+            @error="handlePreviewMediaError"
           ></video>
+          <div
+            v-else-if="preview.type === 'audio' || preview.type === 'video'"
+            class="workspace-preview-media-fallback"
+          >
+            <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+            <span>{{ t('workspace.preview.mediaNotLoadedHint') }}</span>
+          </div>
           <ModelPreview
             v-else-if="preview.embed && preview.type === 'model'"
             :src="preview.url"
@@ -840,8 +849,11 @@ const AUDIO_MIME_TYPES = {
   flac: 'audio/flac',
   m4a: 'audio/mp4',
   mp3: 'audio/mpeg',
+  oga: 'audio/ogg',
   ogg: 'audio/ogg',
-  wav: 'audio/wav'
+  opus: 'audio/ogg',
+  wav: 'audio/wav',
+  weba: 'audio/webm'
 };
 const VIDEO_MIME_TYPES = {
   avi: 'video/x-msvideo',
@@ -1023,7 +1035,7 @@ const CODE_EXTENSIONS = new Set([
   'svelte'
 ]);
 const ARCHIVE_EXTENSIONS = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'bz2']);
-const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a']);
+const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'flac', 'aac', 'ogg', 'oga', 'opus', 'm4a', 'weba']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm']);
 const MODEL_EXTENSIONS = new Set(['glb', 'gltf']);
 const WORKSPACE_DOC_ICON_BASE = `${(import.meta.env.BASE_URL || '/').replace(/\/+$/, '/')}doc-icons`;
@@ -3982,6 +3994,10 @@ const resolveWorkspaceArchiveFailedText = () =>
   desktopLocalMode
     ? t('workspace.download.exportArchiveFailed')
     : t('workspace.download.archiveFailed');
+
+const handlePreviewMediaError = () => {
+  state.preview.hint = t('workspace.preview.mediaDecodeFailedHint');
+};
 
 const openPreviewWithoutOnlyOffice = async (entry) => {
   if (!entry || entry.type !== 'file') return;

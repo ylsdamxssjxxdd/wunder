@@ -1643,6 +1643,20 @@ fn workspace_download_content_type(filename: &str) -> &'static str {
         Some("bmp") => "image/bmp",
         Some("svg") => "image/svg+xml",
         Some("pdf") => "application/pdf",
+        // 音视频必须给出真实类型：媒体元素和部分浏览器（Firefox/Safari）直接按
+        // blob 的类型决定能否解码，octet-stream 会被判成不支持的源。
+        Some("mp3") => "audio/mpeg",
+        Some("wav") => "audio/wav",
+        Some("flac") => "audio/flac",
+        Some("aac") => "audio/aac",
+        Some("m4a") => "audio/mp4",
+        Some("ogg") | Some("oga") | Some("opus") => "audio/ogg",
+        Some("weba") => "audio/webm",
+        Some("mp4") | Some("m4v") => "video/mp4",
+        Some("webm") => "video/webm",
+        Some("mov") => "video/quicktime",
+        Some("mkv") => "video/x-matroska",
+        Some("avi") => "video/x-msvideo",
         Some("txt") => "text/plain; charset=utf-8",
         Some("md") | Some("markdown") => "text/markdown; charset=utf-8",
         Some("json") => "application/json",
@@ -2139,6 +2153,28 @@ mod tests {
         assert_eq!(
             workspace_download_content_type("unknown.bin"),
             "application/octet-stream"
+        );
+    }
+
+    #[test]
+    fn workspace_download_content_type_handles_audio_and_video() {
+        // 音频/视频的下载端点必须给出真实类型，否则 blob 会被标成
+        // application/octet-stream，Firefox/Safari 直接拒绝播放。
+        assert_eq!(workspace_download_content_type("voice.mp3"), "audio/mpeg");
+        assert_eq!(workspace_download_content_type("VOICE.MP3"), "audio/mpeg");
+        assert_eq!(workspace_download_content_type("clip.wav"), "audio/wav");
+        assert_eq!(workspace_download_content_type("loop.flac"), "audio/flac");
+        assert_eq!(workspace_download_content_type("note.aac"), "audio/aac");
+        assert_eq!(workspace_download_content_type("memo.m4a"), "audio/mp4");
+        assert_eq!(workspace_download_content_type("talk.ogg"), "audio/ogg");
+        assert_eq!(workspace_download_content_type("talk.opus"), "audio/ogg");
+        assert_eq!(workspace_download_content_type("movie.mp4"), "video/mp4");
+        assert_eq!(workspace_download_content_type("movie.webm"), "video/webm");
+        assert_eq!(workspace_download_content_type("movie.mov"), "video/quicktime");
+        assert_eq!(workspace_download_content_type("movie.mkv"), "video/x-matroska");
+        assert_eq!(
+            workspace_download_content_type("movie.avi"),
+            "video/x-msvideo"
         );
     }
 }

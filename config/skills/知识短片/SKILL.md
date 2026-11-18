@@ -157,6 +157,7 @@ description: >
 
 ```bash
 python scripts/new_film.py <工程目录> --world C      # 或 B
+python engine/render.py --help             # 忘了命令先看用法（只打印，不渲染）
 python engine/render.py <工程目录> --sheet 3 8 15 22  # 指定时刻拼一张；--sheet 16 是均匀 16 帧
 python engine/render.py <工程目录> --stills 5.9 18.1  # 原尺寸截几帧
 python engine/render.py <工程目录> --stills 5.9 --mark 船  # 截帧并画元素包围盒（先用 fr.mark('船', …) 命名）

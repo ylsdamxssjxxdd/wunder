@@ -642,17 +642,19 @@ test('tail frames validate UTF-16 offsets: zero, continuous, hole, covered and -
   }));
   assert.equal(composeItemText(state(), 'turn-t:text-1', 'content'), '你好，世界😀');
 
-  // Hole: offset ahead of the tail position is dropped until a block heals it.
+  // Hole: an offset ahead of the tail position is accepted and re-anchors it —
+  // dropping the frame froze every later delta (the "answer stops halfway" bug).
+  // The next durable block supplies the missing range.
   apply('thread_item_tail', wireTail({
     item_id: 'turn-t:text-1', field: 'content', offset: 12, text: '未来'
   }));
-  assert.equal(composeItemText(state(), 'turn-t:text-1', 'content'), '你好，世界😀');
+  assert.equal(composeItemText(state(), 'turn-t:text-1', 'content'), '未来');
 
   // Covered: offset behind the tail position is dropped as a replay.
   apply('thread_item_tail', wireTail({
     item_id: 'turn-t:text-1', field: 'content', offset: 3, text: '重复'
   }));
-  assert.equal(composeItemText(state(), 'turn-t:text-1', 'content'), '你好，世界😀');
+  assert.equal(composeItemText(state(), 'turn-t:text-1', 'content'), '未来');
 
   // offset -1 is arrival-order append (tool/command output without durable
   // offsets) and builds on the field tail in arrival order.
@@ -677,7 +679,7 @@ test('tail frames validate UTF-16 offsets: zero, continuous, hole, covered and -
     payload: { item_id:'turn-t:tool-1',turn_id:'turn-t',kind:'tool_call',status:'completed',revision:2,output:'durable-output' }
   }));
   assert.equal(composeItemText(state(), 'turn-t:tool-1', 'output'), 'durable-output');
-  assert.equal(composeItemText(state(), 'turn-t:text-1', 'content'), '你好，世界😀');
+  assert.equal(composeItemText(state(), 'turn-t:text-1', 'content'), '未来');
 });
 
 test('interleaved model-round tails remain isolated inside one turn assistant bubble', () => {

@@ -497,7 +497,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 match result {
                     Ok(()) => {
                         app.set_archive_detail_open(false);
-                        crate::feedback::success(&app, "归档线程已永久删除", "Archived thread deleted");
+                        crate::feedback::success(
+                            &app,
+                            "归档线程已永久删除",
+                            "Archived thread deleted",
+                        );
                         app.invoke_refresh_expert();
                         app.invoke_refresh_chat();
                     }

@@ -22,6 +22,7 @@ engine/
 
 ```bash
 python scripts/new_film.py <工程目录> --world C|B     # 建工程：index.html + 一份没有画面的 film.js 骨架
+python engine/render.py --help                     # 只打印用法就退出（不渲染）
 python engine/render.py <工程> --serve                  # 预览 http://127.0.0.1:8765/?play；?t=41 冻结在 41 秒
 python engine/render.py <工程> --stills 2.5 8.5 21      # 截几帧 → review/
 python engine/render.py <工程> --sheet 16               # 全片均匀 16 帧拼一张 → review/sheet.jpg
@@ -53,6 +54,8 @@ python engine/audio.py  <工程>                          # 合成声音 + 合�
 python engine/audio.py  <工程> --refresh-events         # 先自动重导事件表再合成
 python engine/audio.py  <工程> --bgm 曲子.mp3 -8        # 垫现成配乐（-8 dB），事件音照叠
 ```
+
+`--help`（或 `-h`）任何时候都只打印用法就退出，不读工程、不渲染；写错的开关、少了下文的开关（如只给 `--mark` 不给 `--stills`）会打印「参数有误」并退 2，不会落到「渲整片」的默认分支。
 
 `--jobs` 每段由子进程自己写 `.done` 标记（工程源码指纹 + 分段区间），父进程被杀时已渲完的段仍然有效；
 默认续渲只跳过指纹一致且非空的分段，`--fresh` 强制全部重渲。分段默认保留，方便改一镜只重渲一镜；

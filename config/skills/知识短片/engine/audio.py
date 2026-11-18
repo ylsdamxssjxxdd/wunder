@@ -218,9 +218,18 @@ def check_events_source(proj, a):
             sys.exit(f"音效 {name} @ {when}s 超出 0–{end}s；检查 film.js 的时刻。")
     return spec
 
+def cli_flags(argv):
+    """--help / 不带工程 / 打错的开关先在这里拦下：音频会覆盖 renders/final.mp4，不能猜着干。"""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from render import HELP_TOKENS, print_help, reject_flags
+    if any(tok in HELP_TOKENS for tok in argv): print_help(0, __doc__)
+    reject_flags(argv, known={"--bgm", "--wav-only", "--refresh-events"}, scan=False)
+    if not argv: print_help(0, __doc__)
+
+
 if __name__ == "__main__":
     a = sys.argv[1:]
-    if not a: sys.exit(__doc__)
+    cli_flags(a)
     proj = Path(a[0]).resolve()
     spec = check_events_source(proj, a)
     bgm = a[a.index("--bgm") + 1] if "--bgm" in a else None

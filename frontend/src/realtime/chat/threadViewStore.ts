@@ -191,7 +191,7 @@ const bodyBytes = (text: string): number => new TextEncoder().encode(text).lengt
  *  text (`live_content`) and the lazy durable body (`hydrated_content`).
  *  Both live outside the server's bounded preview and must survive later
  *  pushes of the same row. */
-function keepLocalBody(previous: ViewMessage | undefined, next: ViewMessage): ViewMessage {
+function keepLocalBody(previous: ViewMessage | undefined, next: ViewMessage, streaming: boolean): ViewMessage {
   if (!previous) return next;
   let out = next;
   const token = bodyToken(next);
@@ -204,13 +204,30 @@ function keepLocalBody(previous: ViewMessage | undefined, next: ViewMessage): Vi
   }
   // Only the same item continues the same stream; a new item starts empty.
   if (previous.item_id === next.item_id) {
-    out = { ...out, ...reconcileThreadStream(previous, out) };
+    out = streaming
+      ? { ...out, ...reconcileThreadStream(previous, out) }
+      : settleLiveStream(previous, out);
   }
   return out;
 }
 /** Reset the local stream view once the durable body is authoritative. */
 function clearLiveStream(message: ViewMessage): ViewMessage {
   return { ...message, live_content: '', live_offset: undefined, tail: '', tail_offset: utf16Units(message.content) };
+}
+/**
+ * Settle the local stream buffer once the turn is no longer running.
+ *
+ * The work-process panel renders `live_content` as a live print, so a buffer
+ * that outlived the stream reprinted the finished answer inside the fold and
+ * kept blinking its caret. A buffer the durable text already covers is dropped
+ * outright; one that is still longer than a capped durable preview is kept only
+ * as readable answer text, never as a live row (the view gates the print on the
+ * stream status).
+ */
+function settleLiveStream(previous: ViewMessage, settled: ViewMessage): ViewMessage {
+  const live = String(previous.live_content || '');
+  if (!live || live.length <= String(settled.content || '').length) return clearLiveStream(settled);
+  return { ...settled, live_content: live, live_offset: previous.live_offset };
 }
 function scheduleBodyHydration(e: Entry, id: string, role: BodyRole): void {
   const row = e.rows.get(id);
@@ -266,14 +283,24 @@ export function applyBodyHydration(key: string, id: string, role: BodyRole, expe
  * read fills the missing range.
  */
 function accumulateLiveStream(message: ViewMessage, delta: string, expected: number, deltaUnits: number): Partial<ViewMessage> {
-  return reconcileThreadStream(message, {
-    content: message.content, tail: delta, tail_offset: expected + deltaUnits
-  });
+  // The live buffer is an append-only view of the current item, not a
+  // contiguity proof. Offset-addressed reconciliation is the durable layer's
+  // job; requiring the store to hold an unbroken prefix made one missing frame
+  // (lossy online queue, coalesced chunk) freeze every later delta, which is
+  // exactly the "no streaming" symptom. A forward gap therefore appends what
+  // arrived and leaves the hole for the completed body to heal.
+  const previous = String(message.live_content || '');
+  const next = previous + String(delta || '');
+  const capped = next.length > LIVE_STREAM_MAX_CHARS ? next.slice(next.length - LIVE_STREAM_MAX_CHARS) : next;
+  return { live_content: capped, live_offset: expected + deltaUnits };
 }
 function carryLocalBody(row: ChatViewRow, previous: ChatViewRow | undefined): ChatViewRow {
   if (!previous) return row;
   // The durable row never carries local accumulation; re-attach it per role.
-  return { ...row, user: keepLocalBody(previous.user, row.user), assistant: keepLocalBody(previous.assistant, row.assistant) };
+  // A settled row keeps no live buffer it no longer needs: that is what made
+  // the work-process fold reprint a finished answer.
+  const streaming = LIVE_ROW_STATUSES.includes(row.status);
+  return { ...row, user: keepLocalBody(previous.user, row.user, streaming), assistant: keepLocalBody(previous.assistant, row.assistant, streaming) };
 }
 function projectRowExecutionHead(e: Entry, row: ChatViewRow): ChatViewRow {
   const turnId = row.execution_turn_id || row.root_turn_id;
@@ -761,6 +788,11 @@ function bindTailAssistant(row: ChatViewRow, itemId: string): boolean {
   const currentRound = modelRound(current);
   // Never let a delayed earlier model round overwrite a newer compact row.
   if (current && tailTurnId(current) === tailTurnId(itemId) && incomingRound >= 0 && currentRound >= 0 && incomingRound < currentRound) return false;
+  // Every model round prints into its own segment: the process panel owns the
+  // intermediate text and the bubble owns the final answer. Carrying the old
+  // round's text forward leaked intermediate output into the reply bubble.
+  // Offsets restart at 0; a missing opener is tolerated by the caller, so the
+  // new segment still starts streaming on its first frame.
   row.assistant = {
     ...row.assistant,
     item_id: itemId,
@@ -785,8 +817,11 @@ export function applyThreadViewTail(key:string,payload:any):boolean {
   if (row) {
     const field = String(p?.field || 'content');
     if (!['content', 'reasoning'].includes(field)) return true;
-    const offsetValue = Number(field === 'reasoning' ? p.reasoning_offset ?? p.offset : p.content_offset ?? p.offset);
-    if (row.assistant.item_id !== id && (!Number.isSafeInteger(offsetValue) || offsetValue !== 0)) return true;
+    // A new model round owns a new item id and its own offset space. Binding it
+    // must not require seeing its very first (offset 0) frame: a dropped or
+    // reordered opener used to strand the rest of the round, which is exactly
+    // the "answer stops halfway" symptom. Any offset can start the item; the
+    // buffer is reset below and the durable body still owns the final text.
     const previousReasoningId = row.reasoning_item_id;
     if (!bindTailAssistant(row, id)) return true;
     if (String(p?.field || 'content') === 'reasoning') {
@@ -800,7 +835,9 @@ export function applyThreadViewTail(key:string,payload:any):boolean {
       const offset = Number(p.reasoning_offset ?? p.offset);
       const cursor = Number(row.assistant.reasoning_offset || 0);
       const expected = Number.isSafeInteger(offset) && offset >= 0 ? offset : cursor;
-      if (!Number.isSafeInteger(expected) || expected < 0 || expected !== cursor) return true;
+      // A replayed frame must not be appended twice; a forward gap (a chunk
+      // dropped or coalesced upstream) must not freeze the rest of the answer.
+      if (!Number.isSafeInteger(expected) || expected < 0 || expected < cursor)return true;
       const next = current + delta;
       const bounded = next.length > 32768 ? next.slice(-32768) : next;
       advanceTailActivity(row, 'thinking');
@@ -809,34 +846,36 @@ export function applyThreadViewTail(key:string,payload:any):boolean {
       row.reasoning_item_id = id;
       if (row.process_count != null && previousReasoningId !== id) row.process_count += 1;
       row.reasoning_count = Math.max(1, Number(row.reasoning_count || 0));
-      e.slots.set(row.root_turn_id, materialize(row));
-      notifyTail(e.key);return true;
+      e.slots.set(row.root_turn_id, materialize(row));notifyTail(e.key);return true;
+
     }
     const offset=Number(p.content_offset??p.offset);
-    const base=Number(p.base_seq??0);
-    if(base>(row.assistant.durable_seq??0))return true;
     const expected=row.assistant.content_offset??row.assistant.content.length;
-    // Do not invent a contiguous answer across lost, duplicated or reordered tails.
-    // The next durable block supplies an authoritative prefix/tail and offset.
-    if(!Number.isSafeInteger(offset)||offset!==expected)return true;
+    // Already-applied frames are idempotent. A forward gap means the server
+    // dropped or coalesced a chunk; accept it and re-anchor on the server
+    // cursor so the remaining text still streams (the durable body heals the
+    // hole). Strict equality made a single lost frame kill the whole answer.
+    if(!Number.isSafeInteger(offset)||offset<expected)return true;
+    const gap = offset > expected;
     const deltaUnits = [...delta].reduce((n, ch) => n + ch.length, 0);
     // Read before the durable head/tail are rewritten: a seed compares the
     // previous head against the offset this frame starts from.
-    const live = accumulateLiveStream(row.assistant, delta, expected, deltaUnits);
+    const live = accumulateLiveStream(row.assistant, delta, offset, deltaUnits);
     const encoder=new TextEncoder();
     const prefix=(s:string)=>{let out='',bytes=0;for(const ch of s){const n=encoder.encode(ch).length;if(bytes+n>2048)break;out+=ch;bytes+=n;}return out;};
     if(offset===row.assistant.content.length && encoder.encode(row.assistant.content).length<2048) {
       row.assistant={...row.assistant,content:prefix(row.assistant.content+delta)};
     } else {
-      const tail=(row.assistant.tail??'')+delta;let out='',bytes=0;for(const ch of [...tail].reverse()){const n=encoder.encode(ch).length;if(bytes+n>2048)break;out=ch+out;bytes+=n;}
+      const tail=gap ? delta : (row.assistant.tail??'')+delta;let out='',bytes=0;for(const ch of [...tail].reverse()){const n=encoder.encode(ch).length;if(bytes+n>2048)break;out=ch+out;bytes+=n;}
       row.assistant={...row.assistant,tail:out};
     }
     advanceTailActivity(row, 'responding');
-    row.assistant={...row.assistant,content_offset:expected+deltaUnits,
+    row.assistant={...row.assistant,content_offset:offset+deltaUnits,
       ...live,
-      tail_offset: expected + deltaUnits,
+      tail_offset: offset + deltaUnits,
       body:row.assistant.body?{...row.assistant.body,bytes:row.assistant.body.bytes+encoder.encode(delta).length}:undefined};
     e.slots.set(row.root_turn_id,materialize(row));notifyTail(e.key);return true;
   }
   return true;
 }
+

@@ -1462,10 +1462,13 @@ button.messenger-sidebar-workspace-row {
   padding: 0;
 }
 
+/* 音频/视频居中用 flex：grid 的 auto 列会让 `width: min(100%, 560px)` 解析成 0，
+   控件因此完全不可见（只在深色/白色舞台上留下一整块空白）。 */
 .workspace-dialog--file-preview .workspace-files-preview.is-audio,
 .workspace-dialog--file-preview .workspace-files-preview.is-video {
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .workspace-files-preview-state {

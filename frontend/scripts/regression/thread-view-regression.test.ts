@@ -61,7 +61,9 @@ clearThreadView(key);generation=beginThreadView(key);
 const live={...row(1,10),status:'running',assistant:{item_id:'fixture-answer-1',content:'😀',durable_seq:5,content_offset:2,body:{body_id:'fixture-answer-1|stream',revision:0,bytes:4}}};
 commitThreadView(key,page([live],10),generation);
 const sendTail=(offset:number,text:string,base_seq=5)=>applyThreadViewTail(key,{item_id:'fixture-answer-1',content_offset:offset,text,base_seq});
-sendTail(2,'fixture',6);assert.equal(threadViewSlots(key)![0].assistant.content,'😀');
+// A frame whose base_seq is ahead of the durable cursor still lands: the store
+// now tolerates a lost opener instead of stranding the rest of the round.
+sendTail(2,'fixture',6);assert.equal(threadViewSlots(key)![0].assistant.content,'😀fixture');
 sendTail(2,'fixture');sendTail(2,'fixture');sendTail(100,'hole');
 assert.equal(threadViewSlots(key)![0].assistant.content,'😀fixture');
 let offset=9;for(let n=0;n<300;n++){sendTail(offset,'😀tail');offset+=6;}
@@ -426,3 +428,34 @@ assert.equal(threadViewSessionVersion(key),firstVersion+1);
 assert.equal(threadViewSessionVersion(otherKey),otherVersion);
 assert.equal(threadViewSlots(otherKey)![0],otherSlot);
 console.log('thread view: split tail notifications are session-scoped and preserve row identity pass');
+
+// A finished turn must not keep publishing its local stream buffer. The work
+// process renders that buffer as a live print, so a stale tail reprinted the
+// answer inside the fold and left its blinking caret on screen after the turn
+// had already settled.
+clearThreadView(key);generation=beginThreadView(key);
+const streamingRow={...row(1,1),status:'running',assistant:{item_id:'fixture-live-1',content:'fixture',content_offset:7}};
+commitThreadView(key,page([streamingRow],1),generation);
+applyThreadViewTail(key,{item_id:'fixture-live-1',field:'content',offset:7,text:' answer'});
+assert.equal(threadViewSlots(key)![0].assistant.__thread_live,'fixture answer');
+applyThreadViewChanges(key,{view_seq:2,rows:[{...streamingRow,revision:2,status:'completed',
+  assistant:{item_id:'fixture-live-1',content:'fixture answer'}}]});
+const settledRow=threadViewSlots(key)![0].assistant;
+assert.equal(settledRow.streaming,false);
+assert.equal(settledRow.content,'fixture answer');
+assert.equal(String(settledRow.__thread_live||''),'');
+assert.equal(String(settledRow.__thread_tail||''),'');
+// The same handoff for a long answer: a capped durable preview keeps the
+// readable buffer, and the settled row still stops offering it as a live row
+// (the view prints it only while the stream is running).
+const capped='an answer that runs past the preview budget'.repeat(20);
+commitThreadView(key,page([{...row(2,11),status:'running',assistant:{item_id:'fixture-live-2',content:capped,content_offset:capped.length}}],11),generation);
+assert.equal(threadViewSlots(key)!.find(s=>s.rootTurnId==='fixture-turn-2')!.assistant.__thread_live,capped);
+applyThreadViewChanges(key,{view_seq:12,rows:[{...row(2,12),status:'completed',
+  assistant:{item_id:'fixture-live-2',content:'short preview'}}]});
+const settledCapped=threadViewSlots(key)!.find(s=>s.rootTurnId==='fixture-turn-2')!.assistant;
+assert.equal(settledCapped.streaming,false);
+assert.equal(settledCapped.content,'short preview');
+assert.equal(settledCapped.__thread_live,capped);
+clearThreadView(key);
+console.log('thread view: a settled turn either drops its live buffer or keeps it as readable text, never as a live row pass');

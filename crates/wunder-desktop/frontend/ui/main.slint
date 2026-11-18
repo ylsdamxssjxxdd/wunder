@@ -993,6 +993,13 @@ export component MainWindow inherits Window {
     in-out property <string> recording-elapsed: "";
     in-out property <bool> recording-pulse: false;
     in-out property <bool> follow-output: true;
+    // Per-thread viewport memory (§7). The native layer records where the reader
+    // left each thread and asks the transcript to land back on that offset when
+    // the thread is reopened; the revision is what makes a repeated request for
+    // the same offset still take effect.
+    in-out property <int> timeline-scroll-restore: 0;
+    in-out property <length> timeline-scroll-y: 0px;
+    in-out property <bool> timeline-scroll-tail: true;
     in-out property <int> stream-updates;
     in-out property <int> stream-bytes;
     in-out property <float> stream-max-ui-ms;
@@ -1451,6 +1458,9 @@ export component MainWindow inherits Window {
                             preview-prompt => { root.open-prompt-preview(); }
                             turn-marks: root.turn-marks;
                             follow-output <=> root.follow-output;
+                            scroll-restore-revision: root.timeline-scroll-restore;
+                            scroll-restore-y: root.timeline-scroll-y;
+                            scroll-restore-tail: root.timeline-scroll-tail;
                             spinning: root.busy;
                             stream-revision: root.stream-updates;
                             toggle(index) => { root.timeline-toggle(index); }

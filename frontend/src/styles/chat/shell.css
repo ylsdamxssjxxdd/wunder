@@ -1517,14 +1517,52 @@
   background: #111a2f;
 }
 
+/* 音频/视频用 flex 居中，不要用 grid + place-items：
+   grid 的隐式单列是 auto 尺寸，item 上的 `width: min(100%, 560px)` 在求列宽时
+   百分比没有确定包含块，Chrome 直接算成 0 宽 —— 控件存在却完全看不见
+   （深色舞台时代表现为「一片黑」，白底时代表现为「一片白」）。 */
 .workspace-preview.is-audio,
 .workspace-preview.is-video {
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .workspace-preview-audio {
   width: min(100%, 560px);
+}
+
+/* 音频预览不套深色舞台：原生控件在深色底上（尤其系统深色主题把控件也画成深色时）
+   会整块看成一团黑，用户无法判断是没加载还是不会播。音频给白底播放器卡片，
+   控件对比度由浏览器保证；`color-scheme: light` 让深色系统下也用亮色控件。 */
+.workspace-preview.embed.is-audio {
+  --chat-text: #1f2937;
+  --chat-muted: #6b7280;
+  color: #1f2937;
+  background: var(--mz-surface, #ffffff);
+  color-scheme: light;
+}
+
+.workspace-preview-audio,
+.workspace-preview-video {
+  color-scheme: light;
+}
+
+.workspace-preview-audio {
+  display: block;
+  min-height: 54px;
+}
+
+/* 媒体拿不到地址或解码失败时的兜底说明，避免只剩一块空白。 */
+.workspace-preview-media-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px;
+  color: var(--chat-muted);
+  font-size: 13px;
+  text-align: center;
 }
 
 .workspace-preview-video {

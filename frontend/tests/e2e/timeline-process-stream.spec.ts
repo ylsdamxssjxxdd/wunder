@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test';
 
+// 这些用例把组件挂到同一个 dev harness 里，共享 pinia / i18n / api adapter 等模块级
+// 单例：并行挂载会让后面的用例读到还没装好的实例（表现为 getActivePinia 报错或
+// 过程页加载失败）。文件内串行执行，文件之间仍可并行。
+test.describe.configure({ mode: 'serial' });
+
 test('expanded thought follows live output without any inline preview and preserves a reader scrolling upward', async ({ page }) => {
   await page.goto('/__e2e/composer-b4');
   const result = await page.evaluate(async () => {
@@ -23,7 +28,7 @@ test('expanded thought follows live output without any inline preview and preser
     await nextTick(); await nextTick();
     const body = host.querySelector<HTMLElement>('.tl-thinking-text')!;
     const followed = body.scrollTop > 0 && body.scrollHeight - body.clientHeight - body.scrollTop < 2;
-    // 行内摘要与随流抖动的省略号已移除：条目只有标签与右侧指标。
+    // 收起行不再渲染任何行内摘要或省略号。
     const noPreview = host.querySelector('.tl-thinking-summary') === null
       && host.querySelector('.tl-thinking-ellipsis') === null;
     body.scrollTop = 0;
@@ -143,7 +148,10 @@ test('settling a live thought reloads its complete durable text without changing
       app.mount(host); await nextTick();
       host.querySelector<HTMLButtonElement>('.timeline-process-head')!.click();
       await until(() => Boolean(host.querySelector('.tl-thinking-head')));
-      host.querySelector<HTMLButtonElement>('.tl-thinking-head')!.click();
+      // The thought of the round that is still running opens by itself; clicking
+      // an already open head collapses it and hides the text asserted below.
+      const liveHead = host.querySelector<HTMLButtonElement>('.tl-thinking-head')!;
+      if (liveHead.getAttribute('aria-expanded') === 'false') liveHead.click();
       await nextTick();
       const live = host.querySelector('.tl-thinking-text')?.textContent;
       settled = true; model.reasoningStreaming = false; model.status = 'completed';
@@ -190,7 +198,8 @@ test('a durable thought and a live preview share one canonical process identity'
       app.mount(host); await nextTick();
       host.querySelector<HTMLButtonElement>('.timeline-process-head')!.click();
       await until(() => host.querySelectorAll('.tl-thinking-head').length === 1);
-      host.querySelector<HTMLButtonElement>('.tl-thinking-head')!.click();
+      const thoughtHead = host.querySelector<HTMLButtonElement>('.tl-thinking-head')!;
+      if (thoughtHead.getAttribute('aria-expanded') === 'false') thoughtHead.click();
       model.reasoning = `${durable} extended`;
       await until(() => host.querySelector('.tl-thinking-text')?.textContent?.includes('extended') ?? false);
       return {
@@ -251,7 +260,9 @@ test('continuous work events refresh within a bounded window and never overwrite
       }
       const entries = host.querySelectorAll('.tl-thinking');
       // 行内摘要已移除：思考内容只在展开后的正文里，逐条点开再断言。
-      host.querySelectorAll<HTMLButtonElement>('.tl-thinking-head').forEach((head) => head.click());
+      // Open whatever is still collapsed: the live round's thought opens itself.
+      host.querySelectorAll<HTMLButtonElement>('.tl-thinking-head')
+        .forEach((head) => { if (head.getAttribute('aria-expanded') === 'false') head.click(); });
       await nextTick(); await nextTick();
       const texts = host.querySelectorAll('.tl-thinking-text');
       return { entries: entries.length, oldUntouched: texts[0]?.textContent?.includes('Fixture shared completed') ?? false,
@@ -303,7 +314,8 @@ test('a bounded live thought binds to the same model round as its full durable p
       app.mount(host); await nextTick();
       host.querySelector<HTMLButtonElement>('.timeline-process-head')!.click();
       await until(() => host.querySelectorAll('.tl-thinking-head').length === 1);
-      host.querySelector<HTMLButtonElement>('.tl-thinking-head')!.click();
+      const settledHead = host.querySelector<HTMLButtonElement>('.tl-thinking-head')!;
+      if (settledHead.getAttribute('aria-expanded') === 'false') settledHead.click();
       await nextTick(); await nextTick();
       return {
         entries: host.querySelectorAll('.tl-thinking-head').length,

@@ -34,12 +34,12 @@
           {{ pageError ? t('chat.timeline.processPageFailed') : loadingMore ? t('chat.timeline.processLoading') : t('chat.timeline.processScrollEarlier') }}
         </div>
         <div class="timeline-group">
-        <div v-for="row in rows" :key="row.key" :data-process-key="row.key">
+        <div v-for="row in displayRows" :key="row.key" :data-process-key="row.key">
           <MessageTimelineThinkingEntry
             v-if="row.kind === 'reasoning'"
             :entry="row.entry"
-            :open="openKeys.has(row.key)"
-            @toggle="toggleKey(row.key)"
+            :open="openKeys.has(row.key) || (row.key === currentReasoningRowKey && !closedReasoningKeys.has(row.key))"
+            @toggle="toggleReasoningRow(row.key)"
           />
           <MessageTimelineToolEntry
             v-else-if="row.kind === 'tool'"
@@ -49,8 +49,18 @@
             :structured-view="structuredViewFor(row.entry)"
             @toggle="toggleKey(row.key)"
           />
-          <div v-else class="timeline-body-block" data-turn-slot="body">
+          <div
+            v-else
+            class="timeline-body-block"
+            :class="{ 'timeline-live-print': row.live }"
+            data-turn-slot="body"
+          >
+            <!-- The row the model is still printing renders as live plain text
+                 in its own place: this is the only copy of that round's prose,
+                 so nothing is appended to the fold a second time. -->
+            <template v-if="row.live">{{ row.text }}</template>
             <MessageMarkdownBody
+              v-else
               :cache-key="`${cacheKeyPrefix}${row.key}`"
               :content="row.text"
               :explicit-content="true"
@@ -66,15 +76,16 @@
         <MessageTimelineThinkingEntry
           v-if="reasoningText && !hasCurrentReasoningRow && !hasNewerItems"
           :entry="reasoningEntry"
-          :open="openKeys.has(currentReasoningRowKey)"
-          @toggle="toggleKey(currentReasoningRowKey)"
+          :open="!liveReasoningClosed"
+          @toggle="toggleLiveReasoning"
         />
         <div v-if="hasNewerItems" class="timeline-process-page-state" role="status">
           {{ pageError ? t('chat.timeline.processPageFailed') : loadingMore ? t('chat.timeline.processLoading') : t('chat.timeline.processScrollLater') }}
         </div>
-        <!-- 有工具轮次的流式尾部：正文区在流式期间让位，活动文本在这里直播，
-             轮次完成后由正文区接管（buildRows 会排除最后一条助手正文，不重复）。 -->
-        <div v-if="liveTail && !hasNewerItems" class="timeline-body-block timeline-live-print">{{ liveTail }}</div>
+        <!-- 有工具轮次的流式尾部：正文区在思考/工具阶段让位，这段文字只在过程区
+             直播，而且必须印在该轮自己的持久行里（见 displayRows / placeLivePrint）。
+             它们还没落库时正文区仍在直播同一段文本，所以这里不再另起一行兜底：
+             一处一轮，绝不同时出现两份。 -->
       </template>
     </div>
   </div>
@@ -84,6 +95,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, triggerRef, watch } from 'vue';
 
 import MessageMarkdownBody from './MessageMarkdownBody.vue';
+import { placeLivePrint } from './livePrintRow';
 import { resolveEntryOpen } from './timelineCommandFold';
 import MessageTimelineThinkingEntry from './MessageTimelineThinkingEntry.vue';
 import MessageTimelineToolEntry from './MessageTimelineToolEntry.vue';
@@ -106,7 +118,7 @@ import { resolveModelRoundMetrics } from '@/utils/modelRoundMetrics';
 type ProcessRow =
   | { kind: 'reasoning'; key: string; entry: TimelineReasoningEntry }
   | { kind: 'tool'; key: string; entry: TimelineToolEntry }
-  | { kind: 'print'; key: string; text: string };
+  | { kind: 'print'; key: string; text: string; live?: boolean };
 
 const props = defineProps<{
   sessionId: string;
@@ -184,7 +196,23 @@ let reloadTimer: number | null = null;
 const refreshGate: ProcessRefreshGateState = { pending: false };
 
 const cacheKeyPrefix = computed(() => `turn-process:${props.sessionId}:${props.turnId}:`);
+/** Row/stream statuses that mean the turn no longer produces output. */
+const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled', 'interrupted', 'rejected', 'stopped'];
+const livePrint = computed(() => {
+  const tail = String(props.liveTail || '');
+  if (!tail) return '';
+  // The live print is a stream-only artifact: once the turn is terminal the
+  // answer block owns the text, so keeping this row would show the same answer
+  // twice and leave its blinking caret behind forever.
+  if (TERMINAL_STATUSES.includes(String(props.status || ''))) return '';
+  return tail;
+});
 const reasoningText = computed(() => String(props.reasoning || '').trim());
+/** Durable row key of the model round that is still printing. */
+const livePrintKey = computed(() => {
+  const id = String(props.finalItemId || '').trim();
+  return livePrint.value && id ? `print:${id}` : '';
+});
 const currentActivity = computed(() => {
   let activity = props.activity;
   if (!activity) {
@@ -205,6 +233,27 @@ const currentActivity = computed(() => {
 const currentReasoningItemId = computed(() => String(props.reasoningItemId || '').trim());
 const fallbackReasoningKey = ref('projected:0');
 const currentReasoningRowKey = computed(() => `reasoning:${currentReasoningItemId.value || fallbackReasoningKey.value}`);
+/** The live row keeps one identity for the whole user turn: every model round
+ * opens a new item id, and keying the row by it collapsed the panel on each
+ * handoff, so the thought text appeared in bursts instead of streaming. */
+const liveReasoningRowKey = computed(() => `reasoning:live:${String(props.turnId || 'turn')}`);
+/** The live thought is open by default: the user opened the work process to
+ * watch it, and hiding it behind a click made the stream look stalled. */
+const liveReasoningClosed = ref(false);
+const toggleLiveReasoning = (): void => {
+  liveReasoningClosed.value = !liveReasoningClosed.value;
+};
+/** Current-round thoughts open by themselves; a manual collapse must stick
+ * even after the row settles, so auto-open needs its own closed set. */
+const closedReasoningKeys = ref(new Set<string>());
+const toggleReasoningRow = (key: string): void => {
+  const autoOpen = key === currentReasoningRowKey.value && !closedReasoningKeys.value.has(key);
+  if (autoOpen) {
+    closedReasoningKeys.value = new Set([...closedReasoningKeys.value, key]);
+    return;
+  }
+  toggleKey(key);
+};
 const hasCurrentReasoningRow = computed(() => rows.value.some(row =>
   row.kind === 'reasoning' && row.key === currentReasoningRowKey.value
 ));
@@ -216,13 +265,88 @@ const currentReasoningMetrics = computed(() => {
     processItems.value.find(entry => entry.item_id === id);
   return item ? resolveModelRoundMetrics(item) ?? undefined : undefined;
 });
+/**
+ * Live thought text per item, kept after that round stops streaming.
+ *
+ * The durable page carries a bounded preview of a thought, so once a round ends
+ * its row could shrink from the live text the reader was just reading to a much
+ * shorter preview — a visible collapse that reads as "the content changed on its
+ * own". Remember the freshest text and never let the row render shorter.
+ */
+const reasoningTailByItem = new Map<string, string>();
+watch(
+  () => [currentReasoningItemId.value, reasoningText.value] as const,
+  ([itemId, text]) => {
+    const id = String(itemId || '').trim();
+    const value = String(text || '');
+    if (!id || !value) return;
+    if (value.length < String(reasoningTailByItem.get(id) || '').length) return;
+    reasoningTailByItem.set(id, value);
+    if (reasoningTailByItem.size > 40) {
+      const oldest = reasoningTailByItem.keys().next().value;
+      if (oldest) reasoningTailByItem.delete(oldest);
+    }
+  },
+  { flush: 'post' }
+);
+/** Freshest known thought text for a reasoning row key (`reasoning:<itemId>`). */
+const settledReasoningText = (key: string): string => {
+  if (!key.startsWith('reasoning:')) return '';
+  return reasoningTailByItem.get(key.slice('reasoning:'.length)) || '';
+};
+
+/** Live text placed into the durable row of the round that is still printing. */
+const livePlacement = computed(() =>
+  placeLivePrint(rows.value, livePrint.value, livePrintKey.value, !hasNewerItems.value)
+);
+/** Overlay the live reasoning tail onto its durable row. The process item is
+ * committed in chunks, so without this overlay the thought body only advanced
+ * when a durable chunk landed and the whole panel looked like it had stopped
+ * streaming. */
+const displayRows = computed<ProcessRow[]>(() => {
+  const text = reasoningText.value;
+  // The live text of the round that is still printing goes into its own durable
+  // row, never into an extra block: one round prints once.
+  const placed = livePlacement.value.rows;
+  const key = currentReasoningRowKey.value;
+  return placed.map(row => {
+    if (row.kind !== 'reasoning') return row;
+    const isCurrent = row.key === key;
+    const live = isCurrent ? text : '';
+    // A finished round keeps the text it streamed: the durable page only carries
+    // a bounded preview, so rendering that alone made the thought visibly shrink
+    // once the round ended. Never render shorter than what was already shown.
+    const cached = settledReasoningText(row.key);
+    const freshest = live.length > cached.length ? live : cached;
+    const nextText = freshest.length > row.entry.text.length ? freshest : row.entry.text;
+    const streaming = row.entry.streaming || (isCurrent && currentReasoningStreaming.value);
+    if (nextText === row.entry.text && streaming === row.entry.streaming) return row;
+    return { ...row, entry: { ...row.entry, text: nextText, streaming } };
+  });
+});
 const reasoningEntry = computed<TimelineReasoningEntry>(() => ({
-  kind: 'reasoning', key: currentReasoningRowKey.value, streaming: currentReasoningStreaming.value,
-  summary: reasoningPreview(reasoningText.value), text: reasoningText.value,
-  metrics: currentReasoningMetrics.value
+  kind: 'reasoning', key: liveReasoningRowKey.value, streaming: currentReasoningStreaming.value,
+  summary: '', text: reasoningText.value,
+  metrics: currentReasoningMetrics.value,
+  // The live row keeps the round label of the item it is printing. Without it a
+  // thought that arrived before its durable row looked like an unlabelled extra
+  // entry sitting next to the previous round's thought.
+  modelRound: currentReasoningRound.value
 }));
+/** Model round of the live thought: the durable item's when it is on the page,
+ * otherwise the round the item id itself carries (`…:text-<round>`). */
+const currentReasoningRound = computed<number | null>(() => {
+  const id = currentReasoningItemId.value;
+  if (!id) return null;
+  const item = (props.processItems || []).find(entry => entry.item_id === id) ||
+    processItems.value.find(entry => entry.item_id === id);
+  const round = Number(flattenItemPayload(item?.payload).model_round ?? item?.model_round);
+  if (Number.isSafeInteger(round) && round > 0) return round;
+  const suffix = Number(id.slice(id.lastIndexOf(':text-') + ':text-'.length));
+  return id.includes(':text-') && Number.isSafeInteger(suffix) && suffix > 0 ? suffix : null;
+});
 const currentReasoningStreaming = computed(() => {
-  if (!props.reasoningStreaming || ['completed','failed','cancelled','interrupted','rejected','stopped'].includes(props.status || '')) return false;
+  if (!props.reasoningStreaming || TERMINAL_STATUSES.includes(String(props.status || ''))) return false;
   const item = (props.processItems || []).find(item => item.item_id === currentReasoningItemId.value) ||
     processItems.value.find(item => item.item_id === currentReasoningItemId.value);
   return !item || item.status === 'running';
@@ -336,7 +460,7 @@ const followLiveTail = (): void => {
     restoredScrollTop = body.scrollTop;
   });
 };
-watch(() => [reasoningText.value, props.reasoningStreaming, props.liveTail], followLiveTail, { flush: 'post' });
+watch(() => [reasoningText.value, props.reasoningStreaming, livePrint.value], followLiveTail, { flush: 'post' });
 // Markdown renders asynchronously. Keep the same anchor through those height
 // changes too, until the reader scrolls again, instead of anchoring empty blocks.
 const restorePageAnchor = (): void => {
@@ -595,6 +719,20 @@ watch(
     rebuildRows();
     restorePageAnchor();
   }
+);
+
+// A tool that just started (or a new model round) is already in the view row's
+// `processItems`. Rebuild the rows from it immediately: waiting for the debounced
+// page refresh left the fold showing the previous phase for the whole first part
+// of a tool run, which reads as "it froze right when the tool started".
+watch(
+  () => props.processItems,
+  () => {
+    if (!open.value || !loaded.value) return;
+    rebuildRows();
+    syncCurrentReasoningRow();
+  },
+  { flush: 'post' }
 );
 
 // Debounce structural/phase changes; individual text deltas patch only their

@@ -142,12 +142,18 @@ export global Theme {
     out property <color> link: #1F6FEB;
     // Document type scale. Deliberately larger than the UI scale: prose at the
     // 13px form size reads as a caption, not an answer.
-    out property <length> font-body: 14px;
-    out property <length> font-code: 12.5px;
-    out property <length> font-h1: 23px;
-    out property <length> font-h2: 19px;
-    out property <length> font-h3: 16px;
-    out property <length> font-h4: 14.5px;
+    //
+    // These follow `font-scale` exactly like the UI scale above. The transcript
+    // body, headings, code and tables all read these tokens, so leaving them
+    // unscaled made the chat-font preference apply to chrome (labels, status,
+    // streaming plain text) but not to a settled answer — most visible on the
+    // phone, where the answer is nearly the whole screen.
+    out property <length> font-body: 14px * font-scale;
+    out property <length> font-code: 12.5px * font-scale;
+    out property <length> font-h1: 23px * font-scale;
+    out property <length> font-h2: 19px * font-scale;
+    out property <length> font-h3: 16px * font-scale;
+    out property <length> font-h4: 14.5px * font-scale;
     out property <length> radius-block: 8px;
     // Prose face. The shell bundles Microsoft YaHei for gb2312 coverage; code
     // falls back to the monospace stack above.

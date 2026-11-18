@@ -253,9 +253,8 @@ pub fn install(app: &MainWindow) {
         // 演示目录是纯内存列表：新增即插入一条完整配置，与真实界面一样
         // 不存在「未保存的草稿行」。
         let mut models: Vec<_> = app.get_models().iter().collect();
-        let key = crate::model_editor::next_model_key(
-            models.iter().map(|entry| entry.key.as_str()),
-        );
+        let key =
+            crate::model_editor::next_model_key(models.iter().map(|entry| entry.key.as_str()));
         let mut entry = crate::entity_state::new_model_card(key.clone());
         entry.model = "new-model".into();
         models.insert(0, entry);

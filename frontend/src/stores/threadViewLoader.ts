@@ -119,7 +119,13 @@ export async function openThreadView(store: any, key: string, options: any = {})
 export async function openThreadViewDetached(store: any, key: string) {
   const sessionId = String(key || '').trim();
   if (!sessionId) return null;
-  if (store.activeSessionId === sessionId || threadViewCommitted(sessionId)) {
+  // A committed window is the only proof that the transcript already owns its
+  // render source. `activeSessionId` is also set by the legacy detail loader on
+  // refresh/deep links, and skipping the open there left the pane rendering
+  // from the stale message array: live tails only reached the runtime
+  // projection, so thoughts and answers appeared as one block at the end of
+  // the turn. Always commit the window before trusting the session id.
+  if (threadViewCommitted(sessionId)) {
     return store.sessions.find((item: any) => item.id === sessionId) || null;
   }
   const existing = detachedOpens.get(sessionId);

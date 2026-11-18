@@ -1969,6 +1969,8 @@ export default {
   'workspace.preview.empty': '暂无预览',
   'workspace.preview.emptyContent': '文件为空',
   'workspace.preview.loadFailedHint': '加载失败',
+  'workspace.preview.mediaDecodeFailedHint': '无法播放：浏览器可能不支持该媒体编码，或文件本身已损坏，可先下载到本地确认',
+  'workspace.preview.mediaNotLoadedHint': '没有取到文件内容，无法播放；请重新打开，或下载后本地播放',
   'workspace.preview.loading': '加载中...',
   'workspace.preview.tooLargeHintLocal': '文件较大，建议在本地应用中直接打开，或导出副本后查看',
   'workspace.preview.tooLargeHint': '文件过大，无法预览',

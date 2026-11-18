@@ -56,6 +56,7 @@
 
     <div v-if="hint" class="workspace-preview-hint">{{ hint }}</div>
     <div v-if="stalePreviewHint" class="workspace-preview-hint">{{ stalePreviewHint }}</div>
+    <div v-if="mediaErrorHint" class="workspace-preview-hint">{{ mediaErrorHint }}</div>
 
     <div
       class="workspace-preview workspace-files-preview"
@@ -92,19 +93,28 @@
         :src="previewUrl"
       ></iframe>
       <audio
-        v-else-if="previewKind === 'audio'"
+        v-else-if="previewKind === 'audio' && previewUrl"
         class="workspace-preview-audio"
         :src="previewUrl"
         controls
         preload="metadata"
+        @error="markMediaError"
       ></audio>
       <video
-        v-else-if="previewKind === 'video'"
+        v-else-if="previewKind === 'video' && previewUrl"
         class="workspace-preview-video"
         :src="previewUrl"
         controls
         preload="metadata"
+        @error="markMediaError"
       ></video>
+      <div
+        v-else-if="previewKind === 'audio' || previewKind === 'video'"
+        class="workspace-preview-media-fallback"
+      >
+        <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+        <span>{{ t('workspace.preview.mediaNotLoadedHint') }}</span>
+      </div>
       <ModelPreview v-else-if="previewKind === 'model'" :src="previewUrl" :active="visible" />
       <iframe
         v-else-if="mode === 'preview' && previewKind === 'html'"
@@ -241,6 +251,21 @@ const stalePreviewHint = computed(() =>
     ? t('workspace.preview.unsavedRenderingHint')
     : ''
 );
+
+/** 音视频解码失败时不要留一块沉默的黑舞台，直接说明是编码/文件问题。 */
+const mediaError = ref(false);
+const mediaErrorHint = computed(() => (mediaError.value ? t('workspace.preview.mediaDecodeFailedHint') : ''));
+
+watch(
+  () => [props.visible, props.path, props.previewUrl],
+  () => {
+    mediaError.value = false;
+  }
+);
+
+const markMediaError = () => {
+  mediaError.value = true;
+};
 
 const toggleMode = () => {
   if (!canToggleMode.value) return;

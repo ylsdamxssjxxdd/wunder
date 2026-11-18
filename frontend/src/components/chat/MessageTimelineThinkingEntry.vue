@@ -18,8 +18,8 @@
         {{ entry.streaming ? t('chat.timeline.thinkingRunning') : t('chat.timeline.thinkingDone') }}
       </span>
       <!--
-        行内不再渲染思考摘要：摘要随流式增量改写会让整行宽度与文本反复抖动，
-        且每帧都要测宽滚动。需要看内容的用户点开后查看完整正文。
+        右侧不再显示摘要：无论流式还是完成，正文只在展开区里读，收起行保持
+        标签 + 右侧指标两段，行宽始终稳定。
       -->
       <!-- 与工具条目同一套右侧列：模型轮次 + 该轮请求的上下文占用 + 思考耗时。 -->
       <span class="tl-thinking-metrics" :class="{ 'is-empty': !roundLabel && !tokenMetric && !durationMetric }">

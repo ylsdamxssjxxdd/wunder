@@ -221,6 +221,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok_or("missing scroll-probe output directory")?;
         return smoke::run_scroll_probe(&app, std::path::PathBuf::from(directory));
     }
+    if first_argument.as_deref() == Some(std::ffi::OsStr::new("--scroll-restore-probe")) {
+        // The transcript is one viewport for whichever thread is on screen;
+        // this proves a switch lands each thread on its own position.
+        let directory = arguments
+            .next()
+            .ok_or("missing scroll-restore-probe output directory")?;
+        return smoke::run_scroll_restore_probe(&app, std::path::PathBuf::from(directory));
+    }
     if first_argument.as_deref() == Some(std::ffi::OsStr::new("--list-probe")) {
         // ListView-specific scroll probe: virtualization shifts work into the
         // frame that reveals each row.

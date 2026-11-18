@@ -517,6 +517,33 @@ impl NativeDesktop {
         open_in_os(&self.chat_resource_target(root_path, source)?)
     }
 
+    /// Open one card whose pixels travel inline (`data:` URL) with the OS
+    /// default application.
+    ///
+    /// The composer echoes a screenshot or a pasted picture into the bubble
+    /// with its own data URL, and a parked or failed send never reaches the
+    /// durable turn that would swap the stored path in. Handing that string to
+    /// the workspace resolvers fails, and the previous external-link fallback
+    /// copied it — so a click pasted megabytes of base64 instead of showing the
+    /// picture. The inline bytes are materialised once and then opened.
+    pub fn open_inline_resource(&self, source: &str) -> Result<()> {
+        open_in_os(&self.inline_resource_target(source)?)
+    }
+
+    /// Materialise one `data:` reference as a temp file and return its path.
+    /// Public so the contract tests can assert the bytes and the extension
+    /// without launching a system application.
+    pub fn inline_resource_target(&self, source: &str) -> Result<PathBuf> {
+        let (mime, bytes) = decode_inline_resource(source)?;
+        let directory = std::env::temp_dir().join(INLINE_RESOURCE_DIR);
+        std::fs::create_dir_all(&directory)?;
+        let path = directory.join(inline_resource_name(&mime, &bytes));
+        if !path.exists() {
+            std::fs::write(&path, &bytes)?;
+        }
+        Ok(path)
+    }
+
     /// Resolve one transcript reference to the workspace document a platform
     /// provider can serve: `(workspace id, workspace-relative path)`.
     ///
@@ -1492,6 +1519,81 @@ fn require_existing(target: PathBuf) -> Result<PathBuf> {
         bail!("文件不存在");
     }
     Ok(target)
+}
+
+/// Temp folder for inline attachments a click materialises. Named after the
+/// feature rather than the process so repeated clicks on the same bubble reuse
+/// one file instead of littering the temp root.
+const INLINE_RESOURCE_DIR: &str = "wunder-attachments";
+/// A pasted picture is capped at 8 MiB by the composer; the decode buffer is
+/// sized generously but never unbounded.
+const MAX_INLINE_RESOURCE_BYTES: usize = 64 * 1024 * 1024;
+
+/// Split one `data:` URL into its media type and decoded bytes. Only the
+/// base64 form is produced by the composer, so anything else is reported
+/// instead of being guessed at.
+fn decode_inline_resource(source: &str) -> Result<(String, Vec<u8>)> {
+    use base64::Engine;
+    let Some(rest) = source.trim().strip_prefix("data:") else {
+        bail!("不是内联附件");
+    };
+    if rest.len() > MAX_INLINE_RESOURCE_BYTES {
+        bail!("内联附件过大，无法打开");
+    }
+    let (meta, payload) = rest
+        .split_once(',')
+        .ok_or_else(|| anyhow!("内联附件缺少数据"))?;
+    let mut parts = meta.split(';');
+    let mime = parts.next().unwrap_or_default().trim().to_ascii_lowercase();
+    let encoded = meta
+        .split(';')
+        .any(|part| part.trim().eq_ignore_ascii_case("base64"));
+    if !encoded {
+        bail!("内联附件不是 base64 编码，无法打开");
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(payload.trim())
+        .map_err(|_| anyhow!("内联附件数据损坏，无法打开"))?;
+    if bytes.is_empty() {
+        bail!("内联附件没有数据");
+    }
+    Ok((mime, bytes))
+}
+
+/// File name for one materialised inline attachment: the content hash keeps
+/// repeated clicks on one bubble on the same file, and the extension comes
+/// from the media type so the OS viewer opens the right program.
+fn inline_resource_name(mime: &str, bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(bytes);
+    let mut name = String::with_capacity(24);
+    for byte in &digest[..8] {
+        name.push(HEX[(byte >> 4) as usize] as char);
+        name.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    name.push('.');
+    name.push_str(inline_resource_extension(mime));
+    name
+}
+
+/// Extension for one inline media type. Unknown types stay a generic `.bin`:
+/// guessing would either hide the file from its viewer or, worse, name it
+/// something executable.
+fn inline_resource_extension(mime: &str) -> &'static str {
+    let base = mime.split(';').next().unwrap_or_default().trim();
+    match base {
+        "image/png" => "png",
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/bmp" => "bmp",
+        "image/svg+xml" => "svg",
+        "application/pdf" => "pdf",
+        "text/plain" => "txt",
+        "application/json" => "json",
+        _ => "bin",
+    }
 }
 
 /// Extensions the transcript turns into a picture or a document card. The list

@@ -321,6 +321,33 @@ export const toChatThreadFrame = (
   return null;
 };
 
+/**
+ * The display window consumed a live tail before the durable reducer saw it, so
+ * mirror the clock bump that reducer would have produced.
+ *
+ * The row a tail patches is reused in place (not reactive). Rows re-render off
+ * these per-message clocks, so skipping the bump left the thought frozen until
+ * some unrelated refresh rebuilt the row — the "stalls, then dumps everything"
+ * symptom, which showed up only on threads rendered straight from the tail.
+ */
+const markThreadViewTailClock = (store: unknown, key: string, payload: unknown): void => {
+  const wire = payload as { data?: { item_id?: unknown; field?: unknown } } | null | undefined;
+  const data = wire?.data ?? (payload as { item_id?: unknown; field?: unknown } | undefined);
+  const itemId = String(data?.item_id ?? '').trim();
+  const rawTurnId = String((payload as { data?: { turn_id?: unknown }; turn_id?: unknown })?.data?.turn_id
+    ?? (payload as { turn_id?: unknown })?.turn_id
+    ?? (itemId.includes(':') ? itemId.slice(0, itemId.lastIndexOf(':')) : itemId)).trim();
+  if (!rawTurnId && !itemId) return;
+  // A tail keys the turn-level assistant row whose id the view materializes.
+  const state = getChatThreadState(key);
+  const item = itemId ? state?.items.get(itemId) : undefined;
+  const turnId = String(item?.turnId || rawTurnId || '');
+  const messageId = turnId ? `tturn:${turnId}:assistant` : `titem:${itemId}`;
+  const field = String(data?.field ?? 'content').trim();
+  if (field === 'reasoning') markRuntimeProjectionReasoningChanged(store, [messageId]);
+  else markRuntimeProjectionContentChanged(store, [messageId]);
+};
+
 const bumpInvalidation = (
   store: unknown,
   key: string,
@@ -489,7 +516,14 @@ export const applyChatThreadServerEvent = (
   // The display window only owns the live tail once it has committed a page.
   // While an open is still in flight (or failed) `applyThreadViewTail` finds no
   // row and would swallow the delta, so fall through to the durable state.
-  if(eventType==='thread_item_tail' && threadViewCommitted(key) && applyThreadViewTail(key,payload))return true;
+  if(eventType==='thread_item_tail' && threadViewCommitted(key) && applyThreadViewTail(key,payload)){
+    // This early return skips the durable reducer, and with it the invalidation
+    // clocks. The row it just patched is not reactive, so without the matching
+    // clock bump nothing re-renders it: the thought froze mid-sentence and then
+    // dumped everything on the next unrelated refresh. Mirror the clock here.
+    markThreadViewTailClock(store, key, payload);
+    return true;
+  }
   if(eventType==='thread_process_item' && threadViewCommitted(key)) return applyThreadViewProcessItem(key,payload);
   if (eventType === 'thread_view_change') {
     const wire = payload as any;

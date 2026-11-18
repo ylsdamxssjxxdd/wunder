@@ -72,7 +72,11 @@ pub(crate) fn classify(message: &str) -> Option<i32> {
     if text.is_empty() || is_chatter(text) {
         return None;
     }
-    Some(if is_failure(text) { KIND_ERROR } else { KIND_INFO })
+    Some(if is_failure(text) {
+        KIND_ERROR
+    } else {
+        KIND_INFO
+    })
 }
 
 /// Progress reports and boot banners. They are replaced by a result later, so
@@ -84,9 +88,29 @@ const QUIET_PREFIXES: &[&str] = &["正在", "本地演示", "Local demo", "hide-
 /// Words that mark a write as something the user must read (a failure, a
 /// rejection or a blocked action) instead of a plain result.
 const FAILURE_MARKERS: &[&str] = &[
-    "失败", "错误", "无法", "不能", "未保存", "异常", "不可用", "不支持", "不允许", "未就绪",
-    "尚未", "为空", "必须", "超出", "已达到", "最多可", "请先", "请填写", "请选择", "请移除",
-    "请勿", "仅支持", "⚠",
+    "失败",
+    "错误",
+    "无法",
+    "不能",
+    "未保存",
+    "异常",
+    "不可用",
+    "不支持",
+    "不允许",
+    "未就绪",
+    "尚未",
+    "为空",
+    "必须",
+    "超出",
+    "已达到",
+    "最多可",
+    "请先",
+    "请填写",
+    "请选择",
+    "请移除",
+    "请勿",
+    "仅支持",
+    "⚠",
 ];
 
 fn is_chatter(text: &str) -> bool {
@@ -115,7 +139,10 @@ mod tests {
     fn failures_surface_as_errors_even_without_the_word_failed() {
         assert_eq!(classify("无法读取会话：disk full"), Some(KIND_ERROR));
         assert_eq!(classify("目录加载失败：denied"), Some(KIND_ERROR));
-        assert_eq!(classify("已归档 2 个线程，其余失败：locked"), Some(KIND_ERROR));
+        assert_eq!(
+            classify("已归档 2 个线程，其余失败：locked"),
+            Some(KIND_ERROR)
+        );
         assert_eq!(classify("请先选择或新建云端线程"), Some(KIND_ERROR));
         assert_eq!(classify("Cron 表达式不能为空"), Some(KIND_ERROR));
     }

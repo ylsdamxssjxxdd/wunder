@@ -284,10 +284,7 @@ pub(crate) fn create_model_now(app: &MainWindow, api: &Arc<NativeDesktop>) {
                     // 新加的配置排到列表最上面：刚点完「添加模型」，视线就在
                     // 列表顶部，不该让人滚到底部去找新增的那一条。
                     crate::native_pages::promote_model(&app, &created_key, &order_api);
-                    let message = app
-                        .global::<crate::I18n>()
-                        .get_st_model_added()
-                        .to_string();
+                    let message = app.global::<crate::I18n>().get_st_model_added().to_string();
                     app.set_status(message.as_str().into());
                     crate::native_pages::show_toast(&app, message, 1);
                     app.invoke_refresh_agents();
@@ -303,8 +300,7 @@ pub(crate) fn create_model_now(app: &MainWindow, api: &Arc<NativeDesktop>) {
 /// 保存当前模型草稿。落库只有这一条路径：表单上的「保存」、回车提交配置名称，
 /// 以及保存排队后的重试；编辑器不再做防抖自动保存。
 fn run_save(app: &MainWindow, api: &Arc<NativeDesktop>) {
-    let inflight =
-        EDITOR.with(|slot| slot.borrow().as_ref().is_some_and(|editor| editor.inflight));
+    let inflight = EDITOR.with(|slot| slot.borrow().as_ref().is_some_and(|editor| editor.inflight));
     if inflight || app.get_model_projecting() {
         return;
     }
@@ -386,14 +382,12 @@ fn run_save(app: &MainWindow, api: &Arc<NativeDesktop>) {
                     // different model than the one it was pinned to.
                     let composer_key = app.get_selected_model_key().to_string();
                     crate::native_pages::apply_settings(&app, settings);
-                    if let Some(index) =
-                        app.get_models().iter().position(|model| model.key == key)
+                    if let Some(index) = app.get_models().iter().position(|model| model.key == key)
                     {
                         app.set_selected_model(index as i32);
                     }
                     if renaming
-                        && (composer_key.is_empty()
-                            || composer_key == draft.original_key.as_str())
+                        && (composer_key.is_empty() || composer_key == draft.original_key.as_str())
                     {
                         crate::native_pages::select_model_key(&app, &key);
                     }

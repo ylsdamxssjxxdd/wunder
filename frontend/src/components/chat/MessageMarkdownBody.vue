@@ -1,6 +1,6 @@
 <template>
   <div
-    v-if="usePlainTextRender || markdownPending"
+    v-if="usePlainTextRender || markdownPending || (streaming && isStreamingTextPreview)"
     ref="plainTextRef"
     class="markdown-body message-markdown-body"
     :class="{
@@ -112,8 +112,8 @@ let disposed = false;
 let historyDetailAbortController: AbortController | null = null;
 const STREAM_RENDER_DEBUG_SLOW_MS = 48;
 const MARKDOWN_RENDER_DEBUG_SLOW_MS = 12;
-const STREAM_TEXT_FLUSH_MIN_MS = 32;
-const PLAIN_TEXT_LAYOUT_THROTTLE_MIN_MS = 220;
+const STREAM_TEXT_FLUSH_MIN_MS = 16;
+const PLAIN_TEXT_LAYOUT_THROTTLE_MIN_MS = 16;
 const HISTORY_MARKDOWN_INITIAL_CHARS = 24000;
 let lastStreamRenderTraceAt = 0;
 let lastStreamRenderTraceSignature = '';
@@ -378,8 +378,13 @@ const renderNow = async () => {
   const cacheKey = normalizedCacheKey.value;
   const plainTextRender = usePlainTextRender.value;
   const streamingTextPreview = isStreamingTextPreview.value;
+  // Streaming always paints incrementally as plain text: restarting the
+  // markdown worker on every chunk made long answers stall at the last
+  // completed render, which read as "the answer froze halfway". Markdown
+  // typesetting lands once the turn settles.
+  const streamPlainText = plainTextRender || (props.streaming && streamingTextPreview);
   traceStreamingRenderSource(source, plainTextRender);
-  if (plainTextRender) {
+  if (streamPlainText) {
     updateVisiblePlainText(source, !streamingTextPreview);
   } else {
     clearPlainTextFlushTimer();
@@ -393,7 +398,7 @@ const renderNow = async () => {
     emit('rendered', buildRenderedPayload(source));
     return;
   }
-  if (plainTextRender) {
+  if (streamPlainText) {
     if (streamingTextPreview) {
       schedulePlainTextLayout();
     } else {
@@ -487,8 +492,9 @@ const scheduleRender = () => {
   }
   const plainTextRender = usePlainTextRender.value;
   const streamingTextPreview = isStreamingTextPreview.value;
+  const streamPlainText = plainTextRender || (props.streaming && streamingTextPreview);
   traceStreamingRenderSource(source, plainTextRender);
-  if (plainTextRender) {
+  if (streamPlainText) {
     updateVisiblePlainText(source, !streamingTextPreview);
   } else {
     clearPlainTextFlushTimer();
@@ -508,7 +514,7 @@ const scheduleRender = () => {
     emit('rendered', buildRenderedPayload(source, cached.html));
     return;
   }
-  if (plainTextRender) {
+  if (streamPlainText) {
     if (streamingTextPreview) {
       schedulePlainTextLayout();
     } else {

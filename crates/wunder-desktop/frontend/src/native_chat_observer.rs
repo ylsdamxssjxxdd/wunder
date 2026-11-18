@@ -418,6 +418,11 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                         .is_some_and(|turn| turn.session == session);
                     current.observation.publish(&app, &timeline, live_here);
                     app.set_session_loading(false);
+                    // The thread's rows are in the model now: hand the viewport
+                    // back the position this thread was left at, or its tail.
+                    // Every thread shares one viewport, so this is what keeps
+                    // one thread's scroll from landing in another.
+                    crate::native_chat::restore_transcript_scroll(&app, &current, &session);
                 }
                 // The thread's last published plan and a pending 问询面板
                 // are durable presentation metadata; both come back with

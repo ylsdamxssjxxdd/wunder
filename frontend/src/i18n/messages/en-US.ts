@@ -1996,6 +1996,10 @@ export default {
   'workspace.preview.empty': 'No preview',
   'workspace.preview.emptyContent': 'File is empty',
   'workspace.preview.loadFailedHint': 'Load failed',
+  'workspace.preview.mediaDecodeFailedHint':
+    'Cannot play: the browser may not support this codec, or the file is damaged. Download it to check locally.',
+  'workspace.preview.mediaNotLoadedHint':
+    'File content was not loaded, so it cannot play. Reopen it or download it to play locally.',
   'workspace.preview.loading': 'Loading...',
   'workspace.preview.tooLargeHintLocal': 'File is large. Open it locally or export a copy to view.',
   'workspace.preview.tooLargeHint': 'File too large to preview',

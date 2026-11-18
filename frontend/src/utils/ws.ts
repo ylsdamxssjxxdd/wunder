@@ -342,6 +342,18 @@ export const consumeWsStream = (
     };
   });
 
+/** Session-scoped side effects (command sessions, workspace invalidations) can
+ * arrive without a live request to own them: the broker may publish under the
+ * request that started the turn, or after that request already settled. Keep a
+ * small global sink so those frames still converge the stores instead of being
+ * dropped at the request boundary. */
+type WsGlobalEventHandler = (eventType: string, dataText: string) => void;
+const globalEventHandlers = new Set<WsGlobalEventHandler>();
+export const registerWsGlobalEventHandler = (handler: WsGlobalEventHandler): (() => void) => {
+  globalEventHandlers.add(handler);
+  return () => globalEventHandlers.delete(handler);
+};
+
 export const createWsMultiplexer = (
   createSocket: () => WebSocket,
   options: MultiplexerOptions = {}
@@ -559,15 +571,40 @@ export const createWsMultiplexer = (
     }
     if (type === 'event') {
       const requestId = normalizeRequestId(payload?.request_id || payload?.requestId);
-      if (!requestId) return;
-      const entry = pending.get(requestId);
-      if (!entry) return;
       const eventPayload = asPayloadRecord(payload?.payload);
       const eventType = resolveWsEventType(eventPayload);
       const normalizedEventType = normalizeEventType(eventType);
+      // Session-scoped side effects (command sessions, workspace invalidations)
+      // are published by the broker, not by the turn that happens to own the
+      // connection. They must survive a missing or already-settled request id,
+      // otherwise the composer task counter never leaves zero. Route them to
+      // the most recently registered live request; the side-effect handlers
+      // are idempotent snapshots.
+      const sessionScoped =
+        normalizedEventType.startsWith('command_session_') ||
+        normalizedEventType === 'workspace_update';
+      // Deliver session-scoped side effects to the global consumers first.
+      // They are idempotent snapshots, so also handing them to a request-bound
+      // consumer is harmless, while a missing request id no longer loses them.
+      if (sessionScoped && globalEventHandlers.size > 0) {
+        const sideText = buildEventText(eventPayload.data);
+        for (const handler of globalEventHandlers) {
+          try {
+            handler(eventType, sideText);
+          } catch {
+            // A broken side-effect consumer must not kill the socket.
+          }
+        }
+      }
+      let entry = requestId ? pending.get(requestId) : undefined;
+      if (!entry && sessionScoped) {
+        for (const candidate of pending.values()) entry = candidate;
+      }
+      if (!entry) return;
       const eventId = String(eventPayload.id || '');
       const dataText = buildEventText(eventPayload.data);
       entry.onEvent(eventType, dataText, eventId);
+      if (!requestId) return;
       const queuedFlag =
         normalizedEventType === 'queued' ||
         normalizedEventType === 'queue_enter' ||

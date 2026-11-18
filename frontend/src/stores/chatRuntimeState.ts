@@ -1760,10 +1760,14 @@ const extractCanonicalStreamData = (payload) => {
     : payload;
 };
 
+const readRecord = (value) => (value && typeof value === 'object' && !Array.isArray(value) ? value : null);
 const normalizeCommandSessionRef = (payload, data) => {
-  for (const source of [data, payload]) {
-    if (!source || typeof source !== 'object' || Array.isArray(source)) continue;
-    const ref = String(source.command_session_id ?? source.commandSessionId ?? '').trim();
+  // WS frames wrap the payload once more (`session_id, timestamp, data}`),
+  // so the command fields can sit one level below the extracted data object.
+  for (const source of [data, data?.data, payload, payload?.data, payload?.data?.data]) {
+    const record = readRecord(source);
+    if (!record) continue;
+    const ref = String(record.command_session_id ?? record.commandSessionId ?? '').trim();
     if (ref) return ref;
   }
   return '';
@@ -1784,11 +1788,7 @@ const applyCommandSessionCanonicalSideEffect = (runtimeStore, sessionId, eventTy
   }
   const commandSessionId = normalizeCommandSessionRef(payload, data);
   if (!commandSessionId) return false;
-  const source = data && typeof data === 'object' && !Array.isArray(data)
-    ? data
-    : payload && typeof payload === 'object' && !Array.isArray(payload)
-      ? payload
-      : {};
+  const source = readRecord(data?.data) ?? readRecord(data) ?? readRecord(payload) ?? {};
   if (normalizedEventType === 'tool_output_delta') {
     // command_session_delta is the authoritative live stream for command sessions.
     // Legacy tool_output_delta still drives workflow projection, but appending it here

@@ -1671,7 +1671,11 @@ const openPreview = async (path: string, name: string, size: number) => {
     const blob = await fetchWorkspacePathBlob(path, {
       preview: METAFILE_EXTENSIONS.has(extension) ? 'png' : undefined
     });
-    preview.previewUrl = URL.createObjectURL(blob.blob);
+    // 下载端点的 Content-Type 未必等于预览类型（音频/视频、元文件转 PNG 都如此），
+    // 这里按预览类型归一化一次：blob 的类型就是媒体元素判断能否解码的依据。
+    preview.previewUrl = URL.createObjectURL(
+      normalizeWorkspacePreviewBlob(blob.blob, kind, extension)
+    );
   } catch (error) {
     preview.error = resolveWorkspaceErrorMessage(error, t('messenger.filesArea.openFailed'));
   } finally {

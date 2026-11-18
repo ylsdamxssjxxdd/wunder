@@ -584,6 +584,15 @@ struct State {
     history_has_more: bool,
     history_loading_older: bool,
     drafts: std::collections::HashMap<String, String>,
+    /// Where the reader left each thread's transcript: `Some(offset)` is a
+    /// viewport held away from the tail, `None` a thread left following its
+    /// newest row. Keyed by thread id.
+    ///
+    /// The transcript is one `ScrollView` bound to whichever thread is on
+    /// screen, so without this the next thread inherited the previous thread's
+    /// offset (and its follow flag), and coming back lost the position the
+    /// reader had been holding. Bounded by the visible conversation list.
+    transcript_scroll: std::collections::HashMap<String, Option<f32>>,
     recording: Option<Recording>,
     list_inflight: Arc<AtomicBool>,
     /// Only the first successful catalogue load may choose an initial thread.
@@ -867,6 +876,10 @@ pub(crate) fn prepare_external_timeline(app: &MainWindow) {
         state.timer.stop();
         state.stopwatch.stop();
         state.lease_refresh_timer.stop();
+        // A cloud page takes over the transcript: park the local thread's
+        // viewport here, before this surface replaces its rows and its offset.
+        let leaving = app.get_active_session_id().to_string();
+        remember_transcript_scroll(app, &mut state, &leaving);
         // The local turn loses its stream here: a cloud page is a different
         // surface, and a reducer with a frozen running row would claim the
         // thread is still streaming when it is next opened. Dropping the
@@ -971,6 +984,11 @@ pub(crate) fn replace_external_timeline(app: &MainWindow, mut rows: Vec<Timeline
             }
         }
         publish_timeline(app, &timeline);
+        if reset {
+            // A cloud page owns the transcript while it is on screen: start it
+            // at its own tail instead of inheriting the local thread's offset.
+            restore_transcript_scroll(app, &state.borrow(), "");
+        }
     });
 }
 
@@ -1025,6 +1043,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         history_has_more: false,
         history_loading_older: false,
         drafts: std::collections::HashMap::new(),
+        transcript_scroll: std::collections::HashMap::new(),
         recording: None,
         list_inflight: Arc::new(AtomicBool::new(false)),
         initial_auto_open: true,
@@ -1188,6 +1207,24 @@ fn bind_timeline(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         if resource.trim().is_empty() {
             return;
         }
+        // A bubble can still be showing the composer's own `data:` URL — the
+        // screenshot echo lives there until the durable turn publishes its
+        // stored path, and a parked or failed send never gets that far. Copying
+        // it to the clipboard (the external-link path below) pasted megabytes
+        // of base64, so the inline bytes are materialised and opened instead.
+        if resource.trim_start().starts_with("data:") {
+            let inline = resource.trim().to_string();
+            let desktop = open_desktop.clone();
+            let weak = app.as_weak();
+            std::thread::spawn(move || {
+                let result = desktop.open_inline_resource(&inline);
+                let _ = weak.upgrade_in_event_loop(move |app| match result {
+                    Ok(()) => app.set_status("已打开附件".into()),
+                    Err(error) => app.set_status(format!("无法打开附件：{}", error).into()),
+                });
+            });
+            return;
+        }
         // Markdown links are clickable, but the desktop shell has no browser
         // bridge: hand the target over through the clipboard and say so, which
         // is more useful than failing with "not a workspace file".
@@ -1320,6 +1357,56 @@ fn publish_live_frame(app: &MainWindow, session: &str, live: &crate::timeline::T
     }
     crate::chat_split::sync_live(app, session, live.model());
     app.set_stream_updates(app.get_stream_updates().wrapping_add(1));
+}
+
+/// Record the viewport the reader is holding in `session` before the window
+/// binds another thread. The transcript is a single viewport for whichever
+/// thread is on screen, so without this the next thread opened at the previous
+/// thread's offset and inherited its follow flag.
+fn remember_transcript_scroll(app: &MainWindow, state: &mut State, session: &str) {
+    // The empty key is the cloud surface, which opens its own page at the tail.
+    if session.is_empty() {
+        return;
+    }
+    // With the window split the single transcript is hidden and its offset is
+    // not what the reader is looking at; panes keep their own scroll state.
+    if app.get_split_count() != 1 {
+        return;
+    }
+    let memo = if app.get_follow_output() {
+        None
+    } else {
+        Some(app.get_scroll_y())
+    };
+    state.transcript_scroll.insert(session.to_string(), memo);
+    if state.transcript_scroll.len() >= 100 {
+        let visible: Vec<String> = app
+            .get_conversations()
+            .iter()
+            .map(|row| row.id.to_string())
+            .collect();
+        state
+            .transcript_scroll
+            .retain(|key, _| visible.iter().any(|id| id == key));
+    }
+}
+
+/// Hand the viewport the position `session` was left at, or its tail when the
+/// thread was left following its newest row. Called once per open, after the
+/// thread's rows reach the model; the view settles the offset over the next
+/// few frames because Slint has not laid those rows out yet.
+fn restore_transcript_scroll(app: &MainWindow, state: &State, session: &str) {
+    match state.transcript_scroll.get(session).copied().flatten() {
+        Some(offset) => {
+            app.set_timeline_scroll_tail(false);
+            app.set_timeline_scroll_y(offset);
+        }
+        None => app.set_timeline_scroll_tail(true),
+    }
+    // The revision is the trigger: two threads can hold the same offset, and a
+    // value that does not change would otherwise look like "nothing to do".
+    let revision = app.get_timeline_scroll_restore().wrapping_add(1);
+    app.set_timeline_scroll_restore(revision);
 }
 
 /// Whether this window owns the live tail of `session`. A parked send and an
@@ -2185,6 +2272,9 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         let previous_session = app.get_active_session_id().to_string();
         if previous_session != id {
             crate::chat_split::release_live(&app, &previous_session);
+            // The transcript is about to show another thread: park the offset
+            // (and whether it was following) with the thread being left.
+            remember_transcript_scroll(&app, &mut state.borrow_mut(), &previous_session);
         }
         clear_initial_history();
         // Thread lease I/O is deliberately deferred to the worker below. On a

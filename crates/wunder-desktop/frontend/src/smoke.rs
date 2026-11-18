@@ -502,6 +502,170 @@ pub fn run_scroll_probe(
     Ok(())
 }
 
+/// `--scroll-restore-probe <dir>`: prove that the transcript puts a thread back
+/// on the viewport it was left at, and that opening a thread left at its tail
+/// does not inherit the offset of the thread before it. The window owns exactly
+/// one transcript viewport for whichever thread is on screen, so this is the
+/// regression check for scroll leaking across a thread switch.
+pub fn run_scroll_restore_probe(
+    app: &MainWindow,
+    directory: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    std::fs::create_dir_all(&directory)?;
+    crate::demo::install(app);
+    // Same fixed-viewport hook as the scroll probe, so a run can be compared
+    // across window sizes: WUNDER_SCROLL_PROBE_SIZE=1600x1000.
+    if let Ok(requested) = std::env::var("WUNDER_SCROLL_PROBE_SIZE") {
+        if let Some((width, height)) = requested.split_once('x') {
+            if let (Ok(width), Ok(height)) = (width.parse::<f32>(), height.parse::<f32>()) {
+                app.window()
+                    .set_size(slint::LogicalSize::new(width, height));
+            }
+        }
+    }
+    app.show()?;
+    // Two long threads, so every tail is far below any offset the probe holds.
+    let mut first = crate::timeline::Timeline::new();
+    first.set_history(crate::demo::near_limit_rows(20, 8, false));
+    let mut second = crate::timeline::Timeline::new();
+    second.set_history(crate::demo::near_limit_rows(12, 8, false));
+    let first_model = first.model();
+    let second_model = second.model();
+    app.set_timeline(first_model.clone());
+    app.set_follow_output(true);
+    // Settle layout before the first measured frame.
+    app.window().take_snapshot()?;
+
+    // Offset the probe holds while "reading back" in a thread. Far enough from
+    // both tails that holding it cannot be confused with following.
+    const HELD: f32 = -1200.0;
+    const SETTLE_FRAMES: u8 = 10;
+    fn request(app: &MainWindow, offset: Option<f32>) {
+        match offset {
+            Some(offset) => {
+                app.set_timeline_scroll_tail(false);
+                app.set_timeline_scroll_y(offset);
+            }
+            None => app.set_timeline_scroll_tail(true),
+        }
+        let revision = app.get_timeline_scroll_restore().wrapping_add(1);
+        app.set_timeline_scroll_restore(revision);
+    }
+
+    let report = Rc::new(RefCell::new(Vec::<String>::new()));
+    let failure = Rc::new(RefCell::new(None::<String>));
+    let phase = Rc::new(RefCell::new(0u8));
+    let frames = Rc::new(RefCell::new(0u8));
+    let held = Rc::new(RefCell::new(0.0f32));
+    let timer = Rc::new(slint::Timer::default());
+    let timer_weak = Rc::downgrade(&timer);
+    let weak = app.as_weak();
+    let report_cb = report.clone();
+    let failure_cb = failure.clone();
+    let phase_cb = phase.clone();
+    let frames_cb = frames.clone();
+    let held_cb = held.clone();
+    timer.start(
+        slint::TimerMode::Repeated,
+        std::time::Duration::from_millis(16),
+        move || {
+            let Some(app) = weak.upgrade() else {
+                let _ = slint::quit_event_loop();
+                return;
+            };
+            *frames_cb.borrow_mut() += 1;
+            if *frames_cb.borrow() < SETTLE_FRAMES {
+                return;
+            }
+            *frames_cb.borrow_mut() = 0;
+            let y = app.get_scroll_y();
+            let mut phase = phase_cb.borrow_mut();
+            match *phase {
+                0 => {
+                    // A long thread left at its tail: the viewport must sit far
+                    // below the offset this probe is about to hold.
+                    report_cb
+                        .borrow_mut()
+                        .push(format!("thread A tail y={y:.1}"));
+                    if y > -100.0 {
+                        *failure_cb.borrow_mut() =
+                            Some(format!("thread A did not land at its tail ({y:.1})"));
+                    }
+                    request(&app, Some(HELD));
+                    *phase = 1;
+                }
+                1 => {
+                    // Reading back in thread A: the requested offset is honoured.
+                    report_cb
+                        .borrow_mut()
+                        .push(format!("thread A held y={y:.1} (requested {HELD:.1})"));
+                    if (y - HELD).abs() > 1.5 {
+                        *failure_cb.borrow_mut() = Some(format!(
+                            "thread A offset {HELD:.1} was not restored ({y:.1})"
+                        ));
+                    }
+                    *held_cb.borrow_mut() = y;
+                    // Switch to thread B, which was left following its tail.
+                    // The held offset must not travel with the switch.
+                    app.set_follow_output(false);
+                    app.set_timeline(second_model.clone());
+                    request(&app, None);
+                    *phase = 2;
+                }
+                2 => {
+                    let held = *held_cb.borrow();
+                    report_cb.borrow_mut().push(format!(
+                        "thread B tail y={y:.1} after leaving A at {held:.1}"
+                    ));
+                    if (y - held).abs() <= 1.5 {
+                        *failure_cb.borrow_mut() =
+                            Some(format!("thread B opened at thread A's offset ({held:.1})"));
+                    }
+                    if y > held - 100.0 {
+                        *failure_cb.borrow_mut() =
+                            Some(format!("thread B did not land at its own tail ({y:.1})"));
+                    }
+                    // Back to thread A: its own offset comes back.
+                    app.set_timeline(first_model.clone());
+                    request(&app, Some(held));
+                    *phase = 3;
+                }
+                _ => {
+                    let held = *held_cb.borrow();
+                    report_cb
+                        .borrow_mut()
+                        .push(format!("thread A reopened y={y:.1} (held {held:.1})"));
+                    if (y - held).abs() > 1.5 {
+                        *failure_cb.borrow_mut() = Some(format!(
+                            "returning to thread A lost its offset ({held:.1} -> {y:.1})"
+                        ));
+                    }
+                    if let Some(timer) = timer_weak.upgrade() {
+                        timer.stop();
+                    }
+                    let _ = slint::quit_event_loop();
+                }
+            }
+        },
+    );
+    app.run()?;
+
+    let text = format!(
+        "{}\n{}",
+        report.borrow().join("\n"),
+        failure.borrow().clone().unwrap_or_else(|| "PASS".into())
+    );
+    std::fs::write(directory.join("scroll-restore.txt"), text.as_bytes())?;
+    if let Some(failure) = failure.borrow().clone() {
+        return Err(failure.into());
+    }
+    println!(
+        "PASS: scroll restore probe wrote {}",
+        directory.join("scroll-restore.txt").display()
+    );
+    Ok(())
+}
+
 /// Scroll a long, non-timeline ListView (the thread sidebar) and report the
 /// same frame samples as the transcript probe. ListView creates its rows on
 /// demand, so this is where per-row instantiation and text shaping show up as
