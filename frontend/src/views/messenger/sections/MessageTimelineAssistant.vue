@@ -454,10 +454,18 @@ const processLiveTail = computed(() => {
   void runtimeContentVersion.value;
   if (!hasWorkflowTools.value) return '';
   if (!bodyStreaming.value) return '';
+  // 正文区正在打印同一段回答（responding）时，过程区不再重复打印：一段文字只有
+  // 一个家——中间过程（思考/工具/整理阶段）在过程区，回答正文在正文区。
+  const phase = String(message.value.process_activity?.kind || '');
+  if (phase !== 'thinking' && phase !== 'tool' && phase !== 'processing') return '';
   return String(message.value.__thread_live || '');
 });
 const resolveThreadBodyText = (): string => {
   const preview = String(message.value.content || '');
+  // 连续实时文本优先：durable 行只带被截断的头/尾窗口（2 KB），正文不能停在
+  // 那一段上等终态正文——那正是「开头一部分卡住、结束时一股脑出来」。
+  const live = String(message.value.__thread_live || '');
+  const continuous = live.length > preview.length ? live : preview;
   if (hasWorkflowTools.value) {
     // A turn that called tools prints prose between calls, so its reply text may
     // still turn out to be intermediate work. Two rules keep both halves right:
@@ -466,19 +474,18 @@ const resolveThreadBodyText = (): string => {
     //  · once the phase is thinking / tool / processing, that text is work in
     //    progress: it belongs to the process panel only, and the reply area
     //    yields (it used to keep printing the intermediate round here).
-    if (!bodyStreaming.value) return preview;
+    if (!bodyStreaming.value) return continuous;
     const phase = String(message.value.process_activity?.kind || '');
     if (phase === 'thinking' || phase === 'tool' || phase === 'processing') return '';
-    return preview;
+    return continuous;
   }
   // A missed window keeps its readable prefix while the body reader heals the
   // gap. Never concatenate a disconnected rolling tail into that prefix.
-  const live = String(message.value.__thread_live || '');
   // A settled row renders the durable answer. Its buffer survives only when it
   // still holds more text than a capped preview (see `settleLiveStream`), so an
   // empty buffer — the normal case — must not reach for a stale tail.
   if (!message.value.streaming && !live) return preview;
-  return live.length > preview.length ? live : preview;
+  return continuous;
 };
 const displayContent = computed(() => {
   void runtimeContentVersion.value;

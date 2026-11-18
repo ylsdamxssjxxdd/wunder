@@ -561,3 +561,72 @@ test('ws multiplexer keeps request open on thread_closed event until turn termin
     restore();
   }
 });
+
+test('live session frames fall over to a surviving lane of the same session', async () => {
+  const restore = installWebSocketMock();
+  try {
+    const { createWsMultiplexer } = await import('../../src/utils/ws');
+    const socket = new FakeWebSocket();
+    const client = createWsMultiplexer(() => socket as unknown as WebSocket, {
+      idleTimeoutMs: 0, pingIntervalMs: 0
+    });
+    const watched: string[] = [];
+    const watchedOtherSession: string[] = [];
+    const sendController = new AbortController();
+    // The display watcher is retired (this is what `sendMessage` does) while the
+    // server keeps publishing live tails on its request id.  Those frames carry
+    // the session id, so they must reach the surviving live lane instead of
+    // being dropped with the retired request.
+    const retired = client.request({
+      requestId: 'watch-retired', sessionId: 'session-a',
+      message: { type: 'watch', request_id: 'watch-retired', session_id: 'session-a' },
+      onEvent: (eventType, data) => watched.push(`${eventType}:${data}`),
+      signal: sendController.signal, closeOnFinal: false
+    });
+    void retired.catch(() => {});
+    client.request({
+      requestId: 'watch-other', sessionId: 'session-b',
+      message: { type: 'watch', request_id: 'watch-other', session_id: 'session-b' },
+      onEvent: (eventType, data) => watchedOtherSession.push(`${eventType}:${data}`),
+      closeOnFinal: false
+    });
+    client.request({
+      requestId: 'send-lane', sessionId: 'session-a',
+      message: { type: 'start', request_id: 'send-lane', session_id: 'session-a' },
+      onEvent: (eventType, data) => watched.push(`${eventType}:${data}`),
+      closeOnFinal: false
+    });
+    socket.open();
+    sendController.abort();
+    await sleep(0);
+    watched.length = 0;
+
+    const tail = (text: string) => ({
+      type: 'event', request_id: 'watch-retired',
+      payload: {
+        event: 'thread_item_tail',
+        data: { session_id: 'session-a', data: { item_id: 'turn:text-1', field: 'content', offset: 0, text } }
+      }
+    });
+    socket.emit(tail('第一段'));
+    socket.emit(tail('第二段'));
+    await sleep(0);
+
+    assert.deepEqual(watched, [
+      'thread_item_tail:{"session_id":"session-a","data":{"item_id":"turn:text-1","field":"content","offset":0,"text":"第一段"}}',
+      'thread_item_tail:{"session_id":"session-a","data":{"item_id":"turn:text-1","field":"content","offset":0,"text":"第二段"}}'
+    ]);
+    assert.deepEqual(watchedOtherSession, []);
+
+    // A control frame must never borrow another lane: settling one of those on a
+    // lane that does not own the turn would end or restart it by accident.
+    socket.emit({
+      type: 'event', request_id: 'watch-retired',
+      payload: { event: 'final', data: { session_id: 'session-a' } }
+    });
+    await sleep(0);
+    assert.equal(watched.length, 2);
+  } finally {
+    restore();
+  }
+});

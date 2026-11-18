@@ -282,17 +282,22 @@ export function applyBodyHydration(key: string, id: string, role: BodyRole, expe
  * A gap in the offset sequence keeps the readable prefix until a bounded body
  * read fills the missing range.
  */
-function accumulateLiveStream(message: ViewMessage, delta: string, expected: number, deltaUnits: number): Partial<ViewMessage> {
+function accumulateLiveStream(message: ViewMessage, delta: string): Partial<ViewMessage> {
   // The live buffer is an append-only view of the current item, not a
   // contiguity proof. Offset-addressed reconciliation is the durable layer's
   // job; requiring the store to hold an unbroken prefix made one missing frame
   // (lossy online queue, coalesced chunk) freeze every later delta, which is
-  // exactly the "no streaming" symptom. A forward gap therefore appends what
-  // arrived and leaves the hole for the completed body to heal.
+  // exactly the "no streaming" symptom. A gap — forward, or backward when the
+  // server restarted this item's offsets — therefore appends what arrived and
+  // leaves the hole for the completed body to heal.
+  //
+  // Its end is the buffer's own length, never the server's offset: a restarted
+  // offset space must not move the window, or a single restart would shift the
+  // base and make every following frame look like a replay.
   const previous = String(message.live_content || '');
   const next = previous + String(delta || '');
   const capped = next.length > LIVE_STREAM_MAX_CHARS ? next.slice(next.length - LIVE_STREAM_MAX_CHARS) : next;
-  return { live_content: capped, live_offset: expected + deltaUnits };
+  return { live_content: capped, live_offset: capped.length };
 }
 function carryLocalBody(row: ChatViewRow, previous: ChatViewRow | undefined): ChatViewRow {
   if (!previous) return row;
@@ -809,6 +814,31 @@ function bindTailAssistant(row: ChatViewRow, itemId: string): boolean {
   row.reasoning_item_id = '';
   return true;
 }
+/**
+ * A live window is an append-only preview addressed by server offsets.
+ *
+ * A frame may only be judged against the text it claims to describe: the same
+ * chunk arriving twice is a replay, and that is the only thing a client may
+ * drop. Comparing against a monotonic cursor instead assumed the server's
+ * offset space never restarts, so a re-created emitter, a retry or a replayed
+ * round (offsets back at 0) dropped *every* following frame until the new
+ * offset caught up with the old cursor. The stream froze at its first part and
+ * the rest appeared when the durable item committed — the "stalls, then dumps
+ * everything" report.
+ */
+function liveWindowContains(
+  text: string,
+  end: number,
+  at: number,
+  chunk: string,
+  units: number
+): boolean {
+  if (!text || !Number.isSafeInteger(end) || !Number.isSafeInteger(at)) return false;
+  const start = end - text.length;
+  if (at < start || at + units > end) return false;
+  return text.slice(at - start, at - start + units) === chunk;
+}
+
 export function applyThreadViewTail(key:string,payload:any):boolean {
   const e=entries.get(key);if(!e)return false;
   const p=payload?.data??payload;const id=String(p?.item_id??'');const delta=String(p?.text??p?.delta??p?.content??'');
@@ -835,14 +865,16 @@ export function applyThreadViewTail(key:string,payload:any):boolean {
       const offset = Number(p.reasoning_offset ?? p.offset);
       const cursor = Number(row.assistant.reasoning_offset || 0);
       const expected = Number.isSafeInteger(offset) && offset >= 0 ? offset : cursor;
-      // A replayed frame must not be appended twice; a forward gap (a chunk
-      // dropped or coalesced upstream) must not freeze the rest of the answer.
-      if (!Number.isSafeInteger(expected) || expected < 0 || expected < cursor)return true;
+      const deltaUnits = [...delta].reduce((n, ch) => n + ch.length, 0);
+      if (!Number.isSafeInteger(expected) || expected < 0) return true;
+      // Only a chunk this window already holds is a replay. Anything else is
+      // appended: a restarted offset space must not freeze the thought.
+      if (liveWindowContains(current, cursor, expected, delta, deltaUnits)) return true;
       const next = current + delta;
       const bounded = next.length > 32768 ? next.slice(-32768) : next;
       advanceTailActivity(row, 'thinking');
       row.assistant = { ...row.assistant, reasoning: bounded,
-        reasoning_offset: expected + [...delta].reduce((n, ch) => n + ch.length, 0) };
+        reasoning_offset: expected + deltaUnits };
       row.reasoning_item_id = id;
       if (row.process_count != null && previousReasoningId !== id) row.process_count += 1;
       row.reasoning_count = Math.max(1, Number(row.reasoning_count || 0));
@@ -851,19 +883,22 @@ export function applyThreadViewTail(key:string,payload:any):boolean {
     }
     const offset=Number(p.content_offset??p.offset);
     const expected=row.assistant.content_offset??row.assistant.content.length;
-    // Already-applied frames are idempotent. A forward gap means the server
-    // dropped or coalesced a chunk; accept it and re-anchor on the server
-    // cursor so the remaining text still streams (the durable body heals the
-    // hole). Strict equality made a single lost frame kill the whole answer.
-    if(!Number.isSafeInteger(offset)||offset<expected)return true;
-    const gap = offset > expected;
     const deltaUnits = [...delta].reduce((n, ch) => n + ch.length, 0);
+    // Already-applied frames are idempotent; every other frame appends. A
+    // forward gap (chunk dropped or coalesced upstream) and a backward one (the
+    // server restarted this item's offset space) both keep streaming, and the
+    // durable body owns the final text either way.
+    if(!Number.isSafeInteger(offset)||offset<0)return true;
+    const liveText = String(row.assistant.live_content || '');
+    const liveEnd = Number(row.assistant.live_offset ?? -1);
+    if (liveWindowContains(liveText, liveEnd, offset, delta, deltaUnits)) return true;
+    const gap = offset > expected;
     // Read before the durable head/tail are rewritten: a seed compares the
     // previous head against the offset this frame starts from.
-    const live = accumulateLiveStream(row.assistant, delta, offset, deltaUnits);
+    const live = accumulateLiveStream(row.assistant, delta);
     const encoder=new TextEncoder();
     const prefix=(s:string)=>{let out='',bytes=0;for(const ch of s){const n=encoder.encode(ch).length;if(bytes+n>2048)break;out+=ch;bytes+=n;}return out;};
-    if(offset===row.assistant.content.length && encoder.encode(row.assistant.content).length<2048) {
+    if(offset===expected && offset===row.assistant.content.length && encoder.encode(row.assistant.content).length<2048) {
       row.assistant={...row.assistant,content:prefix(row.assistant.content+delta)};
     } else {
       const tail=gap ? delta : (row.assistant.tail??'')+delta;let out='',bytes=0;for(const ch of [...tail].reverse()){const n=encoder.encode(ch).length;if(bytes+n>2048)break;out=ch+out;bytes+=n;}

@@ -50,6 +50,8 @@ type WsRequestPayload = {
 
 type PendingEntry = {
   onEvent: StreamEventHandler;
+  /** Session this lane belongs to; live frames may fall over to it. */
+  sessionId: string;
   resolve: () => void;
   reject: (error: unknown) => void;
   settled: boolean;
@@ -103,6 +105,25 @@ const asPayloadRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 
 const normalizeEventType = (eventType: unknown): string => String(eventType || '').trim().toLowerCase();
+
+/**
+ * Live timeline frames belong to a session, not to the request lane that
+ * happened to carry them. The server publishes each tail chunk once per
+ * connection, so a frame addressed to a lane the client already retired must
+ * fall over to another live lane of the same session instead of being dropped.
+ * Terminal and control frames are deliberately absent: settling one of those on
+ * a lane that does not own the turn would end or restart it by accident.
+ */
+const LIVE_SESSION_EVENT_TYPES = new Set([
+  'thread_item_tail',
+  'thread_item_delta',
+  'thread_process_item',
+  'thread_view_change',
+  'thread_view_required',
+  'context_usage',
+  'thread_status',
+  'goal_updated'
+]);
 
 const resolveWsEventType = (eventPayload: Record<string, unknown>): string => {
   const directType = String(eventPayload.event ?? eventPayload.type ?? '').trim();
@@ -597,13 +618,38 @@ export const createWsMultiplexer = (
         }
       }
       let entry = requestId ? pending.get(requestId) : undefined;
+      let borrowedLane = false;
       if (!entry && sessionScoped) {
         for (const candidate of pending.values()) entry = candidate;
+      }
+      if (!entry && LIVE_SESSION_EVENT_TYPES.has(normalizedEventType)) {
+        // A live session frame can be addressed to a lane this client already
+        // dropped: the display watcher is replaced by the send stream (or by a
+        // re-subscribe) while the server keeps publishing on the retired
+        // request id.  The server delivers each tail once per connection, so
+        // dropping the frame here lost most of the answer — the text stopped
+        // after its first part and then appeared at once when the durable item
+        // committed.  Fall over to another live lane of the same session: the
+        // timelines are offset-addressed and idempotent, so a duplicate is
+        // harmless while a lost chunk is not.
+        const frameSessionId = String(
+          asPayloadRecord(eventPayload.data)?.session_id || eventPayload.session_id || ''
+        ).trim();
+        if (frameSessionId) {
+          for (const candidate of pending.values()) {
+            if (candidate.sessionId !== frameSessionId) continue;
+            entry = candidate;
+            borrowedLane = true;
+          }
+        }
       }
       if (!entry) return;
       const eventId = String(eventPayload.id || '');
       const dataText = buildEventText(eventPayload.data);
       entry.onEvent(eventType, dataText, eventId);
+      // A borrowed lane only renders the frame; the settlement bookkeeping
+      // below belongs to the request the frame was addressed to.
+      if (borrowedLane) return;
       if (!requestId) return;
       const queuedFlag =
         normalizedEventType === 'queued' ||
@@ -742,6 +788,7 @@ export const createWsMultiplexer = (
       }
       const entry: PendingEntry = {
         onEvent: typeof payload?.onEvent === 'function' ? payload.onEvent : () => {},
+        sessionId: String(payload?.sessionId || '').trim(),
         resolve,
         reject,
         closeOnFinal: payload?.closeOnFinal !== false,

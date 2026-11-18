@@ -71,7 +71,10 @@ const long=threadViewSlots(key)![0].assistant;assert.ok(long.__thread_tail);
 // The local stream view stays contiguous while the durable head/tail stay bounded.
 assert.ok(String(long.__thread_live||'').startsWith('😀fixture'));
 assert.equal(long.__thread_live?.includes('😀tail'),true);
-assert.equal(long.__thread_live_offset, long.__thread_content_offset);
+// 实时窗口按自己的长度寻址，不再借用服务端游标：偏移空间被重建时窗口不能被
+// 挪动（见 thread-view-live-tail-regression），服务端游标仍单独记在 content_offset。
+assert.equal(long.__thread_live_offset, String(long.__thread_live||'').length);
+assert.ok(Number(long.__thread_content_offset) >= 1809);
 // A still-capped body keeps its durable read available for the answer text.
 assert.ok(long.__thread_body);
 assert.ok(new TextEncoder().encode(long.content).length<=2048);assert.ok(new TextEncoder().encode(long.__thread_tail).length<=2048);

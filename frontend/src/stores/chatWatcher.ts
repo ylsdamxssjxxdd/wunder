@@ -234,6 +234,12 @@ export const startSessionWatcher = (store, sessionId, options: SessionWatchOptio
     closeOnFinal: false,
     // Session-level stop owns cancellation. Aborting this local watcher must
     // not emit an additional request-scoped cancel frame.
+    //
+    // A retired watcher therefore keeps its server-side feeder until the next
+    // subscription replaces it, and that feeder still takes its share of the
+    // connection's single tail delivery. The multiplexer covers those frames by
+    // falling them over to a live lane of the same session, so a replaced
+    // watcher can never starve the answer stream again.
     cancelOnAbort: false
   });
   watchPromise

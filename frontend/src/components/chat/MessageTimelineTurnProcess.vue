@@ -38,8 +38,8 @@
           <MessageTimelineThinkingEntry
             v-if="row.kind === 'reasoning'"
             :entry="row.entry"
-            :open="openKeys.has(row.key) || (row.key === currentReasoningRowKey && !closedReasoningKeys.has(row.key))"
-            @toggle="toggleReasoningRow(row.key)"
+            :open="row.liveOnly ? !liveReasoningClosed : (openKeys.has(row.key) || (row.key === autoOpenReasoningKey && !closedReasoningKeys.has(row.key)))"
+            @toggle="row.liveOnly ? toggleLiveReasoning() : toggleReasoningRow(row.key)"
           />
           <MessageTimelineToolEntry
             v-else-if="row.kind === 'tool'"
@@ -70,15 +70,6 @@
           </div>
         </div>
         </div>
-        <!-- Live reasoning belongs after the durable process rows until its own
-             record arrives.  Rendering it before the list made each new model
-             round appear to overwrite the first completed reasoning entry. -->
-        <MessageTimelineThinkingEntry
-          v-if="reasoningText && !hasCurrentReasoningRow && !hasNewerItems"
-          :entry="reasoningEntry"
-          :open="!liveReasoningClosed"
-          @toggle="toggleLiveReasoning"
-        />
         <div v-if="hasNewerItems" class="timeline-process-page-state" role="status">
           {{ pageError ? t('chat.timeline.processPageFailed') : loadingMore ? t('chat.timeline.processLoading') : t('chat.timeline.processScrollLater') }}
         </div>
@@ -116,7 +107,7 @@ import { completeProcessRefresh, requestProcessRefresh, type ProcessRefreshGateS
 import { resolveModelRoundMetrics } from '@/utils/modelRoundMetrics';
 
 type ProcessRow =
-  | { kind: 'reasoning'; key: string; entry: TimelineReasoningEntry }
+  | { kind: 'reasoning'; key: string; entry: TimelineReasoningEntry; liveOnly?: boolean }
   | { kind: 'tool'; key: string; entry: TimelineToolEntry }
   | { kind: 'print'; key: string; text: string; live?: boolean };
 
@@ -247,13 +238,31 @@ const toggleLiveReasoning = (): void => {
  * even after the row settles, so auto-open needs its own closed set. */
 const closedReasoningKeys = ref(new Set<string>());
 const toggleReasoningRow = (key: string): void => {
-  const autoOpen = key === currentReasoningRowKey.value && !closedReasoningKeys.value.has(key);
+  const autoOpen = key === autoOpenReasoningKey.value && !closedReasoningKeys.value.has(key);
   if (autoOpen) {
     closedReasoningKeys.value = new Set([...closedReasoningKeys.value, key]);
     return;
   }
   toggleKey(key);
 };
+/** The reasoning row that is printing right now.
+ *
+ * `props.reasoningItemId` can lag behind the durable page (it arrives with the
+ * next view change), and when it does not match any row the thought collapsed
+ * mid-stream and then re-opened — the reader saw the text vanish and jump. Fall
+ * back to the newest reasoning row so the row being written stays open.
+ */
+const autoOpenReasoningKey = computed(() => {
+  const explicit = currentReasoningRowKey.value;
+  if (rows.value.some(row => row.kind === 'reasoning' && row.key === explicit)) return explicit;
+  for (let index = rows.value.length - 1; index >= 0; index -= 1) {
+    const row = rows.value[index];
+    // Only a row the durable page still marks as running is printing. A settled
+    // row must never receive the live text — that overwrote a finished thought.
+    if (row.kind === 'reasoning' && row.entry.streaming) return row.key;
+  }
+  return explicit;
+});
 const hasCurrentReasoningRow = computed(() => rows.value.some(row =>
   row.kind === 'reasoning' && row.key === currentReasoningRowKey.value
 ));
@@ -265,36 +274,6 @@ const currentReasoningMetrics = computed(() => {
     processItems.value.find(entry => entry.item_id === id);
   return item ? resolveModelRoundMetrics(item) ?? undefined : undefined;
 });
-/**
- * Live thought text per item, kept after that round stops streaming.
- *
- * The durable page carries a bounded preview of a thought, so once a round ends
- * its row could shrink from the live text the reader was just reading to a much
- * shorter preview — a visible collapse that reads as "the content changed on its
- * own". Remember the freshest text and never let the row render shorter.
- */
-const reasoningTailByItem = new Map<string, string>();
-watch(
-  () => [currentReasoningItemId.value, reasoningText.value] as const,
-  ([itemId, text]) => {
-    const id = String(itemId || '').trim();
-    const value = String(text || '');
-    if (!id || !value) return;
-    if (value.length < String(reasoningTailByItem.get(id) || '').length) return;
-    reasoningTailByItem.set(id, value);
-    if (reasoningTailByItem.size > 40) {
-      const oldest = reasoningTailByItem.keys().next().value;
-      if (oldest) reasoningTailByItem.delete(oldest);
-    }
-  },
-  { flush: 'post' }
-);
-/** Freshest known thought text for a reasoning row key (`reasoning:<itemId>`). */
-const settledReasoningText = (key: string): string => {
-  if (!key.startsWith('reasoning:')) return '';
-  return reasoningTailByItem.get(key.slice('reasoning:'.length)) || '';
-};
-
 /** Live text placed into the durable row of the round that is still printing. */
 const livePlacement = computed(() =>
   placeLivePrint(rows.value, livePrint.value, livePrintKey.value, !hasNewerItems.value)
@@ -308,21 +287,35 @@ const displayRows = computed<ProcessRow[]>(() => {
   // The live text of the round that is still printing goes into its own durable
   // row, never into an extra block: one round prints once.
   const placed = livePlacement.value.rows;
-  const key = currentReasoningRowKey.value;
-  return placed.map(row => {
-    if (row.kind !== 'reasoning') return row;
-    const isCurrent = row.key === key;
-    const live = isCurrent ? text : '';
-    // A finished round keeps the text it streamed: the durable page only carries
-    // a bounded preview, so rendering that alone made the thought visibly shrink
-    // once the round ended. Never render shorter than what was already shown.
-    const cached = settledReasoningText(row.key);
-    const freshest = live.length > cached.length ? live : cached;
-    const nextText = freshest.length > row.entry.text.length ? freshest : row.entry.text;
-    const streaming = row.entry.streaming || (isCurrent && currentReasoningStreaming.value);
-    if (nextText === row.entry.text && streaming === row.entry.streaming) return row;
-    return { ...row, entry: { ...row.entry, text: nextText, streaming } };
+  if (!text) return placed;
+  const key = autoOpenReasoningKey.value;
+  // Only the row that is printing follows the live tail. Touching other rows here
+  // let a finished round's text move while the reader was watching the new one,
+  // which read as "two thoughts" with a scrambled order.
+  const overlaid = placed.map(row => {
+    if (row.kind !== 'reasoning' || row.key !== key) return row;
+    const streamingRow = currentReasoningStreaming.value || row.entry.streaming;
+    if (!streamingRow && row.entry.text.length >= text.length) return row;
+    return {
+      ...row,
+      entry: {
+        ...row.entry,
+        text,
+        streaming: currentReasoningStreaming.value || row.entry.streaming
+      }
+    };
   });
+  if (hasCurrentReasoningRow.value || hasNewerItems.value) return overlaid;
+  // A round whose own record has not landed yet prints in its own place: right
+  // before the tool call it opened. Appending it at the bottom made the thought
+  // look like it came *after* that tool, which reads as a scrambled order until
+  // the durable row finally sorts itself out.
+  const liveRow: ProcessRow = {
+    kind: 'reasoning', key: liveReasoningRowKey.value, entry: reasoningEntry.value, liveOnly: true
+  };
+  const toolIndex = overlaid.findIndex(row => row.kind === 'tool' && row.entry.status === 'loading');
+  const at = toolIndex >= 0 ? toolIndex : overlaid.length;
+  return [...overlaid.slice(0, at), liveRow, ...overlaid.slice(at)];
 });
 const reasoningEntry = computed<TimelineReasoningEntry>(() => ({
   kind: 'reasoning', key: liveReasoningRowKey.value, streaming: currentReasoningStreaming.value,
