@@ -643,6 +643,9 @@ export component MainWindow inherits Window {
     in-out property <string> runtime-rg;
     in-out property <string> runtime-ffmpeg;
     in-out property <string> runtime-browser;
+    // `.js`/`.ts` 与 `.sh` 的写后语法校验宿主（引擎探测，可被用户路径覆盖）。
+    in-out property <string> runtime-node;
+    in-out property <string> runtime-bash;
     in-out property <string> runtime-shell;
     // Effective binary the runtime resolves right now (bundled or system); the
     // settings page shows it as the field placeholder for empty overrides.
@@ -651,6 +654,8 @@ export component MainWindow inherits Window {
     in-out property <string> runtime-rg-effective;
     in-out property <string> runtime-ffmpeg-effective;
     in-out property <string> runtime-browser-effective;
+    in-out property <string> runtime-node-effective;
+    in-out property <string> runtime-bash-effective;
     in-out property <string> runtime-shell-effective;
     in-out property <bool> importing-supplement: false;
     in-out property <string> supplement-status;
@@ -660,6 +665,8 @@ export component MainWindow inherits Window {
     callback pick-rg-path();
     callback pick-ffmpeg-path();
     callback pick-browser-path();
+    callback pick-node-path();
+    callback pick-bash-path();
     callback pick-shell-path();
     // The settings page's active category, shared with the smoke harness.
     in-out property <int> settings-active-panel: 0;
@@ -1730,9 +1737,11 @@ export component MainWindow inherits Window {
         // profile route owns them); the settings page no longer shows a
         // separate identity panel, so nothing is bound through it.
         python-path <=> root.runtime-python; git-path <=> root.runtime-git; rg-path <=> root.runtime-rg;
-        ffmpeg-path <=> root.runtime-ffmpeg; browser-path <=> root.runtime-browser; shell-path <=> root.runtime-shell;
+        ffmpeg-path <=> root.runtime-ffmpeg; browser-path <=> root.runtime-browser;
+        node-path <=> root.runtime-node; bash-path <=> root.runtime-bash; shell-path <=> root.runtime-shell;
         python-effective: root.runtime-python-effective; git-effective: root.runtime-git-effective; rg-effective: root.runtime-rg-effective;
-        ffmpeg-effective: root.runtime-ffmpeg-effective; browser-effective: root.runtime-browser-effective; shell-effective: root.runtime-shell-effective;
+        ffmpeg-effective: root.runtime-ffmpeg-effective; browser-effective: root.runtime-browser-effective;
+        node-effective: root.runtime-node-effective; bash-effective: root.runtime-bash-effective; shell-effective: root.runtime-shell-effective;
         importing-supplement <=> root.importing-supplement; supplement-status <=> root.supplement-status;
         import-supplement => { root.import-supplement(); }
         pick-python-path => { root.pick-python-path(); }
@@ -1740,6 +1749,8 @@ export component MainWindow inherits Window {
         pick-rg-path => { root.pick-rg-path(); }
         pick-ffmpeg-path => { root.pick-ffmpeg-path(); }
         pick-browser-path => { root.pick-browser-path(); }
+        pick-node-path => { root.pick-node-path(); }
+        pick-bash-path => { root.pick-bash-path(); }
         pick-shell-path => { root.pick-shell-path(); }
         stress-running <=> root.stress-running;
         stress-user-rounds <=> root.stress-user-rounds;

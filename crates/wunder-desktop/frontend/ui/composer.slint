@@ -1435,11 +1435,10 @@ component AttachmentChip inherits Rectangle {
 export component Composer inherits Rectangle {
     in-out property <string> draft <=> editor.text;
     in property <bool> busy: false;
-    // Phone shells (安卓版) hand the plus button to their own sheet: the desktop
-    // cascade is too small for touch, so tapping the button reports intent and
-    // the shell renders a full-width function panel under the input instead.
+    // Phone shells (安卓版) route the plus button straight to their file picker:
+    // the desktop cascade is too small for touch, and a phone messenger's plus
+    // is understood as "attach".
     in property <bool> mobile: false;
-    in property <bool> mobile-plus-open: false;
     callback mobile-plus-toggled();
     // 手机端折叠态输入卡只是入口：开启后整张卡片不接收文字输入，点一下就
     // 请宿主打开全屏输入页（键盘长在那一页上）。
@@ -1734,21 +1733,21 @@ export component Composer inherits Rectangle {
                     width: 36px;
                     height: 36px;
                     border-radius: Theme.radius-md;
-                    background: root.mobile-plus-open ? Theme.accent-soft : Theme.surface;
+                    background: Theme.surface;
                     border-width: 1px;
-                    border-color: root.mobile-plus-open ? Theme.accent-secondary : Theme.border-strong;
+                    border-color: Theme.border-strong;
                     drop-shadow-color: #1F23290F; drop-shadow-blur: 2px; drop-shadow-offset-y: 1px;
                     Image {
                         x: 8px;
                         y: 8px;
                         width: 20px;
                         height: 20px;
-                        source: root.mobile-plus-open ? @image-url("../assets/icons/xmark.svg") : @image-url("../assets/icons/plus-plain.svg");
-                        colorize: root.mobile-plus-open ? Theme.accent-ink : Theme.text-secondary;
+                        source: @image-url("../assets/icons/plus-plain.svg");
+                        colorize: Theme.text-secondary;
                         image-fit: contain;
                     }
                     accessible-role: button;
-                    accessible-label: I18n.cp_more;
+                    accessible-label: I18n.cp_more_upload;
                     accessible-action-default => { root.mobile-plus-toggled(); }
                     TouchArea {
                         mouse-cursor: pointer;
@@ -1880,14 +1879,7 @@ export component Composer inherits Rectangle {
             // 手机端折叠态输入卡不是编辑区，而是全屏输入页的入口：这一层
             // 盖住编辑器，点一下只转成一次 mobile-page-requested。
             if root.mobile && root.mobile-page-trigger : TouchArea {
-                enabled: !root.mobile-plus-open;
                 clicked => { root.mobile-page-requested(); }
-            }
-            // While the phone function panel is open the input is a close
-            // target, not a caret target: one tap puts the tray away and the
-            // next tap types, matching messenger behaviour.
-            if root.mobile && root.mobile-plus-open : TouchArea {
-                clicked => { root.mobile-plus-toggled(); }
             }
             }
             if root.mobile : Rectangle {
@@ -1949,17 +1941,17 @@ export component Composer inherits Rectangle {
                     width: root.mobile ? 36px : 24px;
                     height: root.mobile ? 36px : 24px;
                     border-radius: root.mobile ? Theme.radius-md : Theme.radius-sm;
-                    background: (root.plus-open || root.mobile-plus-open) ? Theme.accent-soft : Theme.surface;
+                    background: root.plus-open ? Theme.accent-soft : Theme.surface;
                     border-width: 1px;
-                    border-color: (root.plus-open || root.mobile-plus-open) ? Theme.accent-secondary : Theme.border-strong;
+                    border-color: root.plus-open ? Theme.accent-secondary : Theme.border-strong;
                     drop-shadow-color: #1F23290F; drop-shadow-blur: 2px; drop-shadow-offset-y: 1px;
                     Image {
                         x: root.mobile ? 8px : 4px;
                         y: root.mobile ? 8px : 4px;
                         width: root.mobile ? 20px : 16px;
                         height: root.mobile ? 20px : 16px;
-                        source: (root.plus-open || root.mobile-plus-open) ? @image-url("../assets/icons/xmark.svg") : @image-url("../assets/icons/plus-plain.svg");
-                        colorize: (root.plus-open || root.mobile-plus-open) ? Theme.accent-ink : Theme.text-secondary;
+                        source: root.plus-open ? @image-url("../assets/icons/xmark.svg") : @image-url("../assets/icons/plus-plain.svg");
+                        colorize: root.plus-open ? Theme.accent-ink : Theme.text-secondary;
                         image-fit: contain;
                     }
                     accessible-role: button; accessible-label: I18n.cp_more;
@@ -2209,9 +2201,6 @@ export component Composer inherits Rectangle {
                 saving: root.model-saving;
                 open <=> root.model-open;
                 opened => {
-                    if root.mobile && root.mobile-plus-open {
-                        root.mobile-plus-toggled();
-                    }
                     root.plus-open = false;
                     root.close-submenus();
                 }

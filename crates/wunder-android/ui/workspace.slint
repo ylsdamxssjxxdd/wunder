@@ -125,10 +125,16 @@ export component WorkspacePage inherits Rectangle {
     in property <string> error: "";
     in property <[WorkspaceFile]> entries: [];
 
+    // Raised by the header button; the shell owns the confirmation dialog so
+    // the drawer and this page share one dialog.
+    in-out property <bool> clear-armed: false;
+
     callback back();
     callback refresh();
     callback open-path(string);
     callback upload(string);
+    // Empty the folder currently on screen after the inline confirmation.
+    callback clear();
     callback load-more();
     // Files open the shared action sheet owned by the shell, so the inline
     // drawer list and this page never grow two divergent menus.
@@ -195,6 +201,15 @@ export component WorkspacePage inherits Rectangle {
                             font-size: Theme.font-2xs;
                             overflow: elide;
                         }
+                    }
+                    Action {
+                        width: 34px;
+                        height: 34px;
+                        icon-size: 17px;
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/trash.svg");
+                        label: "清空";
+                        enabled: !root.loading && root.total > 0;
+                        clicked => { root.clear-armed = true; }
                     }
                     Action {
                         width: 34px;

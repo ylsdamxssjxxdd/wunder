@@ -2267,6 +2267,31 @@
   "en": "Shell path"
  },
  {
+  "key": "st_node_path",
+  "zh": "Node 路径（.js / .ts）",
+  "en": "Node path (.js / .ts)"
+ },
+ {
+  "key": "st_bash_path",
+  "zh": "Bash 路径（.sh）",
+  "en": "Bash path (.sh)"
+ },
+ {
+  "key": "st_syntax_title",
+  "zh": "语法检查",
+  "en": "Syntax check"
+ },
+ {
+  "key": "st_syntax_note",
+  "zh": "写回文件后只做解析、不改内容；缺解释器时回执降级为跳过。留空自动探测，字段里显示的就是此刻生效的路径。",
+  "en": "Files are parsed after a write and never blocked. A missing interpreter only downgrades the receipt. Leave empty to auto-detect; the field shows the path in effect right now."
+ },
+ {
+  "key": "st_syntax_map",
+  "zh": ".py Python · .js .ts Node · .sh Bash · .ps1 PowerShell（复用上面的 shell 路径）· .json .yaml .css .html 内置解析",
+  "en": ".py Python · .js .ts Node · .sh Bash · .ps1 PowerShell (reuses the shell path above) · .json .yaml .css .html built in"
+ },
+ {
   "key": "st_stress_count",
   "zh": "个数",
   "en": "Count"

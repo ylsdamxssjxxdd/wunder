@@ -797,6 +797,36 @@ impl NativeDesktop {
         Ok(())
     }
 
+    /// Remove every child of one workspace folder; the folder itself stays.
+    /// Nested directories go with their contents, like `workspace_local_delete`.
+    /// Returns how many top-level entries were removed.
+    pub fn workspace_local_clear(&self, root_path: &str, path: &str) -> Result<usize> {
+        let root = normalize_root(root_path)?;
+        if !root.is_dir() {
+            bail!(WORKSPACE_ROOT_MISSING);
+        }
+        let dir = if path.is_empty() {
+            root.clone()
+        } else {
+            workspace_resource_target(&root, path)?
+        };
+        if !dir.is_dir() {
+            bail!("目录不存在");
+        }
+        let mut removed = 0usize;
+        for item in std::fs::read_dir(&dir)? {
+            let Ok(item) = item else { continue };
+            let target = item.path();
+            if target.is_dir() {
+                std::fs::remove_dir_all(&target).map_err(|error| anyhow!("删除失败：{error}"))?;
+            } else {
+                std::fs::remove_file(&target).map_err(|error| anyhow!("删除失败：{error}"))?;
+            }
+            removed += 1;
+        }
+        Ok(removed)
+    }
+
     /// Validate a new-entry relative path and resolve it under `root`. Unlike
     /// `workspace_resource_target` the entry does not exist yet, so the
     /// boundary check is purely lexical.

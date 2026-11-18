@@ -3,6 +3,7 @@
   "cli": "wunder 命令行 {version}",
   "python": "Python {version} + 常用库",
   "git": "Git {version}",
+  "bash": "Bash {version}（.sh 语法校验）",
   "rg": "ripgrep {version}",
   "powershell": "PowerShell {version}（命令执行默认 shell）",
   "ffmpeg": "FFmpeg {version}",

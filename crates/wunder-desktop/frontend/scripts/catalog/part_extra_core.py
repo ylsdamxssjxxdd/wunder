@@ -100,6 +100,17 @@ ENTRIES = [
     ('st_param_reasoning_effort', '默认思考等级', 'Default reasoning effort'),
     ('st_param_simulation_speed', '模拟速度', 'Simulation speed'),
     ('st_shell_path', 'shell 路径', 'Shell path'),
+    ('st_node_path', 'Node 路径（.js / .ts）', 'Node path (.js / .ts)'),
+    ('st_bash_path', 'Bash 路径（.sh）', 'Bash path (.sh)'),
+    ('st_syntax_title', '语法检查', 'Syntax check'),
+    ('st_syntax_note',
+     '写回文件后只做解析、不改内容；缺解释器时回执降级为跳过。留空自动探测，字段里显示的就是此刻生效的路径。',
+     'Files are parsed after a write and never blocked. A missing interpreter only downgrades the receipt. '
+     'Leave empty to auto-detect; the field shows the path in effect right now.'),
+    ('st_syntax_map',
+     '.py Python · .js .ts Node · .sh Bash · .ps1 PowerShell（复用上面的 shell 路径）· .json .yaml .css .html 内置解析',
+     '.py Python · .js .ts Node · .sh Bash · .ps1 PowerShell (reuses the shell path above) · '
+     '.json .yaml .css .html built in'),
     ('st_stress_count', '个数', 'Count'),
     ('st_wunder_model_hint', '在新浏览器窗口打开 3D 展示', 'Open the 3D viewer in a new browser window'),
     ('st_wunder_model_open', '眺望心舰', 'Behold Wunder'),

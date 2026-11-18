@@ -34,7 +34,7 @@ mod edit_recovery;
 mod file_history;
 mod write_guard;
 mod write_receipt;
-mod write_syntax;
+pub(crate) mod write_syntax;
 mod lsp_support;
 mod mcp_pack;
 mod memory_manager_tool;

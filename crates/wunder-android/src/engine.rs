@@ -142,6 +142,8 @@ pub enum Command {
     DownloadWorkspace {
         path: String,
     },
+    /// Remove every entry inside the folder the working-directory page shows.
+    ClearWorkspace,
     /// Decode one Markdown image for the transcript. The UI only knows the
     /// source string; the engine owns the workspace boundary and the decoder.
     LoadMarkdownImage {
@@ -1601,6 +1603,7 @@ fn run(
                 }
             }
             Command::DownloadWorkspace { path } => download_workspace(&desktop, &shared, &path),
+            Command::ClearWorkspace => clear_workspace(&desktop, &shared),
             Command::LoadMarkdownImage { source } => {
                 start_markdown_image(&desktop, &shared, &sender, source)
             }
@@ -6105,6 +6108,31 @@ fn delete_workspace_entry(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, 
             refresh_workspace_after_mutation(desktop, shared);
         }
         Err(error) => notify(shared, format!("删除失败：{error:#}")),
+    }
+}
+
+/// Empty the folder currently on screen. The folder itself survives; every
+/// file and subfolder inside it is removed with the same boundary checks as
+/// the single-entry delete.
+fn clear_workspace(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
+    let root = match active_workspace_root(desktop, shared) {
+        Ok(root) => root,
+        Err(error) => {
+            notify(shared, format!("无法读取工作区设置：{error}"));
+            return;
+        }
+    };
+    let path = shared
+        .lock()
+        .map(|state| state.workspace_path.clone())
+        .unwrap_or_default();
+    match desktop.workspace_local_clear(&root, &path) {
+        Ok(0) => notify(shared, "目录已经是空的"),
+        Ok(count) => {
+            notify(shared, format!("已清空 {count} 项"));
+            refresh_workspace_after_mutation(desktop, shared);
+        }
+        Err(error) => notify(shared, format!("清空失败：{error:#}")),
     }
 }
 

@@ -621,7 +621,7 @@ impl Orchestrator {
                                 Ok(value) => ToolResultPayload::from_value(value),
                                 Err(err) => {
                                     if err.to_string() == tool_exec::TOOL_TIMEOUT_ERROR {
-                                        build_tool_timeout_result(&name, tool_timeout)
+                                        build_tool_timeout_result_with_sessions(Some(&scoped_tool_context), &name, tool_timeout)
                                     } else {
                                         ToolResultPayload::error(
                                             err.to_string(),
@@ -673,7 +673,7 @@ impl Orchestrator {
                             Ok(value) => ToolResultPayload::from_value(value),
                             Err(err) => {
                                 if err.to_string() == tool_exec::TOOL_TIMEOUT_ERROR {
-                                    build_tool_timeout_result(&name, tool_timeout)
+                                    build_tool_timeout_result_with_sessions(Some(&scoped_tool_context), &name, tool_timeout)
                                 } else {
                                     ToolResultPayload::error(
                                         err.to_string(),
@@ -705,7 +705,7 @@ impl Orchestrator {
                         Ok(value) => ToolResultPayload::from_value(value),
                         Err(err) => {
                             if err.to_string() == tool_exec::TOOL_TIMEOUT_ERROR {
-                                build_tool_timeout_result(&name, tool_timeout)
+                                build_tool_timeout_result_with_sessions(Some(&scoped_tool_context), &name, tool_timeout)
                             } else {
                                 ToolResultPayload::error(
                                     err.to_string(),

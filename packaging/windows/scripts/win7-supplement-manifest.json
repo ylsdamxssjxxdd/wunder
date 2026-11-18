@@ -7,6 +7,7 @@
   "layout": {
     "pythonRoot": "opt\\python",
     "gitRoot": "opt\\git",
+    "bashRoot": "opt\\bash",
     "rgRoot": "opt\\rg",
     "ffmpegRoot": "opt\\ffmpeg",
     "powershellRoot": "opt\\powershell",
@@ -121,6 +122,39 @@
       "ia32": {
         "fileName": "MinGit-2.46.2-32-bit.zip",
         "url": "https://github.com/git-for-windows/git/releases/download/v2.46.2.windows.1/MinGit-2.46.2-32-bit.zip"
+      }
+    }
+  },
+  "bash": {
+    "version": "2.46.2",
+    "flavor": "PortableGit bash closure",
+    "source": "git-for-windows PortableGit",
+    "dest": "opt\\bash\\bin",
+    "expectedExe": "bash.exe",
+    "files": [
+      "usr/bin/bash.exe",
+      "usr/bin/sh.exe"
+    ],
+    "globs": [
+      "usr/bin/msys-2.0.dll"
+    ],
+    "notes": [
+      "MinGit is the non-interactive distribution and ships no bash at all, so the write receipt could not check .sh on a machine without Git for Windows. The same Git for Windows release ships PortableGit, and only the bash closure is taken from it.",
+      "The real interpreter is usr/bin/bash.exe (2.1 MB, imports KERNEL32.dll and msys-2.0.dll only). bin/bash.exe in PortableGit is a 48 KB launcher that re-execs the usr/bin copy, so taking bin/bash.exe would ship a shell that cannot start on its own.",
+      "The closure is exactly three files (bash.exe, sh.exe, msys-2.0.dll, about 5.6 MB). Parsing needs nothing else: bash -n and bash -c echo work with the runtime DLL alongside the binaries, while external commands are out of scope for a syntax check (opt/git/usr/bin already carries coreutils for scripts that opt into Git Bash).",
+      "PortableGit is published as a 7z self-extracting archive, so the build host needs a 7-Zip binary, the same resolver the Chrome and 7-Zip components use. -BashArchivePath accepts either that archive or an already unpacked PortableGit tree for hosts without one, and -SkipBash leaves the shell out.",
+      "The staged tree passes three gates: the Windows 7 import gate on bash.exe, a DLL closure check (every non-system import must sit next to the binaries), and a real bash -n run that has to accept a valid script and reject a broken one. A closure that only looks complete fails the last gate."
+    ],
+    "archives": {
+      "x64": {
+        "fileName": "PortableGit-2.46.2-64-bit.7z.exe",
+        "url": "https://github.com/git-for-windows/git/releases/download/v2.46.2.windows.1/PortableGit-2.46.2-64-bit.7z.exe",
+        "sha256": "58ae5c1a27d3f9ce8518c1a187860973cfa4dd604f518350e84f7baf418fc9fa"
+      },
+      "ia32": {
+        "fileName": "PortableGit-2.46.2-32-bit.7z.exe",
+        "url": "https://github.com/git-for-windows/git/releases/download/v2.46.2.windows.1/PortableGit-2.46.2-32-bit.7z.exe",
+        "sha256": "7351e28f498010f0aa2fd63abbd704698db38cf6f881e2417fb3d73e5a7e6f87"
       }
     }
   },

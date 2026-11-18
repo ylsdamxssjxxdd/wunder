@@ -12,6 +12,15 @@ pub enum Tool {
     /// discovery has to be explicit: the portable build is called `pwsh.exe`,
     /// which a bare `powershell.exe` lookup can never resolve.
     PowerShell,
+    /// Node runtime. The supplement ships no standalone `opt/node`: the only
+    /// copy is the one Playwright bundles next to its Python driver, so the
+    /// lookup has to follow the interpreter layout instead of a fixed path.
+    Node,
+    /// POSIX shell for `.sh` syntax checks. It is staged under `opt/bash/bin`
+    /// from the same Git for Windows release as MinGit, because MinGit is the
+    /// non-interactive distribution and ships no bash at all. The `opt/git`
+    /// arms stay for packs and imports that carry a full Git for Windows tree.
+    Bash,
 }
 
 /// The shared home always wins. Older installations remain read-only fallbacks;
@@ -27,6 +36,9 @@ pub fn roots(home: &Path, app_dir: &Path, appimage_dir: Option<PathBuf>) -> Vec<
 }
 
 pub fn find_tool(roots: &[PathBuf], tool: Tool) -> Option<PathBuf> {
+    if matches!(tool, Tool::Node) {
+        return roots.iter().find_map(|root| node_bin(root));
+    }
     let candidates: &[&str] = match tool {
         Tool::Python if cfg!(windows) => &[
             "opt/python/python.exe",
@@ -56,6 +68,16 @@ pub fn find_tool(roots: &[PathBuf], tool: Tool) -> Option<PathBuf> {
             "opt/powershell/bin/powershell.exe",
         ],
         Tool::PowerShell => &["opt/powershell/pwsh", "opt/powershell/bin/pwsh"],
+        Tool::Bash if cfg!(windows) => &[
+            "opt/bash/bin/bash.exe",
+            "opt/bash/bin/sh.exe",
+            "opt/git/bin/bash.exe",
+            "opt/git/usr/bin/bash.exe",
+            "opt/git/mingw64/bin/bash.exe",
+        ],
+        Tool::Bash => &["opt/bash/bin/bash", "opt/bash/bash", "opt/git/bin/bash"],
+        // Handled by `node_bin` above; kept for match exhaustiveness.
+        Tool::Node => &[],
     };
     roots.iter().find_map(|root| {
         candidates
@@ -75,6 +97,9 @@ pub fn path_entries(roots: &[PathBuf]) -> Vec<PathBuf> {
         "opt/venv/bin",
         "opt/git/cmd",
         "opt/git/bin",
+        // 打包的 bash 闭包（bash.exe + sh.exe + msys-2.0.dll）：进了 PATH，
+        // `bash -n`、技能脚本和用户的 shell 命令才都能解析到同一个 bash。
+        "opt/bash/bin",
         "opt/rg",
         "opt/rg/bin",
         "opt/ripgrep",
@@ -86,7 +111,7 @@ pub fn path_entries(roots: &[PathBuf]) -> Vec<PathBuf> {
         "opt/powershell",
         "opt/powershell/bin",
     ];
-    roots
+    let mut entries: Vec<PathBuf> = roots
         .iter()
         .flat_map(|root| {
             BASE_DIRS
@@ -95,7 +120,84 @@ pub fn path_entries(roots: &[PathBuf]) -> Vec<PathBuf> {
                 .collect::<Vec<_>>()
         })
         .filter(|path| path.is_dir())
-        .collect()
+        .collect();
+    // The Playwright driver node is the supplement's only Node runtime and it
+    // sits in a Python-versioned directory, so it is discovered instead of
+    // listed. Without it in PATH no child process (`node --check`, skill
+    // scripts, npm-style helpers) can resolve a bare `node` on Win7.
+    for root in roots {
+        if let Some(dir) = node_bin(root).and_then(|node| node.parent().map(Path::to_path_buf)) {
+            if !entries.contains(&dir) {
+                entries.push(dir);
+            }
+        }
+    }
+    entries
+}
+
+/// Playwright's driver node, found under whichever layout the interpreter
+/// uses: Windows embeddable (`Lib/site-packages`), python-build-standalone
+/// (`lib/python3.X/site-packages`) or a Debian-style `dist-packages`. A
+/// standalone `opt/node` tree is accepted too in case a pack ships one later.
+pub fn node_bin(root: &Path) -> Option<PathBuf> {
+    const FIXED: &[&str] = &[
+        "opt/node/node.exe",
+        "opt/node/bin/node.exe",
+        "opt/nodejs/node.exe",
+        "opt/nodejs/bin/node.exe",
+        "opt/node/node",
+        "opt/node/bin/node",
+        "opt/nodejs/bin/node",
+        "opt/python/node.exe",
+        "opt/python/bin/node",
+        "opt/python/Lib/site-packages/playwright/driver/node.exe",
+        "opt/python/lib/site-packages/playwright/driver/node",
+        "opt/python/lib/site-packages/playwright/driver/node.exe",
+    ];
+    if let Some(found) = FIXED
+        .iter()
+        .map(|name| root.join(name))
+        .find(|path| path.is_file())
+    {
+        return Some(found);
+    }
+    let packages = [
+        "site-packages/playwright/driver/node",
+        "site-packages/playwright/driver/node.exe",
+        "dist-packages/playwright/driver/node",
+        "dist-packages/playwright/driver/node.exe",
+    ];
+    // Bounded: one directory level under opt/python/lib, no recursive walk.
+    for entry in std::fs::read_dir(root.join("opt/python/lib")).ok()?.flatten() {
+        let name = entry.file_name();
+        if !name.to_string_lossy().starts_with("python") {
+            continue;
+        }
+        for leaf in packages {
+            let candidate = entry.path().join(leaf);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+/// Supplement roots that apply to this process, resolved from `WUNDER_HOME`
+/// and the executable location. Engine-side probes that run outside the
+/// desktop settings refresh (syntax checks, CLI, bundled tool lookup) use this
+/// instead of re-deriving the layout.
+pub fn local_roots() -> Vec<PathBuf> {
+    let home = super::resolve_home_from_env_or_user();
+    let app_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| home.clone());
+    let appimage = std::env::var_os("APPIMAGE")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .and_then(|path| path.parent().map(Path::to_path_buf));
+    roots(&home, &app_dir, appimage)
 }
 
 /// Register the complete local supplement toolchain for child processes.
@@ -290,6 +392,83 @@ mod tests {
         let roots = roots(&home, &home, None);
         assert_eq!(git_exec_path(&roots), None);
         assert_eq!(git_template_dir(&roots), None);
+    }
+
+    #[test]
+    fn playwright_driver_node_is_found_and_reaches_path() {
+        // The supplement ships no `opt/node`; Node only exists inside the
+        // Playwright driver, and on Linux that path carries the Python version.
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("profile");
+        let node = if cfg!(windows) {
+            "opt/python/Lib/site-packages/playwright/driver/node.exe"
+        } else {
+            "opt/python/lib/python3.8/site-packages/playwright/driver/node"
+        };
+        std::fs::create_dir_all(home.join(node).parent().unwrap()).unwrap();
+        std::fs::write(home.join(node), b"fixture").unwrap();
+        let roots = roots(&home, &home, None);
+        assert_eq!(
+            find_tool(&roots, Tool::Node),
+            Some(home.join(node)),
+            "driver node must be discovered from the interpreter layout"
+        );
+        let driver_dir = home.join(node).parent().unwrap().to_path_buf();
+        assert!(path_entries(&roots).contains(&driver_dir));
+    }
+
+    #[test]
+    fn node_lookup_accepts_a_standalone_opt_tree_and_stays_empty_without_one() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("profile");
+        std::fs::create_dir_all(home.join("opt/venv/bin")).unwrap();
+        assert_eq!(node_bin(&home), None);
+        let node = if cfg!(windows) {
+            "opt/node/node.exe"
+        } else {
+            "opt/node/bin/node"
+        };
+        std::fs::create_dir_all(home.join(node).parent().unwrap()).unwrap();
+        std::fs::write(home.join(node), b"fixture").unwrap();
+        assert_eq!(node_bin(&home), Some(home.join(node)));
+    }
+
+    #[test]
+    fn a_bundled_shell_tree_is_discovered_for_syntax_checks() {
+        // MinGit itself ships no bash; this covers a pack that stages one under
+        // `opt/bash`, plus the Linux layout, so `.sh` validation can use it.
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("profile");
+        let bash = if cfg!(windows) {
+            "opt/git/usr/bin/bash.exe"
+        } else {
+            "opt/bash/bin/bash"
+        };
+        std::fs::create_dir_all(home.join(bash).parent().unwrap()).unwrap();
+        std::fs::write(home.join(bash), b"fixture").unwrap();
+        let roots = roots(&home, &home, None);
+        assert_eq!(find_tool(&roots, Tool::Bash), Some(home.join(bash)));
+    }
+
+    #[test]
+    fn staged_bash_closure_wins_over_a_full_git_tree() {
+        // 补充包的 bash 闭包落在 opt/bash/bin：Windows 上要排在 opt/git 之前
+        // （MinGit 没有 shell，只有导入过完整 Git 树才有），并且该目录要进 PATH，
+        // 裸命令 `bash` 才解析得到。
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("profile");
+        let exe = if cfg!(windows) { "bash.exe" } else { "bash" };
+        let staged = home.join("opt/bash/bin").join(exe);
+        std::fs::create_dir_all(staged.parent().unwrap()).unwrap();
+        std::fs::write(&staged, b"fixture").unwrap();
+        if cfg!(windows) {
+            let full_git = home.join("opt/git/usr/bin/bash.exe");
+            std::fs::create_dir_all(full_git.parent().unwrap()).unwrap();
+            std::fs::write(&full_git, b"fixture").unwrap();
+        }
+        let roots = roots(&home, &home, None);
+        assert_eq!(find_tool(&roots, Tool::Bash), Some(staged));
+        assert!(path_entries(&roots).contains(&home.join("opt/bash/bin")));
     }
 
     #[test]

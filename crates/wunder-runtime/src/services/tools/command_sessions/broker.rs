@@ -580,6 +580,12 @@ impl CommandSessionBroker {
         }
     }
 
+    /// 是否还有后台进程名额。调用方在 spawn 之前问一次，避免命令已经
+    /// 跑起来才发现登记不上（那会只剩「杀掉」或「超时未登记」两种烂结果）。
+    pub(crate) fn has_process_capacity(&self) -> bool {
+        self.active_processes.load(Ordering::Acquire) < MAX_ACTIVE_COMMAND_PROCESSES
+    }
+
     pub(crate) fn remove_process(&self, command_session_id: &str) {
         if self.processes.remove(command_session_id).is_some() {
             self.active_processes.fetch_sub(1, Ordering::AcqRel);

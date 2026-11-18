@@ -123,17 +123,17 @@ Type: filesandordirs; Name: "{app}\opt\remotion"
 [Code]
 // Keep the component list in sync with build_win7_installer.ps1 and
 // build_win7_installer_linux.py: the task names below must cover every
-// supplement component those scripts can emit (currently python, git, rg,
+// supplement component those scripts can emit (currently python, git, bash, rg,
 // ffmpeg, 7zip, powershell, browser, fonts). Inno parses these names as expressions,
 // so a component whose directory starts with a digit gets a letter-prefixed
 // task name (7zip -> sevenzip); ComponentDirAt maps it back to the opt dir.
 const
-  ComponentCount = 8;
+  ComponentCount = 9;
   CComponentsShown = {#ComponentsShown};
 
 var
-  ComponentTasks: array[0..7] of String;
-  ComponentLabels: array[0..7] of String;
+  ComponentTasks: array[0..8] of String;
+  ComponentLabels: array[0..8] of String;
   SelectAllCheckBox: TNewCheckBox;
   UpdatingSelectAll: Boolean;
 
@@ -141,20 +141,22 @@ function InitializeSetup(): Boolean;
 begin
   ComponentTasks[0] := 'python';
   ComponentTasks[1] := 'git';
-  ComponentTasks[2] := 'rg';
-  ComponentTasks[3] := 'ffmpeg';
-  ComponentTasks[4] := 'sevenzip';
-  ComponentTasks[5] := 'powershell';
-  ComponentTasks[6] := 'browser';
-  ComponentTasks[7] := 'fonts';
+  ComponentTasks[2] := 'bash';
+  ComponentTasks[3] := 'rg';
+  ComponentTasks[4] := 'ffmpeg';
+  ComponentTasks[5] := 'sevenzip';
+  ComponentTasks[6] := 'powershell';
+  ComponentTasks[7] := 'browser';
+  ComponentTasks[8] := 'fonts';
   ComponentLabels[0] := 'Python';
   ComponentLabels[1] := 'Git';
-  ComponentLabels[2] := 'ripgrep';
-  ComponentLabels[3] := 'FFmpeg';
-  ComponentLabels[4] := '7-Zip';
-  ComponentLabels[5] := 'PowerShell';
-  ComponentLabels[6] := '内置浏览器';
-  ComponentLabels[7] := '字体';
+  ComponentLabels[2] := 'Bash';
+  ComponentLabels[3] := 'ripgrep';
+  ComponentLabels[4] := 'FFmpeg';
+  ComponentLabels[5] := '7-Zip';
+  ComponentLabels[6] := 'PowerShell';
+  ComponentLabels[7] := '内置浏览器';
+  ComponentLabels[8] := '字体';
   Result := True;
 end;
 

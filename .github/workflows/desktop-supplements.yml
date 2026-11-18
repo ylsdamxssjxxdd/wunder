@@ -145,6 +145,24 @@ jobs:
           $version = & $pwsh -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'
           if ("$version".Trim() -ne '7.1.7') { throw "pwsh smoke reported '$version' instead of 7.1.7" }
           Write-Host "portable PowerShell smoke ok: $version"
+          # bash 门禁：清单声明 bundled、bash.exe 为 32 位 PE，且真能解析脚本。
+          # MinGit 不带 bash，这一份是从同版本 PortableGit 里抽出的闭包；缺 DLL
+          # 时会在这里（而不是用户机器上）失败。
+          if ($meta.bash.bundled -ne $true) { throw 'supplement metadata says the bash closure is not bundled' }
+          if ($meta.bash.version -ne '2.46.2') { throw "unexpected bundled bash version: $($meta.bash.version)" }
+          $bash = Join-Path $work 'opt\bash\bin\bash.exe'
+          if (-not (Test-Path -LiteralPath $bash -PathType Leaf)) { throw 'opt/bash/bin/bash.exe missing from the pack' }
+          $bashBytes = [IO.File]::ReadAllBytes($bash)
+          $bashPe = [BitConverter]::ToInt32($bashBytes, 0x3c)
+          $bashMachine = [BitConverter]::ToUInt16($bashBytes, $bashPe + 4)
+          if ($bashMachine -ne 0x014c) { throw ('bash.exe is not an i386 PE (machine=0x{0:x4})' -f $bashMachine) }
+          $bashScript = Join-Path $work 'smoke.sh'
+          [IO.File]::WriteAllText($bashScript, "#!/bin/sh`nif [ -f x ]; then`n  echo ok`nfi`n")
+          & $bash -n $bashScript
+          if ($LASTEXITCODE -ne 0) { throw "bash -n rejected a valid script (exit $LASTEXITCODE)" }
+          $bashOut = & $bash -c 'echo ok'
+          if ("$bashOut".Trim() -ne 'ok') { throw "bash smoke reported '$bashOut' instead of 'ok'" }
+          Write-Host 'bundled bash smoke ok: bash -n + echo'
           # 便携 7-Zip 门禁：清单声明 bundled、7z.exe 为 32 位 PE、7z.dll 在位，
           # 且能在构建机上真实运行（x64 runner 可运行 x86 可执行文件）。
           if ($meta.'7zip'.bundled -ne $true) { throw 'supplement metadata says 7-Zip is not bundled' }

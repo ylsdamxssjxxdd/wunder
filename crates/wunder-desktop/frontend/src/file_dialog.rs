@@ -51,6 +51,8 @@ pub fn pick_executable(tool: &str) -> Option<String> {
         "rg" => "ripgrep 可执行文件",
         "ffmpeg" => "ffmpeg 可执行文件",
         "browser" => "浏览器可执行文件",
+        "node" => "Node 可执行文件",
+        "bash" => "Bash 可执行文件",
         "shell" => "shell 可执行文件",
         _ => "可执行文件",
     };

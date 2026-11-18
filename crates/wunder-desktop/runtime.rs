@@ -73,6 +73,17 @@ pub struct DesktopSettings {
     /// the bundled `opt/browser` discovery.
     #[serde(default)]
     pub browser_path: String,
+    /// User-picked Node used by the write-receipt syntax check for `.js`/`.ts`.
+    /// Empty lets the engine probe PATH (which already carries the supplement's
+    /// Playwright driver node) and the supplement itself.
+    #[serde(default)]
+    pub node_path: String,
+    /// User-picked POSIX shell used by the write-receipt syntax check for
+    /// `.sh`. On Windows this is the user's Git for Windows / MSYS2 bash, since
+    /// the supplement's MinGit ships no Git Bash and the command shell there is
+    /// PowerShell. Empty lets the engine probe its own candidate list.
+    #[serde(default)]
+    pub bash_path: String,
     /// User-picked shell executable (`pwsh.exe` / `powershell.exe`). Empty
     /// keeps the supplement host probe. A `cmd.exe` pick is deliberately not
     /// honoured here: the command tool passes PowerShell-only switches, so
@@ -110,6 +121,23 @@ pub struct DesktopSettings {
     pub updated_at: f64,
 }
 
+/// 运行时工具路径的表单值。设置页一次保存全部路径，字段与
+/// [`DesktopSettings`] 同名，空串表示「自动探测」。
+#[derive(Clone, Debug, Default)]
+pub struct RuntimeToolPaths {
+    pub python: String,
+    pub git: String,
+    pub rg: String,
+    pub ffmpeg: String,
+    pub browser: String,
+    /// `.js`/`.ts` 语法校验用的 node。
+    pub node: String,
+    /// `.sh` 语法校验用的 bash。
+    pub bash: String,
+    /// 命令工具的 shell（Windows 为 PowerShell，Unix 为 bash）。
+    pub shell: String,
+}
+
 impl Default for DesktopSettings {
     fn default() -> Self {
         Self {
@@ -122,6 +150,8 @@ impl Default for DesktopSettings {
             rg_path: String::new(),
             ffmpeg_path: String::new(),
             browser_path: String::new(),
+            node_path: String::new(),
+            bash_path: String::new(),
             shell_path: String::new(),
             shell_mode: String::new(),
             python_runtime_mode: default_python_runtime_mode(),
@@ -1003,6 +1033,12 @@ pub fn runtime_tool_statuses(settings: &DesktopSettings, app_dir: &Path) -> Vec<
         resolve_embedded_powershell_bin,
         system_shell_bin,
     );
+    // `.js`/`.ts` 与 `.sh` 的写后语法校验走引擎自己的宿主探测（PATH → 补充包 →
+    // Windows 上已安装的 Git Bash）。设置页显示的就是探测结论，和写入回执里写的
+    // 校验器同源；用户填了路径就以路径为准。
+    let hosts = wunder_server::syntax_hosts();
+    let node_status = checker_status("node", &settings.node_path, hosts.node.clone(), app_dir);
+    let bash_status = checker_status("bash", &settings.bash_path, hosts.shell.clone(), app_dir);
     vec![
         tool_status(
             "python",
@@ -1030,7 +1066,56 @@ pub fn runtime_tool_statuses(settings: &DesktopSettings, app_dir: &Path) -> Vec<
             shell_resolved,
             shell_auto_label,
         ),
+        node_status,
+        bash_status,
     ]
+}
+
+/// 语法校验宿主的路径状态：显式填写的路径优先（无效就报 `invalid`），留空时
+/// 直接用引擎探测结论，并按是否落在补充包目录里区分 `embedded` / `system`。
+fn checker_status(
+    tool: &str,
+    configured: &str,
+    detected: Option<String>,
+    app_dir: &Path,
+) -> RuntimeToolStatus {
+    let configured = configured.trim();
+    if !configured.is_empty() {
+        let candidate = resolve_workspace_path_input(configured, app_dir);
+        let (source, effective) = if candidate.is_file() {
+            ("custom", candidate.to_string_lossy().into_owned())
+        } else {
+            ("invalid", String::new())
+        };
+        return RuntimeToolStatus {
+            tool: tool.into(),
+            configured: configured.into(),
+            effective,
+            source: source.into(),
+        };
+    }
+    let effective = detected.unwrap_or_default();
+    let source = if effective.is_empty() {
+        "missing"
+    } else if is_supplement_path(&effective, app_dir) {
+        "embedded"
+    } else {
+        "system"
+    };
+    RuntimeToolStatus {
+        tool: tool.into(),
+        configured: String::new(),
+        effective,
+        source: source.into(),
+    }
+}
+
+/// 探测结论落在补充包根目录下就是「随包发布」，其余都算宿主自带。
+fn is_supplement_path(path: &str, app_dir: &Path) -> bool {
+    let target = normalize_path_for_compare(Path::new(path));
+    embedded_supplement_roots_for_env(app_dir)
+        .iter()
+        .any(|root| target.starts_with(&normalize_path_for_compare(root)))
 }
 
 /// Auto-resolution for a runtime tool with no explicit configured path: the
@@ -1162,19 +1247,41 @@ pub(crate) fn refresh_runtime_tool_env(settings: &DesktopSettings, app_dir: &Pat
     if let Some(browser_bin) = browser_override {
         set_env_path_if_exists("WUNDER_BROWSER_BIN", &browser_bin);
     }
+    // 写后语法校验的宿主：node（`.js`/`.ts`）与 bash（`.sh`）。只有用户显式选了
+    // 路径才发布；留空时清掉变量，让引擎按自己的顺序探测（PATH → 补充包里的
+    // Playwright 驱动 node / `opt/bash` → Windows 上已安装的 Git Bash）。
+    match resolve_desktop_tool_bin(&settings.node_path, app_dir) {
+        Some(node_bin) => set_env_path_if_exists("WUNDER_NODE", &node_bin),
+        None => std::env::remove_var("WUNDER_NODE"),
+    }
+    match resolve_desktop_tool_bin(&settings.bash_path, app_dir) {
+        Some(bash_bin) => set_env_path_if_exists("WUNDER_BASH", &bash_bin),
+        None => std::env::remove_var("WUNDER_BASH"),
+    }
+    // 宿主探测结论按进程缓存，路径一变就得丢掉，否则要重启才生效。
+    wunder_server::reset_syntax_hosts();
     #[cfg(windows)]
-    if let Some(shell_bin) = resolve_desktop_tool_bin(&settings.shell_path, app_dir) {
+    {
         // cmd.exe cannot take the PowerShell switches the command tool passes,
         // so a cmd pick stays a `shell_mode` decision instead of a host
         // override.
-        let is_cmd = shell_bin
-            .file_name()
-            .and_then(|name| name.to_str())
-            .map(|name| name.eq_ignore_ascii_case("cmd.exe"))
-            .unwrap_or(false);
-        if !is_cmd {
-            set_env_path_if_exists(wunder_server::command_utils::POWERSHELL_EXE_ENV, &shell_bin);
-            wunder_server::command_utils::reset_powershell_host();
+        let picks_cmd = |path: &std::path::Path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.eq_ignore_ascii_case("cmd.exe"))
+                .unwrap_or(false)
+        };
+        match resolve_desktop_tool_bin(&settings.shell_path, app_dir) {
+            Some(shell_bin) if !picks_cmd(&shell_bin) => {
+                set_env_path_if_exists(wunder_server::command_utils::POWERSHELL_EXE_ENV, &shell_bin);
+                wunder_server::command_utils::reset_powershell_host();
+            }
+            // 清空设置或改选 cmd.exe 都要撤掉上一次发布的覆盖：留着它进程会继续
+            // 用旧的 pwsh，界面上写的是「自动」，实际跑的还是旧路径。
+            _ => {
+                std::env::remove_var(wunder_server::command_utils::POWERSHELL_EXE_ENV);
+                wunder_server::command_utils::reset_powershell_host();
+            }
         }
     }
     #[cfg(not(windows))]
@@ -2963,12 +3070,24 @@ mod tests {
         } else {
             "my-shell"
         });
+        let node_bin = root.join(if cfg!(windows) {
+            "my-node.exe"
+        } else {
+            "my-node"
+        });
+        let bash_bin = root.join(if cfg!(windows) {
+            "my-bash.exe"
+        } else {
+            "my-bash"
+        });
         fs::write(&python_bin, "").expect("create python stub");
         fs::write(&git_bin, "").expect("create git stub");
         fs::write(&rg_bin, "").expect("create rg stub");
         fs::write(&ffmpeg_bin, "").expect("create ffmpeg stub");
         fs::write(&browser_bin, "").expect("create browser stub");
         fs::write(&shell_bin, "").expect("create shell stub");
+        fs::write(&node_bin, "").expect("create node stub");
+        fs::write(&bash_bin, "").expect("create bash stub");
 
         let mut settings = DesktopSettings::default();
         settings.python_path = python_bin.to_string_lossy().into_owned();
@@ -2977,12 +3096,64 @@ mod tests {
         settings.ffmpeg_path = ffmpeg_bin.to_string_lossy().into_owned();
         settings.browser_path = browser_bin.to_string_lossy().into_owned();
         settings.shell_path = shell_bin.to_string_lossy().into_owned();
+        settings.node_path = node_bin.to_string_lossy().into_owned();
+        settings.bash_path = bash_bin.to_string_lossy().into_owned();
         let statuses = runtime_tool_statuses(&settings, &app_dir);
         for entry in &statuses {
             assert_eq!(
                 entry.source, "custom",
                 "{} should use the configured path",
                 entry.tool
+            );
+        }
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn syntax_host_statuses_fall_back_without_hiding_broken_paths() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-desktop-syntax-host-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let app_dir = root.join("app");
+        fs::create_dir_all(&app_dir).expect("create app dir");
+        let node_bin = root.join(if cfg!(windows) { "node.exe" } else { "node" });
+        fs::write(&node_bin, "").expect("create node stub");
+
+        let mut broken = DesktopSettings::default();
+        broken.node_path = root.join("gone-node").to_string_lossy().into_owned();
+        let statuses = runtime_tool_statuses(&broken, &app_dir);
+        let node = statuses
+            .iter()
+            .find(|entry| entry.tool == "node")
+            .expect("node status");
+        // 填错的路径必须报 invalid 并留空 effective：悄悄换成自动探测出来的
+        // 另一个 node，界面就会说「在用你选的这个」，而实际不是。
+        assert_eq!(node.source, "invalid");
+        assert!(node.effective.is_empty());
+
+        let mut custom = DesktopSettings::default();
+        custom.node_path = node_bin.to_string_lossy().into_owned();
+        let statuses = runtime_tool_statuses(&custom, &app_dir);
+        let node = statuses
+            .iter()
+            .find(|entry| entry.tool == "node")
+            .expect("node status");
+        assert_eq!(node.source, "custom");
+        assert_eq!(node.effective, node_bin.to_string_lossy());
+
+        // 留空则跟随引擎探测：宿主自带、随包发布、或这台机器上确实没有。
+        let statuses = runtime_tool_statuses(&DesktopSettings::default(), &app_dir);
+        for tool in ["node", "bash"] {
+            let entry = statuses
+                .iter()
+                .find(|entry| entry.tool == tool)
+                .expect("syntax host status");
+            assert!(
+                matches!(entry.source.as_str(), "system" | "embedded" | "missing"),
+                "{tool} source should come from detection, got {}",
+                entry.source
             );
         }
 

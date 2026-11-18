@@ -26,6 +26,7 @@ updated_at: 2026-11-14
 | --- | --- | --- |
 | `opt/python` | Windows 3.8.10；Linux 3.8.18 | 智能体写脚本、跑 Python 工具 |
 | `opt/git` | MinGit 2.46.2（Windows）/ 2.46.2 源码编译（Linux） | clone、补丁、仓库操作 |
+| `opt/bash` | 2.46.2 bash 闭包（仅 Windows，取自同版本 PortableGit） | 写文件的 `.sh` 语法校验 |
 | `opt/rg` | Windows 14.1.0；Linux 14.1.1 | 搜索内容与命令行检索 |
 | `opt/ffmpeg` | 静态 4.4.1 | 抽帧、抽音轨、转码（不含 `ffprobe`） |
 | `opt/7zip` | 25.01 | 压缩包打包与解压 |

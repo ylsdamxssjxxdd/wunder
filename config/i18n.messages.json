@@ -3722,5 +3722,23 @@
   "tool.spec.text_edit.args.end_line": {
     "en-US": "Last line of the range (1-based, inclusive).",
     "zh-CN": "行区间结束行号（1-based，含该行）。"
-  }
+  },
+  "tool.spec.command_session.description.zh-CN": "继续运行中的命令，或查看本线程有哪些命令任务。不传 command_session_id 时列出本线程的命令任务（id、状态、运行时长、输出尾部），用来确认某条命令到底有没有在跑，不要靠 ps 或反复重试去猜。传 command_session_id 时操作那条会话：chars 为空读取新增输出，非空写入 stdin；wait_for=output 等到有新输出或退出，wait_for=exit 等到进程退出，两者的 yield_time_ms 都可到 300000，分钟级任务一两次调用就能等到结果；传 after_seq（已看到输出对应的 seq）可精确续读；chars=\\u0003 中断，chars=\\u0004 关闭 stdin 产生 EOF。复用同一 id 直到 status=exited 且拿到 exit_code，不要为了读取结果而重跑命令。",
+  "tool.spec.command_session.description.en-US": "Continue a running command, or list this thread's command tasks. Omit command_session_id to list command tasks with id, status, elapsed time and output tail; use that instead of ps or blind retries to find out whether a command is still running. With command_session_id: empty chars reads new output, non-empty chars writes to stdin; wait_for=output returns on the next output or exit, wait_for=exit blocks until the process exits, and both accept yield_time_ms up to 300000, so a multi-minute job can be awaited in one or two calls. Pass after_seq to resume exactly where you left off; chars=\\u0003 interrupts and chars=\\u0004 closes stdin. Keep using the same id until status=exited with an exit_code; never rerun a command just to read its result.",
+  "tool.spec.command_session.args.id.zh-CN": "要操作的命令会话 id（执行命令返回）。省略则列出本线程的命令任务，不阻塞、不改变任何会话。",
+  "tool.spec.command_session.args.id.en-US": "Command session id returned by execute_command. Omit it to list this thread's command tasks without blocking or changing any session.",
+  "tool.spec.command_session.args.yield_time_ms.zh-CN": "本次等待窗口（毫秒）。默认：普通轮询 1000、wait_for=output 30000、wait_for=exit 60000；上限 300000。等待到点不会终止命令。",
+  "tool.spec.command_session.args.yield_time_ms.en-US": "Wait window in milliseconds. Defaults: 1000 for a plain poll, 30000 for wait_for=output, 60000 for wait_for=exit; max 300000. Reaching the window never stops the command.",
+  "tool.spec.command_session.args.wait_for.zh-CN": "exit：阻塞到进程退出再返回；output：等到有新输出（或进程退出）就返回。两者都允许分钟级 yield_time_ms。",
+  "tool.spec.command_session.args.wait_for.en-US": "exit blocks until the process exits; output returns as soon as new output arrives (or the process exits). Both allow a multi-minute yield_time_ms.",
+  "tool.command_session.list_summary.zh-CN": "本线程的命令任务清单。",
+  "tool.command_session.list_summary.en-US": "Command tasks in this thread.",
+  "tool.command_session.list_next_step.zh-CN": "running=true 的任务仍在跑：用它的 command_session_id 继续等待（wait_for=exit）或读取增量输出；不要重复启动同一条命令，尤其是带单实例锁的程序。",
+  "tool.command_session.list_next_step.en-US": "Tasks with running=true are still alive: keep waiting on that command_session_id (wait_for=exit) or read incremental output. Never start the same command again, especially single-instance programs.",
+  "tool.command_session.keep_waiting.zh-CN": "命令仍在运行。需要等它跑完就再调用命令会话并传 wait_for=exit 与较大的 yield_time_ms（可到 300000），不要用 sleep 空等，也不要重跑同一条命令。",
+  "tool.command_session.keep_waiting.en-US": "The command is still running. To wait for it, call command_session again with wait_for=exit and a large yield_time_ms (up to 300000); never idle with sleep and never rerun the command.",
+  "tool.exec.reused_running.zh-CN": "本线程里一模一样的命令已经在运行，已直接复用那条会话（reused=true）。不要再次启动；用命令会话传 wait_for=exit 等到它跑完。",
+  "tool.exec.reused_running.en-US": "The exact same command is already running in this thread and its session was reused (reused=true). Do not start another copy; wait on it with command_session and wait_for=exit.",
+  "tool.spec.exec.args.yield_time_ms.zh-CN": "首次等待输出的时间（毫秒），默认 10000，最大 30000；命令提前结束会立即返回。仍在运行时结果带 command_session_id 与当前 seq；需要等它跑完就用命令会话的 wait_for=exit（yield_time_ms 可到 300000）。该参数只控制等待窗口，不会到点杀死命令。",
+  "tool.spec.exec.args.yield_time_ms.en-US": "Initial wait for output in milliseconds (default 10000, max 30000). Commands that finish sooner return immediately. If it is still running, the result carries command_session_id and the current seq; to wait for completion use command_session with wait_for=exit (yield_time_ms up to 300000). This is a wait window, not a kill timeout."
 }

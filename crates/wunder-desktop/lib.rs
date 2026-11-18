@@ -30,7 +30,7 @@ pub use native::{
     TARGET_DESKTOP, TARGET_SUPPLEMENT, UPDATE_GITHUB_REPO, UPDATE_RELAUNCH_ENV, WORKSPACE_COLORS,
     WORKSPACE_ICONS,
 };
-pub use runtime::DesktopRuntime;
+pub use runtime::{DesktopRuntime, RuntimeToolPaths};
 pub use wunder_server::cloud::update::{is_newer_version, AndroidRelease};
 /// 工具动作词表（如命令会话的「等待 / 发送输入」）的唯一来源在引擎里。桌面版与安卓版
 /// 的投影代码都读这一份；安卓版的主机预览构建没有直接链接运行时，所以由这里转出。

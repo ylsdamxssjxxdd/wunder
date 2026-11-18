@@ -54,6 +54,27 @@ pub fn apply_platform_spawn_options_std(cmd: &mut StdCommand) {
     }
 }
 
+/// 同步短命子进程的「不弹控制台」开关。
+///
+/// 语法校验、解释器探测这类进程只跑几十毫秒，输出全走管道，也不需要在终端里
+/// 抢用户的控制台。Windows 上不给 `CREATE_NO_WINDOW` 时，控制台子系统程序会
+/// 自己分配一个新控制台窗口——每次写 `.py` 都能看到黑框闪一下，就是这个原因。
+///
+/// 与 [`apply_platform_spawn_options_std`] 分开，是因为这里的调用方（写文件时
+/// 的校验子进程）只需要「别弹窗」：Unix 下不额外改进程组，仍按调用方自己的
+/// 超时逻辑 kill 单个子进程。
+pub fn hide_console_window_std(cmd: &mut StdCommand) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(WINDOWS_CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = cmd;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Shell selection
 // ---------------------------------------------------------------------------

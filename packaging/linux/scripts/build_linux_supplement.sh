@@ -404,6 +404,13 @@ Usage:
    opt/7zip (and opt/browser on amd64).
 4. Start wunder Desktop or wunder CLI; both prepend the shared opt/python,
    opt/git, opt/rg, opt/ffmpeg and opt/7zip to PATH automatically.
+
+Syntax checks: the write tool validates scripts before reporting back. Node for
+.js/.ts comes from the Playwright driver
+(opt/python/lib/python3.X/site-packages/playwright/driver), whose directory is
+prepended to PATH; .sh uses the system bash; .ps1 needs pwsh (PowerShell 7),
+found in PATH or under opt/powershell. Missing interpreters only downgrade the
+check to "skipped", files are still written.
 EOF
 
 python3 - "$manifest_json" "$arch" "$build_root" "$python_archive_url" "$git_tarball_url" "$rg_archive_url" "$ffmpeg_archive_url" "$requirements_path" "$package_root/wunder-linux-supplement.json" <<'PYEOF'

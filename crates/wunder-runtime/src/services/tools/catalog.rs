@@ -432,14 +432,15 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             description: t("tool.spec.command_session.description"),
             input_schema: super::schema::object(vec![
                 super::schema::string("command_session_id")
-                    .desc(t("tool.spec.command_session.args.id")),
+                    .desc(t("tool.spec.command_session.args.id"))
+                    .optional(),
                 super::schema::string("chars")
                     .desc(t("tool.spec.command_session.args.input"))
                     .optional(),
                 super::schema::integer("yield_time_ms")
                     .desc(t("tool.spec.command_session.args.yield_time_ms"))
                     .min(0)
-                    .max(30000)
+                    .max(300000)
                     .optional(),
                 super::schema::integer("after_seq")
                     .desc(t("tool.spec.command_session.args.after_seq"))
@@ -447,7 +448,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .optional(),
                 super::schema::string("wait_for")
                     .desc(t("tool.spec.command_session.args.wait_for"))
-                    .enums(vec!["exit"])
+                    .enums(vec!["exit", "output"])
                     .optional(),
             ]),
         },

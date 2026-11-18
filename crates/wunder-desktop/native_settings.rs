@@ -73,6 +73,10 @@ pub struct DesktopSettings {
     pub rg_path: String,
     pub ffmpeg_path: String,
     pub browser_path: String,
+    /// `.js`/`.ts` 语法校验用的 node。
+    pub node_path: String,
+    /// `.sh` 语法校验用的 bash。
+    pub bash_path: String,
     pub shell_path: String,
     pub tool_status: Vec<RuntimeToolStatus>,
     pub models: Vec<ModelRecord>,
@@ -839,17 +843,11 @@ impl NativeDesktop {
         Ok(settings)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn save_runtime(
         &self,
         workspace: &str,
         language: &str,
-        python_path: &str,
-        git_path: &str,
-        rg_path: &str,
-        ffmpeg_path: &str,
-        browser_path: &str,
-        shell_path: &str,
+        tools: &crate::runtime::RuntimeToolPaths,
     ) -> Result<DesktopSettings> {
         if workspace.trim().is_empty() || !matches!(language, "zh-CN" | "en-US") {
             bail!("请填写工作目录和有效的语言");
@@ -883,12 +881,14 @@ impl NativeDesktop {
             config.i18n.default_language = language.into();
             // Tool paths stay lenient like the runtime resolvers: an invalid
             // value falls back at spawn time and the status panel reports it.
-            settings.python_path = python_path.trim().to_string();
-            settings.git_path = git_path.trim().to_string();
-            settings.rg_path = rg_path.trim().to_string();
-            settings.ffmpeg_path = ffmpeg_path.trim().to_string();
-            settings.browser_path = browser_path.trim().to_string();
-            settings.shell_path = shell_path.trim().to_string();
+            settings.python_path = tools.python.trim().to_string();
+            settings.git_path = tools.git.trim().to_string();
+            settings.rg_path = tools.rg.trim().to_string();
+            settings.ffmpeg_path = tools.ffmpeg.trim().to_string();
+            settings.browser_path = tools.browser.trim().to_string();
+            settings.node_path = tools.node.trim().to_string();
+            settings.bash_path = tools.bash.trim().to_string();
+            settings.shell_path = tools.shell.trim().to_string();
             Ok(())
         })
     }
@@ -1402,6 +1402,8 @@ fn project(
         rg_path: persisted.rg_path.clone(),
         ffmpeg_path: persisted.ffmpeg_path.clone(),
         browser_path: persisted.browser_path.clone(),
+        node_path: persisted.node_path.clone(),
+        bash_path: persisted.bash_path.clone(),
         shell_path: persisted.shell_path.clone(),
         tool_status: runtime_tool_statuses(persisted, app_dir),
         models,

@@ -3,6 +3,7 @@ use super::*;
 
 pub(super) const TOOL_TIMEOUT_ERROR: &str = "tool_timeout";
 const MAX_COMMAND_TIMEOUT_SECS: f64 = 3600.0;
+use crate::tools::command_options::TOOL_WATCHDOG_GRACE_S;
 
 use super::tool_result_payload::{
     estimate_tool_result_chars, extract_exit_code, merge_tool_result_meta,
@@ -1077,18 +1078,25 @@ pub(super) fn resolve_tool_timeout(
     let _ = canonical_tool_name;
     let mut timeout_s = parse_timeout_secs(args.get("timeout_s")).unwrap_or(0.0);
     if canonical_tool_name == "执行命令" {
-        // The initial wait always has a bounded yield. Long processes keep
-        // running in their session after the tool call returns.
+        // 工具在前台阻塞路径上最多等自己的 timeout_s（默认 120s），可脱离
+        // 路径则在 yield 窗口内返回会话。看门狗必须比这两者都宽：被丢弃的
+        // future 会把进程树一起带走，那正是「命令其实在跑、工具却报结果
+        // 未知」的来源。工具自己总能先返回，看门狗只兜真正挂死的情况。
         let yield_s = crate::tools::command_options::parse_command_yield_time(args).as_secs_f64();
+        let blocking_s = if timeout_s > 0.0 {
+            timeout_s.min(MAX_COMMAND_TIMEOUT_SECS)
+        } else {
+            crate::tools::command_options::DEFAULT_COMMAND_TIMEOUT_S
+        };
         return Some(Duration::from_secs_f64(
-            (yield_s + 30.0).max(MIN_TOOL_TIMEOUT_S),
+            (yield_s.max(blocking_s) + TOOL_WATCHDOG_GRACE_S).max(MIN_TOOL_TIMEOUT_S),
         ));
     } else if canonical_tool_name == "命令会话" {
-        // A poll may wait up to 30s server-side before responding.
+        // 一次轮询最多 30s，显式等待退出/新输出可到分钟级：预算跟着窗口走。
         let yield_s = crate::tools::command_options::parse_command_session_wait(args).yield_time_ms
             as f64
             / 1000.0;
-        timeout_s = timeout_s.max(yield_s.min(30.0) + 30.0);
+        timeout_s = timeout_s.max(yield_s + TOOL_WATCHDOG_GRACE_S);
     } else if tool_name.contains('@') {
         if timeout_s <= 0.0 {
             let fallback = DEFAULT_TOOL_TIMEOUT_S;
@@ -1783,15 +1791,24 @@ mod tests {
     #[test]
     fn tool_deadlines_always_exist_for_blocking_commands_and_sessions() {
         let config = Config::default();
-        // 默认只读一眼（250ms），外层看门狗仍然必须存在。
+        // 默认只读一眼（1s），外层看门狗仍然必须存在。
         assert_eq!(
             resolve_tool_timeout(&config, "command_session", &json!({})),
-            Some(Duration::from_millis(30_250))
+            Some(Duration::from_millis(31_000))
         );
-        // 只有显式声明阻塞到退出时才放大到 60s 窗口。
+        // 显式阻塞到退出：默认 60s 窗口，看门狗随窗口放大到 90s。
         assert_eq!(
             resolve_tool_timeout(&config, "command_session", &json!({"wait_for": "exit"})),
             Some(Duration::from_secs(90))
+        );
+        // 分钟级等待：窗口与看门狗一起放大，不会在中途被砍。
+        assert_eq!(
+            resolve_tool_timeout(
+                &config,
+                "命令会话",
+                &json!({"wait_for": "output", "yield_time_ms": 240_000})
+            ),
+            Some(Duration::from_secs(270))
         );
         assert_eq!(
             resolve_tool_timeout(&config, "执行命令", &json!({})),
@@ -1812,7 +1829,7 @@ mod tests {
                 "执行命令",
                 &json!({"run_in_background": true, "timeout_s": 0})
             ),
-            Some(Duration::from_secs(120))
+            Some(Duration::from_secs(150))
         );
     }
 

@@ -26,6 +26,7 @@ Desktop and CLI share one `opt/`, so installing Desktop also provides the CLI ru
 | --- | --- | --- |
 | `opt/python` | 3.8.10 (Windows); 3.8.18 (Linux) | Agent-written scripts and Python tools |
 | `opt/git` | MinGit 2.46.2 (Windows) / 2.46.2 built from source (Linux) | Clone, patches, repository work |
+| `opt/bash` | 2.46.2 bash closure (Windows only, from the same PortableGit release) | `.sh` syntax checks when writing files |
 | `opt/rg` | 14.1.0 (Windows); 14.1.1 (Linux) | Content search and terminal search |
 | `opt/ffmpeg` | static 4.4.1 | Frame and audio extraction, transcoding (no `ffprobe`) |
 | `opt/7zip` | 25.01 | Archive packing and unpacking |

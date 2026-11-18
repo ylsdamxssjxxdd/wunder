@@ -3,7 +3,8 @@ use super::{
     command_options::{
         apply_time_budget_secs, parse_command_budget, parse_command_session_input,
         parse_command_session_wait, parse_command_yield_time, parse_dry_run, CommandSessionInput,
-        DEFAULT_COMMAND_YIELD_MS, MAX_COMMAND_SESSION_POLL_MS,
+        DEFAULT_COMMAND_TIMEOUT_S, DEFAULT_COMMAND_YIELD_MS, MAX_COMMAND_SESSION_POLL_MS,
+        MAX_COMMAND_TIMEOUT_S,
     },
     command_output_guard::{
         derive_capture_policies, render_command_output, CommandOutputCapture,
@@ -11,8 +12,8 @@ use super::{
         DEFAULT_CAPTURE_TOTAL_BYTES,
     },
     command_sessions::{
-        CommandProcessHandle, CommandSessionLaunchMode, CommandSessionStream,
-        CommandSessionTracker, CommandStdinWrite,
+        CommandProcessHandle, CommandSessionLaunchMode, CommandSessionSnapshot,
+        CommandSessionStatus, CommandSessionStream, CommandSessionTracker, CommandStdinWrite,
     },
     execute_in_sandbox, recover_tool_args_value, resolve_tool_name,
     tool_error::{
@@ -51,10 +52,75 @@ fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
     }
 }
 
-const DEFAULT_COMMAND_TIMEOUT_S: f64 = 120.0;
-const MAX_COMMAND_TIMEOUT_S: f64 = 3600.0;
 /// 可交互进程的最长保留时间，避免挂死进程永久占用会话槽位。
 const INTERACTIVE_COMMAND_MAX_S: f64 = 3600.0;
+
+/// 同一条命令已经在本线程里跑着时返回那条会话：不再启动第二份。
+///
+/// 带单实例锁的程序（渲染器、桌面应用、服务端）重复启动只会被自己拦住，
+/// 模型看到「锁被占用」再去 ps 排查，代价远高于直接复用既有会话。
+fn running_duplicate_session(
+    context: &ToolContext<'_>,
+    command: &str,
+    cwd: &Path,
+) -> Option<CommandSessionSnapshot> {
+    let broker = context.command_sessions.as_ref()?;
+    let target = command.trim();
+    if target.is_empty() {
+        return None;
+    }
+    let cwd_text = cwd.to_string_lossy();
+    broker
+        .list_session_snapshots(context.user_id, context.session_id)
+        .into_iter()
+        .find(|snapshot| {
+            snapshot.status == CommandSessionStatus::Running
+                && snapshot.command.trim() == target
+                && snapshot.cwd == cwd_text
+        })
+}
+
+/// 复用已有会话的返回：形状与「首包 running」一致，并同步推进模型游标，
+/// 下次用命令会话续读时不会把同段输出重放一遍。
+fn build_reused_command_result(
+    context: &ToolContext<'_>,
+    snapshot: &CommandSessionSnapshot,
+) -> Value {
+    let guidance = i18n::t("tool.exec.reused_running");
+    let truncated = snapshot.stdout_dropped_bytes > 0
+        || snapshot.stderr_dropped_bytes > 0
+        || snapshot.pty_dropped_bytes > 0;
+    if !truncated {
+        if let Some(broker) = context.command_sessions.as_ref() {
+            broker.advance_model_cursor(
+                context.user_id,
+                context.session_id,
+                &snapshot.command_session_id,
+                snapshot.seq,
+            );
+        }
+    }
+    build_model_tool_success(
+        "execute_command",
+        "running",
+        format!("Same command is already running in this thread. {guidance}"),
+        json!({
+            "command_session_id": &snapshot.command_session_id,
+            "status": "running",
+            "reused": true,
+            "next_step": guidance,
+            "results": [{
+                "command": &snapshot.command,
+                "command_index": snapshot.command_index,
+                "command_session_id": &snapshot.command_session_id,
+                "running": true,
+                "seq": snapshot.seq,
+                "stdout": &snapshot.stdout_tail,
+                "stderr": &snapshot.stderr_tail,
+            }],
+        }),
+    )
+}
 
 /// Detect commands that only idle (e.g. `sleep 5`) without doing real work.
 fn is_bare_sleep_command(command: &str) -> bool {
@@ -976,10 +1042,14 @@ async fn run_spawned_child_streaming(
     })
 }
 
-/// Detach a local child after a short initial wait. The process and its bounded
-/// session transcript remain owned by the broker while the model continues.
+/// 让进程脱离这次工具调用：子进程、输出读任务与进程树守卫全部交给一个
+/// 监视任务持有，工具调用只等一条「最终结果」通知。
+///
+/// 这样即使上层看门狗把工具调用打断（future 被丢弃），进程也不会陪葬：
+/// 它继续留在命令会话里，可查询、可等待、可终止。反过来，工具在等待窗口
+/// 内正常拿到结果时，语义与原来的前台阻塞路径完全一致。
 #[allow(clippy::too_many_arguments)]
-async fn detach_spawned_child(
+async fn supervise_spawned_child(
     broker: Arc<super::command_sessions::CommandSessionBroker>,
     mut child: Child,
     timeout: Option<Duration>,
@@ -988,7 +1058,8 @@ async fn detach_spawned_child(
     mut stderr_task: Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
     tree: ProcessTree,
     child_stdin: Option<tokio::process::ChildStdin>,
-) -> Result<CommandRunResult> {
+    result_tx: tokio::sync::oneshot::Sender<Result<CommandRunResult>>,
+) -> Result<()> {
     let session_id = command_session.command_session_id().to_string();
     let cleanup_session_id = session_id.clone();
     // 写端来自调用方提前 take 出来的那一份；tokio 的 wait 不会关掉它。
@@ -1027,22 +1098,21 @@ async fn detach_spawned_child(
         };
         // 自然退出也可能留下持有管道的孙进程；宽限内读不到 EOF 就树终止，
         // 保证 watcher 一定收尾、broker 槽位一定释放。
-        let _ = drain_output_captures(&mut stdout_task, &mut stderr_task, &tree).await;
-        tree.disarm();
-        let exit_code = wait_result.as_ref().and_then(exit_status_code);
-        tracker.emit_exit(exit_code, timed_out, error);
+        let finished = complete_detachable_child(
+            wait_result,
+            timed_out,
+            &mut stdout_task,
+            &mut stderr_task,
+            &tree,
+            tracker,
+            error,
+        )
+        .await;
         broker.remove_process(&cleanup_session_id);
+        // 调用方可能早已离开（工具超时/取消），发送失败是正常情况。
+        let _ = result_tx.send(finished);
     });
-    Ok(CommandRunResult {
-        returncode: -1,
-        stdout: String::new(),
-        stderr: String::new(),
-        timed_out: false,
-        stdout_capture: CommandOutputCaptureMeta::empty(),
-        stderr_capture: CommandOutputCaptureMeta::empty(),
-        command_session_id: Some(session_id),
-        running: true,
-    })
+    Ok(())
 }
 
 fn start_command_output_readers(
@@ -1300,14 +1370,14 @@ async fn run_command_streaming(
         )
         .await;
     };
-    // 前台命令在执行期间登记一枚会话级取消令牌，面板的「终止」由此取消它；
-    // 守卫在函数返回时摘除（detached 之后由进程句柄接管终止）。
-    let (_cancel_guard, session_cancel) = context
-        .command_sessions
-        .as_ref()
-        .map(|broker| SessionCancelGuard::register(broker, command_session.command_session_id()))
-        .unzip();
     let Some(wait) = yield_time.filter(|wait| *wait > Duration::ZERO) else {
+        // 前台阻塞路径：执行期间登记会话级取消令牌，面板的「终止」由此取消它，
+        // 守卫在函数返回时摘除。
+        let (_cancel_guard, session_cancel) = context
+            .command_sessions
+            .as_ref()
+            .map(|broker| SessionCancelGuard::register(broker, command_session.command_session_id()))
+            .unzip();
         return run_spawned_child_streaming(
             context,
             child,
@@ -1322,9 +1392,24 @@ async fn run_command_streaming(
         )
         .await;
     };
-    // Start readers before the initial wait so a chatty process cannot block
-    // on a full pipe while the model is doing other work.
-    let (mut stdout_task, mut stderr_task) = start_command_output_readers(
+    // 可脱离路径必须有 broker 才能接管进程；拿不到就退回前台阻塞，语义不变。
+    let Some(broker) = context.command_sessions.as_ref().cloned() else {
+        return run_spawned_child_streaming(
+            context,
+            child,
+            tool_name,
+            &command_text,
+            timeout,
+            stdout_policy,
+            stderr_policy,
+            Some(command_session),
+            None,
+            tree,
+        )
+        .await;
+    };
+    // 读任务先起，勤输出的进程不会在初次等待期间把管道写满。
+    let (stdout_task, stderr_task) = start_command_output_readers(
         context,
         &mut child,
         tool_name,
@@ -1333,94 +1418,10 @@ async fn run_command_streaming(
         stderr_policy,
         command_session.clone(),
     );
-    // 关键：等待既要能被超时/取消打断，也要在进程自然退出时立刻返回。
-    // 只 sleep(wait) 会让前台转后台路径把每条秒回的命令都拖满 timeout。
-    enum WaitOutcome {
-        Exited(std::io::Result<std::process::ExitStatus>),
-        TimedOut,
-        Cancelled,
-    }
-    let outcome = if let Some(cancel) = session_cancel.as_ref() {
-        tokio::select! {
-            _ = cancel.cancelled() => WaitOutcome::Cancelled,
-            result = child.wait() => WaitOutcome::Exited(result),
-            _ = tokio::time::sleep(wait) => WaitOutcome::TimedOut,
-        }
-    } else {
-        tokio::select! {
-            result = child.wait() => WaitOutcome::Exited(result),
-            _ = tokio::time::sleep(wait) => WaitOutcome::TimedOut,
-        }
-    };
-    match outcome {
-        WaitOutcome::Cancelled => {
-            tree.terminate();
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-            return complete_detachable_child(
-                None,
-                false,
-                &mut stdout_task,
-                &mut stderr_task,
-                &tree,
-                command_session,
-                Some("command cancelled".to_string()),
-            )
-            .await;
-        }
-        WaitOutcome::Exited(Ok(status)) => {
-            return complete_detachable_child(
-                Some(status),
-                false,
-                &mut stdout_task,
-                &mut stderr_task,
-                &tree,
-                command_session,
-                None,
-            )
-            .await;
-        }
-        WaitOutcome::Exited(Err(err)) => return Err(anyhow!(err)),
-        WaitOutcome::TimedOut => {}
-    }
-    if let Some(status) = child.try_wait()? {
-        return complete_detachable_child(
-            Some(status),
-            false,
-            &mut stdout_task,
-            &mut stderr_task,
-            &tree,
-            command_session,
-            None,
-        )
-        .await;
-    }
-    let Some(broker) = context.command_sessions.as_ref().cloned() else {
-        let (status, timed_out) = if let Some(timeout) = timeout {
-            match tokio::time::timeout(timeout, child.wait()).await {
-                Ok(status) => (Some(status?), false),
-                Err(_) => {
-                    tree.terminate();
-                    let _ = child.kill().await;
-                    let _ = child.wait().await;
-                    (None, true)
-                }
-            }
-        } else {
-            (Some(child.wait().await?), false)
-        };
-        return complete_detachable_child(
-            status,
-            timed_out,
-            &mut stdout_task,
-            &mut stderr_task,
-            &tree,
-            command_session,
-            None,
-        )
-        .await;
-    };
-    detach_spawned_child(
+    // 进程从这一刻起由监视任务持有：工具调用被打断也不再连坐子进程。
+    let (result_tx, mut result_rx) = tokio::sync::oneshot::channel();
+    let session_id = command_session.command_session_id().to_string();
+    supervise_spawned_child(
         broker,
         child,
         timeout,
@@ -1429,8 +1430,113 @@ async fn run_command_streaming(
         stderr_task,
         tree,
         child_stdin,
+        result_tx,
     )
-    .await
+    .await?;
+    // 等待窗口内退出就把完整结果交回去；窗口到点则只交会话，进程继续跑。
+    match tokio::time::timeout(wait, &mut result_rx).await {
+        Ok(Ok(result)) => return result,
+        Ok(Err(_)) => {}
+        Err(_) => {
+            // 恰好在窗口末尾退出：给收尾一点余量，避免把已完成报成运行中。
+            if let Ok(Ok(result)) =
+                tokio::time::timeout(Duration::from_millis(500), &mut result_rx).await
+            {
+                return result;
+            }
+        }
+    }
+    Ok(CommandRunResult {
+        returncode: -1,
+        stdout: String::new(),
+        stderr: String::new(),
+        timed_out: false,
+        stdout_capture: CommandOutputCaptureMeta::empty(),
+        stderr_capture: CommandOutputCaptureMeta::empty(),
+        command_session_id: Some(session_id),
+        running: true,
+    })
+}
+
+/// `命令会话` 不带 id 时：列出本线程的命令任务。
+///
+/// 这是「到底跑没跑」的只读答案。工具调用被超时打断、消息里没拿到会话 id，
+/// 或者模型只是想确认后台还有哪些进程时，用它代替 `ps` 与反复猜。
+fn command_session_list(context: &ToolContext<'_>) -> Value {
+    let Some(broker) = context.command_sessions.as_ref() else {
+        return build_failed_tool_result(
+            &i18n::t("tool.command_session.unavailable"),
+            json!({}),
+            ToolErrorMeta::new("TOOL_COMMAND_SESSION_UNAVAILABLE", None, false, None),
+            false,
+        );
+    };
+    let now = chrono::Utc::now();
+    let mut sessions = broker
+        .list_session_snapshots(context.user_id, context.session_id)
+        .into_iter()
+        .map(|snapshot| {
+            let view = snapshot.task_view(now);
+            json!({
+                "command_session_id": view.id,
+                "status": view.status,
+                "running": view.running,
+                "exit_code": view.exit_code,
+                "timed_out": snapshot.timed_out,
+                "command": view.command,
+                "cwd": view.cwd,
+                "elapsed_ms": view.elapsed_ms,
+                "seq": snapshot.seq,
+                "stdout_tail": tail_excerpt(&snapshot.stdout_tail),
+                "stderr_tail": tail_excerpt(&snapshot.stderr_tail),
+                "output_truncated": snapshot.stdout_dropped_bytes > 0
+                    || snapshot.stderr_dropped_bytes > 0
+                    || snapshot.pty_dropped_bytes > 0,
+            })
+        })
+        .collect::<Vec<_>>();
+    // 还在跑的排前面：模型最需要知道的就是「现在有什么在跑」。
+    sessions.sort_by(|left, right| {
+        let running = |value: &Value| value.get("running").and_then(Value::as_bool) != Some(true);
+        running(left).cmp(&running(right)).then_with(|| {
+            let elapsed = |value: &Value| {
+                value
+                    .get("elapsed_ms")
+                    .and_then(Value::as_i64)
+                    .unwrap_or_default()
+            };
+            elapsed(right).cmp(&elapsed(left))
+        })
+    });
+    let total = sessions.len();
+    let running = sessions
+        .iter()
+        .filter(|value| value.get("running").and_then(Value::as_bool) == Some(true))
+        .count();
+    sessions.truncate(20);
+    build_model_tool_success(
+        "command_session",
+        "listed",
+        i18n::t("tool.command_session.list_summary"),
+        json!({
+            "sessions": sessions,
+            "total": total,
+            "running": running,
+            "next_step": i18n::t("tool.command_session.list_next_step"),
+        }),
+    )
+}
+
+/// 会话尾部输出只带最后一小段：够看清进度，不把上下文撑爆。
+fn tail_excerpt(text: &str) -> String {
+    const MAX_CHARS: usize = 1_200;
+    let trimmed = text.trim_end();
+    let count = trimmed.chars().count();
+    if count <= MAX_CHARS {
+        return trimmed.to_string();
+    }
+    let tail: String = trimmed.chars().skip(count - MAX_CHARS).collect();
+    format!("…{}", tail)
 }
 
 /// 后台命令会话的唯一入口：空 input 读新输出，非空 input 写 stdin 后再读，
@@ -1451,12 +1557,7 @@ pub(crate) async fn command_session_control(
         .unwrap_or("")
         .trim();
     if session_id.is_empty() {
-        return Ok(build_failed_tool_result(
-            &crate::i18n::t("tool.command_session.id_required"),
-            json!({}),
-            ToolErrorMeta::new("TOOL_COMMAND_SESSION_ID_REQUIRED", None, false, None),
-            false,
-        ));
+        return Ok(command_session_list(context));
     }
     let input = parse_command_session_input(args);
     let wait = parse_command_session_wait(args);
@@ -2147,10 +2248,13 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             })
         });
     let context = scoped_context.as_ref().unwrap_or(context);
+    // 后台名额满时退回前台阻塞：短命令照常跑完，长命令由自己的 timeout_s
+    // 回收并如实报超时，不会出现「进程跑着、会话却登记不上」的半截状态。
     let yield_time = context
         .command_sessions
-        .is_some()
-        .then(|| parse_command_yield_time(&args));
+        .as_ref()
+        .filter(|broker| broker.has_process_capacity())
+        .map(|_| parse_command_yield_time(&args));
     let timeout_s = parse_timeout_secs(args.get("timeout_s"))
         .map(|value| value.max(0.0))
         .unwrap_or(DEFAULT_COMMAND_TIMEOUT_S);
@@ -2455,6 +2559,8 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             .map(ToString::to_string)
             .collect::<Vec<_>>()
     };
+    // 单条命令才做「已有一模一样的会话在跑」的复用检查；批量脚本按顺序照跑。
+    let single_command = commands.len() == 1;
     if commands.is_empty() {
         return Ok(build_failed_tool_result(
             i18n::t("tool.exec.command_required"),
@@ -2559,6 +2665,15 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
         } else {
             command
         };
+        // 同一条命令已经在本线程跑着：直接交回那条会话，不重复启动。
+        // 渲染器、桌面应用这类单实例程序第二次启动只会被自己拦住，模型再
+        // 靠 ps 判断"到底跑没跑"，白白丢掉一轮。
+        if single_command && yield_time.is_some() {
+            if let Some(snapshot) = running_duplicate_session(context, &command, &cwd) {
+                context.workspace.mark_tree_dirty(context.workspace_id);
+                return Ok(build_reused_command_result(context, &snapshot));
+            }
+        }
         let run = run_command_streaming(
             context,
             &command,

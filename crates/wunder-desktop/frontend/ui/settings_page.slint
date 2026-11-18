@@ -468,6 +468,8 @@ export component SettingsPage inherits Rectangle {
     in-out property <string> rg-path;
     in-out property <string> ffmpeg-path;
     in-out property <string> browser-path;
+    in-out property <string> node-path;
+    in-out property <string> bash-path;
     in-out property <string> shell-path;
     // Effective executable the runtime would actually use right now (bundled
     // supplement or system). The save path drops values equal to it, so an
@@ -477,6 +479,8 @@ export component SettingsPage inherits Rectangle {
     in property <string> rg-effective;
     in property <string> ffmpeg-effective;
     in property <string> browser-effective;
+    in property <string> node-effective;
+    in property <string> bash-effective;
     in property <string> shell-effective;
     in-out property <bool> importing-supplement: false;
     in-out property <string> supplement-status;
@@ -486,6 +490,8 @@ export component SettingsPage inherits Rectangle {
     callback pick-rg-path();
     callback pick-ffmpeg-path();
     callback pick-browser-path();
+    callback pick-node-path();
+    callback pick-bash-path();
     callback pick-shell-path();
     // ---- 线程渲染压测：用户手动触发，写入本地库模拟线程 ----
     in-out property <bool> stress-running: false;
@@ -1258,6 +1264,26 @@ export component SettingsPage inherits Rectangle {
                                     Rectangle { horizontal-stretch: 1; }
                                 }
                                 Text { height: 18px; text: root.supplement-status; color: root.supplement-status.starts-with("导入失败") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; visible: root.supplement-status != ""; }
+                            }
+                            // ---- 语法检查：写回文件后的解析器宿主 ----
+                            // 只对需要外部解释器的语言生效（.py / .js / .ts / .sh / .ps1）。
+                            // 字段留空即自动探测，显示的是引擎此刻真正会用的那个二进制。
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.st_syntax_title; subtitle: I18n.st_syntax_note; }
+                                Rectangle { height: 10px; }
+                                HorizontalLayout { height: 62px; spacing: 10px;
+                                    FormField { horizontal-stretch: 1; label: I18n.st_node_path; text <=> root.node-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
+                                    VerticalLayout { width: 92px; alignment: end; padding-bottom: 5px;
+                                        PathBrowseButton { enabled: !root.saving && !root.loading; clicked => { root.pick-node-path(); } }
+                                    }
+                                }
+                                HorizontalLayout { height: 62px; spacing: 10px;
+                                    FormField { horizontal-stretch: 1; label: I18n.st_bash_path; text <=> root.bash-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
+                                    VerticalLayout { width: 92px; alignment: end; padding-bottom: 5px;
+                                        PathBrowseButton { enabled: !root.saving && !root.loading; clicked => { root.pick-bash-path(); } }
+                                    }
+                                }
+                                Text { height: 18px; text: I18n.st_syntax_map; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                             }
                         }
                     }

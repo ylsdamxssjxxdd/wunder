@@ -1041,6 +1041,109 @@ pub(super) fn build_tool_failure_next_step_hint(
     "建议下一步：停止重复当前调用，调整工具参数或更换工具路径后继续。".to_string()
 }
 
+/// 命令类工具被看门狗打断时，补上「进程其实还在」的事实。
+///
+/// 只报 `execution_outcome: unknown` 会把模型推向两个错误动作：去 `ps` 里
+/// 猜、或者直接重跑同一条命令。后者对带单实例锁的程序等于自杀——第二次
+/// 启动被自己的第一次拦下，还白白多花一轮。这里把活会话连同 id、状态和
+/// 尾部输出一起交回去，模型可以直接接着等待。
+pub(super) fn build_tool_timeout_result_with_sessions(
+    context: Option<&crate::services::tools::ToolContext<'_>>,
+    tool_name: &str,
+    timeout: Option<Duration>,
+) -> ToolResultPayload {
+    let payload = build_tool_timeout_result(tool_name, timeout);
+    let Some(context) = context else {
+        return payload;
+    };
+    let canonical = crate::tools::resolve_tool_name(tool_name);
+    if canonical != "执行命令" && canonical != "命令会话" {
+        return payload;
+    }
+    let Some(broker) = context.command_sessions.as_ref() else {
+        return payload;
+    };
+    let now = chrono::Utc::now();
+    let running = broker
+        .list_session_snapshots(context.user_id, context.session_id)
+        .into_iter()
+        .filter(|snapshot| {
+            snapshot.status
+                == crate::services::tools::command_sessions::CommandSessionStatus::Running
+        })
+        .map(|snapshot| {
+            let elapsed_ms = snapshot
+                .ended_at
+                .unwrap_or(now)
+                .signed_duration_since(snapshot.started_at)
+                .num_milliseconds()
+                .max(0);
+            json!({
+                "command_session_id": snapshot.command_session_id,
+                "command": one_line_excerpt(&snapshot.command),
+                "cwd": snapshot.cwd,
+                "elapsed_ms": elapsed_ms,
+                "seq": snapshot.seq,
+                "stdout_tail": tail_excerpt(&snapshot.stdout_tail),
+                "stderr_tail": tail_excerpt(&snapshot.stderr_tail),
+            })
+        })
+        .collect::<Vec<_>>();
+    attach_running_sessions(payload, tool_name, running)
+}
+
+/// 把活会话塞进超时结果。单独拆出来是为了能直接用构造数据覆盖这段文案，
+/// 不必先拉起一个真实进程。
+pub(super) fn attach_running_sessions(
+    mut payload: ToolResultPayload,
+    tool_name: &str,
+    running: Vec<Value>,
+) -> ToolResultPayload {
+    if running.is_empty() {
+        return payload;
+    }
+    let hint = "命令仍在运行：不要重试同一条命令，直接用 command_session_id 调用命令会话继续等待（wait_for=exit 会阻塞到退出，yield_time_ms 可到 300000）。";
+    if let Some(map) = payload.data.as_object_mut() {
+        map.insert("execution_outcome".to_string(), json!("running"));
+        map.insert("still_running".to_string(), json!(true));
+        map.insert("sessions".to_string(), json!(running));
+        map.insert("next_step_hint".to_string(), json!(hint));
+    }
+    payload.error = format!(
+        "Tool `{}` exceeded its wait window, but the command is still running in its session.",
+        tool_name
+    );
+    payload
+}
+
+/// 命令原文压成一行：列表里只要认出是哪条命令。
+fn one_line_excerpt(command: &str) -> String {
+    const MAX_CHARS: usize = 240;
+    let single = command
+        .split(['\n', '\r'])
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if single.chars().count() <= MAX_CHARS {
+        return single;
+    }
+    let head = single.chars().take(MAX_CHARS - 1).collect::<String>();
+    format!("{}…", head)
+}
+
+/// 尾部输出只带最后一小段：够判断进度，不撑爆上下文。
+fn tail_excerpt(text: &str) -> String {
+    const MAX_CHARS: usize = 1_200;
+    let trimmed = text.trim_end();
+    let count = trimmed.chars().count();
+    if count <= MAX_CHARS {
+        return trimmed.to_string();
+    }
+    let tail = trimmed.chars().skip(count - MAX_CHARS).collect::<String>();
+    format!("…{}", tail)
+}
+
 pub(super) fn build_tool_timeout_result(
     tool_name: &str,
     timeout: Option<Duration>,

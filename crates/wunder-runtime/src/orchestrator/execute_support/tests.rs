@@ -15,6 +15,41 @@ fn tool_timeout_never_advertises_blind_side_effect_retries() {
 }
 
 #[test]
+fn command_timeout_reports_the_still_running_session() {
+    let payload = build_tool_timeout_result("执行命令", Some(Duration::from_secs(60)));
+    let enriched = attach_running_sessions(
+        payload,
+        "执行命令",
+        vec![json!({
+            "command_session_id": "cmd_fixture",
+            "command": "render --jobs 4",
+            "elapsed_ms": 61_000,
+            "seq": 12
+        })],
+    );
+    // 有活会话时必须说「还在跑」，模型据此继续等，而不是重跑。
+    assert_eq!(enriched.data["execution_outcome"], "running");
+    assert_eq!(enriched.data["still_running"], true);
+    assert_eq!(
+        enriched.data["sessions"][0]["command_session_id"],
+        "cmd_fixture"
+    );
+    assert!(enriched.data["next_step_hint"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("命令会话"));
+    assert!(enriched.error.contains("still running"));
+    // 没有活会话时保持「结果未知」：不能凭空断言命令还在跑。
+    let plain = attach_running_sessions(
+        build_tool_timeout_result("执行命令", None),
+        "执行命令",
+        Vec::new(),
+    );
+    assert_eq!(plain.data["execution_outcome"], "unknown");
+    assert!(plain.data["sessions"].is_null());
+}
+
+#[test]
 fn desktop_max_rounds_keeps_a_loose_hard_cap() {
     let mut config = LlmModelConfig::default();
     assert_eq!(

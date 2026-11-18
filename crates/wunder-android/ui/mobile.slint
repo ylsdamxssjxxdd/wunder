@@ -10,7 +10,7 @@ export { I18n }
 import { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion, CommandTask, SubagentItem, TurnMark, PlanStep, QueueTurn } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
 export { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion }
 import { TimelineView } from "../../../crates/wunder-desktop/frontend/ui/timeline.slint";
-import { Composer, CommandOptions, GoalBanner, InquiryPanel, ModelSetupBanner, StatusDock } from "../../../crates/wunder-desktop/frontend/ui/composer.slint";
+import { Composer, GoalBanner, InquiryPanel, ModelSetupBanner, StatusDock } from "../../../crates/wunder-desktop/frontend/ui/composer.slint";
 import { Action, FormField, ConfirmDialog } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
 import { MobileSettings } from "settings.slint";
 import { ComposePage } from "compose_page.slint";
@@ -35,130 +35,6 @@ import { ListView, ScrollView } from "std-widgets.slint";
 
 // One row of the mobile thread drawer. The projection lives in Rust; this is
 // a flat, bounded card so a long thread list stays cheap to scroll.
-
-// One square in the phone's function panel: a single soft icon capsule with a
-// caption. No outer card or border — the capsule is the whole shape, so the
-// thumbs in one row read as one even strip instead of nested boxes.
-component PlusTile inherits Rectangle {
-    in property <image> icon;
-    in property <string> label;
-    in property <bool> enabled: true;
-    in property <bool> active: false;
-    callback clicked();
-    horizontal-stretch: 1;
-    height: 74px;
-    background: transparent;
-    tile-touch := TouchArea {
-        enabled: root.enabled;
-        clicked => { root.clicked(); }
-    }
-    VerticalLayout {
-        alignment: center;
-        spacing: 7px;
-        Rectangle {
-            width: 50px;
-            height: 50px;
-            border-radius: 18px;
-            background: root.active ? Theme.accent-soft
-                : tile-touch.has-hover ? Theme.selected
-                : root.enabled ? Theme.surface : Theme.input-readonly-bg;
-            border-width: 1px;
-            border-color: root.active ? Theme.danger.with-alpha(0.28) : Theme.border;
-            Image {
-                x: 14px;
-                y: 14px;
-                width: 22px;
-                height: 22px;
-                source: root.icon;
-                colorize: root.active ? Theme.danger
-                    : root.enabled ? Theme.text-secondary : Theme.border-strong;
-                image-fit: contain;
-            }
-        }
-        Text {
-            text: root.label;
-            color: root.active ? Theme.danger : root.enabled ? Theme.text-secondary : Theme.muted;
-            font-size: Theme.font-2xs;
-            horizontal-alignment: center;
-            overflow: elide;
-        }
-    }
-}
-
-// Capture strip above the composer. Recording and transcription stay visible
-// after the plus tray closes, and stopping is one tap.
-component VoiceBar inherits Rectangle {
-    in property <int> phase: 0;
-    in property <string> elapsed: "";
-    callback stop();
-    height: 38px;
-    border-radius: Theme.radius-md;
-    background: Theme.surface;
-    border-width: 1px;
-    border-color: Theme.border;
-    HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 4px;
-        spacing: 8px;
-        cross-axis-alignment: center;
-        Rectangle {
-            width: 8px;
-            height: 8px;
-            border-radius: 4px;
-            background: root.phase == 1 ? Theme.danger : Theme.muted;
-        }
-        Text {
-            horizontal-stretch: 1;
-            text: root.phase == 1
-                ? "正在录音 · " + root.elapsed + "，点停止结束"
-                : "正在识别录音…";
-            color: root.phase == 1 ? Theme.danger : Theme.muted;
-            font-size: Theme.font-sm;
-            vertical-alignment: center;
-            overflow: elide;
-        }
-        if root.phase == 1 : Action {
-            width: 34px;
-            height: 30px;
-            icon-size: 14px;
-            icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/stop.svg");
-            label: "停止";
-            clicked => { root.stop(); }
-        }
-    }
-}
-
-// One selectable row in a phone function-panel sub-list.
-component PanelOption inherits Rectangle {
-    in property <string> label;
-    in property <bool> selected: false;
-    in property <bool> danger: false;
-    callback clicked();
-    height: 48px;
-    border-radius: Theme.radius-sm;
-    background: root.selected ? Theme.accent-soft : option-touch.has-hover ? Theme.hover : transparent;
-    option-touch := TouchArea {
-        clicked => { root.clicked(); }
-    }
-    Text {
-        x: 12px;
-        width: parent.width - 44px;
-        height: parent.height;
-        text: root.label;
-        color: root.danger ? Theme.danger : root.selected ? Theme.accent-ink : Theme.text;
-        font-size: Theme.font-sm;
-        vertical-alignment: center;
-        overflow: elide;
-    }
-    if root.selected : Image {
-        x: parent.width - 30px;
-        y: (parent.height - 16px) / 2;
-        width: 16px;
-        height: 16px;
-        source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/circle-check.svg");
-        colorize: Theme.accent-ink;
-    }
-}
 
 // One action in a bottom action sheet. Icons keep the sheet scannable and
 // mirror the desktop sidebar's row menu.
@@ -200,13 +76,15 @@ component SheetAction inherits Rectangle {
 component RowIconButton inherits Rectangle {
     in property <image> icon;
     in property <string> tip;
+    in property <bool> enabled: true;
     callback clicked();
 
     width: 28px;
     height: 32px;
     border-radius: 6px;
-    background: icon-touch.has-hover ? Theme.hover : transparent;
+    background: root.enabled && icon-touch.has-hover ? Theme.hover : transparent;
     icon-touch := TouchArea {
+        enabled: root.enabled;
         clicked => { root.clicked(); }
     }
     Image {
@@ -215,7 +93,7 @@ component RowIconButton inherits Rectangle {
         width: 14px;
         height: 14px;
         source: root.icon;
-        colorize: Theme.muted;
+        colorize: root.enabled ? Theme.muted : Theme.border-strong;
     }
     accessible-role: button;
     accessible-label: root.tip;
@@ -476,16 +354,8 @@ export component MobileWindow inherits Window {
     in property <string> workspace-icon: "folder";
     in property <string> workspace-color: "blue";
     in property <int> workspace-thread-count: 0;
-
-    // ---- phone function panel ---------------------------------------
-    in-out property <bool> plus-open: false;
-    // 0 grid, 1 commands, 2 preset questions, 3 approval mode.
-    in-out property <int> plus-view: 0;
-    in property <[string]> preset-questions: [];
-    // Voice capture: 0 idle, 1 recording, 2 transcribing. The strip above the
-    // composer owns the stop action; the plus tile mirrors the same state.
-    in property <int> voice-phase: 0;
-    in property <string> voice-elapsed: "";
+    // 工作目录的“清空”确认：抽屉内联列表和独立页面共用同一个对话框。
+    in-out property <bool> workspace-clear-open: false;
 
     // ---- composer ----------------------------------------------------
     in-out property <string> draft: "";
@@ -765,9 +635,9 @@ export component MobileWindow inherits Window {
     callback update-workspace(string, string, string, string, string);
     callback delete-workspace(string);
     callback pick-workspace-folder();
-    callback plus-panel-opened();
+    // Empty the working-directory folder after the shared confirmation.
+    callback clear-workspace();
     callback keyboard-dismiss();
-    callback record-voice();
     callback send();
     callback stop();
     callback select-model(int, string);
@@ -899,10 +769,6 @@ export component MobileWindow inherits Window {
     private property <length> inset-top: self.safe-area-insets.top;
     private property <length> inset-bottom: self.safe-area-insets.bottom;
     private property <length> header-height: 52px;
-    // Secondary lists fit five 48px rows plus the 46px back header without
-    // scrolling on a standard phone.
-    private property <length> plus-panel-height: root.plus-open
-        ? (root.plus-view == 0 ? 100px : 312px) + root.inset-bottom : 0px;
 
     function commit-rename() {
         if root.rename-title == "" {
@@ -957,21 +823,6 @@ export component MobileWindow inherits Window {
         root.workspace-move(root.file-pending.path, target);
     }
 
-    function toggle-plus() {
-        root.plus-open = !root.plus-open;
-        if !root.plus-open {
-            root.plus-view = 0;
-        } else {
-            root.plus-panel-opened();
-        }
-    }
-
-    changed plus-open => {
-        if !root.plus-open {
-            root.plus-view = 0;
-        }
-    }
-
     changed drawer-open => {
         if root.drawer-open {
             root.keyboard-dismiss();
@@ -987,6 +838,7 @@ export component MobileWindow inherits Window {
             root.file-rename-open = false;
             root.file-delete-open = false;
             root.file-move-open = false;
+            root.workspace-clear-open = false;
         }
     }
 
@@ -996,20 +848,9 @@ export component MobileWindow inherits Window {
         }
     }
 
-    function close-plus() {
-        root.plus-open = false;
-        root.plus-view = 0;
-    }
-
-    function pick-draft(value: string) {
-        root.draft = value;
-        root.close-plus();
-    }
-
-    // 折叠态输入卡被点中：收起功能面板，直接进全屏输入页（编辑器在页面
-    // 自己的 init 里要焦点，键盘随之弹出）。
+    // 折叠态输入卡被点中：直接进全屏输入页（编辑器在页面自己的 init 里
+    // 要焦点，键盘随之弹出）。
     function open-input-page() {
-        root.close-plus();
         root.input-page-open = true;
     }
 
@@ -1038,7 +879,6 @@ export component MobileWindow inherits Window {
     // The device row's plus creates a workspace directly, the desktop
     // selector's twin. The catalogue page opens with its editor already up.
     function show-workspace-create() {
-        root.close-plus();
         root.close-drawer();
         root.workspaces-open = true;
         root.open-workspaces();
@@ -1172,7 +1012,6 @@ export component MobileWindow inherits Window {
                         icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-pen-to-square.svg");
                         label: I18n.chat_new_thread;
                         clicked => {
-                            root.close-plus();
                             root.new-session();
                         }
                     }
@@ -1318,23 +1157,10 @@ export component MobileWindow inherits Window {
                     }
                 }
 
-                if root.voice-phase != 0 : HorizontalLayout {
-                    padding-left: 16px;
-                    padding-right: 16px;
-                    padding-top: 4px;
-                    padding-bottom: 2px;
-                    VoiceBar {
-                        horizontal-stretch: 1;
-                        phase: root.voice-phase;
-                        elapsed: root.voice-elapsed;
-                        stop() => { root.record-voice(); }
-                    }
-                }
-
                 composer := Composer {
                     mobile: true;
-                    mobile-plus-open: root.plus-open;
-                    mobile-plus-toggled() => { root.toggle-plus(); }
+                    // 手机上的加号就是上传附件，不再展开功能面板。
+                    mobile-plus-toggled() => { root.attach-files(); }
                     mobile-page-trigger: true;
                     mobile-page-requested() => { root.open-input-page(); }
                     draft <=> root.draft;
@@ -1360,10 +1186,7 @@ export component MobileWindow inherits Window {
                     show-host-hud: false;
                     show-cli-action: false;
                     branch-name: root.branch-name;
-                    send() => {
-                        root.close-plus();
-                        root.send();
-                    }
+                    send() => { root.send(); }
                     stop() => { root.stop(); }
                     select-model(index, key) => { root.select-model(index, key); }
                     open-model-settings() => { root.open-model-settings(); }
@@ -1372,132 +1195,13 @@ export component MobileWindow inherits Window {
             }
         }
 
-        // ---- phone function panel -------------------------------------
-        // Tapping + no longer opens the desktop cascade: a full-width panel
-        // slides up under the input, exactly like a messenger's attach tray.
-        if root.plus-open : Rectangle {
-            height: root.plus-panel-height;
-            background: Theme.panel;
-
-            Rectangle {
-                y: 0px;
-                width: parent.width;
-                height: 1px;
-                background: Theme.border;
-            }
-
-            if root.plus-view == 0 : VerticalLayout {
-                padding-left: 10px;
-                padding-right: 10px;
-                padding-top: 12px;
-                padding-bottom: 8px + root.inset-bottom;
-                spacing: 0px;
-                HorizontalLayout {
-                    spacing: 2px;
-                    // Upload from the phone straight into the active
-                    // workspace root; the work-directory page has its own
-                    // per-folder upload button.
-                    PlusTile {
-                        visible: root.settings-chat-target == 0;
-                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/upload.svg");
-                        label: "上传文件";
-                        clicked => {
-                            root.close-plus();
-                            root.attach-files();
-                        }
-                    }
-                    PlusTile {
-                        visible: root.settings-chat-target == 0;
-                        icon: root.voice-phase == 1
-                            ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/stop.svg")
-                            : @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-mic.svg");
-                        label: root.voice-phase == 1 ? "停止"
-                            : root.voice-phase == 2 ? "识别中"
-                            : "录音";
-                        active: root.voice-phase == 1;
-                        enabled: root.voice-phase != 2;
-                        clicked => {
-                            root.close-plus();
-                            root.record-voice();
-                        }
-                    }
-                    PlusTile {
-                        visible: root.settings-chat-target == 0;
-                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/terminal.svg");
-                        label: I18n.cp_commands;
-                        clicked => { root.plus-view = 1; }
-                    }
-                    PlusTile {
-                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-wand-sparkles.svg");
-                        label: "预设";
-                        enabled: root.preset-questions.length > 0;
-                        clicked => { root.plus-view = 2; }
-                    }
-                }
-            }
-
-            if root.plus-view != 0 : VerticalLayout {
-                padding-left: 8px;
-                padding-right: 8px;
-                padding-top: 4px;
-                padding-bottom: 6px + root.inset-bottom;
-                spacing: 0px;
-                Rectangle {
-                    height: 46px;
-                    HorizontalLayout {
-                        spacing: 2px;
-                        cross-axis-alignment: center;
-                        Action {
-                            width: 34px;
-                            height: 34px;
-                            icon-size: 17px;
-                            icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-left.svg");
-                            label: "返回";
-                            clicked => { root.plus-view = 0; }
-                        }
-                        Text {
-                            horizontal-stretch: 1;
-                            text: root.plus-view == 1 ? I18n.cp_commands
-                                : I18n.ag_preset_questions;
-                            color: Theme.text;
-                            font-size: Theme.font-md;
-                            font-weight: 600;
-                            vertical-alignment: center;
-                        }
-                    }
-                }
-                ScrollView {
-                    vertical-stretch: 1;
-                    horizontal-scrollbar-policy: always-off;
-                    VerticalLayout {
-                        spacing: 2px;
-                        if root.plus-view == 1 : VerticalLayout {
-                            spacing: 2px;
-                            for command in CommandOptions.items : PanelOption {
-                                label: command.label;
-                                clicked => { root.pick-draft(command.value); }
-                            }
-                        }
-                        if root.plus-view == 2 : VerticalLayout {
-                            spacing: 2px;
-                            for question in root.preset-questions : PanelOption {
-                                label: question;
-                                clicked => { root.pick-draft(question); }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         // Bottom safe area: a strip of the chat surface under the composer.
         Rectangle {
             // The keyboard replaces the navigation bar, so the gesture inset
-            // must not stack on top of the keyboard height. The open function
-            // panel already carries the inset at its own foot.
-            height: root.ime-height > 0px || root.plus-open ? 0px : root.inset-bottom;
+            // must not stack on top of the keyboard height.
+            height: root.ime-height > 0px ? 0px : root.inset-bottom;
             background: Theme.panel;
-            visible: root.inset-bottom > 0px && root.ime-height == 0px && !root.plus-open;
+            visible: root.inset-bottom > 0px && root.ime-height == 0px;
         }
     }
 
@@ -1754,7 +1458,6 @@ export component MobileWindow inherits Window {
                         icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-plus.svg");
                         tip: "新建线程";
                         clicked => {
-                            root.close-plus();
                             root.new-session();
                         }
                     }
@@ -1897,6 +1600,12 @@ export component MobileWindow inherits Window {
                             vertical-alignment: center;
                             overflow: elide;
                         }
+                    }
+                    if root.settings-chat-target == 0 : RowIconButton {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/trash.svg");
+                        tip: "清空";
+                        enabled: !root.workspace-loading && root.workspace-total > 0;
+                        clicked => { root.workspace-clear-open = true; }
                     }
                     if root.settings-chat-target == 0 : RowIconButton {
                         icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/upload.svg");
@@ -2950,12 +2659,14 @@ export component MobileWindow inherits Window {
         loading: root.workspace-loading;
         error: root.workspace-error;
         entries: root.workspace-entries;
+        clear-armed <=> root.workspace-clear-open;
         back() => {
             root.workspace-open = false;
         }
         refresh() => { root.refresh-workspace(); }
         open-path(path) => { root.open-workspace(path); }
         upload(dir) => { root.upload-workspace(dir); }
+        clear() => { root.clear-workspace(); }
         file-actions(entry) => {
             root.file-pending = entry;
             root.file-sheet-open = true;
@@ -3259,6 +2970,22 @@ export component MobileWindow inherits Window {
         danger: true;
         confirmed => { root.confirm-file-delete(); }
         canceled => { root.file-delete-open = false; }
+    }
+
+    // 清空当前工作目录：抽屉内联列表和独立页面共用同一个确认框。
+    if root.workspace-clear-open : ConfirmDialog {
+        width: 100%;
+        height: parent.height - root.ime-height;
+        title: "清空工作目录";
+        message: "将删除当前目录里的全部文件和文件夹，删除后无法恢复。";
+        confirm-label: "清空";
+        cancel-label: I18n.common_cancel;
+        danger: true;
+        confirmed => {
+            root.workspace-clear-open = false;
+            root.clear-workspace();
+        }
+        canceled => { root.workspace-clear-open = false; }
     }
 
     // ---- trajectory page --------------------------------------------

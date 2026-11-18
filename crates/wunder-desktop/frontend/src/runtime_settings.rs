@@ -63,12 +63,28 @@ fn persist(app: &MainWindow, api: &Arc<NativeDesktop>) {
         app.get_runtime_shell().to_string(),
         app.get_runtime_shell_effective().to_string(),
     );
+    let node = keep_custom(
+        app.get_runtime_node().to_string(),
+        app.get_runtime_node_effective().to_string(),
+    );
+    let bash = keep_custom(
+        app.get_runtime_bash().to_string(),
+        app.get_runtime_bash_effective().to_string(),
+    );
+    let tools = wunder_desktop::RuntimeToolPaths {
+        python,
+        git,
+        rg,
+        ffmpeg,
+        browser,
+        node,
+        bash,
+        shell,
+    };
     let api = api.clone();
     let weak = app.as_weak();
     std::thread::spawn(move || {
-        let result = api.save_runtime(
-            &workspace, &language, &python, &git, &rg, &ffmpeg, &browser, &shell,
-        );
+        let result = api.save_runtime(&workspace, &language, &tools);
         let _ = weak.upgrade_in_event_loop(move |app| {
             app.set_saving(false);
             match result {
@@ -199,6 +215,30 @@ fn install_tool_path_pickers(app: &MainWindow, api: Arc<NativeDesktop>) {
         }
         if let Some(path) = crate::file_dialog::pick_executable("browser") {
             app.set_runtime_browser(path.into());
+            persist(&app, &persist_api);
+        }
+    });
+    let weak = app.as_weak();
+    let persist_api = api.clone();
+    app.on_pick_node_path(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_saving() || app.get_settings_loading() {
+            return;
+        }
+        if let Some(path) = crate::file_dialog::pick_executable("node") {
+            app.set_runtime_node(path.into());
+            persist(&app, &persist_api);
+        }
+    });
+    let weak = app.as_weak();
+    let persist_api = api.clone();
+    app.on_pick_bash_path(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_saving() || app.get_settings_loading() {
+            return;
+        }
+        if let Some(path) = crate::file_dialog::pick_executable("bash") {
+            app.set_runtime_bash(path.into());
             persist(&app, &persist_api);
         }
     });

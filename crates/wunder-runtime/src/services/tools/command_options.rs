@@ -12,6 +12,15 @@ const MAX_COMMAND_LIMIT: usize = 200;
 pub(crate) const MAX_COMMAND_SESSION_POLL_MS: u64 = 30_000;
 /// 与 Codex 的 write_stdin 一致：一次调用等待一小段输出后即交还控制权。
 pub(crate) const DEFAULT_COMMAND_SESSION_POLL_MS: u64 = 1_000;
+/// 「阻塞到退出 / 下一条输出」的上限。渲染、构建这类分钟级任务必须能一次
+/// 等得足够久，否则模型只能用几十个轮次轮询，比命令本身还慢。
+pub(crate) const MAX_COMMAND_SESSION_WAIT_MS: u64 = 300_000;
+/// 单条命令自身的执行时限（前台阻塞路径与超时回收共用）。
+pub(crate) const DEFAULT_COMMAND_TIMEOUT_S: f64 = 120.0;
+pub(crate) const MAX_COMMAND_TIMEOUT_S: f64 = 3600.0;
+/// 工具层等待窗口之外再留给外层看门狗的余量：工具必须在看门狗之前
+/// 自己返回，否则被丢弃 future 打断会连进程树一起带走。
+pub(crate) const TOOL_WATCHDOG_GRACE_S: f64 = 30.0;
 
 pub(crate) fn parse_command_yield_time(args: &Value) -> Duration {
     let value = args
@@ -23,7 +32,18 @@ pub(crate) fn parse_command_yield_time(args: &Value) -> Duration {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommandSessionWaitKind {
+    /// 默认：只等一小段新输出就返回。
+    Poll,
+    /// 等到有新输出或进程退出，等待窗口可以很长。
+    Output,
+    /// 等到进程退出，等待窗口可以很长。
+    Exit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CommandSessionWaitOptions {
+    pub(crate) kind: CommandSessionWaitKind,
     pub(crate) wait_for_exit: bool,
     pub(crate) yield_time_ms: u64,
 }
@@ -69,21 +89,33 @@ pub(crate) fn parse_command_session_input(args: &Value) -> CommandSessionInput<'
 
 /// Share the same wait policy with the orchestrator's outer tool deadline.
 pub(crate) fn parse_command_session_wait(args: &Value) -> CommandSessionWaitOptions {
-    let wait_for_exit = args
+    let kind = match args
         .get("wait_for")
         .and_then(Value::as_str)
-        .is_some_and(|value| value.eq_ignore_ascii_case("exit"));
+        .map(str::trim)
+    {
+        Some(value) if value.eq_ignore_ascii_case("exit") => CommandSessionWaitKind::Exit,
+        Some(value) if value.eq_ignore_ascii_case("output") => CommandSessionWaitKind::Output,
+        _ => CommandSessionWaitKind::Poll,
+    };
+    // 一次「只读一眼」不该长期占住模型轮次；显式要求等退出或等下一条输出时
+    // 才放开到分钟级窗口。
+    let (default_ms, max_ms) = match kind {
+        CommandSessionWaitKind::Poll => (
+            DEFAULT_COMMAND_SESSION_POLL_MS,
+            MAX_COMMAND_SESSION_POLL_MS,
+        ),
+        CommandSessionWaitKind::Output => (30_000, MAX_COMMAND_SESSION_WAIT_MS),
+        CommandSessionWaitKind::Exit => (60_000, MAX_COMMAND_SESSION_WAIT_MS),
+    };
     let yield_time_ms = args
         .get("yield_time_ms")
         .and_then(Value::as_u64)
-        .unwrap_or(if wait_for_exit {
-            MAX_COMMAND_SESSION_POLL_MS
-        } else {
-            DEFAULT_COMMAND_SESSION_POLL_MS
-        })
-        .min(MAX_COMMAND_SESSION_POLL_MS);
+        .unwrap_or(default_ms)
+        .min(max_ms);
     CommandSessionWaitOptions {
-        wait_for_exit,
+        kind,
+        wait_for_exit: kind == CommandSessionWaitKind::Exit,
         yield_time_ms,
     }
 }
@@ -217,23 +249,43 @@ mod tests {
         assert_eq!(
             parse_command_session_wait(&json!({})),
             CommandSessionWaitOptions {
+                kind: CommandSessionWaitKind::Poll,
                 wait_for_exit: false,
                 yield_time_ms: DEFAULT_COMMAND_SESSION_POLL_MS
             }
         );
-        // 兼容旧调用中的显式退出等待；新调用只需设置同一个等待窗口。
-        for args in [
-            json!({"wait_for": "exit"}),
-            json!({"wait_for": "EXIT", "yield_time_ms": 90_000}),
-        ] {
-            assert_eq!(
-                parse_command_session_wait(&args),
-                CommandSessionWaitOptions {
-                    wait_for_exit: true,
-                    yield_time_ms: 30_000
-                }
-            );
-        }
+        // 显式退出等待：默认 60s，可按需延长到分钟级窗口。
+        assert_eq!(
+            parse_command_session_wait(&json!({"wait_for": "exit"})),
+            CommandSessionWaitOptions {
+                kind: CommandSessionWaitKind::Exit,
+                wait_for_exit: true,
+                yield_time_ms: 60_000
+            }
+        );
+        assert_eq!(
+            parse_command_session_wait(&json!({"wait_for": "EXIT", "yield_time_ms": 240_000})),
+            CommandSessionWaitOptions {
+                kind: CommandSessionWaitKind::Exit,
+                wait_for_exit: true,
+                yield_time_ms: 240_000
+            }
+        );
+        // 等到下一条输出：返回时仍在运行，但窗口远大于一次普通轮询。
+        assert_eq!(
+            parse_command_session_wait(&json!({"wait_for": "output", "yield_time_ms": 120_000})),
+            CommandSessionWaitOptions {
+                kind: CommandSessionWaitKind::Output,
+                wait_for_exit: false,
+                yield_time_ms: 120_000
+            }
+        );
+        // 等待窗口有上限，模型不能靠一个超大值把线程挂死。
+        assert_eq!(
+            parse_command_session_wait(&json!({"wait_for": "exit", "yield_time_ms": 9_000_000}))
+                .yield_time_ms,
+            MAX_COMMAND_SESSION_WAIT_MS
+        );
         assert_eq!(
             parse_command_session_wait(&json!({"wait_for": "nonsense"})).wait_for_exit,
             false
@@ -242,9 +294,10 @@ mod tests {
             parse_command_session_wait(&json!({"yield_time_ms": 0})).yield_time_ms,
             0
         );
+        // 普通轮询仍限制在 30s 内。
         assert_eq!(
             parse_command_session_wait(&json!({"yield_time_ms": 90_000})).yield_time_ms,
-            30_000
+            MAX_COMMAND_SESSION_POLL_MS
         );
     }
 

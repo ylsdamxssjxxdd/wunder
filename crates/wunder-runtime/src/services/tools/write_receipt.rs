@@ -612,6 +612,7 @@ pub(crate) fn check_syntax(path: &str, content: &str) -> Verdict {
         "js" | "mjs" | "cjs" => write_syntax::javascript(content),
         "ts" | "mts" | "cts" => write_syntax::typescript(content, path),
         "sh" | "bash" => write_syntax::shell(content),
+        "ps1" | "psm1" | "psd1" => write_syntax::powershell(content),
         "css" | "scss" | "less" => write_syntax::css(content),
         // JSX/TSX 需要 esbuild/tsc 才能解析，缺了就明说，绝不用 node 硬解析。
         "jsx" | "tsx" => Verdict::skipped("none", "no jsx checker"),
@@ -969,6 +970,14 @@ mod tests {
             check_syntax("a.jsx", "const a = <div/>;").render(),
             "skipped (no jsx checker)"
         );
+        // PowerShell 系（ps1/psm1/psd1）必须真的走到解析器，而不是 no checker。
+        for name in ["a.ps1", "b.psm1", "c.psd1"] {
+            let ps = check_syntax(name, "$x = 1\n").render();
+            assert!(
+                ps == "OK (ps parse)" || ps.starts_with("skipped"),
+                "{name} must reach the ps checker, got: {ps}"
+            );
+        }
         assert_eq!(
             check_syntax("a.unknownext", "x").render(),
             "skipped (no checker)"

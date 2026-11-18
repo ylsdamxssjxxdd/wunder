@@ -114,6 +114,7 @@ Desktop and CLI share one `opt/`, so installing Desktop also provides the CLI ru
 | --- | --- | --- |
 | `opt/python` | 3.8.10 (Windows); 3.8.18 (Linux) | Agent-written scripts and Python tools |
 | `opt/git` | MinGit 2.46.2 (Windows) / 2.46.2 built from source (Linux) | Clone, patches, repository work |
+| `opt/bash` | 2.46.2 bash closure (Windows only, from the same PortableGit release) | `.sh` syntax checks when writing files |
 | `opt/rg` | 14.1.0 (Windows); 14.1.1 (Linux) | Content search and terminal search |
 | `opt/ffmpeg` | static 4.4.1 | Frame and audio extraction, transcoding (no `ffprobe`) |
 | `opt/7zip` | 25.01 | Archive packing and unpacking |
@@ -774,6 +775,8 @@ Only a bounded preview of the output is kept. Cancelling the current thread term
 
 A long-lived background command session is managed by the `command_session` tool, which supports switching between foreground and background: a foreground call reads the current status and output directly, while switching to background leaves the command running.
 
+Without `command_session_id` the call is a read-only task list: it lists this thread's command tasks (id, status, elapsed time, current `seq`, output tail) so you can confirm whether a command is actually running instead of guessing with `ps`, and it changes no session.
+
 One call has exactly three intents, decided by `chars`:
 
 - **Empty `chars`** (or omitted): read back status plus new output only, waiting at most `yield_time_ms` (1000 ms by default) and returning immediately when new output arrives.
@@ -782,9 +785,12 @@ One call has exactly three intents, decided by `chars`:
 
 Optional arguments:
 
-- **`yield_time_ms`**: wait ceiling for this call, 0–30000; pass 0 for an immediate read.
+- **`yield_time_ms`**: wait ceiling for this call. A plain poll defaults to 1000 with a 30000 ceiling; `wait_for=output` defaults to 30000 and `wait_for=exit` to 60000, both up to 300000 (5 minutes). Pass 0 for an immediate read.
 - **`after_seq`**: return only output newer than that `seq`, for catching up on a chunk that was truncated or only partially shown.
-- **`wait_for=exit`**: ignore intermediate output and block until the process exits or the window ends (that mode defaults the window to 30000).
+- **`wait_for=exit`**: ignore intermediate output and block until the process exits or the window ends. Minute-long builds and renders finish within one or two calls this way.
+- **`wait_for=output`**: return as soon as there is new output (or the process exits), for watching progress instead of waiting for the end.
+
+A second call of an identical command while it is still running in the same thread reuses that session (the result carries `reused=true`) instead of starting a second copy. This matters for programs with a single-instance lock, where the rerun would only be blocked by the first one.
 
 An already-exited session is not an error: its final output and exit code are still returned. Decide completion from `status` and `exit_code` instead of re-running the command.
 

@@ -4,6 +4,7 @@
 
 - `opt/python`：给智能体、本地脚本与 Python 工具调用使用的内置 Python
 - `opt/git`：给 `git clone`、`git status`、补丁应用与仓库操作使用的内置 Git
+- `opt/bash`：给写文件的 `.sh` 语法校验使用的 bash 闭包（`bash.exe` + `sh.exe` + `msys-2.0.dll`，约 5.6 MB）；可用 `-SkipBash` 跳过
 - `opt/rg`：给 `search_content` 与命令行检索使用的内置 ripgrep
 - `opt/ffmpeg`：随包附带的静态 ffmpeg（`opt/ffmpeg/bin` 已由桌面运行时自动接入 `PATH`）
 - `opt/7zip`：随包附带的 7-Zip 25.01 命令行版（`7z.exe` + `7z.dll`），压缩包归档工具（含 `.7z`/`.rar` 解压）由它提供；可用 `-SkipSevenZip` 跳过
@@ -21,7 +22,7 @@
 - 勾选命令行时，安装完成后 `{安装根}\bin` 会加入当前用户 `PATH`（重复安装不重复追加，卸载时只移除这一项）。新开终端可直接运行 `wunder-cli`；`desktop` 启动桌面版，`wunder-desktop` 也可直接运行。
 - 开始菜单使用统一名称：wunder 桌面版与 wunder 命令行；桌面快捷方式随勾选“桌面版”自动创建；卸载入口仍为“卸载心舰”。
 - 卸载器移除 `bin`、`.wunder-home`、安装时选择的组件目录和安装器写入的用户 `PATH` 项，保留用户数据。
-- 补充包仍可单独导入：在桌面版设置中选择“导入补充包”，或手动解压到 `WUNDER_HOME`。两端自动识别共享 home 中的 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`、`opt/7zip`、`opt/powershell` 与 `opt/browser`。
+- 补充包仍可单独导入：在桌面版设置中选择“导入补充包”，或手动解压到 `WUNDER_HOME`。两端自动识别共享 home 中的 `opt/python`、`opt/git`、`opt/bash`、`opt/rg`、`opt/ffmpeg`、`opt/7zip`、`opt/powershell` 与 `opt/browser`。
 
 ## 安装后的终端命令
 
@@ -75,6 +76,12 @@ Inno Setup 的 `Source: ...\*` 不会展开以点开头的目录和文件，直�
   - `MinGit` 适合嵌入第三方桌面应用，体积比完整安装包更小（不含 Git Bash 与 POSIX 工具链，`git.exe` 位于 `cmd/`）。
   - `MinGit` 默认仍带一批智能体用不到的东西，构建的剪裁阶段会一并移除：Git Credential Manager 的 .NET/Avalonia UI（含 `SkiaSharp`、`Microsoft.Identity.*`、`msalruntime` 等，约 25 MB）、`scalar`、`tig`、`gitk`/`git gui`、vim/perl 与 Tcl/Tk 运行时、各语言文档树。剪裁后 `opt/git` 约 58 MB，保留 `git.exe`、原生依赖 DLL、`usr/bin` 下的 MSYS 运行时（shell 脚本用）和 `mingw32/libexec/git-core` 下的脚本。
   - 剪裁同时把 `etc/gitconfig` 的 `credential.helper` 从 `manager` 改为 `wincred`，并删除 MinGit 原带的、指向本机 `C:/Program Files/Git/etc/gitconfig` 的 `[include]` 段：否则装过 Git for Windows 的机器会重新启用已被删除的凭据管理器。
+- Bash：`PortableGit 2.46.2` 的 bash 闭包（`usr/bin/bash.exe`、`usr/bin/sh.exe`、`usr/bin/msys-2.0.dll`，约 5.6 MB）
+  - `MinGit` 是“非交互发行版”，设计上就不带 Git Bash：压缩包里根本没有 `bash.exe`，所以 `.sh` 的语法校验在没装 Git for Windows 的机器上只能跳过。
+  - 因此从同一版本的 `PortableGit`（Git for Windows 官方发布，同为最后支持 Win7 的 2.46.2）里只抽 bash 闭包：两个可执行文件加 `msys-2.0.dll`，不带第二份 Git 树。
+  - 注意取的是 `usr/bin/bash.exe`（2.1 MB，只静态导入 `KERNEL32.dll` 与 `msys-2.0.dll`），不是 `bin/bash.exe`：后者是 48 KB 的启动器，会去 exec `../usr/bin/bash.exe`，单独拷走等于发一个起不来的 shell。
+  - 落位到 `opt/bash/bin` 后过三道门禁：`bash.exe` 的 Win7 导入门禁、DLL 闭包检查（非系统导入必须与二进制同目录，`api-ms-win-*`/`ext-ms-*` 除外）、真实 `bash -n` 冒烟（合法脚本必须通过、未闭合 `if` 必须报错），避免“在构建机上能起来、到用户机器上缺 DLL”。
+  - `PortableGit` 发布形态是 7z 自解压包，构建机需要 7-Zip（与浏览器、7-Zip 组件同一解析器）；没有 7-Zip 的主机可用 `-BashArchivePath` 指向已解开的 PortableGit 目录，或用 `-SkipBash` 跳过该组件。
 - capstone：`5.0.1`
   - `5.0.2` 的 `py3-none-win32` wheel 里 `capstone/lib/capstone.dll` 实际是 x86-64 镜像（上游打包错误，`win32` 与 `win_amd64` 两个 wheel 携带同一个 0x8664 DLL），32 位 Python 无法加载；`5.0.3` 起不再发布 win32 wheel。`5.0.1` 是同系列 API 且带真正的 i386 DLL。
   - 该问题暴露的是「逐个组件自己声明架构」不可靠：补充包在打包前会对 `opt/` 下所有 `exe/dll/pyd/node` 做一次全量 PE 架构门禁，出现与目标架构不符的文件直接构建失败。
@@ -197,6 +204,7 @@ Win7 最高只支持到 Chrome 109（`109.0.5414.x`，最后一个支持 Windows
 3. 解压后确认共享 home 下出现：
    - `opt/python`
    - `opt/git`
+   - `opt/bash`（若打包时未用 `-SkipBash` 跳过）
    - `opt/rg`
    - `opt/ffmpeg`
    - `opt/7zip`（若打包时未用 `-SkipSevenZip` 跳过）
@@ -207,7 +215,8 @@ Win7 最高只支持到 Chrome 109（`109.0.5414.x`，最后一个支持 Windows
 两端启动时会自动：
 
 - 从共享 home 探测补充包，不受程序安装目录和启动目录影响
-- 将共享 home 下的 `opt/python`、`opt/python/Scripts`、`opt/git/cmd`、`opt/git/bin`、`opt/rg`、`opt/rg/bin`、`opt/ffmpeg/bin`、`opt/7zip`、`opt/powershell` 接入 `PATH`，重复导入不会重复累加
+- 将共享 home 下的 `opt/python`、`opt/python/Scripts`、`opt/git/cmd`、`opt/git/bin`、`opt/bash/bin`、`opt/rg`、`opt/rg/bin`、`opt/ffmpeg/bin`、`opt/7zip`、`opt/powershell` 接入 `PATH`，重复导入不会重复累加
+- 把 `opt/python/Lib/site-packages/playwright/driver`（Playwright 自带的 `node.exe`，也是补充包里唯一的 Node）一并接入 `PATH`，`.js`/`.ts` 校验、技能脚本里的裸 `node` 才能解析到
 - 把 `opt/powershell/pwsh.exe` 的绝对路径发布为 `WUNDER_POWERSHELL_EXE`，执行命令工具探测成功后即以它为默认 shell
 
 这样桥接层与智能体工具调用就能优先命中内置 Python / Git / rg / PowerShell。

@@ -19,6 +19,9 @@ pub use services::thread_log::export_stream as export_thread_log_stream;
 pub use services::thread_log::hydrate_active_text as hydrate_thread_item_text;
 pub use services::tool_result_display;
 pub use services::tools::command_sessions::{CommandTaskDetail, CommandTaskView};
+// 写后语法校验的宿主探测结论：桌面版设置页要显示「当前生效的解释器」，
+// 与写入回执里的校验器标签同源，所以从引擎侧统一出口。
+pub use services::tools::write_syntax::{reset_hosts as reset_syntax_hosts, syntax_hosts, SyntaxHosts};
 pub mod storage;
 
 pub use api::{build_desktop_router, build_router};

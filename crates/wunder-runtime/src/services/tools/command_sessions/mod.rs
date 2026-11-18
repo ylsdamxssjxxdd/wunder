@@ -6,5 +6,7 @@ pub(crate) use broker::CommandProcessHandle;
 pub use broker::CommandSessionBroker;
 pub(crate) use broker::CommandStdinWrite;
 pub(crate) use tracker::CommandSessionTracker;
-pub(crate) use types::{CommandSessionLaunchMode, CommandSessionStream};
+pub(crate) use types::{
+    CommandSessionLaunchMode, CommandSessionSnapshot, CommandSessionStatus, CommandSessionStream,
+};
 pub use types::{CommandTaskDetail, CommandTaskView};

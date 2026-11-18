@@ -450,6 +450,11 @@ export global I18n {
     out property <string> st_param_reasoning_effort: zh ? "默认思考等级" : "Default reasoning effort";
     out property <string> st_param_simulation_speed: zh ? "模拟速度" : "Simulation speed";
     out property <string> st_shell_path: zh ? "shell 路径" : "Shell path";
+    out property <string> st_node_path: zh ? "Node 路径（.js / .ts）" : "Node path (.js / .ts)";
+    out property <string> st_bash_path: zh ? "Bash 路径（.sh）" : "Bash path (.sh)";
+    out property <string> st_syntax_title: zh ? "语法检查" : "Syntax check";
+    out property <string> st_syntax_note: zh ? "写回文件后只做解析、不改内容；缺解释器时回执降级为跳过。留空自动探测，字段里显示的就是此刻生效的路径。" : "Files are parsed after a write and never blocked. A missing interpreter only downgrades the receipt. Leave empty to auto-detect; the field shows the path in effect right now.";
+    out property <string> st_syntax_map: zh ? ".py Python · .js .ts Node · .sh Bash · .ps1 PowerShell（复用上面的 shell 路径）· .json .yaml .css .html 内置解析" : ".py Python · .js .ts Node · .sh Bash · .ps1 PowerShell (reuses the shell path above) · .json .yaml .css .html built in";
     out property <string> st_stress_count: zh ? "个数" : "Count";
     out property <string> st_wunder_model_hint: zh ? "在新浏览器窗口打开 3D 展示" : "Open the 3D viewer in a new browser window";
     out property <string> st_wunder_model_open: zh ? "眺望心舰" : "Behold Wunder";

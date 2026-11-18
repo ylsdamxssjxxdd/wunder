@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Build the Wunder Desktop Windows supplement (bundled Python + Git + ripgrep + ffmpeg + 7-Zip).
+Build the Wunder Desktop Windows supplement (bundled Python + Git + bash + ripgrep + ffmpeg + 7-Zip).
 
 .DESCRIPTION
 Windows counterpart of packaging/linux/scripts/build_linux_supplement.sh.
@@ -12,8 +12,13 @@ zip lands in target\installer\payload\<win7-arch>\ (found by build.bat pack);
 an explicit -BuildRoot keeps dist\ inside that root.
 
 The archive is imported into WUNDER_HOME (default: the user's .wunder
-directory); both local forms auto-detect opt/python, opt/git, opt/rg and
-opt/ffmpeg on startup, and probe opt/browser for a bundled browser.
+directory); both local forms auto-detect opt/python, opt/git, opt/bash, opt/rg
+and opt/ffmpeg on startup, and probe opt/browser for a bundled browser.
+
+opt/bash carries the bash closure (usr/bin/bash.exe + sh.exe + msys-2.0.dll)
+taken from the same Git for Windows release as MinGit. MinGit ships no shell at
+all, so without this component the write receipt can only check .sh when the
+host already has Git for Windows or MSYS2 installed.
 
 .PARAMETER Arch
 Target architecture: ia32 (default, Windows 7) or x64.
@@ -31,10 +36,16 @@ pip index URL. Defaults to the manifest defaultPackageIndexUrl (Tsinghua Tuna).
 .PARAMETER RefreshDownloads
 Redownload cached archives instead of reusing them.
 
-.PARAMETER PythonArchivePath / GitArchivePath / RgArchivePath / FfmpegArchivePath / SevenZipArchivePath / BrowserArchivePath / PowerShellArchivePath
+.PARAMETER PythonArchivePath / GitArchivePath / BashArchivePath / RgArchivePath / FfmpegArchivePath / SevenZipArchivePath / BrowserArchivePath / PowerShellArchivePath
 Use hand-prepared local archives instead of downloading. BrowserArchivePath
 overrides the automatic Chrome 109 cache/download flow and also accepts an
-unpacked browser directory staged into opt/browser.
+unpacked browser directory staged into opt/browser. BashArchivePath accepts the
+pinned PortableGit archive or an already unpacked PortableGit tree, which is the
+escape hatch for a build host without 7-Zip.
+
+.PARAMETER SkipBash
+Leave opt/bash out of the pack. `.sh` checks then need a host Git for Windows /
+MSYS2 bash and are reported as skipped on a machine without one.
 
 .PARAMETER SkipPowerShell
 Leave the portable PowerShell 7 out of the pack. The command tool then falls
@@ -78,6 +89,8 @@ param(
 
   [string]$GitArchivePath = '',
 
+  [string]$BashArchivePath = '',
+
   [string]$RgArchivePath = '',
 
   [string]$FfmpegArchivePath = '',
@@ -100,6 +113,8 @@ param(
   [switch]$SkipPowerShell,
 
   [switch]$SkipSevenZip,
+
+  [switch]$SkipBash,
 
   [switch]$BestEffort
 )
@@ -361,6 +376,95 @@ function Invoke-GitSmoke {
   $gitSizeMb = [math]::Round(((Get-ChildItem -LiteralPath $GitRoot -Recurse -File -ErrorAction SilentlyContinue |
     Measure-Object -Property Length -Sum).Sum / 1MB), 1)
   Write-Step "git smoke ok: init/commit/log on the trimmed tree (opt/git = $gitSizeMb MB)"
+}
+
+function Assert-BashDllClosure {
+  # Every DLL the staged binaries import has to sit next to them or come from
+  # Windows itself. Both system roots are consulted because a 32-bit pack is
+  # normally built on a 64-bit host (System32 holds the 64-bit images and
+  # SysWOW64 the 32-bit ones). Missing api-ms-win-* entries are ignored: those
+  # are API sets resolved by the loader, not files in this tree.
+  param([string]$Directory)
+  $present = @{}
+  foreach ($file in @(Get-ChildItem -LiteralPath $Directory -File -Filter '*.dll' -ErrorAction SilentlyContinue)) {
+    $present[$file.Name.ToLowerInvariant()] = $true
+  }
+  $systemRoots = @()
+  if (-not [string]::IsNullOrWhiteSpace($env:SystemRoot)) {
+    $systemRoots += (Join-Path $env:SystemRoot 'System32')
+    $systemRoots += (Join-Path $env:SystemRoot 'SysWOW64')
+  }
+  $missing = New-Object System.Collections.Generic.List[string]
+  $checked = 0
+  foreach ($image in @(Get-ChildItem -LiteralPath $Directory -File -ErrorAction SilentlyContinue |
+      Where-Object { @('.exe', '.dll') -contains $_.Extension.ToLowerInvariant() })) {
+    $checked++
+    foreach ($name in @(Get-PeImportedDlls -Path $image.FullName)) {
+      $key = $name.ToLowerInvariant()
+      if ($present.ContainsKey($key)) { continue }
+      if ($key.StartsWith('api-ms-win-') -or $key.StartsWith('ext-ms-')) { continue }
+      $onHost = $false
+      foreach ($root in $systemRoots) {
+        if (Test-Path -LiteralPath (Join-Path $root $name) -PathType Leaf) { $onHost = $true; break }
+      }
+      if ($onHost) { continue }
+      $missing.Add("$($image.Name) -> $name")
+    }
+  }
+  if ($missing.Count -gt 0) {
+    $preview = (@($missing | Select-Object -Unique | Select-Object -First 10) -join [Environment]::NewLine)
+    Fail ("bash DLL closure is incomplete ($checked PE files checked):$([Environment]::NewLine)$preview")
+  }
+  Write-Step "validated bash DLL closure ($checked PE files)"
+}
+
+function Invoke-BashSmoke {
+  # `bash -n` is exactly what the write receipt runs, so the smoke test parses a
+  # valid script and a deliberately broken one. `--version` alone would pass on
+  # a tree whose POSIX runtime cannot actually start a parser.
+  param([string]$BashExe)
+  $smokeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('wunder-bash-smoke-' + [guid]::NewGuid().ToString('N'))
+  Ensure-Directory $smokeRoot
+  try {
+    $good = Join-Path $smokeRoot 'good.sh'
+    $bad = Join-Path $smokeRoot 'bad.sh'
+    # Single-quoted here-strings keep `$1` literal; interpolation would make
+    # StrictMode complain about an undefined variable.
+    Write-Utf8NoBom -Path $good -Content (@(
+        '#!/bin/sh',
+        'if [ -f "$1" ]; then',
+        "  printf '%s\n' ok",
+        'fi',
+        ''
+      ) -join "`n")
+    # Unterminated `if`: bash -n must reject it.
+    Write-Utf8NoBom -Path $bad -Content (@(
+        '#!/bin/sh',
+        'if [ -f x ]; then',
+        "  printf '%s\n' ok",
+        ''
+      ) -join "`n")
+
+    $version = Invoke-ProcessCapture -FilePath $BashExe -Arguments @('--version')
+    if ($version.ExitCode -ne 0 -or -not ("$($version.StdOut)" -match 'GNU bash')) {
+      Fail "bash smoke failed to start: exit=$($version.ExitCode) out=$($version.StdOut) err=$($version.StdErr)"
+    }
+    $goodRun = Invoke-ProcessCapture -FilePath $BashExe -Arguments @('-n', $good)
+    if ($goodRun.ExitCode -ne 0) {
+      Fail "bash -n rejected a valid script: $($goodRun.StdErr)"
+    }
+    $badRun = Invoke-ProcessCapture -FilePath $BashExe -Arguments @('-n', $bad)
+    if ($badRun.ExitCode -eq 0) {
+      Fail 'bash -n accepted a broken script: the parser is not running'
+    }
+    $versionLine = (@($version.StdOut -split "`n") | Where-Object { $_.Trim() -ne '' } | Select-Object -First 1)
+    $badLine = (@($badRun.StdErr -split "`n") | Where-Object { $_.Trim() -ne '' } | Select-Object -First 1)
+    # "$null" collapses a missing line to an empty string; StrictMode would
+    # reject .Trim() on a null here.
+    Write-Step ("bash smoke ok: {0}; -n reports '{1}'" -f "$versionLine".Trim(), "$badLine".Trim())
+  } finally {
+    Remove-TreeQuiet $smokeRoot
+  }
 }
 
 function Find-PythonExe {
@@ -825,6 +929,7 @@ $zipPath = Join-Path $distDir $zipName
 $layout = Get-PropertyValue -Object $manifest -Name 'layout'
 $pythonRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'pythonRoot' -Default 'opt\python'))
 $gitRoot    = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'gitRoot' -Default 'opt\git'))
+$bashRoot   = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'bashRoot' -Default 'opt\bash'))
 $rgRoot     = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'rgRoot' -Default 'opt\rg'))
 $ffmpegRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'ffmpegRoot' -Default 'opt\ffmpeg'))
 $powershellRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'powershellRoot' -Default 'opt\powershell'))
@@ -1022,6 +1127,85 @@ if ($null -ne $gitArchiveMeta) {
   # vim/perl and the Tcl/Tk GUI helpers -- all removed by the shared prune step
   # below, which also rewrites credential.helper to wincred so HTTPS push keeps
   # working without the manager.
+}
+
+# ---------------------------------------------------------------------------
+# bash (the `.sh` syntax check needs a real bash; MinGit ships none)
+# ---------------------------------------------------------------------------
+# MinGit deliberately carries no shell, so the write receipt could only check
+# `.sh` on a machine that already had Git for Windows installed. The same Git
+# for Windows release publishes PortableGit, which does bundle the MSYS bash.
+# Only the closure is taken from it, and the binaries come from usr/bin: the
+# bin/bash.exe in PortableGit is a 48 KB launcher that re-execs usr/bin/bash.exe,
+# so copying bin/ would ship a shell that cannot start on its own. Three files
+# (bash.exe, sh.exe, msys-2.0.dll, about 5.6 MB) are enough for `bash -n`.
+$bashMeta = Get-PropertyValue -Object $manifest -Name 'bash'
+$bashVersion = [string](Get-PropertyValue -Object $bashMeta -Name 'version' -Default '')
+$bashExeRel = [string](Get-PropertyValue -Object $bashMeta -Name 'expectedExe' -Default 'bash.exe')
+$bashBinDir = Join-Path $bashRoot 'bin'
+$bashBundled = $false
+if (-not $SkipBash) {
+  $bashArchiveMeta = Get-PropertyValue -Object (Get-PropertyValue -Object $bashMeta -Name 'archives') -Name $Arch
+  if ($null -eq $bashArchiveMeta) {
+    # Without a shell the `.sh` check silently degrades to "skipped", which is
+    # exactly the state this component exists to remove: a missing archive is a
+    # packaging error, not something to discover on the target machine.
+    Fail "manifest has no bash archive for arch $Arch; add it to win7-supplement-manifest.json or pass -SkipBash"
+  }
+  $bashSource = $BashArchivePath
+  if ([string]::IsNullOrWhiteSpace($bashSource)) {
+    $bashSource = Join-Path $downDir ([string](Get-PropertyValue -Object $bashArchiveMeta -Name 'fileName' -Default 'PortableGit.7z.exe'))
+    Get-DownloadedFile -Url ([string](Get-PropertyValue -Object $bashArchiveMeta -Name 'url')) -Destination $bashSource -Force:$RefreshDownloads | Out-Null
+    Assert-FileSha256 -Path $bashSource -Expected ([string](Get-PropertyValue -Object $bashArchiveMeta -Name 'sha256' -Default ''))
+  } elseif (-not (Test-Path -LiteralPath $bashSource)) { Fail "bash archive not found: $bashSource" }
+
+  $bashSourceRoot = $bashSource
+  if (-not (Test-Path -LiteralPath $bashSource -PathType Container)) {
+    # PortableGit is published as a 7z self-extracting archive; the same host
+    # 7-Zip that unpacks Chrome and the 7-Zip installer unpacks it. A host
+    # without one can still pass -BashArchivePath pointing at an unpacked tree.
+    $sevenZipHost = ''
+    try { $sevenZipHost = Resolve-SevenZipExecutable -RepoRoot $repoRoot } catch { }
+    if ([string]::IsNullOrWhiteSpace($sevenZipHost)) {
+      Fail "7-Zip is required to unpack the PortableGit archive; install 7-Zip, pass -BashArchivePath with an unpacked PortableGit tree, or pass -SkipBash"
+    }
+    $bashSourceRoot = Join-Path $buildRootEffective 'bash-source'
+    Write-Step "extracting PortableGit $bashVersion for the bash closure"
+    Invoke-SevenZipExtract -Executable $sevenZipHost -Archive $bashSource -Destination $bashSourceRoot -Force7z
+  }
+
+  Remove-Tree $bashBinDir
+  Ensure-Directory $bashBinDir
+  foreach ($rel in @(Get-PropertyValue -Object $bashMeta -Name 'files' -Default @('usr/bin/bash.exe', 'usr/bin/sh.exe'))) {
+    $source = Join-Path $bashSourceRoot ([string]$rel -replace '/', '\')
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { Fail "bash payload missing ${rel}: $bashSource" }
+    Copy-Item -LiteralPath $source -Destination (Join-Path $bashBinDir (Split-Path -Leaf $source)) -Force
+  }
+  # The binaries import KERNEL32.dll and the MSYS runtime only, so the runtime
+  # DLL has to sit next to them. It is manifest-globbed rather than hardcoded:
+  # the DLL closure check below fails the build if a future release pulls in
+  # another import, and widening the glob is the fix.
+  $msysPattern = [string](Get-PropertyValue -Object $bashMeta -Name 'globs' -Default @('usr/bin/msys-2.0.dll') | Select-Object -First 1)
+  $msysDir = Split-Path -Parent ($msysPattern -replace '/', '\')
+  $msysFilter = Split-Path -Leaf $msysPattern
+  $msysDlls = @(Get-ChildItem -LiteralPath (Join-Path $bashSourceRoot $msysDir) -Filter $msysFilter -File -ErrorAction SilentlyContinue)
+  if ($msysDlls.Count -eq 0) { Fail "no MSYS runtime DLLs matching $msysPattern in $bashSource" }
+  foreach ($dll in $msysDlls) {
+    Copy-Item -LiteralPath $dll.FullName -Destination (Join-Path $bashBinDir $dll.Name) -Force
+  }
+
+  $bashExe = Join-Path $bashBinDir $bashExeRel
+  if (-not (Test-Path -LiteralPath $bashExe -PathType Leaf)) { Fail "bash executable missing after staging: $bashExe" }
+  Assert-Win7PeImports -Path $bashExe
+  Assert-BashDllClosure -Directory $bashBinDir
+  Invoke-BashSmoke -BashExe $bashExe
+  if ($bashSourceRoot -ne $bashSource) { Remove-TreeQuiet $bashSourceRoot }
+  $bashBundled = $true
+  $bashSizeMb = [math]::Round(((Get-ChildItem -LiteralPath $bashRoot -Recurse -File -ErrorAction SilentlyContinue |
+    Measure-Object -Property Length -Sum).Sum / 1MB), 1)
+  Write-Step "bash staged: opt/bash/bin ($(($msysDlls.Count + 2)) files, $bashSizeMb MB)"
+} else {
+  Write-Step 'skipping bash (-SkipBash); .sh checks will need a host Git Bash'
 }
 
 # ---------------------------------------------------------------------------
@@ -1263,6 +1447,7 @@ Wunder Desktop Windows supplement (__ARCH__, profile: __PROFILE__)
 Contents:
   opt/python   Python __PYVER__ (embeddable) + pinned packages
   opt/git      MinGit __GITVER__
+  opt/bash     PortableGit __BASHVER__ bash closure (usr/bin/bash.exe + sh.exe + msys-2.0.dll, __BASHSTATE__)
   opt/rg       ripgrep __RGVER__
   opt/powershell  PowerShell __PSVER__ portable (pwsh.exe; command tool default shell, __PSSTATE__)
   opt/ffmpeg   ffmpeg __FFVER__ (when bundled)
@@ -1272,7 +1457,7 @@ Contents:
 Use Import supplement in the wunder Desktop settings to install into WUNDER_HOME.
 For manual installation, close processes using this runtime and unpack into
 WUNDER_HOME (default: .wunder in your user home). wunder Desktop and wunder CLI share
-opt/python, opt/git, opt/rg, opt/ffmpeg, opt/powershell and opt/7zip,
+opt/python, opt/git, opt/bash, opt/rg, opt/ffmpeg, opt/powershell and opt/7zip,
 and prepend their bins to PATH.
 
 Shell: when opt/powershell/pwsh.exe starts, the command tool runs it as the
@@ -1281,10 +1466,18 @@ probe fails. Windows 7 needs the Universal CRT (KB2999226) and the Visual C++
 2015-2019 runtime for the bundled .NET 5 host; without them the tool keeps
 working on the system shell instead of failing every command.
 
+Syntax checks: the write tool validates scripts before reporting back. Node for
+.js/.ts comes from the Playwright driver (opt/python/Lib/site-packages/
+playwright/driver/node.exe), whose directory is prepended to PATH; .sh uses
+opt/bash/bin/bash.exe (__BASHSTATE__); .ps1 uses pwsh (or the system Windows
+PowerShell). Missing interpreters only downgrade the check to "skipped", files
+are still written.
+
 Browsers: __BROWSER__
 '@
 $psState = if ($psBundled) { 'bundled' } else { 'not bundled; the system Windows PowerShell is used' }
-$readmeText = $readmeText.Replace('__ARCH__', $archLabel).Replace('__PROFILE__', $PythonProfile).Replace('__PYVER__', $pyVer).Replace('__GITVER__', $gitVersion).Replace('__RGVER__', $rgVersion).Replace('__FFVER__', $ffVersion).Replace('__SZVER__', $szVersion).Replace('__PSVER__', $psVersion).Replace('__PSSTATE__', $psState).Replace('__BROWSERVER__', $browserVersion).Replace('__BROWSEREXE__', $browserExeRel).Replace('__BROWSER__', $browserNote)
+$bashState = if ($bashBundled) { 'bundled; no host Git Bash needed' } else { 'not bundled; .sh checks need a host Git for Windows / MSYS2 bash' }
+$readmeText = $readmeText.Replace('__ARCH__', $archLabel).Replace('__PROFILE__', $PythonProfile).Replace('__PYVER__', $pyVer).Replace('__GITVER__', $gitVersion).Replace('__BASHVER__', $bashVersion).Replace('__BASHSTATE__', $bashState).Replace('__RGVER__', $rgVersion).Replace('__FFVER__', $ffVersion).Replace('__SZVER__', $szVersion).Replace('__PSVER__', $psVersion).Replace('__PSSTATE__', $psState).Replace('__BROWSERVER__', $browserVersion).Replace('__BROWSEREXE__', $browserExeRel).Replace('__BROWSER__', $browserNote)
 Write-Utf8NoBom -Path (Join-Path $packRoot 'README-win7-supplement.txt') -Content $readmeText
 
 $metaObj = [ordered]@{
@@ -1301,6 +1494,13 @@ $metaObj = [ordered]@{
     }
   }
   git           = [ordered]@{ version = $gitVersion }
+  bash          = [ordered]@{
+    version = $bashVersion
+    bundled = $bashBundled
+    expectedExe = ('opt/bash/bin/' + $bashExeRel)
+    source = 'git-for-windows PortableGit (usr/bin/bash.exe + usr/bin/sh.exe + usr/bin/msys-2.0.dll)'
+    syntaxCheck = 'bash -n'
+  }
   rg            = [ordered]@{ version = $rgVersion }
   powershell    = [ordered]@{
     version = $psVersion

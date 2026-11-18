@@ -91,7 +91,6 @@ pub fn build_preview() -> MobileWindow {
     let weak = ui.as_weak();
     ui.on_open_drawer(move || {
         if let Some(ui) = weak.upgrade() {
-            ui.set_plus_open(false);
             ui.set_drawer_open(true);
         }
     });
@@ -186,7 +185,6 @@ pub fn build_preview() -> MobileWindow {
     ui.on_open_settings(move |page| {
         if let Some(ui) = weak.upgrade() {
             ui.set_drawer_open(false);
-            ui.set_plus_open(false);
             ui.set_settings_page(page);
             ui.set_settings_open(true);
         }
@@ -286,6 +284,7 @@ pub fn build_preview() -> MobileWindow {
         }
     });
     ui.on_refresh_workspace(|| {});
+    ui.on_clear_workspace(|| {});
     ui.on_upload_workspace(|_| {});
     ui.on_download_workspace(|_| {});
     ui.on_load_more_workspace(|_, _| {});
@@ -418,7 +417,6 @@ pub fn build_preview() -> MobileWindow {
             workspaces_for_delete.set_vec(kept);
         }
     });
-    ui.on_plus_panel_opened(|| {});
     ui.on_keyboard_dismiss(|| {});
     // 预览壳没有引擎，所以"发送"在这里只做回显：清空草稿、把这句作为一条
     // 用户行落到时间线底部，看起来就是发出去了，不会停在输入区。
@@ -667,7 +665,6 @@ fn wire_callbacks(
         // the thread list so the files are never a stale snapshot.
         let _ = sender.send(Command::RefreshWorkspace);
         if let Some(ui) = weak.upgrade() {
-            ui.set_plus_open(false);
             ui.set_drawer_open(true);
         }
     });
@@ -692,7 +689,6 @@ fn wire_callbacks(
         }
         if let Some(ui) = weak.upgrade() {
             ui.set_drawer_open(false);
-            ui.set_plus_open(false);
         }
     });
 
@@ -779,6 +775,10 @@ fn wire_callbacks(
     let sender = commands.clone();
     ui.on_refresh_workspace(move || {
         let _ = sender.send(Command::RefreshWorkspace);
+    });
+    let sender = commands.clone();
+    ui.on_clear_workspace(move || {
+        let _ = sender.send(Command::ClearWorkspace);
     });
     ui.on_upload_workspace(move |dir| {
         #[cfg(target_os = "android")]
@@ -897,13 +897,6 @@ fn wire_callbacks(
         let _ = sender.send(Command::TrajectoryFilter(filter));
     });
 
-    // Opening the phone's function panel replaces the keyboard, exactly like
-    // the plus button in a messenger: the panel needs the bottom half of the
-    // screen, not a keyboard above it.
-    ui.on_plus_panel_opened(move || {
-        #[cfg(target_os = "android")]
-        crate::android_host::hide_keyboard();
-    });
     ui.on_keyboard_dismiss(move || {
         #[cfg(target_os = "android")]
         crate::android_host::hide_keyboard();
@@ -996,7 +989,6 @@ fn wire_callbacks(
         let _ = sender.send(Command::RefreshCompanion);
         if let Some(ui) = weak.upgrade() {
             ui.set_drawer_open(false);
-            ui.set_plus_open(false);
             ui.set_settings_page(page);
             ui.set_settings_open(true);
         }
@@ -1502,11 +1494,6 @@ fn wire_callbacks(
     let sender = commands.clone();
     ui.on_delete_channel_binding(move |id| {
         let _ = sender.send(Command::DeleteChannelBinding(id.to_string()));
-    });
-
-    let sender = commands.clone();
-    ui.on_record_voice(move || {
-        let _ = sender.send(Command::VoiceToggle);
     });
 
     // 撤下一条还在等待发送的消息：文本由引擎退回草稿，这一帧只发命令。
@@ -2154,7 +2141,6 @@ fn start_tick(
     let mut last_patch = 0u64;
     let mut last_sessions = 0u64;
     let mut last_archived = 0u64;
-    let mut last_presets = 0u64;
     let mut last_trajectory = 0u64;
     let mut last_prompt_preview = 0u64;
     let mut last_workspace = 0u64;
@@ -2212,9 +2198,6 @@ fn start_tick(
     #[cfg(target_os = "android")]
     let mut last_back: Option<Instant> = None;
     let mut host_ticks = 0u32;
-    let mut last_voice = 0u64;
-    let mut voice_started: Option<Instant> = None;
-    let mut last_voice_elapsed = String::new();
     let mut last_images = 0u64;
     let mut last_selection = String::new();
     let mut selection_lost_at: Option<Instant> = None;
@@ -2422,8 +2405,6 @@ fn start_tick(
             let current = ui.get_draft().to_string();
             let separator = if current.trim().is_empty() { "" } else { "\n" };
             ui.set_draft(format!("{current}{separator}{}", text.trim()).into());
-            ui.set_plus_open(false);
-            ui.set_plus_view(0);
         }
         // 待发消息只在当前这一轮结束后出发：正常收尾由直播流自己做，这里
         // 低频兜底一次，覆盖停止、发送失败与后台目标结束这些没有直播流收尾
@@ -2512,29 +2493,6 @@ fn start_tick(
                 ui.set_stream_revision(state.stream_revision);
             }
             last_rev = state.rev;
-        }
-
-        if state.voice_rev != last_voice {
-            last_voice = state.voice_rev;
-            ui.set_voice_phase(state.voice_phase);
-            if state.voice_phase == 1 {
-                voice_started = Some(Instant::now());
-                last_voice_elapsed = "00:00".into();
-                ui.set_voice_elapsed("00:00".into());
-            } else {
-                voice_started = None;
-                last_voice_elapsed.clear();
-                ui.set_voice_elapsed("".into());
-            }
-        }
-        if state.voice_phase == 1 {
-            let started = voice_started.get_or_insert_with(Instant::now);
-            let seconds = started.elapsed().as_secs();
-            let text = format!("{:02}:{:02}", seconds / 60, seconds % 60);
-            if text != last_voice_elapsed {
-                last_voice_elapsed = text.clone();
-                ui.set_voice_elapsed(text.into());
-            }
         }
 
         if state.target == 0 && state.sessions_rev != last_sessions {
@@ -2836,16 +2794,6 @@ fn start_tick(
             ))));
             ui.set_archived_total(state.archived_total as i32);
             last_archived = state.archived_rev;
-        }
-
-        if state.preset_rev != last_presets {
-            let questions: Vec<slint::SharedString> = state
-                .preset_questions
-                .iter()
-                .map(|question| question.as_str().into())
-                .collect();
-            ui.set_preset_questions(ModelRc::from(Rc::new(VecModel::from(questions))));
-            last_presets = state.preset_rev;
         }
 
         // 目标横幅：本机线程的目标状态，随引擎观察实时更新。
@@ -3704,12 +3652,6 @@ fn handle_back(
         }
     } else if ui.get_drawer_open() {
         ui.set_drawer_open(false);
-    } else if ui.get_plus_open() {
-        if ui.get_plus_view() != 0 {
-            ui.set_plus_view(0);
-        } else {
-            ui.set_plus_open(false);
-        }
     } else {
         closed = false;
     }
@@ -3797,11 +3739,6 @@ pub fn install_preview_data(
     ui.set_workspace_thread_count(3);
     ui.set_model_name("预览模型".into());
     ui.set_model_key("preview-chat".into());
-    ui.set_preset_questions(ModelRc::from(Rc::new(VecModel::from(vec![
-        slint::SharedString::from("继续"),
-        slint::SharedString::from("总结一下当前进度"),
-        slint::SharedString::from("检查一下最近的改动"),
-    ]))));
     ui.set_inquiry_questions(ModelRc::from(Rc::new(VecModel::from(vec![
         InquiryQuestion {
             index: 0,
@@ -4478,10 +4415,6 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
         "compose" => {
             ui.set_draft("把这份周报的结论改成三条要点，语气收紧一点。".into());
             ui.set_input_page_open(true);
-        }
-        // 加号功能面板：一排方块的实际宽度与间距在这里看。
-        "plus" => {
-            ui.set_plus_open(true);
         }
         "workspace-sheet" => {
             ui.set_drawer_open(true);

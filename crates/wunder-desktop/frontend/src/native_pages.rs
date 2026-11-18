@@ -1130,12 +1130,16 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
     app.set_runtime_rg(display(settings.rg_path.clone(), "rg").into());
     app.set_runtime_ffmpeg(display(settings.ffmpeg_path.clone(), "ffmpeg").into());
     app.set_runtime_browser(display(settings.browser_path.clone(), "browser").into());
+    app.set_runtime_node(display(settings.node_path.clone(), "node").into());
+    app.set_runtime_bash(display(settings.bash_path.clone(), "bash").into());
     app.set_runtime_shell(display(settings.shell_path.clone(), "powershell").into());
     app.set_runtime_python_effective(effective("python").into());
     app.set_runtime_git_effective(effective("git").into());
     app.set_runtime_rg_effective(effective("rg").into());
     app.set_runtime_ffmpeg_effective(effective("ffmpeg").into());
     app.set_runtime_browser_effective(effective("browser").into());
+    app.set_runtime_node_effective(effective("node").into());
+    app.set_runtime_bash_effective(effective("bash").into());
     app.set_runtime_shell_effective(effective("powershell").into());
     // The catalogue object projects the composer's full model list and mirrors
     // its size for the picker's "empty list" versus "nothing configured" split.
