@@ -530,7 +530,7 @@ fn apply_history_step(
             write_target(ws, user_id, target, path, &restored)?;
         }
         // 内容已经等于目标态时也要挪游标，否则下一次进退会卡在原地。
-        let _ = file_history::commit_cursor(target, &ws.workspace_root(user_id), step.cursor);
+        let _ = file_history::commit_cursor(target, &ws.workspace_root(user_id), &step.cursor);
     }
     let (diff, unavailable) = if diff_source_too_large(before, &restored) {
         (LineDiff::default(), Some(DIFF_UNAVAILABLE_OVERSIZE))
@@ -541,7 +541,7 @@ fn apply_history_step(
     let mut data = with_receipt(path, before, &restored, &diff, unavailable, None, verify, data);
     if let Some(map) = data.as_object_mut() {
         map.insert("restored_from".to_string(), json!(step.display));
-        map.insert("cursor".to_string(), json!(step.cursor));
+        map.insert("cursor".to_string(), json!(step.cursor_display));
     }
     Ok(write_outcome(action, path, data, dry_run, changed))
 }

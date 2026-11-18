@@ -1,5 +1,18 @@
 use super::*;
 
+/// 回执里的 `cursor`：必须给出下一次撤销要用的**快照路径**，并落在期望的编号上。
+///
+/// 游标不再对外暴露下标，所以这里不能比数字：比「是不是那一版的文件」。
+fn cursor_file(data: &Value, name: &str, rev: u32) -> String {
+    let text = data["cursor"]
+        .as_str()
+        .expect("cursor 要给快照文件名，不能是下标")
+        .to_string();
+    let prefix = "temp/.history/".to_string() + name + "@" + &rev.to_string();
+    assert!(text.starts_with(&prefix), "cursor 要指向该编号的快照文件");
+    text
+}
+
 #[test]
 fn command_requested_only_for_non_empty_command() {
     assert!(command_requested(&json!({"command": "view"})));
@@ -441,7 +454,7 @@ fn undo_and_redo_walk_the_history_instead_of_toggling() {
     let first = step("undo_edit");
     assert_eq!(first["ok"], json!(true));
     assert_eq!(first["data"]["changed_files"], json!(1));
-    assert_eq!(first["data"]["cursor"], json!(1));
+    cursor_file(&first["data"], "notes.txt", 1);
     assert!(first["data"]["restored_from"]
         .as_str()
         .expect("snapshot")
@@ -468,11 +481,11 @@ fn undo_and_redo_walk_the_history_instead_of_toggling() {
     // 重做原路返回：A → A,B → A,B,C，再往后到顶停住。
     let redo = step("redo");
     assert_eq!(redo["ok"], json!(true));
-    assert_eq!(redo["data"]["cursor"], json!(1));
+    cursor_file(&redo["data"], "notes.txt", 1);
     assert_eq!(read(), "A\nB\n");
 
     let redo = step("redo");
-    assert_eq!(redo["data"]["cursor"], json!(2));
+    cursor_file(&redo["data"], "notes.txt", 2);
     assert_eq!(read(), "A\nB\nC\n");
 
     let done = step("redo");
@@ -574,7 +587,11 @@ fn corrupt_snapshot_in_the_middle_keeps_earlier_undo_reachable() {
     // 关键点：@1 仍然可达，不能被「已到最早」挡住。
     let back = step("undo_edit");
     assert_eq!(back["ok"], json!(true), "{back}");
-    assert_eq!(back["data"]["cursor"], json!(0));
+    assert_eq!(
+        back["data"]["cursor"],
+        Value::Null,
+        "退到最早一态后没有更早的快照可给，回执留空而不是编一个下标"
+    );
     assert_eq!(read(), "A\n");
 
     // 撤销过的当前内容不能丢：redo 回到 C。

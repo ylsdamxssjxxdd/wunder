@@ -2,8 +2,6 @@
 
 use super::*;
 
-use super::*;
-
 fn seed(workspace: &Path, name: &str, content: &str) -> PathBuf {
     let target = workspace.join(name);
     fs::create_dir_all(target.parent().expect("parent")).expect("mkdir");
@@ -24,6 +22,26 @@ fn revs_of(workspace: &Path, name: &str) -> Vec<u32> {
 fn commit(target: &Path, workspace: &Path, before: &str, after: &str) {
     snapshot(target, workspace, before).expect("snapshot");
     fs::write(target, after).expect("write");
+}
+
+/// 游标的唯一断言入口：还原成编号，并要求它存的确实是快照文件名。
+///
+/// 游标记文件名而不是下标，所以「指向一个已经删掉的文件」这种坏状态不能蒙混
+/// 过关：既要编号对，也要那格文件真的在。
+fn cursor_rev(step: &StepBack) -> u32 {
+    let cursor = parse_cursor(&step.cursor);
+    if let Cursor::File(file) = &cursor {
+        assert!(
+            rev_in_file_name(file).is_some(),
+            "游标要存快照文件名，实际是 {file}"
+        );
+    }
+    cursor.rev().unwrap_or(0)
+}
+
+/// 盘上游标的编号；`None` 表示没有游标文件（旧目录）。
+fn stored_cursor_rev(dir: &Path, name: &str) -> Option<u32> {
+    read_cursor(dir, name).map(|cursor| cursor.rev().unwrap_or(0))
 }
 
 #[test]
@@ -98,16 +116,16 @@ fn undo_walks_the_whole_stack_and_redo_walks_it_back() {
     // 撤销：C → B → A，不新增历史态。
     let first = step_back(&target, workspace, "C\n").expect("undo 1");
     assert_eq!(first.content, "B\n");
-    assert_eq!(first.cursor, 1);
+    assert_eq!(cursor_rev(&first), 1, "撤销到 B 后，下一次撤销要指向 @1");
     fs::write(&target, &first.content).expect("write back");
-    commit_cursor(&target, workspace, first.cursor).expect("cursor");
+    commit_cursor(&target, workspace, &first.cursor).expect("cursor");
     assert_eq!(read(&target), "B\n");
 
     let second = step_back(&target, workspace, "B\n").expect("undo 2");
     assert_eq!(second.content, "A\n");
-    assert_eq!(second.cursor, 0);
+    assert_eq!(cursor_rev(&second), 0, "退到最早一态，游标落 0");
     fs::write(&target, &second.content).expect("write back");
-    commit_cursor(&target, workspace, second.cursor).expect("cursor");
+    commit_cursor(&target, workspace, &second.cursor).expect("cursor");
     assert_eq!(read(&target), "A\n");
     assert_eq!(
         step_back(&target, workspace, "A\n").unwrap_err(),
@@ -119,16 +137,16 @@ fn undo_walks_the_whole_stack_and_redo_walks_it_back() {
     // 重做原路返回：A → B → C，同样不新增历史态。
     let back = step_forward(&target, workspace).expect("redo 1");
     assert_eq!(back.content, "B\n");
-    assert_eq!(back.cursor, 1);
+    assert_eq!(cursor_rev(&back), 1, "重做到 B 后，下一次撤销要指向 @1");
     fs::write(&target, &back.content).expect("write back");
-    commit_cursor(&target, workspace, back.cursor).expect("cursor");
+    commit_cursor(&target, workspace, &back.cursor).expect("cursor");
     assert_eq!(read(&target), "B\n");
 
     let back = step_forward(&target, workspace).expect("redo 2");
     assert_eq!(back.content, "C\n");
-    assert_eq!(back.cursor, 2);
+    assert_eq!(cursor_rev(&back), 2, "重做到 C 后，下一次撤销要指向 @2");
     fs::write(&target, &back.content).expect("write back");
-    commit_cursor(&target, workspace, back.cursor).expect("cursor");
+    commit_cursor(&target, workspace, &back.cursor).expect("cursor");
     assert_eq!(read(&target), "C\n");
     assert_eq!(
         step_forward(&target, workspace).unwrap_err(),
@@ -150,7 +168,7 @@ fn writing_after_undo_drops_the_redo_branch() {
     let back = step_back(&target, workspace, "C\n").expect("undo");
     assert_eq!(back.content, "B\n");
     fs::write(&target, &back.content).expect("restore B");
-    commit_cursor(&target, workspace, back.cursor).expect("cursor");
+    commit_cursor(&target, workspace, &back.cursor).expect("cursor");
 
     // 从 B 另起一版 D：redo 分支被砍掉，重做无处可去。
     commit(&target, workspace, "B\n", "D\n");
@@ -188,9 +206,9 @@ fn legacy_history_without_cursor_steps_back_once() {
     // 旧目录没有 @cursor：只允许退一步，之后就按「没有更多历史」处理。
     let back = step_back(&target, workspace, "C\n").expect("undo");
     assert_eq!(back.content, "B\n");
-    assert_eq!(back.cursor, 0);
+    assert_eq!(cursor_rev(&back), 0, "退到最早一态，游标落 0");
     fs::write(&target, &back.content).expect("write back");
-    commit_cursor(&target, workspace, back.cursor).expect("cursor");
+    commit_cursor(&target, workspace, &back.cursor).expect("cursor");
     assert_eq!(
         step_back(&target, workspace, "B\n").unwrap_err(),
         StepBlock::AtOldest { revisions: 2 }
@@ -246,19 +264,19 @@ fn corrupt_middle_snapshot_does_not_hide_earlier_history() {
     ));
     assert_eq!(read(&target), "C\n");
     assert_eq!(revs_of(workspace, "temp/seq.css"), vec![1]);
-    assert_eq!(read_cursor(&dir, &name), Some(1));
+    assert_eq!(stored_cursor_rev(&dir, &name), Some(1), "游标要跟着压实到 @1");
 
     // 更早的 @1 不能被跳过：继续撤销要退到 A。
     let back = step_back(&target, workspace, "C\n").expect("undo to earliest");
     assert_eq!(back.content, "A\n");
-    assert_eq!(back.cursor, 0);
+    assert_eq!(cursor_rev(&back), 0, "退到最早一态，游标落 0");
     fs::write(&target, &back.content).expect("write back");
-    commit_cursor(&target, workspace, back.cursor).expect("cursor");
+    commit_cursor(&target, workspace, &back.cursor).expect("cursor");
 
     // 撤销过程中当前内容 C 被补成 redo 来源，不能丢。
     let forward = step_forward(&target, workspace).expect("redo");
     assert_eq!(forward.content, "C\n");
-    assert_eq!(forward.cursor, 1);
+    assert_eq!(cursor_rev(&forward), 1, "重做回 C 前先停在被补出来的那格");
 }
 
 #[test]
@@ -272,12 +290,12 @@ fn stale_cursor_after_a_manual_delete_falls_back_to_the_nearest_revision() {
 
     // 旧版本删中间格但不压实会留下这种状态：cursor=2，@2 已不在。
     remove_rev(&dir, &name, 2);
-    assert_eq!(read_cursor(&dir, &name), Some(2));
+    assert_eq!(stored_cursor_rev(&dir, &name), Some(2), "游标仍指着已被删掉的 @2");
 
     // 不能宣布「已到最早」：要退到游标之下最近还在的 @1。
     let back = step_back(&target, workspace, "C\n").expect("fallback to @1");
     assert_eq!(back.content, "A\n");
-    assert_eq!(back.cursor, 0);
+    assert_eq!(cursor_rev(&back), 0, "退到最早一态，游标落 0");
     // 当前内容被补成 redo 来源，编号重新连续。
     assert_eq!(revs_in(&dir, &name), vec![1, 2]);
 }
@@ -323,6 +341,85 @@ fn sweep_drops_versions_older_than_the_retention_window() {
     );
     assert!(!history.join("stale.py@2").exists(), "压实后不该留空洞");
     assert!(!fresh.exists());
+}
+
+#[test]
+fn cursor_names_the_snapshot_file_instead_of_an_index() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let workspace = root.path();
+    let target = seed(workspace, "temp/named.css", "A\n");
+    commit(&target, workspace, "A\n", "B\n");
+    commit(&target, workspace, "B\n", "C\n");
+    let (dir, name) = locate(&target, workspace).expect("locate");
+
+    let back = step_back(&target, workspace, "C\n").expect("undo");
+    let expected_file = name.clone() + "@1-" + &short_hash("A\n");
+    assert_eq!(
+        back.cursor, expected_file,
+        "游标要落成快照文件名，而不是会漂移的下标"
+    );
+    assert!(dir.join(&back.cursor).exists(), "游标指向的文件必须真的在");
+    let expected_display = "temp/.history/".to_string() + &expected_file;
+    assert_eq!(
+        back.cursor_display.as_deref(),
+        Some(expected_display.as_str()),
+        "回执也要给出可读路径，而不是数字"
+    );
+}
+
+#[test]
+fn global_cap_drops_the_oldest_versions_until_it_fits() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let history = history_root(root.path());
+    fs::create_dir_all(&history).expect("mkdir");
+    let base = SystemTime::now() - Duration::from_secs(600);
+    for rev in 1..=6u32 {
+        let path = history.join(format!("big.py@{}", rev));
+        let mut body = String::from("v");
+        body.push_str(&rev.to_string());
+        body.push_str(&"x".repeat(998));
+        fs::write(&path, body).expect("seed");
+        // 修改时间随编号递增：回收按它从旧到新砍。
+        set_mtime(&path, base + Duration::from_secs(rev as u64));
+    }
+
+    sweep_with_cap(&history, 2_500);
+
+    let revs = revs_in(&history, "big.py");
+    assert_eq!(revs, vec![1, 2], "超出上限先砍最旧，剩下的编号要压实");
+    let kept = read(&history.join("big.py@2"));
+    assert!(kept.starts_with("v6"), "留下的必须是最新内容，实际 {kept:.8}");
+    let total: u64 = revs
+        .iter()
+        .filter_map(|rev| rev_bytes(&history, "big.py", *rev))
+        .sum();
+    assert!(total <= 2_500, "回收后总量要落回上限内，实际 {total}");
+}
+
+#[test]
+fn written_bytes_trigger_a_sweep_before_the_interval_expires() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let history = history_root(root.path());
+    fs::create_dir_all(&history).expect("mkdir");
+    let stale = history.join("old.py@1");
+    fs::write(&stale, "x\n").expect("seed");
+    set_mtime(
+        &stale,
+        SystemTime::now() - Duration::from_secs(MAX_AGE_SECS + 60),
+    );
+    // 刚扫过：时间间隔还没到，此时只有累计写入量能把回收叫起来。
+    fs::write(history.join(SWEEP_MARKER), "1").expect("marker");
+
+    maybe_sweep(&history, 1);
+    assert!(stale.exists(), "写入量小、间隔也没到，不该扫全目录");
+
+    maybe_sweep(&history, SWEEP_BYTES_TRIGGER);
+    assert!(!stale.exists(), "累计写入越过阈值必须马上回收，不能等 6 小时");
+    assert_eq!(
+        fs::read_to_string(history.join(WRITTEN_MARKER)).expect("counter"),
+        "0",
+        "回收后计数清零，下一次重新累计"
+    );
 }
 
 fn set_mtime(path: &Path, at: SystemTime) {
