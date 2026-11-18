@@ -400,7 +400,10 @@ fn insert_degrades_to_counts_only_for_oversized_sources() {
     let data = &result["data"];
     assert_eq!(data["diff_unavailable"], json!("oversize"));
     assert_eq!(data["files"][0]["action"], json!("update"));
-    assert_eq!(data["files"][0]["added_lines"], json!(0));
+    // 内容确实改了，但 diff 被有界性守卫放弃：计数必须报 null 而不是 0。
+    assert_eq!(data["added_lines"], Value::Null);
+    assert_eq!(data["hunks_applied"], Value::Null);
+    assert_eq!(data["files"][0]["added_lines"], Value::Null);
     assert!(data["files"][0]["diff_blocks"]
         .as_array()
         .expect("blocks")
@@ -449,10 +452,17 @@ fn undo_and_redo_walk_the_history_instead_of_toggling() {
     assert_eq!(second["ok"], json!(true));
     assert_eq!(read(), "A\n");
 
-    // 到栈底就停住，不再翻回上一态。
+    // 到栈底就停住：历史还在，只是游标已经在最早一态，不能报「没有快照」。
     let third = step("undo_edit");
     assert_eq!(third["ok"], json!(false));
-    assert_eq!(third["error_meta"]["code"], json!("TOOL_SRE_NO_HISTORY"));
+    assert_eq!(third["error_meta"]["code"], json!("TOOL_SRE_AT_OLDEST"));
+    assert_eq!(third["data"]["history_at_oldest"], json!(true));
+    // 两份历史态 + 补出来的 redo 态，一共 3 份快照文件。
+    assert_eq!(third["data"]["revisions"], json!(3));
+    assert!(third["error"]
+        .as_str()
+        .expect("message")
+        .contains("最早的可用版本"));
     assert_eq!(read(), "A\n");
 
     // 重做原路返回：A → A,B → A,B,C，再往后到顶停住。
@@ -469,6 +479,51 @@ fn undo_and_redo_walk_the_history_instead_of_toggling() {
     assert_eq!(done["ok"], json!(false));
     assert_eq!(done["error_meta"]["code"], json!("TOOL_SRE_NO_REDO"));
     assert_eq!(read(), "A\nB\nC\n");
+}
+
+#[test]
+fn undo_reports_a_tampered_snapshot_instead_of_restoring_it() {
+    let dir = tempdir().expect("tempdir");
+    let ws = editor_workspace(dir.path());
+    run(&ws, "create", &create_args("tampered.txt", "A\n"));
+    let target = ws.resolve_path("tester", "tampered.txt").expect("path");
+    run(
+        &ws,
+        "insert",
+        &json!({
+            "command": "insert",
+            "file_path": "tampered.txt",
+            "insert_line": 1,
+            "new_string": "B",
+        }),
+    );
+    assert_eq!(std::fs::read_to_string(&target).expect("read"), "A\nB\n");
+
+    // 把历史文件的内容换掉：文件名里的短 sha 与内容不再相符。
+    let history = ws.workspace_root("tester").join("temp/.history");
+    let entry = std::fs::read_dir(&history)
+        .expect("history")
+        .flatten()
+        .map(|item| item.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.starts_with("tampered.txt@1-"))
+                .unwrap_or(false)
+        })
+        .expect("snapshot file");
+    std::fs::write(&entry, "fake-40\n").expect("tamper");
+
+    let result = run(
+        &ws,
+        "undo_edit",
+        &json!({ "command": "undo_edit", "file_path": "tampered.txt" }),
+    );
+    assert_eq!(result["ok"], json!(false));
+    assert_eq!(result["error_meta"]["code"], json!("TOOL_SRE_HISTORY_CORRUPT"));
+    // 被污染的内容绝不写回用户文件。
+    assert_eq!(std::fs::read_to_string(&target).expect("read"), "A\nB\n");
+    assert!(!entry.exists(), "损坏的快照要被删掉，不能留着下次再恢复");
 }
 
 #[test]

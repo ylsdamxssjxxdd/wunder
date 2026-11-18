@@ -409,29 +409,37 @@ fn block_json(block: &DiffBlock) -> Value {
     })
 }
 
-fn file_entry(action: &str, path: &str, diff: &LineDiff) -> Value {
+fn file_entry(action: &str, path: &str, diff: &LineDiff, unknown: bool) -> Value {
+    // `unknown` 表示有界性守卫放弃了 diff：此时计数是「没算」，不是「0 行」。
+    let count = |value: usize| if unknown { Value::Null } else { json!(value) };
     json!({
         "action": action,
         "path": path,
         "to_path": Value::Null,
-        "hunks": diff.hunks,
-        "added_lines": diff.added_lines,
-        "deleted_lines": diff.deleted_lines,
-        "diff_lines_omitted": diff.omitted_lines,
+        "hunks": count(diff.hunks),
+        "added_lines": count(diff.added_lines),
+        "deleted_lines": count(diff.deleted_lines),
+        "diff_lines_omitted": count(diff.omitted_lines),
         "diff_blocks": diff.blocks.iter().map(block_json).collect::<Vec<_>>(),
     })
 }
 
 /// 写入 `data` 的补丁家族键（单文件变更）。默认 `LineDiff` 表示「只有计数、
 /// 没有块」，用于有界性守卫放弃 diff 的场景。
+///
+/// `unavailable` 有值时计数一律写 `null`：文件确实改过了，报 `0` 会被读成
+/// 「改了 0 行」，比不给数字更容易误导。
 pub(super) fn insert_diff_fields(
     map: &mut Map<String, Value>,
     action: &str,
     path: &str,
     diff: &LineDiff,
+    unavailable: Option<&'static str>,
 ) {
-    map.insert("added_lines".to_string(), json!(diff.added_lines));
-    map.insert("deleted_lines".to_string(), json!(diff.deleted_lines));
+    let unknown = unavailable.is_some();
+    let count = |value: usize| if unknown { Value::Null } else { json!(value) };
+    map.insert("added_lines".to_string(), count(diff.added_lines));
+    map.insert("deleted_lines".to_string(), count(diff.deleted_lines));
     map.insert("changed_files".to_string(), json!(1usize));
     map.insert("added".to_string(), json!(usize::from(action == "add")));
     map.insert(
@@ -443,9 +451,12 @@ pub(super) fn insert_diff_fields(
         json!(usize::from(action == "delete")),
     );
     map.insert("moved".to_string(), json!(0usize));
-    map.insert("hunks_applied".to_string(), json!(diff.hunks));
-    map.insert("diff_lines_omitted".to_string(), json!(diff.omitted_lines));
-    map.insert("files".to_string(), json!([file_entry(action, path, diff)]));
+    map.insert("hunks_applied".to_string(), count(diff.hunks));
+    map.insert("diff_lines_omitted".to_string(), count(diff.omitted_lines));
+    map.insert(
+        "files".to_string(),
+        json!([file_entry(action, path, diff, unknown)]),
+    );
 }
 
 /// dry_run/写入回执用的 unified diff 行数上限（含 `---`/`+++`/`@@` 头）。
@@ -764,7 +775,7 @@ mod tests {
     fn contract_keys_match_the_patch_family() {
         let diff = diff_replaced("a\nb\n", "a\nc\n");
         let mut map = Map::new();
-        insert_diff_fields(&mut map, "update", "sample.txt", &diff);
+        insert_diff_fields(&mut map, "update", "sample.txt", &diff, None);
         let fields = Value::Object(map);
         assert_eq!(
             sorted_keys(&fields),
@@ -827,7 +838,7 @@ mod tests {
     #[test]
     fn empty_diff_still_carries_the_contract_keys_without_blocks() {
         let mut map = Map::new();
-        insert_diff_fields(&mut map, "update", "sample.txt", &LineDiff::default());
+        insert_diff_fields(&mut map, "update", "sample.txt", &LineDiff::default(), None);
         let fields = Value::Object(map);
         assert_eq!(fields["added_lines"], json!(0));
         assert_eq!(fields["changed_files"], json!(1));

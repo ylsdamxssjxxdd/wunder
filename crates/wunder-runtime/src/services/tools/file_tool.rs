@@ -2734,7 +2734,7 @@ fn build_write_data(
     unified_truncated: bool,
 ) -> Value {
     let mut data = Map::<String, Value>::new();
-    insert_diff_fields(&mut data, diff.action, path, &diff.diff);
+    insert_diff_fields(&mut data, diff.action, path, &diff.diff, diff.unavailable);
     if let Some(reason) = diff.unavailable {
         data.insert("diff_unavailable".to_string(), json!(reason));
     }
@@ -3161,8 +3161,10 @@ mod write_result_tests {
             "sample.txt", 5, false, true, 4, Value::Null, &diff, &receipt, None, "", false,
         );
         assert_eq!(data["diff_unavailable"], json!(DIFF_UNAVAILABLE_BINARY));
-        assert_eq!(data["added_lines"], json!(0));
-        assert_eq!(data["deleted_lines"], json!(0));
+        // 放弃 diff 时计数报 null：0 会被误读成「文件没变」。
+        assert_eq!(data["added_lines"], Value::Null);
+        assert_eq!(data["deleted_lines"], Value::Null);
+        assert_eq!(data["hunks_applied"], Value::Null);
         assert!(data["files"][0]["diff_blocks"]
             .as_array()
             .expect("blocks")

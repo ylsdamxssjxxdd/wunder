@@ -732,7 +732,7 @@ fn build_edit_data(
     data.insert("bytes_after".to_string(), json!(bytes_after));
     data.insert("dry_run".to_string(), json!(dry_run));
     data.insert("lsp".to_string(), lsp);
-    insert_diff_fields(&mut data, "update", path, diff);
+    insert_diff_fields(&mut data, "update", path, diff, unavailable);
     if let Some(reason) = unavailable {
         data.insert("diff_unavailable".to_string(), json!(reason));
     }
@@ -948,7 +948,11 @@ mod tests {
             false,
         );
         assert_eq!(data["diff_unavailable"], json!("oversize"));
-        assert_eq!(data["added_lines"], json!(0));
+        // 超限时计数是「没算」而不是「0 行」，否则会被读成「改了个寂寞」。
+        assert_eq!(data["added_lines"], Value::Null);
+        assert_eq!(data["deleted_lines"], Value::Null);
+        assert_eq!(data["hunks_applied"], Value::Null);
+        assert_eq!(data["files"][0]["added_lines"], Value::Null);
         assert!(data["files"][0]["diff_blocks"]
             .as_array()
             .expect("array")

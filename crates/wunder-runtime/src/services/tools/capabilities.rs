@@ -70,6 +70,33 @@ mod tests {
         assert!(fs::read_to_string(&target).is_ok());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn local_fs_keeps_mode_bits_and_hard_links() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("E_exec.sh");
+        let alias = dir.path().join("alias.sh");
+        fs::write(&target, "#!/bin/sh\necho old\n").expect("seed");
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).expect("chmod");
+        fs::hard_link(&target, &alias).expect("hard link");
+        let inode = fs::metadata(&target).expect("meta").ino();
+
+        // 走工具真正使用的写入能力：权限位不能掉，硬链接不能断。
+        local_fs()
+            .write_text(&target, "#!/bin/sh\necho new\n")
+            .expect("write");
+
+        let meta = fs::metadata(&target).expect("meta");
+        assert_eq!(meta.permissions().mode() & 0o777, 0o755, "可执行位被吃掉了");
+        assert_eq!(meta.ino(), inode, "inode 变了，硬链接会停在旧内容上");
+        assert_eq!(meta.nlink(), 2);
+        assert_eq!(
+            fs::read_to_string(&alias).expect("read alias"),
+            "#!/bin/sh\necho new\n"
+        );
+    }
+
     #[test]
     fn local_shell_reports_kind() {
         let shell = LocalShell;

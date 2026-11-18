@@ -344,7 +344,7 @@ fn build_edit_data(
     unavailable: Option<&'static str>,
 ) -> Value {
     let mut fields = Map::<String, Value>::new();
-    insert_diff_fields(&mut fields, action, path, diff);
+    insert_diff_fields(&mut fields, action, path, diff, unavailable);
     if let Some(reason) = unavailable {
         fields.insert("diff_unavailable".to_string(), json!(reason));
     }
@@ -459,7 +459,8 @@ fn insert_command(
 /// 撤销：把目标文件写回栈里上一态的内容，只移动游标、不压新快照。
 ///
 /// 与「回滚到最近一版」不同，连续调用会一路往回退（C → B → A），退到最初
-/// 之后返回无历史；撤销之后再写入会砍掉 redo 分支，所以两条时间线不会互串。
+/// 之后报 `TOOL_SRE_AT_OLDEST`（有历史、只是已经在最早一态）；撤销之后再写入
+/// 会砍掉 redo 分支，所以两条时间线不会互串。
 fn undo_edit_command(
     ws: &WorkspaceManager,
     user_id: &str,
@@ -472,8 +473,9 @@ fn undo_edit_command(
     }
     let workspace_root = ws.workspace_root(user_id);
     let before = read_current(target)?;
-    let Some(step) = file_history::step_back(target, &workspace_root, &before) else {
-        return Ok(fail(no_history(path)));
+    let step = match file_history::step_back(target, &workspace_root, &before) {
+        Ok(step) => step,
+        Err(block) => return Ok(fail(history_block(path, block))),
     };
     apply_history_step(ws, user_id, target, path, args, &before, step, "undo_edit")
 }
@@ -490,8 +492,9 @@ fn redo_edit_command(
     }
     let workspace_root = ws.workspace_root(user_id);
     let before = read_current(target)?;
-    let Some(step) = file_history::step_forward(target, &workspace_root) else {
-        return Ok(fail(no_redo(path)));
+    let step = match file_history::step_forward(target, &workspace_root) {
+        Ok(step) => step,
+        Err(block) => return Ok(fail(history_block(path, block))),
     };
     apply_history_step(ws, user_id, target, path, args, &before, step, "redo")
 }
@@ -541,6 +544,36 @@ fn apply_history_step(
         map.insert("cursor".to_string(), json!(step.cursor));
     }
     Ok(write_outcome(action, path, data, dry_run, changed))
+}
+
+/// 退不动时按原因分派：栈底和「根本没有历史」是两件事，提示不能共用。
+fn history_block(path: &str, block: file_history::StepBlock) -> Value {
+    match block {
+        file_history::StepBlock::AtOldest { revisions } => at_oldest(path, revisions),
+        file_history::StepBlock::AtNewest => no_redo(path),
+        file_history::StepBlock::Corrupt { display } => corrupt_snapshot(path, &display),
+        file_history::StepBlock::NoHistory => no_history(path),
+    }
+}
+
+/// 有历史但已经退到最早一态：文件没被改动，历史也还在。
+fn at_oldest(path: &str, revisions: u32) -> Value {
+    editor_failure(
+        &format!("{path} 已退回最早的可用版本；未修改文件。"),
+        json!({ "path": path, "history_at_oldest": true, "revisions": revisions }),
+        "TOOL_SRE_AT_OLDEST",
+        "历史里最早的一版就是当前内容，继续撤销不会有变化；要更早的内容只能靠外部备份。",
+    )
+}
+
+/// 快照内容与文件名里的短 sha 不符：按损坏处理，已删除，绝不写回文件。
+fn corrupt_snapshot(path: &str, snapshot: &str) -> Value {
+    editor_failure(
+        &format!("{path} 的快照内容与文件名不符，已按损坏删除；未修改文件。"),
+        json!({ "path": path, "history_corrupt": snapshot }),
+        "TOOL_SRE_HISTORY_CORRUPT",
+        "历史目录被外部改过；重新写入一次即可重建这一版之后的历史。",
+    )
 }
 
 fn no_history(path: &str) -> Value {
