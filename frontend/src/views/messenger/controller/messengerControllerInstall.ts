@@ -6237,9 +6237,12 @@ function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerCont
               ctx.resourcePreviewKind.value = loaded.kind;
               ctx.resourcePreviewContent.value = loaded.content;
               ctx.resourcePreviewUrl.value = loaded.previewUrl;
-              ctx.resourcePreviewEditable.value = !loaded.truncated && ownsResource;
+              ctx.resourcePreviewEditable.value = loaded.editable && ownsResource;
               if (loaded.truncated) {
                   ctx.resourcePreviewHint.value = ctx.t('workspace.preview.truncatedHint');
+              }
+              else if (!loaded.editable) {
+                  ctx.resourcePreviewHint.value = ctx.t('workspace.preview.previewOnlyHint');
               }
               return;
           }

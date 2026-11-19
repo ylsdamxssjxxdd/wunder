@@ -10,7 +10,13 @@
 import { buildWorkspaceHtmlPreviewDocument } from '@/components/chat/workspaceHtmlPreview';
 import { isWorkspaceHtmlDocumentPath } from '@/utils/workspaceResourcePreview';
 
+/** 可编辑文本（源码进代码编辑器）的单次读取上限。 */
 export const WORKSPACE_DOCUMENT_TEXT_MAX_BYTES = 2 * 1024 * 1024;
+/**
+ * HTML 的成品是页面：默认渲染进 iframe，不需要把源码塞进代码编辑器，
+ * 所以预览上限单独放宽。超过文本上限时只给渲染结果，源码编辑请下载后处理。
+ */
+export const WORKSPACE_HTML_DOCUMENT_MAX_BYTES = 30 * 1024 * 1024;
 
 export type WorkspaceDocumentTextPayload = {
   content: string;
@@ -27,6 +33,8 @@ export type WorkspaceDocumentPreviewLoad = {
   /** HTML 预览时生成的对象 URL，关闭对话框时需要统一回收。 */
   objectUrls: string[];
   truncated: boolean;
+  /** 是否允许继续编辑源码；大文件只读预览时为 false。 */
+  editable: boolean;
   size: number;
 };
 
@@ -37,6 +45,7 @@ const emptyLoad = (status: 'too-large'): WorkspaceDocumentPreviewLoad => ({
   previewUrl: '',
   objectUrls: [],
   truncated: false,
+  editable: false,
   size: 0
 });
 
@@ -51,15 +60,21 @@ export const loadWorkspaceDocumentPreview = async (options: {
   maxBytes?: number;
 }): Promise<WorkspaceDocumentPreviewLoad> => {
   const maxBytes = Math.max(1024, Number(options.maxBytes) || WORKSPACE_DOCUMENT_TEXT_MAX_BYTES);
+  const path = String(options.path || '').replace(/\\/g, '/').trim();
+  const isHtmlDocument = isWorkspaceHtmlDocumentPath(path);
+  // HTML 默认渲染预览，不进代码编辑器，上限单独放宽到 30MB。
+  const previewMaxBytes = isHtmlDocument
+    ? Math.max(maxBytes, WORKSPACE_HTML_DOCUMENT_MAX_BYTES)
+    : maxBytes;
   const declaredSize = Number(options.sizeBytes);
-  if (Number.isFinite(declaredSize) && declaredSize > maxBytes) {
+  if (Number.isFinite(declaredSize) && declaredSize > previewMaxBytes) {
     return emptyLoad('too-large');
   }
 
-  const path = String(options.path || '').replace(/\\/g, '/').trim();
-  if (isWorkspaceHtmlDocumentPath(path)) {
+  if (isHtmlDocument) {
     const source = await options.fetchBlob(path);
-    if (Number(source?.size) > maxBytes) {
+    const size = Number(source?.size) || 0;
+    if (size > previewMaxBytes) {
       return emptyLoad('too-large');
     }
     const rawHtml = await source.text();
@@ -68,16 +83,19 @@ export const loadWorkspaceDocumentPreview = async (options: {
       entryPath: path,
       fetchResource: (relativePath) => options.fetchBlob(relativePath)
     });
+    // 超过源码编辑上限时只交付渲染结果：把几十 MB 源码塞进代码编辑器会直接卡死界面。
+    const editable = size <= maxBytes;
     return {
       status: 'ready',
       kind: 'html',
-      content: rawHtml,
+      content: editable ? rawHtml : '',
       previewUrl: URL.createObjectURL(
         new Blob([previewDocument.html], { type: 'text/html; charset=utf-8' })
       ),
       objectUrls: previewDocument.objectUrls,
       truncated: false,
-      size: Number(source?.size) || rawHtml.length
+      editable,
+      size: size || rawHtml.length
     };
   }
 
@@ -92,6 +110,7 @@ export const loadWorkspaceDocumentPreview = async (options: {
     previewUrl: '',
     objectUrls: [],
     truncated: payload?.truncated === true,
+    editable: payload?.truncated !== true,
     size: Number(payload?.size) || 0
   };
 };

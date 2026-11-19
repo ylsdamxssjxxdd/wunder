@@ -1975,6 +1975,7 @@ export default {
   'workspace.preview.tooLargeHintLocal': '文件较大，建议在本地应用中直接打开，或导出副本后查看',
   'workspace.preview.tooLargeHint': '文件过大，无法预览',
   'workspace.preview.truncatedHint': '仅显示部分内容',
+  'workspace.preview.previewOnlyHint': '文件较大，仅显示渲染预览；需要编辑源码请下载后处理',
   'workspace.preview.unsupportedHintLocal': '当前环境不支持该类型预览，可在本地应用中直接打开，或导出副本后查看',
   'workspace.preview.unsupportedHint': '不支持预览',
   'workspace.preview.model.error': '模型加载失败，请确认为 GLB 或内嵌资源的 glTF',

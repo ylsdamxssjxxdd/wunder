@@ -1658,8 +1658,9 @@ const openPreview = async (path: string, name: string, size: number) => {
       previewHtmlObjectUrls = loaded.objectUrls;
       preview.previewUrl = loaded.previewUrl;
       preview.content = loaded.content;
-      preview.editable = !loaded.truncated;
+      preview.editable = loaded.editable;
       if (loaded.truncated) preview.hint = t('workspace.preview.truncatedHint');
+      else if (!loaded.editable) preview.hint = t('workspace.preview.previewOnlyHint');
       preview.metaLabel = `${path}  ·  ${formatWorkspaceBytes(loaded.size || size)}`;
       return;
     }

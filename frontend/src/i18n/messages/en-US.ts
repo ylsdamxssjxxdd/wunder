@@ -2004,6 +2004,7 @@ export default {
   'workspace.preview.tooLargeHintLocal': 'File is large. Open it locally or export a copy to view.',
   'workspace.preview.tooLargeHint': 'File too large to preview',
   'workspace.preview.truncatedHint': 'Content truncated',
+  'workspace.preview.previewOnlyHint': 'File is large; showing rendered preview only. Download it to edit the source.',
   'workspace.preview.unsupportedHintLocal': 'Preview is unavailable here. Open it locally or export a copy to view.',
   'workspace.preview.unsupportedHint': 'Unsupported preview',
   'workspace.preview.model.error': 'Failed to load the model. Use GLB or a glTF with embedded resources.',
