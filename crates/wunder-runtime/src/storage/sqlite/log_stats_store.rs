@@ -1,10 +1,11 @@
 use super::SqliteStorage;
-use crate::storage::StorageLifecycle;
+use crate::storage::{LogUsage, StorageLifecycle};
 use anyhow::Result;
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::path::Path;
 
 pub(super) trait SqliteLogStatsStorage {
     fn get_user_chat_stats_impl(&self) -> Result<HashMap<String, HashMap<String, i64>>>;
@@ -22,7 +23,7 @@ pub(super) trait SqliteLogStatsStorage {
         since_time: Option<f64>,
         until_time: Option<f64>,
     ) -> Result<Vec<HashMap<String, Value>>>;
-    fn get_log_usage_impl(&self) -> Result<u64>;
+    fn get_log_usage_impl(&self) -> Result<LogUsage>;
     fn delete_logs_by_time_range_impl(
         &self,
         start_time: f64,
@@ -209,17 +210,39 @@ impl SqliteLogStatsStorage for SqliteStorage {
         Ok(sessions)
     }
 
-    fn get_log_usage_impl(&self) -> Result<u64> {
-        self.ensure_initialized()?;
-        let _ = self.runtime_logs()?;
-        let conn = self.open_logs()?;
-        let pages: i64 = conn.pragma_query_value(None, "page_count", |row| row.get(0))?;
-        let free: i64 = conn.pragma_query_value(None, "freelist_count", |row| row.get(0))?;
-        let size: i64 = conn.pragma_query_value(None, "page_size", |row| row.get(0))?;
-        Ok(pages
-            .saturating_sub(free)
-            .max(0)
-            .saturating_mul(size.max(0)) as u64)
+    fn get_log_usage_impl(&self) -> Result<LogUsage> {
+        // Report the on-disk footprint of both log stores. Reading SQLite page
+        // counts used to hide the real volume twice over: it skipped the WAL
+        // (which holds most recent bytes) and ignored the thread history store
+        // entirely, so the admin monitor showed a few megabytes for a
+        // multi-gigabyte transcript.
+        let root = self
+            .db_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."));
+        let mut thread_bytes = 0;
+        for name in [
+            "thread_history_1.sqlite",
+            "thread_history_1.sqlite-wal",
+            "thread_history_1.sqlite-shm",
+        ] {
+            thread_bytes += regular_file_bytes(&root.join(name));
+        }
+        for name in ["sessions", "archived_sessions"] {
+            thread_bytes += log_directory_bytes(&root.join(name), 0);
+        }
+        let mut diagnostic_bytes = 0;
+        for name in [
+            "logs_1.sqlite",
+            "logs_1.sqlite-wal",
+            "logs_1.sqlite-shm",
+        ] {
+            diagnostic_bytes += regular_file_bytes(&root.join(name));
+        }
+        Ok(LogUsage {
+            thread_bytes,
+            diagnostic_bytes,
+        })
     }
 
     fn delete_logs_by_time_range_impl(
@@ -374,5 +397,73 @@ impl SqliteLogStatsStorage for SqliteStorage {
             params![user_id, session_id],
         )?;
         Ok(())
+    }
+}
+
+/// Missing files count as zero; symlinks are never followed so a log footprint
+/// report cannot escape the storage root.
+fn regular_file_bytes(path: &Path) -> u64 {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => metadata.len(),
+        _ => 0,
+    }
+}
+
+/// Bounded recursive size of a log directory (rollout transcripts). The depth
+/// limit only guards against pathological trees; normal `YYYY/MM/DD` nesting is
+/// three levels deep.
+fn log_directory_bytes(path: &Path, depth: u8) -> u64 {
+    const MAX_DEPTH: u8 = 6;
+    if depth >= MAX_DEPTH {
+        return 0;
+    }
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    let mut total = 0_u64;
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            total = total.saturating_add(log_directory_bytes(&entry.path(), depth + 1));
+        } else if file_type.is_file() {
+            total = total.saturating_add(entry.metadata().map(|meta| meta.len()).unwrap_or(0));
+        }
+    }
+    total
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::{ConversationLogStore, LogStatsStore};
+
+    #[test]
+    fn log_usage_separates_thread_and_diagnostic_footprint() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = SqliteStorage::new(dir.path().join("state_1.sqlite").to_string_lossy().into());
+        storage.ensure_initialized().unwrap();
+        storage
+            .append_tool_log(
+                "sample-user",
+                &json!({"session_id":"sample-thread","tool":"sample-tool","ok":true}),
+            )
+            .unwrap();
+        let rollout_dir = dir.path().join("sessions/2026/01/01");
+        std::fs::create_dir_all(&rollout_dir).unwrap();
+        std::fs::write(rollout_dir.join("rollout-sample.jsonl"), vec![b'x'; 8192]).unwrap();
+
+        let usage = storage.get_log_usage().unwrap();
+        assert!(
+            usage.diagnostic_bytes > 0,
+            "diagnostic log store should be counted"
+        );
+        assert!(
+            usage.thread_bytes >= 8192,
+            "thread transcripts should be counted, got {}",
+            usage.thread_bytes
+        );
+        assert_eq!(usage.total(), usage.thread_bytes + usage.diagnostic_bytes);
     }
 }

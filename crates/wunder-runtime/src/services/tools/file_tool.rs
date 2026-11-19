@@ -1,7 +1,7 @@
 use super::line_diff::{
     diff_added_file, diff_replaced, diff_source_too_large, insert_diff_fields, LineDiff,
     DIFF_UNAVAILABLE_BINARY, DIFF_UNAVAILABLE_OVERSIZE, DIFF_UNAVAILABLE_UNREADABLE,
-    MAX_DIFF_SOURCE_BYTES, unified_diff, MAX_UNIFIED_DIFF_LINES,
+    MAX_DIFF_SOURCE_BYTES, unified_diff,
 };
 use super::{
     build_model_tool_success, build_model_tool_success_with_hint, collect_allow_roots,
@@ -2708,14 +2708,16 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
         touch_lsp_file(context, &write_outcome.target, true).await
     };
     let previous_text = write_outcome.previous_text.as_deref().unwrap_or("");
-    // diff 与回执都以「真正落盘的字节」为准（可能补回了 BOM）。
-    let (unified, unified_truncated) = unified_diff(
+    // diff 与回执都以「真正落盘的字节」为准（可能补回了 BOM）。写入结果里的
+    // unified diff 不做行数截断：模型靠它确认自己写进去的到底是什么，截断只会
+    // 换来一次多余的重读。
+    let unified = unified_diff(
         &path,
         previous_text,
         &write_outcome.written,
         &write_outcome.diff.diff,
-        MAX_UNIFIED_DIFF_LINES,
     );
+    let unified_truncated = false;
     let data = build_write_data(
         &path,
         write_outcome.written.len(),

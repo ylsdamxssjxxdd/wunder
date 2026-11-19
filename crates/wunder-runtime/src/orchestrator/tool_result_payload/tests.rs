@@ -2672,3 +2672,98 @@ fn structured_check_and_undo_source_survive_the_projection() {
     assert_eq!(projected["restored_from"], json!("temp/.history/sketch.py@2"));
     assert_eq!(projected["cursor"], json!(1));
 }
+
+/// 写入结果不做观察层压缩：大 diff 也必须完整到达模型，模型才不用重读文件。
+#[test]
+fn write_observation_keeps_the_whole_diff_without_compression() {
+    let mut diff = String::from("--- a/big.html\n+++ b/big.html\n");
+    for index in 0..400 {
+        diff.push_str(&format!("+line {index}\n"));
+    }
+    let result = ToolResultPayload::from_value(json!({
+        "tool": "写入文件",
+        "ok": true,
+        "data": {
+            "action": "write_file",
+            "state": "completed",
+            "data": {
+                "path": "big.html",
+                "bytes": diff.len(),
+                "changed": true,
+                "changed_files": 1,
+                "unified_diff": diff,
+                "unified_diff_truncated": false
+            }
+        }
+    }));
+    // 预算给得很小：写入结果必须无视它，否则这里会被折叠成空预览。
+    let observation = result.to_compact_payload_with_token_budget("write_file", Some(200));
+    let payload_diff = observation["data"]["unified_diff"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        payload_diff.contains("+line 399"),
+        "the full diff must survive: {observation}"
+    );
+    assert_ne!(observation["truncated"], json!(true));
+    assert!(observation["data"]["preview"].is_null());
+}
+
+/// 文本编辑的写结果与写入文件同一口径：完整 diff 必须到达模型。
+#[test]
+fn text_edit_observation_keeps_the_whole_diff_without_compression() {
+    let mut diff = String::from("--- a/big.html\n+++ b/big.html\n");
+    for index in 0..400 {
+        diff.push_str(&format!("+line {index}\n"));
+    }
+    let result = ToolResultPayload::from_value(json!({
+        "tool": "文本编辑",
+        "ok": true,
+        "data": {
+            "action": "edit",
+            "state": "completed",
+            "data": {
+                "path": "big.html",
+                "bytes": diff.len(),
+                "changed": true,
+                "changed_files": 1,
+                "receipt": "file: big.html (400 lines, 4.0 KB, sha256: 9f3a1c2d4e5f)",
+                "unified_diff": diff,
+                "unified_diff_truncated": false
+            }
+        }
+    }));
+    let observation = result.to_compact_payload_with_token_budget("文本编辑", Some(200));
+    let payload_diff = observation["data"]["unified_diff"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        payload_diff.contains("+line 399"),
+        "the full diff must survive: {observation}"
+    );
+    assert_ne!(observation["truncated"], json!(true));
+}
+
+/// 但 `command=view` 是读结果：同一个工具不能借「写结果不压缩」把整份文件灌进上下文。
+#[test]
+fn text_edit_view_observation_still_obeys_the_budget() {
+    let content: String = (0..2000)
+        .map(|index| format!("{index:>4} line\n"))
+        .collect();
+    let result = ToolResultPayload::from_value(json!({
+        "tool": "文本编辑",
+        "ok": true,
+        "data": {
+            "action": "view",
+            "state": "completed",
+            "data": { "path": "a.txt", "kind": "file", "content": content }
+        }
+    }));
+    let observation = result.to_compact_payload_with_token_budget("文本编辑", Some(200));
+    let projected = observation["data"]["content"].as_str().unwrap_or_default();
+    assert!(
+        projected.len() < content.len(),
+        "view must stay bounded: {observation}"
+    );
+    assert_eq!(observation["truncated"], json!(true));
+}

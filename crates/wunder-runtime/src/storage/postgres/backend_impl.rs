@@ -6,7 +6,7 @@ use crate::storage::{
     ConversationLogStore, CronStore, GatewayStore, InterlinkApprovalRecord, InterlinkAuditRecord,
     InterlinkChannelRecord, InterlinkCommandRecord, InterlinkShadowOverview, InterlinkShadowRecord,
     InterlinkStore, ListCloudDeviceLogsQuery, ListCloudRecordsQuery, ListInterlinkAuditQuery,
-    ListInterlinkCommandsQuery, LogStatsStore, MediaStore, MemoryRecordStore, MetaStore,
+    ListInterlinkCommandsQuery, LogStatsStore, LogUsage, MediaStore, MemoryRecordStore, MetaStore,
     MonitorStore, OrphanSweepResult, QuotaBalanceStore, RetentionStore, SessionGoalStore,
     SessionLockStore, SessionRunStore, StorageLifecycle, ThreadLogStore, ThreadOpenLeaseStore,
     UserAccountStore, UserRefreshTokenRecord, UserRefreshTokenStore, UserWorldStore,
@@ -455,7 +455,7 @@ impl LogStatsStore for PostgresStorage {
     ) -> Result<Vec<HashMap<String, Value>>> {
         self.get_tool_session_usage_impl(tool, since_time, until_time)
     }
-    fn get_log_usage(&self) -> Result<u64> {
+    fn get_log_usage(&self) -> Result<LogUsage> {
         self.get_log_usage_impl()
     }
     fn delete_logs_by_time_range(

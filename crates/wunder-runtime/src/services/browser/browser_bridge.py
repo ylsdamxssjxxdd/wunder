@@ -24,6 +24,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -34,9 +35,9 @@ import tempfile
 import time
 import traceback
 import urllib.request
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, unquote, urlparse
 
 # Playwright 1.40 needs Node >=16. The Win7 supplement replaces Playwright's
 # x64 driver node with a 32-bit Node 16 build; Node 16 otherwise refuses to
@@ -547,9 +548,25 @@ READABLE_JS = """(opts) => {
 }"""
 
 
+# 工作区预览域名。页面资源由 bridge 自己从工作区读出并直接喂给浏览器
+# （page.route），既不发网络请求也不占用端口，所以 file:// 被禁用、容器里
+# 端口被别人占用时，仍然可以预览交付的 HTML。
+PREVIEW_HOST = "wunder.preview"
+
+# Console ring per tab: enough to see the first error and its follow-ups, small
+# enough that a page stuck in a render loop cannot grow the bridge's memory.
+CONSOLE_LIMIT = 200
+CONSOLE_TEXT_LIMIT = 400
+# 回读与随动作附带的数量上限：够定位第一个报错，又不会把上下文灌满。
+CONSOLE_REPORT_LIMIT = 40
+CONSOLE_SAMPLE_LIMIT = 5
+# 一次滚轮/拖拽的最大幅度，避免单个调用把页面推到不可预期的地方。
+WHEEL_MAX_DELTA = 20000
+POINTER_MAX_STEPS = 60
+
+
 class Policy:
     """URL policy mirrored from the Rust runtime and applied inside the browser."""
-
     def __init__(self, args):
         self.allow_private_network = bool(args.allow_private_network)
         self.allow_file_scheme = not bool(args.deny_file_scheme)
@@ -656,6 +673,10 @@ class Policy:
             return False, "file:// URLs are disabled"
         if scheme not in ("http", "https"):
             return False, "only http/https URLs are supported (got %s)" % scheme
+        # 预览域名只由 page.route 应答工作区里的文件，从不发网络请求，所以
+        # 不受私网与域名策略约束。
+        if (parsed.hostname or "").strip().lower() == PREVIEW_HOST:
+            return True, ""
         if self.allow_private_network:
             return True, ""
         host = (parsed.hostname or "").strip().lower().strip("[]")
@@ -785,6 +806,39 @@ def _elapsed_ms(since):
 
 
 CDP_PROFILE_PREFIX = "wunder-cdp-profile-"
+
+
+def _is_gpu_switch(arg):
+    """Caller-supplied GPU switches always win over the platform default."""
+    return (
+        arg.startswith("--disable-gpu")
+        or arg.startswith("--use-gl")
+        or arg.startswith("--use-angle")
+        or arg == "--enable-gpu"
+    )
+
+
+def with_software_gpu_defaults(launch_args, headless):
+    """Headless on a host without a display GPU: keep composition on the CPU.
+
+    Chromium's GPU process is then the only place SwiftShader works: it renders
+    every frame of an animated page in software and keeps compositing for as
+    long as a surface exists. Measured on Chrome 122 and 158 (no /dev/dri): an
+    animated three.js page pulls 14+ cores of GPU-process CPU, while the same
+    page with --disable-gpu still produces identical pixels and the same frame
+    count. So headless browsers on GPU-less Linux hosts opt out of it - the
+    WebGL canvas keeps working, the busy software compositor does not.
+
+    An explicit GPU switch from the caller is never overridden, and non-Linux
+    hosts keep their default path (this probe only knows /dev/dri).
+    """
+    if not headless or not sys.platform.startswith("linux"):
+        return list(launch_args)
+    if any(_is_gpu_switch(arg) for arg in launch_args):
+        return list(launch_args)
+    if os.path.isdir("/dev/dri"):
+        return list(launch_args)
+    return list(launch_args) + ["--disable-gpu"]
 
 
 def build_cdp_command(executable_path, port, profile_dir, headless, extra_args=None):
@@ -934,7 +988,9 @@ class BridgeSession:
         mark = time.monotonic()
         self.pw = sync_playwright().start()
         self.startup_ms["driver_ms"] = _elapsed_ms(mark)
-        launch_args = [item for item in args.launch_arg if item]
+        launch_args = with_software_gpu_defaults(
+            [item for item in args.launch_arg if item], args.headless
+        )
         # Launch strategy mirrors deepseek-harness `browser-use`: either launch a
         # managed browser (optionally on a user-supplied channel / executable) or
         # attach to an already-running browser over CDP so existing tabs, logins
@@ -999,6 +1055,11 @@ class BridgeSession:
         self.page_generations = {}
         self.page_identities = {}
         self.page_states = {}
+        # Per-tab console ring plus the workspace directory a preview URL maps
+        # to. Both are bounded and tab-scoped, so a closed tab releases them.
+        self.console_logs = {}
+        self.preview_root = None
+        self.preview_installed = set()
         # Cursor signatures bind a window to this one bridge process.  They are
         # deliberately not persisted: a restarted browser cannot promise the
         # same DOM, so callers must observe the page again.
@@ -1170,9 +1231,140 @@ class BridgeSession:
         self.refs[target_id] = {}
         self.page_generations[target_id] = 0
         self.page_identities[target_id] = None
+        self.console_logs[target_id] = deque(maxlen=CONSOLE_LIMIT)
+        self._watch_console(target_id, page)
+        if self.preview_root:
+            self._install_preview(page, self.preview_root)
         if self.active_target_id is None:
             self.active_target_id = target_id
         return target_id, page
+
+    def _watch_console(self, target_id, page):
+        """Record console output and uncaught page errors for this tab.
+
+        A rendering bug shows up as a console error long before it shows up as a
+        readable difference in a screenshot, so the model needs both from the
+        same call instead of guessing from pixels alone.
+        """
+        buffer = self.console_logs.get(target_id)
+
+        def record(entry):
+            current = self.console_logs.get(target_id)
+            if current is not None:
+                current.append(entry)
+
+        def on_console(message):
+            try:
+                entry = {
+                    "type": str(message.type or "log"),
+                    "text": _short(message.text or "", CONSOLE_TEXT_LIMIT),
+                }
+                location = getattr(message, "location", None) or {}
+                line = location.get("lineNumber")
+                column = location.get("columnNumber")
+                if isinstance(line, int):
+                    entry["line"] = line + 1
+                    if isinstance(column, int):
+                        entry["column"] = column + 1
+                source = str(location.get("url") or "")
+                if source and not source.startswith("http://%s/" % PREVIEW_HOST):
+                    entry["source"] = source.rsplit("/", 1)[-1][:80]
+            except Exception:
+                return
+            record(entry)
+
+        def on_page_error(error):
+            try:
+                entry = {"type": "pageerror", "text": _short(str(error), CONSOLE_TEXT_LIMIT)}
+            except Exception:
+                return
+            record(entry)
+
+        try:
+            page.on("console", on_console)
+            page.on("pageerror", on_page_error)
+        except Exception:
+            # A page that cannot take listeners simply reports no console.
+            if buffer is not None:
+                buffer.append({"type": "info", "text": "console capture unavailable"})
+
+    def _install_preview(self, page, root):
+        """Serve the workspace over `http://wunder.preview/` for this page.
+
+        Self-contained HTML still needs an origin to run in: file:// is refused
+        in sandboxed runtimes and a hand-started HTTP server collides with other
+        workspaces in a shared container. Fulfilling the request from the
+        workspace keeps preview deterministic and port-free.
+        """
+        resolved = os.path.realpath(str(root))
+        if resolved in self.preview_installed:
+            return
+        self.preview_installed.add(resolved)
+
+        def handler(route, request):
+            try:
+                parsed = urlparse(request.url)
+                relative = unquote(parsed.path or "/").lstrip("/")
+                target = os.path.realpath(os.path.join(resolved, relative))
+                inside = target == resolved or target.startswith(resolved + os.sep)
+                if not inside:
+                    route.fulfill(
+                        status=403,
+                        content_type="text/plain; charset=utf-8",
+                        body="Blocked: path escapes the workspace\n",
+                    )
+                    return
+                if os.path.isdir(target):
+                    target = os.path.join(target, "index.html")
+                if not os.path.isfile(target):
+                    route.fulfill(
+                        status=404,
+                        content_type="text/plain; charset=utf-8",
+                        body="Not found in workspace: %s\n" % relative,
+                    )
+                    return
+                content_type = mimetypes.guess_type(target)[0] or "application/octet-stream"
+                if content_type.startswith("text/") or content_type in (
+                    "application/javascript",
+                    "application/json",
+                ):
+                    content_type += "; charset=utf-8"
+                with open(target, "rb") as handle:
+                    body = handle.read()
+            except Exception as exc:
+                try:
+                    route.fulfill(
+                        status=500,
+                        content_type="text/plain; charset=utf-8",
+                        body="Preview failed: %s\n" % type(exc).__name__,
+                    )
+                except Exception:
+                    pass
+                return
+            try:
+                route.fulfill(
+                    status=200,
+                    content_type=content_type,
+                    headers={"cache-control": "no-store"},
+                    body=body,
+                )
+            except Exception:
+                pass
+
+        try:
+            page.route("http://%s/**" % PREVIEW_HOST, handler)
+        except Exception:
+            self.preview_installed.discard(resolved)
+
+    def _preview_url(self, root, relative):
+        """Remember the workspace root and turn a relative path into a URL."""
+        self.preview_root = os.path.realpath(str(root))
+        cleaned = str(relative or "").replace("\\", "/")
+        if not cleaned.strip():
+            raise ValueError("Browser preview needs a workspace-relative path")
+        if cleaned.startswith("/") or any(part == ".." for part in cleaned.split("/")):
+            raise ValueError("Browser preview path must stay inside the workspace")
+        return "http://%s/%s" % (PREVIEW_HOST, quote(cleaned, safe="/"))
 
     def _sync_pages(self):
         """Reconcile the tab table with the context's live pages.
@@ -1207,6 +1399,7 @@ class BridgeSession:
                 self.page_generations.pop(target_id, None)
                 self.page_identities.pop(target_id, None)
                 self.page_states.pop(target_id, None)
+                self.console_logs.pop(target_id, None)
         if self.active_target_id not in self.pages:
             self.active_target_id = next(iter(self.pages), None)
 
@@ -1243,7 +1436,7 @@ class BridgeSession:
                 "navigation"
                 if operation in ("navigate", "open", "open_tab", "back")
                 else "interaction"
-                if operation in ("click", "type", "fill", "press", "hover", "select", "drag", "wait")
+                if operation in ("click", "type", "fill", "press", "hover", "select", "drag", "scroll", "wait")
                 else "command"
             )
             public_message = (
@@ -1294,7 +1487,12 @@ class BridgeSession:
         if action in ("tabs", "list_tabs"):
             return self.list_tabs()
         if action in ("open", "open_tab"):
-            return self.open_tab(raw.get("url"), raw.get("timeout_ms"))
+            return self.open_tab(
+                raw.get("url"),
+                raw.get("timeout_ms"),
+                preview_root=raw.get("preview_root"),
+                preview_path=raw.get("preview_path"),
+            )
         if action in ("focus", "focus_tab"):
             return self.focus_tab(raw.get("target_id"), raw.get("index"))
         if action in ("close", "close_tab"):
@@ -1302,7 +1500,13 @@ class BridgeSession:
                 return self.close_tab(raw.get("target_id"), raw.get("index"))
             return {"success": True, "data": {"status": "closing"}}
         if action == "navigate":
-            return self.navigate(raw.get("url"), raw.get("target_id"), raw.get("timeout_ms"))
+            return self.navigate(
+                raw.get("url"),
+                raw.get("target_id"),
+                raw.get("timeout_ms"),
+                preview_root=raw.get("preview_root"),
+                preview_path=raw.get("preview_path"),
+            )
         if action == "snapshot":
             return self.snapshot(
                 target_id=raw.get("target_id"),
@@ -1351,7 +1555,9 @@ class BridgeSession:
             },
         }
 
-    def open_tab(self, url=None, timeout_ms=None):
+    def open_tab(self, url=None, timeout_ms=None, preview_root=None, preview_path=None):
+        if preview_root and preview_path:
+            url = self._preview_url(preview_root, preview_path)
         if url:
             allowed, reason = self.policy.check(url)
             if not allowed:
@@ -1362,6 +1568,8 @@ class BridgeSession:
                 "success": False,
                 "error": "Browser session reached max tabs limit (%s)" % self.args.max_tabs,
             }
+        if preview_root:
+            self._install_preview(page, preview_root)
         response = None
         if url:
             try:
@@ -1419,6 +1627,7 @@ class BridgeSession:
         self.page_generations.pop(target_id, None)
         self.page_identities.pop(target_id, None)
         self.page_states.pop(target_id, None)
+        self.console_logs.pop(target_id, None)
         if not self.pages:
             new_target_id, _ = self._new_page()
             self.active_target_id = new_target_id
@@ -1434,13 +1643,18 @@ class BridgeSession:
             },
         }
 
-    def navigate(self, url, target_id=None, timeout_ms=None):
+    def navigate(self, url, target_id=None, timeout_ms=None, preview_root=None, preview_path=None):
+        page, target_id = self._resolve_page(target_id)
+        if preview_root and preview_path:
+            # 工作区里的 HTML 直接以预览域名打开：无需自建 HTTP 服务，也不受
+            # file:// 策略限制，页面里的相对资源仍然可用。
+            self._install_preview(page, preview_root)
+            url = self._preview_url(preview_root, preview_path)
         if not url:
             return {"success": False, "error": "Missing 'url' parameter"}
         allowed, reason = self.policy.check(url)
         if not allowed:
             return {"success": False, "error": "Navigation blocked: %s" % reason}
-        page, target_id = self._resolve_page(target_id)
         # Clear refs before the request: even a failed navigation can replace
         # the document with an error page, and selectors from the old page must
         # not silently match a different element on the new one.
@@ -1769,6 +1983,8 @@ class BridgeSession:
                 cursor=request.get("cursor"),
             )
         page, target_id = self._resolve_page(target_id or request.get("target_id"))
+        if kind == "console":
+            return self.read_console(target_id, clear=bool(request.get("clear", False)))
         if kind == "wait":
             return self._wait(page, target_id, request)
         if kind == "back":
@@ -1801,6 +2017,10 @@ class BridgeSession:
                 return {"success": False, "error": "Browser press missing 'key'"}
             page.keyboard.press(str(key))
             return self._action_result(page, target_id, kind, extra={"key": key})
+        if kind == "scroll":
+            return self._wheel(page, target_id, request)
+        if kind == "drag" and _is_pointer_drag(request):
+            return self._pointer_drag(page, target_id, request)
         locator_request = ({"ref": request.get("from_ref"), "selector": request.get("from_selector")}
                            if kind == "drag" else request)
         locator, locator_meta = self._resolve_locator(page, target_id, locator_request)
@@ -1928,16 +2148,15 @@ class BridgeSession:
     def screenshot(self, target_id=None, full_page=False):
         page, target_id = self._resolve_page(target_id)
         content = page.screenshot(full_page=full_page)
-        return {
-            "success": True,
-            "data": {
-                "target_id": target_id,
-                "url": page.url,
-                "format": "png",
-                "image_base64": base64.b64encode(content).decode("utf-8"),
-                "full_page": full_page,
-            },
+        data = {
+            "target_id": target_id,
+            "url": page.url,
+            "format": "png",
+            "image_base64": base64.b64encode(content).decode("utf-8"),
+            "full_page": full_page,
         }
+        data.update(self.console_summary(target_id))
+        return {"success": True, "data": data}
 
     def read_page(self, target_id=None, max_chars=40000, cursor=None):
         page, target_id = self._resolve_page(target_id)
@@ -2282,6 +2501,116 @@ class BridgeSession:
             "error": "Browser wait requires one of wait_ms/selector/text/url/load_state",
         }
 
+    def _wheel(self, page, target_id, request):
+        """Scroll or zoom with a real wheel event.
+
+        3D canvases read `wheel` directly (OrbitControls zooms on `deltaY`) and
+        never emit a scrollable element, so an element-targeted scroll is not a
+        substitute: the event has to land at a point on the canvas.
+        """
+        delta_x = _coerce_int(request.get("delta_x"), 0)
+        delta_y = _coerce_int(request.get("delta_y"), 0)
+        if delta_x == 0 and delta_y == 0:
+            return {
+                "success": False,
+                "error": "Browser scroll requires a non-zero 'delta_x' or 'delta_y'",
+            }
+        if abs(delta_x) > WHEEL_MAX_DELTA or abs(delta_y) > WHEEL_MAX_DELTA:
+            return {"success": False, "error": "Browser scroll delta is out of range"}
+        extra = {"delta_x": delta_x, "delta_y": delta_y}
+        timeout_ms = self._element_timeout_ms(request)
+        target = any(request.get(key) for key in ("ref", "selector", "text"))
+        if target:
+            locator, locator_meta = self._resolve_locator(page, target_id, request)
+            locator.hover(timeout=timeout_ms)
+            extra.update(locator_meta)
+        else:
+            x = _coerce_int(request.get("x"), None)
+            y = _coerce_int(request.get("y"), None)
+            if x is not None and y is not None:
+                page.mouse.move(max(x, 0), max(y, 0))
+                extra["at"] = [max(x, 0), max(y, 0)]
+        page.mouse.wheel(delta_x, delta_y)
+        return self._action_result(page, target_id, "scroll", extra=extra)
+
+    def _pointer_drag(self, page, target_id, request):
+        """Drag by coordinates, emitting intermediate moves.
+
+        A canvas orbit/rotate handler is driven by pointermove events, so a
+        single jump to the destination produces no rotation at all. Steps make
+        the gesture look like a real drag.
+        """
+        from_x = _coerce_int(request.get("from_x"), 0)
+        from_y = _coerce_int(request.get("from_y"), 0)
+        to_x = _coerce_int(request.get("to_x"), 0)
+        to_y = _coerce_int(request.get("to_y"), 0)
+        steps = _coerce_int(request.get("steps"), 12)
+        steps = max(1, min(steps, POINTER_MAX_STEPS))
+        page.mouse.move(from_x, from_y)
+        page.mouse.down()
+        try:
+            page.mouse.move(to_x, to_y, steps=steps)
+        finally:
+            page.mouse.up()
+        return self._action_result(
+            page,
+            target_id,
+            "drag",
+            extra={
+                "from": [from_x, from_y],
+                "to": [to_x, to_y],
+                "steps": steps,
+            },
+        )
+
+    def read_console(self, target_id=None, clear=False):
+        """Report console output and uncaught errors for one tab.
+
+        The skill checklist asks for "no uncaught exceptions"; without this the
+        model can only infer it from the rendered pixels.
+        """
+        _, target_id = self._resolve_page(target_id)
+        entries = list(self.console_logs.get(target_id) or [])
+        errors = [item for item in entries if item.get("type") in ("error", "pageerror")]
+        warnings = [item for item in entries if item.get("type") == "warning"]
+        if clear and self.console_logs.get(target_id) is not None:
+            self.console_logs[target_id].clear()
+        shown = entries[-CONSOLE_REPORT_LIMIT:]
+        lines = []
+        for item in shown:
+            where = ""
+            if item.get("line"):
+                where = " (line %s)" % item["line"]
+            lines.append("[%s] %s%s" % (item.get("type", "log"), item.get("text", ""), where))
+        return {
+            "success": True,
+            "data": {
+                "target_id": target_id,
+                "total": len(entries),
+                "errors": len(errors),
+                "warnings": len(warnings),
+                "cleared": bool(clear),
+                "truncated": len(entries) > len(shown),
+                "entries": shown,
+                "text": "\n".join(lines),
+            },
+        }
+
+    def console_summary(self, target_id):
+        """Bounded console counters attached to every action result."""
+        entries = list(self.console_logs.get(target_id) or [])
+        errors = [item for item in entries if item.get("type") in ("error", "pageerror")]
+        warnings = [item for item in entries if item.get("type") == "warning"]
+        summary = {}
+        if errors:
+            summary["console_errors"] = len(errors)
+            summary["console_error_samples"] = [
+                item.get("text", "") for item in errors[:CONSOLE_SAMPLE_LIMIT]
+            ]
+        if warnings:
+            summary["console_warnings"] = len(warnings)
+        return summary
+
     def _action_result(self, page, target_id, kind, extra=None):
         verdict = self._final_url_verdict(page)
         if verdict is not None:
@@ -2297,6 +2626,9 @@ class BridgeSession:
         }
         if extra:
             payload.update(extra)
+        # 每条动作回执都带上控制台异常计数：模型在同一轮就能判断刚做的
+        # 交互是否触发了脚本错误，不必等到下一张截图。
+        payload.update(self.console_summary(target_id))
         blocked = self._drain_blocked()
         if blocked:
             payload["blocked"] = blocked
@@ -2306,6 +2638,24 @@ class BridgeSession:
 def _short(text, limit=120):
     value = " ".join(str(text).split())
     return value[:limit]
+
+
+def _coerce_int(value, default):
+    """Accept ints and integral floats, reject everything else."""
+    if isinstance(value, bool) or value is None:
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value == int(value):
+        return int(value)
+    return default
+
+
+def _is_pointer_drag(request):
+    return all(
+        _coerce_int(request.get(key), None) is not None
+        for key in ("from_x", "from_y", "to_x", "to_y")
+    )
 
 
 def http_metadata(response):

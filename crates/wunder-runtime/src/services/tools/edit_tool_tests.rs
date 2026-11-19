@@ -442,3 +442,36 @@ async fn write_file_returns_a_receipt_a_snapshot_and_a_preview_diff() {
     assert_eq!(fixture.read("sketch.py"), "x = 2\ny = 3\n");
     assert!(preview["data"].get("history").is_none());
 }
+
+/// 批量替换超过结构化块预算（12 块）时，回执里的 unified diff 仍要完整列出
+/// 每一处命中：模型确认改动靠的是这段文本，不是 `diff_blocks` 的抽样结果。
+#[tokio::test]
+async fn unified_diff_lists_every_replacement_past_the_block_budget() {
+    let fixture = Fixture::new();
+    let mut source = String::new();
+    for index in 0..30 {
+        if index % 2 == 0 {
+            source.push_str(&format!("token {index}\n"));
+        } else {
+            source.push_str(&format!("keep {index}\n"));
+        }
+    }
+    fixture.write("sample.txt", &source);
+    let result = fixture
+        .call(json!({
+            "file_path": "sample.txt",
+            "old_string": "token",
+            "new_string": "TOKEN",
+            "replace_all": true
+        }))
+        .await;
+    assert_ok(&result);
+    assert_eq!(result["data"]["hunks_applied"], json!(15));
+    assert!(result["data"]["diff_lines_omitted"].as_u64().unwrap_or(0) > 0);
+    let unified = result["data"]["unified_diff"]
+        .as_str()
+        .expect("unified diff");
+    assert_eq!(unified.matches("@@ -").count(), 15, "{unified}");
+    assert!(unified.contains("+TOKEN 28"), "{unified}");
+    assert_eq!(result["data"]["unified_diff_truncated"], json!(false));
+}

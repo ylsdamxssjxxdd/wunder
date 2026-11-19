@@ -158,7 +158,12 @@ impl ToolResultPayload {
         strip_compact_payload_noise(&mut payload, tool_name);
         copy_saved_result_reference(&mut payload, self);
         if let Some(token_budget) = token_budget {
-            fit_observation_payload_to_token_budget(&mut payload, tool_name, token_budget);
+            // 写类结果不走 token 预算收缩：它必须完整到达模型，否则模型会把
+            // 自己刚写的内容读成「被省略」，只能重读文件才能继续编辑。
+            let canonical = crate::services::tools::resolve_tool_name(tool_name);
+            if !is_complete_write_observation(&canonical, &self.data) {
+                fit_observation_payload_to_token_budget(&mut payload, tool_name, token_budget);
+            }
         }
         payload
     }
@@ -710,6 +715,39 @@ const CONTINUATION_NESTED_KEYS: [&str; 7] = [
     "pagination",
 ];
 
+/// 写类工具的结果不参与观察层压缩：回执与完整 diff 是模型下一步编辑的依据，
+/// 截断或折叠都会让它把文件重新读一遍。
+///
+/// 「文本编辑」还兼作读取（`command=view` 返回带行号的文件内容）。那种结果是
+/// 纯读，必须继续受观察层预算约束，否则一次 view 就能把整份文件灌进上下文；
+/// 所以只有带写类回执字段的结果才算完整观察。
+pub(super) fn is_complete_write_observation(canonical: &str, data: &Value) -> bool {
+    match canonical {
+        "写入文件" | "write_file" => true,
+        "文本编辑" => is_text_edit_write_result(data),
+        _ => false,
+    }
+}
+
+fn is_text_edit_write_result(data: &Value) -> bool {
+    let Some(map) = model_tool_result_data_map(data) else {
+        return false;
+    };
+    // `command=view` 只回 content，是读结果，走通用观察预算。
+    if map.contains_key("content") {
+        return false;
+    }
+    [
+        "unified_diff",
+        "receipt",
+        "sha256",
+        "changed_files",
+        "bytes",
+    ]
+    .iter()
+    .any(|key| map.contains_key(*key))
+}
+
 pub(super) fn default_observation_token_budget(tool_name: &str) -> i64 {
     let canonical = crate::services::tools::resolve_tool_name(tool_name);
     match canonical.as_str() {
@@ -1107,7 +1145,11 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
         return;
     }
     let canonical = crate::services::tools::resolve_tool_name(tool_name);
-    // Read the flag before the success projection replaces `data`. A complete
+    // 写类结果就是模型刚写下的内容：回执加完整 diff。压缩它等于让模型记不清
+    // 自己写过什么，下一步 edit 只能把文件重读一遍；所以这类观察不做头尾截断、
+    // 数组取样或字符预算收缩，原样交给模型。`command=view` 是读结果，不在此列。
+    let write_observation_complete =
+        is_complete_write_observation(&canonical, map.get("data").unwrap_or(&Value::Null));
     // top-level listing must also bypass the generic array sampler below,
     // otherwise the enlarged projection is cut back down to 32 entries.
     let top_level_listing = matches!(canonical.as_str(), "列出文件" | "list_files")
@@ -1199,20 +1241,24 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
     if let Some(compacted_map) = compacted_data.as_object_mut() {
         fit_read_file_content_to_observation_budget(compacted_map);
     }
-    let mut observation_truncated = truncate_observation_data(
-        &mut compacted_data,
-        OBSERVATION_HEAD_CHARS,
-        OBSERVATION_TAIL_CHARS,
-        TOOL_RESULT_TRUNCATION_MARKER,
-        array_limit,
-    );
+    let mut observation_truncated = if write_observation_complete {
+        false
+    } else {
+        truncate_observation_data(
+            &mut compacted_data,
+            OBSERVATION_HEAD_CHARS,
+            OBSERVATION_TAIL_CHARS,
+            TOOL_RESULT_TRUNCATION_MARKER,
+            array_limit,
+        )
+    };
     let mut truncation_reasons = if observation_truncated {
         collect_truncation_reasons_from_value(&compacted_data, TOOL_RESULT_TRUNCATION_MARKER)
     } else {
         Vec::new()
     };
     let chars_before_compact = estimate_tool_result_chars(&compacted_data);
-    if chars_before_compact > OBSERVATION_MAX_CHARS {
+    if chars_before_compact > OBSERVATION_MAX_CHARS && !write_observation_complete {
         append_truncation_reason(&mut truncation_reasons, "char_budget");
         compacted_data = compact_large_tool_result_data(
             &compacted_data,

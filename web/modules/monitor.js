@@ -1265,6 +1265,9 @@ const renderMonitorMetrics = (system) => {
     elements.metricDisk.textContent = "-";
     elements.metricDiskDetail.textContent = "";
     elements.metricLogUsage.textContent = "-";
+    if (elements.metricLogUsageDetail) {
+      elements.metricLogUsageDetail.textContent = "";
+    }
     elements.metricWorkspaceUsage.textContent = "-";
     return;
   }
@@ -1290,6 +1293,12 @@ const renderMonitorMetrics = (system) => {
       })
     : "";
   elements.metricLogUsage.textContent = formatBytes(system.log_used);
+  if (elements.metricLogUsageDetail) {
+    elements.metricLogUsageDetail.textContent = t("monitor.metric.logUsage.detail", {
+      thread: formatBytes(system.log_thread_used ?? 0),
+      diag: formatBytes(system.log_diag_used ?? 0),
+    });
+  }
   elements.metricWorkspaceUsage.textContent = formatBytes(system.workspace_used);
 };
 

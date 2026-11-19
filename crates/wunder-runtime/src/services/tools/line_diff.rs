@@ -310,53 +310,61 @@ pub(super) fn diff_replaced(before: &str, after: &str) -> LineDiff {
     let old = build_line_index(before);
     let new = build_line_index(after);
     let mut diff = LineDiff::default();
-    let prefix = common_prefix_len(&old.texts, &new.texts);
-    let suffix = common_suffix_len(&old.texts[prefix..], &new.texts[prefix..]);
-    let old_mid = old.texts.len() - suffix - prefix;
-    let new_mid = new.texts.len() - suffix - prefix;
+    for region in changed_regions(&old.texts, &new.texts) {
+        diff.push_region(&old.texts, &new.texts, region);
+    }
+    diff
+}
+
+/// 完整的变更区域（无块数/行数预算）。
+///
+/// `LineDiff` 用它生成有界块供前端差异卡片使用；`unified_diff` 在块被预算裁过
+/// 时用它重算完整文本。两处必须是同一份算法，否则模型看到的 diff 会和
+/// `diff_blocks` 对不上。
+fn changed_regions(old: &[&str], new: &[&str]) -> Vec<Region> {
+    let prefix = common_prefix_len(old, new);
+    let suffix = common_suffix_len(&old[prefix..], &new[prefix..]);
+    let old_mid = old.len() - suffix - prefix;
+    let new_mid = new.len() - suffix - prefix;
     if old_mid == 0 && new_mid == 0 {
-        return diff;
+        return Vec::new();
     }
-    if old_mid == new_mid {
-        let mut run: Option<Region> = None;
-        for offset in 0..old_mid {
-            if old.texts[prefix + offset] == new.texts[prefix + offset] {
-                if let Some(region) = run.take() {
-                    diff.push_region(&old.texts, &new.texts, region);
-                }
-                continue;
-            }
-            match run.as_mut() {
-                Some(region) => {
-                    region.old_len += 1;
-                    region.new_len += 1;
-                }
-                None => {
-                    run = Some(Region {
-                        old_start: prefix + offset,
-                        old_len: 1,
-                        new_start: prefix + offset,
-                        new_len: 1,
-                    })
-                }
-            }
-        }
-        if let Some(region) = run {
-            diff.push_region(&old.texts, &new.texts, region);
-        }
-        return diff;
-    }
-    diff.push_region(
-        &old.texts,
-        &new.texts,
-        Region {
+    if old_mid != new_mid {
+        return vec![Region {
             old_start: prefix,
             old_len: old_mid,
             new_start: prefix,
             new_len: new_mid,
-        },
-    );
-    diff
+        }];
+    }
+    let mut regions = Vec::new();
+    let mut run: Option<Region> = None;
+    for offset in 0..old_mid {
+        if old[prefix + offset] == new[prefix + offset] {
+            if let Some(region) = run.take() {
+                regions.push(region);
+            }
+            continue;
+        }
+        match run.as_mut() {
+            Some(region) => {
+                region.old_len += 1;
+                region.new_len += 1;
+            }
+            None => {
+                run = Some(Region {
+                    old_start: prefix + offset,
+                    old_len: 1,
+                    new_start: prefix + offset,
+                    new_len: 1,
+                })
+            }
+        }
+    }
+    if let Some(region) = run {
+        regions.push(region);
+    }
+    regions
 }
 
 /// 字面替换：`offsets` 是 `before` 中每个被替换区间的字节起点（升序、互不重叠），
@@ -487,66 +495,62 @@ pub(super) fn insert_diff_fields(
     );
 }
 
-/// dry_run/写入回执用的 unified diff 行数上限（含 `---`/`+++`/`@@` 头）。
-pub(super) const MAX_UNIFIED_DIFF_LINES: usize = 60;
 /// 每个变更块前后各带几行上下文。
 const UNIFIED_CONTEXT_LINES: usize = 2;
 
-/// 把已有的块结构渲染成 unified diff 文本：`---`/`+++`/`@@` + 上下文 + `-`/`+`。
+/// 把（旧文本，新文本）渲染成 unified diff 文本：`---`/`+++`/`@@` + 上下文 + `-`/`+`。
 ///
-/// 与 `apply_patch` 的 `diff_blocks` 同源，因此前端差异卡片与模型看到的文本
-/// 不会互相矛盾；超过 `max_lines` 直接截断并返回 `true`，绝不输出半块。
-pub(super) fn unified_diff(
-    path: &str,
-    before: &str,
-    after: &str,
-    diff: &LineDiff,
-    max_lines: usize,
-) -> (String, bool) {
-    let old = build_line_index(before).texts;
-    let new = build_line_index(after).texts;
+/// 写类工具（写入文件、文本编辑）的回执靠这段文本确认「自己刚写进去的到底是
+/// 什么」，所以这里**不设行数/块数/正文预算**：`LineDiff` 里的块是为前端差异
+/// 卡片有界化准备的，被预算裁过时按同一套区域算法重算完整内容，模型才不必
+/// 为了看自己的改动把文件重读一遍。
+///
+/// 唯一的例外是源文本超过 `MAX_DIFF_SOURCE_BYTES`：那种情况本就给不出 diff
+/// （调用方带 `diff_unavailable`），硬算只会把一次工具结果撑爆上下文。
+pub(super) fn unified_diff(path: &str, before: &str, after: &str, diff: &LineDiff) -> String {
+    let old_index = build_line_index(before);
+    let new_index = build_line_index(after);
+    let old = &old_index.texts;
+    let new = &new_index.texts;
+    let regions: Vec<Region> = if diff.omission().is_none() || diff_source_too_large(before, after)
+    {
+        diff.blocks.iter().map(block_region).collect()
+    } else {
+        changed_regions(old, new)
+    };
+
     let mut out: Vec<String> = Vec::with_capacity(16);
     out.push("--- a/".to_string() + path);
     out.push("+++ b/".to_string() + path);
-    let mut truncated = false;
-    let mut stopped = false;
     let mut last_old = 0usize;
 
-    for block in &diff.blocks {
-        if stopped {
-            break;
-        }
-        let old_start = block.start_line_before.max(1);
-        let new_start = block.start_line_after.max(1);
-        let old_len = if block.end_line_before >= block.start_line_before
-            && block.start_line_before > 0
-        {
-            block.end_line_before - block.start_line_before + 1
+    for region in &regions {
+        let old_start = region.old_start + 1;
+        let new_start = region.new_start + 1;
+        let old_len = region.old_len;
+        let new_len = region.new_len;
+        let end_line_before = if old_len == 0 {
+            region.old_start
         } else {
-            0
+            region.old_start + old_len
         };
-        let new_len = if block.end_line_after >= block.start_line_after {
-            block.end_line_after - block.start_line_after + 1
+        let end_line_after = if new_len == 0 {
+            region.new_start
         } else {
-            0
+            region.new_start + new_len
         };
 
         // 前置上下文：最多两行，且不与上一个块已经输出过的行重叠。
         if old_len > 0 || new_len > 0 {
-            let from = old_start.saturating_sub(UNIFIED_CONTEXT_LINES).max(last_old + 1);
+            let from = old_start
+                .saturating_sub(UNIFIED_CONTEXT_LINES)
+                .max(last_old + 1);
             for line_no in from..old_start {
                 let Some(text) = old.get(line_no - 1) else {
                     break;
                 };
-                if !push_unified_line(&mut out, " ".to_string() + text, max_lines) {
-                    truncated = true;
-                    stopped = true;
-                    break;
-                }
+                out.push(" ".to_string() + text);
             }
-        }
-        if stopped {
-            break;
         }
 
         let mut header = String::from("@@ -");
@@ -558,56 +562,54 @@ pub(super) fn unified_diff(
         header.push(',');
         header.push_str(&new_len.to_string());
         header.push_str(" @@");
-        if !push_unified_line(&mut out, header, max_lines) {
-            truncated = true;
-            break;
-        }
+        out.push(header);
 
-        for line in &block.lines {
-            let prefix = if line.kind == "add" { "+" } else { "-" };
-            let text = prefix.to_string() + &line.text;
-            if !push_unified_line(&mut out, text, max_lines) {
-                truncated = true;
-                stopped = true;
-                break;
-            }
+        for text in old
+            .get(region.old_start..region.old_start + old_len)
+            .unwrap_or(&[])
+        {
+            out.push("-".to_string() + text);
         }
-        last_old = block.end_line_before.max(old_start.saturating_sub(1));
+        for text in new
+            .get(region.new_start..region.new_start + new_len)
+            .unwrap_or(&[])
+        {
+            out.push("+".to_string() + text);
+        }
+        last_old = end_line_before.max(old_start.saturating_sub(1));
 
         // 后置上下文：接在本次块之后，下一块的前置上下文会自动去重。
-        if !stopped {
-            for offset in 1..=UNIFIED_CONTEXT_LINES {
-                let line_no = block.end_line_after + offset;
-                let Some(text) = new.get(line_no.saturating_sub(1)) else {
-                    break;
-                };
-                if !push_unified_line(&mut out, " ".to_string() + text, max_lines) {
-                    truncated = true;
-                    stopped = true;
-                    break;
-                }
-                last_old = line_no;
-            }
+        for offset in 1..=UNIFIED_CONTEXT_LINES {
+            let line_no = end_line_after + offset;
+            let Some(text) = new.get(line_no.saturating_sub(1)) else {
+                break;
+            };
+            out.push(" ".to_string() + text);
+            last_old = line_no;
         }
     }
 
-    if truncated {
-        out.push("… diff truncated (read the file or rerun with a narrower range)".to_string());
-    }
-    // 有行被省掉时，文本同样不是完整的：`truncated` 必须为真，否则「只有 ---/+++
-    // 头却说没截断」会被读成「没有改动」。
-    (out.join("\n"), truncated || diff.omission().is_some())
+    out.join("\n")
 }
 
-/// 行数预算守卫：超预算返回 `false`，由调用方标记截断并停止。
-fn push_unified_line(out: &mut Vec<String>, line: String, max_lines: usize) -> bool {
-    if out.len() >= max_lines {
-        return false;
+/// 从有界块推回 0-based 区域，语义与 `changed_regions` 一致。
+fn block_region(block: &DiffBlock) -> Region {
+    Region {
+        old_start: block.start_line_before.saturating_sub(1),
+        old_len: if block.start_line_before > 0 && block.end_line_before >= block.start_line_before
+        {
+            block.end_line_before - block.start_line_before + 1
+        } else {
+            0
+        },
+        new_start: block.start_line_after.saturating_sub(1),
+        new_len: if block.end_line_after >= block.start_line_after {
+            block.end_line_after - block.start_line_after + 1
+        } else {
+            0
+        },
     }
-    out.push(line);
-    true
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -615,7 +617,7 @@ mod tests {
 
     #[test]
     fn a_single_huge_line_is_reported_as_omitted_instead_of_no_change() {
-        // 200 KB 单行：放不进正文预算，绝不能表现成「没有改动」。
+        // 200 KB 单行：结构化块放不进正文预算，但模型回执仍要看到真实改动。
         let before = "x".repeat(200 * 1024);
         let after = "y".repeat(200 * 1024);
         let diff = diff_replaced(&before, &after);
@@ -626,15 +628,10 @@ mod tests {
         assert_eq!(diff.omission(), Some(OMITTED_LINE_TOO_LONG));
         assert_eq!(diff.omitted_lines, 2);
 
-        let (text, truncated) = unified_diff(
-            "longline.txt",
-            &before,
-            &after,
-            &diff,
-            MAX_UNIFIED_DIFF_LINES,
-        );
-        assert!(!text.contains("@@"), "没有块时只能给 ---/+++ 头");
-        assert!(truncated, "省掉正文必须报 truncated，否则会被读成无改动");
+        let text = unified_diff("longline.txt", &before, &after, &diff);
+        assert!(text.contains("@@ -1,1 +1,1 @@"), "{}", &text[..64]);
+        // 模型靠这段文本确认自己写进去的是什么：单行再长也不在这里截断。
+        assert!(text.lines().any(|line| line.len() == 1 + 200 * 1024));
     }
 
     #[test]
@@ -642,9 +639,7 @@ mod tests {
         let before = "a\nb\nc\nd\ne\n";
         let after = "a\nb\nC\nd\ne\n";
         let diff = diff_replaced(before, after);
-        let (text, truncated) =
-            unified_diff("x.txt", before, after, &diff, MAX_UNIFIED_DIFF_LINES);
-        assert!(!truncated);
+        let text = unified_diff("x.txt", before, after, &diff);
         assert!(text.starts_with("--- a/x.txt\n+++ b/x.txt\n"), "{}", text);
         assert!(text.contains("@@ -3,1 +3,1 @@"), "{}", text);
         assert!(text.contains("\n a\n b\n"), "{}", text);
@@ -652,20 +647,27 @@ mod tests {
     }
 
     #[test]
-    fn unified_diff_truncates_at_the_budget() {
+    fn unified_diff_keeps_every_changed_line_past_the_block_budget() {
+        // 200 行全改：结构化块按 12 块/80 行预算折叠，模型回执必须是完整 diff。
         let mut before = String::new();
         let mut after = String::new();
-        for index in 0..40 {
+        for index in 0..200 {
             before.push_str(&format!("line {}\n", index));
             after.push_str(&format!("line {}!\n", index));
         }
         let diff = diff_replaced(&before, &after);
-        let (text, truncated) = unified_diff("x.txt", &before, &after, &diff, 10);
-        assert!(truncated);
-        assert!(text.contains("truncated"), "{}", text);
-        assert!(text.lines().count() <= 11, "{}", text);
+        assert!(diff.omission().is_some(), "结构化块应当命中预算");
+        assert_eq!(diff.added_lines, 200);
+        assert_eq!(diff.deleted_lines, 200);
+        let text = unified_diff("x.txt", &before, &after, &diff);
+        assert!(text.contains("@@ -1,200 +1,200 @@"), "{}", &text[..64]);
+        for index in 0..200 {
+            let removed = format!("-line {index}");
+            let added = format!("+line {index}!");
+            assert!(text.lines().any(|line| line == removed), "{index}");
+            assert!(text.lines().any(|line| line == added), "{index}");
+        }
     }
-
 
     fn kinds(diff: &LineDiff) -> Vec<&'static str> {
         diff.blocks

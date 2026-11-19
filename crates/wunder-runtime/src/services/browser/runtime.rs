@@ -337,7 +337,14 @@ impl BrowserControlService {
     async fn navigate(&self, scope: &BrowserSessionScope, args: &Value) -> Result<Value> {
         self.ensure_available()?;
         let session_key = scope.session_key()?;
-        let url = self.normalize_url(required_string(args, "url")?)?;
+        // 工作区预览：bridge 自己从 preview_root 读盘并用预览域名应答，这里
+        // 不做 URL 规范化（它不是真实网络地址）。
+        let preview_root = optional_string(args, "preview_root");
+        let preview_path = optional_string(args, "preview_path");
+        let url = match preview_path {
+            Some(_) => None,
+            None => Some(self.normalize_url(required_string(args, "url")?)?),
+        };
         let timeout_ms = optional_timeout_ms(args, self.config.timeout_secs);
         let response = self
             .command(
@@ -349,6 +356,8 @@ impl BrowserControlService {
                     "target_id": optional_string(args, "target_id"),
                     "url": url,
                     "timeout_ms": timeout_ms,
+                    "preview_root": preview_root,
+                    "preview_path": preview_path,
                     "include_snapshot": optional_bool(args, "include_snapshot").unwrap_or(false),
                     "max_chars": self.snapshot_budget(args),
                     "snapshot_timeout_ms": optional_u64(args, "snapshot_timeout_ms"),

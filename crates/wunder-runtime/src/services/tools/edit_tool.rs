@@ -12,7 +12,6 @@ use super::capabilities::{local_fs, FsCapability};
 use super::context::collect_allow_roots;
 use super::line_diff::{
     diff_literal_replaces, diff_replaced, insert_diff_fields, unified_diff, LineDiff,
-    MAX_UNIFIED_DIFF_LINES,
 };
 use super::{edit_recovery, file_history, write_receipt};
 use super::{
@@ -389,13 +388,10 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         touch_lsp_file(context, &outcome.target, true).await
     };
 
-    let (unified, unified_truncated) = unified_diff(
-        &file_path,
-        &outcome.before,
-        &outcome.after,
-        &outcome.diff,
-        MAX_UNIFIED_DIFF_LINES,
-    );
+    // 编辑回执同样给完整 diff：模型靠它确认自己改过的地方，行数预算只会
+    // 让它为了看一眼改动把文件重读一遍。
+    let unified = unified_diff(&file_path, &outcome.before, &outcome.after, &outcome.diff);
+    let unified_truncated = false;
     let mut data = build_edit_data(
         &file_path,
         outcome.occurrences,
@@ -823,7 +819,7 @@ mod tests {
         let (diff, unavailable) =
             build_replace_diff(before, after, offsets, occurrences, needle.len(), new);
         let receipt = write_receipt::build("a.txt", after, false);
-        let (unified, _) = unified_diff("a.txt", before, after, &diff, MAX_UNIFIED_DIFF_LINES);
+        let unified = unified_diff("a.txt", before, after, &diff);
         build_edit_data(
             "a.txt",
             occurrences,

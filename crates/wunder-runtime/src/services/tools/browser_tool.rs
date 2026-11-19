@@ -274,6 +274,7 @@ fn ensure_browser_available(config: &Config) -> Result<()> {
 /// Persist every inline image block into the workspace and rewrite it as an
 /// attachment reference (dsh parity: images are delivered as attachments).
 fn persist_image_blocks(context: &ToolContext<'_>, args: &Value, value: &mut Value) -> Result<()> {
+    let mut frame: Option<Value> = None;
     let Some(blocks) = value.get_mut("content").and_then(Value::as_array_mut) else {
         return Ok(());
     };
@@ -296,6 +297,11 @@ fn persist_image_blocks(context: &ToolContext<'_>, args: &Value, value: &mut Val
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(encoded.as_bytes())
             .map_err(|err| anyhow!("Browser image base64 decode failed: {err}"))?;
+        // 同一轮就能判读的画面摘要：截图本身要到下一轮才作为图像进入上下文，
+        // 而「有没有渲染出来」通常是当下就要决定的事。
+        if index == 0 {
+            frame = frame_summary(&bytes);
+        }
         let extension = image_extension(&mime_type);
         let requested = if index == 0 {
             args.get("path")
@@ -344,7 +350,85 @@ fn persist_image_blocks(context: &ToolContext<'_>, args: &Value, value: &mut Val
         );
         index += 1;
     }
+    if let Some(summary) = frame {
+        if let Some(map) = value.as_object_mut() {
+            map.insert("frame_note".to_string(), json!(frame_note(&summary)));
+            map.insert("frame".to_string(), summary);
+        }
+    }
     Ok(())
+}
+
+/// One compact, machine-readable verdict about a rendered frame.
+///
+/// A vision round trip is expensive and arrives one model round later, so the
+/// tool synthesizes the part that is cheap to measure: how many colors the frame
+/// actually contains, how dominant the background is, and how bright it is.
+/// A flat single-color frame means the scene did not render; a sudden drop in
+/// distinct colors means the camera moved somewhere empty.
+fn frame_summary(bytes: &[u8]) -> Option<Value> {
+    const SAMPLE: u32 = 96;
+    let image = image::load_from_memory(bytes).ok()?;
+    let width = image.width();
+    let height = image.height();
+    let sample = if width > SAMPLE || height > SAMPLE {
+        image.resize(SAMPLE, SAMPLE, image::imageops::FilterType::Triangle)
+    } else {
+        image
+    };
+    let rgb = sample.to_rgb8();
+    let total = (rgb.width() as usize) * (rgb.height() as usize);
+    if total == 0 {
+        return None;
+    }
+    let mut buckets: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+    let mut luma_sum: u64 = 0;
+    for pixel in rgb.pixels() {
+        let [r, g, b] = pixel.0;
+        // 5 bits per channel: close enough for "did it render", immune to noise.
+        let key = ((r as u32 >> 3) << 10) | ((g as u32 >> 3) << 5) | (b as u32 >> 3);
+        *buckets.entry(key).or_insert(0) += 1;
+        luma_sum += (2126 * r as u64 + 7152 * g as u64 + 722 * b as u64) / 10000;
+    }
+    let dominant = buckets.values().copied().max().unwrap_or(0);
+    let dominant_share = dominant as f64 / total as f64;
+    let distinct = buckets.len();
+    Some(json!({
+        "width": width,
+        "height": height,
+        "distinct_colors": distinct,
+        "dominant_share": (dominant_share * 1000.0).round() / 1000.0,
+        "mean_luma": (luma_sum as usize) / total,
+        "blank": distinct <= 2 || dominant_share >= 0.995,
+    }))
+}
+
+fn frame_note(summary: &Value) -> String {
+    let distinct = summary
+        .get("distinct_colors")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let share = summary
+        .get("dominant_share")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+    let luma = summary
+        .get("mean_luma")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if summary
+        .get("blank")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return format!(
+            "Frame is a flat single-color image ({distinct} distinct color(s), mean luma {luma}): nothing rendered yet — check canvas sizing, the render loop and console errors before judging the design."
+        );
+    }
+    format!(
+        "Frame has {distinct} distinct colors, the dominant one covers {:.0}% and mean luma is {luma}.",
+        share * 100.0
+    )
 }
 
 fn image_extension(mime_type: &str) -> &'static str {
@@ -583,6 +667,54 @@ mod tests {
         assert!(
             resolved.is_file(),
             "screenshot file missing at {resolved:?}"
+        );
+    }
+
+    fn png_bytes(width: u32, height: u32, pixel: impl Fn(u32, u32) -> [u8; 3]) -> Vec<u8> {
+        use image::ImageEncoder as _;
+        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+        for y in 0..height {
+            for x in 0..width {
+                let [r, g, b] = pixel(x, y);
+                rgba.extend_from_slice(&[r, g, b, 255]);
+            }
+        }
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(
+                &rgba,
+                width,
+                height,
+                image::ExtendedColorType::Rgba8,
+            )
+            .expect("encode png");
+        png
+    }
+
+    #[test]
+    fn frame_summary_flags_a_flat_frame_as_blank() {
+        let bytes = png_bytes(64, 48, |_, _| [13, 17, 23]);
+        let summary = super::frame_summary(&bytes).expect("summary");
+        assert_eq!(summary["blank"], json!(true));
+        assert_eq!(summary["width"], json!(64));
+        assert!(
+            summary["distinct_colors"].as_u64().unwrap_or(99) <= 2,
+            "a flat frame must not report many colors: {summary}"
+        );
+    }
+
+    #[test]
+    fn frame_summary_reports_a_rendered_frame() {
+        let bytes = png_bytes(64, 48, |x, y| {
+            [(x * 4) as u8, (y * 5) as u8, ((x + y) * 2) as u8]
+        });
+        let summary = super::frame_summary(&bytes).expect("summary");
+        assert_eq!(summary["blank"], json!(false));
+        assert!(summary["distinct_colors"].as_u64().unwrap_or(0) > 16);
+        let note = super::frame_note(&summary);
+        assert!(
+            note.contains("distinct colors"),
+            "note should describe the frame: {note}"
         );
     }
 }

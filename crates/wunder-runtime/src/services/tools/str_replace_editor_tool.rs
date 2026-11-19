@@ -20,7 +20,7 @@ use super::capabilities::{local_fs, FsCapability};
 use super::context::collect_allow_roots;
 use super::line_diff::{
     diff_added_file, diff_replaced, diff_source_too_large, insert_diff_fields, unified_diff,
-    LineDiff, DIFF_UNAVAILABLE_OVERSIZE, MAX_UNIFIED_DIFF_LINES,
+    LineDiff, DIFF_UNAVAILABLE_OVERSIZE,
 };
 use super::{file_history, write_receipt};
 use super::{
@@ -643,8 +643,9 @@ fn with_receipt(
     mut data: Value,
 ) -> Value {
     let receipt = write_receipt::build(path, after, verify);
-    let (unified, unified_truncated) =
-        unified_diff(path, before, after, diff, MAX_UNIFIED_DIFF_LINES);
+    // 与写入文件、字面编辑同一口径：回执里的 diff 给完整内容，不按行截断。
+    let unified = unified_diff(path, before, after, diff);
+    let unified_truncated = false;
     if let Some(map) = data.as_object_mut() {
         if let Some(snapshot) = snapshot {
             map.insert("history".to_string(), json!(snapshot.display));

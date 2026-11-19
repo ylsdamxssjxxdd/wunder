@@ -675,10 +675,11 @@ mod tests {
             anchors,
             5_000 / super::super::thread_history::ANCHOR_INTERVAL + 1
         );
+        // 迁移要一路走到当前 schema 版本：写死 5 会在下一次加迁移时又变红。
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            5
+            super::SCHEMA_VERSION
         );
         assert_eq!(
             conn.query_row("PRAGMA auto_vacuum", [], |row| row.get::<_, i64>(0))

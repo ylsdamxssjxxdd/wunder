@@ -1791,7 +1791,9 @@ wunder 是一个**泛用型人工智能操作系统**（wunder = 模型 + 拘束
 - 说明：当提供 `start_time`/`end_time` 时，将按区间统计并忽略 `tool_hours`；服务状态与 Sandbox 状态指标均基于统计区间。
 - 说明：`system` 中的主机资源指标依赖 Rust `host-metrics` feature；Docker Compose 默认启用该 feature，自定义 `WUNDER_SERVER_FEATURES` 时若移除它，CPU、内存、进程与磁盘指标会以 0 值降级。
 - 返回（JSON）：
-- `system`：系统资源占用（cpu_percent/memory_total/memory_used/memory_available/process_rss/process_cpu_percent/load_avg_1/load_avg_5/load_avg_15/disk_total/disk_used/disk_free/disk_percent/log_used/workspace_used/uptime_s）
+- `system`：系统资源占用（cpu_percent/memory_total/memory_used/memory_available/process_rss/process_cpu_percent/load_avg_1/load_avg_5/load_avg_15/disk_total/disk_used/disk_free/disk_percent/log_used/log_thread_used/log_diag_used/workspace_used/uptime_s）
+  - `log_used`：日志占用总量（字节），等于 `log_thread_used + log_diag_used`。PostgreSQL 按线程日志表与诊断日志表的 `pg_total_relation_size` 求和；SQLite 按 `thread_history_1.sqlite`、`sessions`/`archived_sessions` 转录目录与 `logs_1.sqlite` 的文件（含 WAL）大小求和。
+  - `log_thread_used`：线程日志（会话转录与事件记录）占用；`log_diag_used`：诊断日志（监控记录、工具调用指标、流事件，即日志清理可回收的部分）占用。
   - `service`：服务状态指标（active_sessions/queued_sessions/history_sessions/finished_sessions/error_sessions/cancelled_sessions/total_sessions/avg_consumed_tokens/avg_elapsed_s/avg_prefill_speed_tps/avg_decode_speed_tps）
   - `sandbox`：沙盒状态（mode/network/readonly_rootfs/idle_ttl_s/timeout_s/endpoint/image/resources(cpu/memory_mb/pids)/recent_calls/recent_sessions）
   - `sessions`：活动线程列表（start_time/session_id/user_id/question/status/token_usage/elapsed_s/stage/summary
@@ -1830,10 +1832,10 @@ wunder 是一个**泛用型人工智能操作系统**（wunder = 模型 + 拘束
   - `deleted`：按表统计的删除条数
   - `deleted_total`：总删除条数
   - `system`：删除后的系统资源指标快照
-- 说明：该接口是管理端按时间范围手动维护线程日志的入口，立即物理删除，仅供管理员使用。
-- 说明：清理范围与 `system.log_used` 口径一致，覆盖 `chat_history`、`tool_logs`、`artifact_logs`、`monitor_sessions`、`stream_events`、`memory_task_logs`。其中包含聊天历史上下文与流事件，删除后不可恢复。
-- 说明：除管理员手动清理外，`stream_events` 按 `observability.stream_event_retention_hours`（默认 168 小时，0 表示禁用）由每小时保留期清扫任务自动删除过期事件（`chat_history` 永不自动删除）；用户删除会话后写入宽限期墓碑，`observability.deleted_session_log_grace_hours`（默认 24 小时，<=0 表示立即清理）到期后由清扫任务物理删除其日志。
-- 清理日志与空历史线程目录在同一事务提交，`deleted.chat_sessions` 返回目录删除数。仅清理范围内曾有消息、现已无聊天/上下文/流事件/监控/工具/产物记录的目录；保留未使用草稿、部分历史、有定时任务或活动目标的线程。运行中、排队中和等待审批线程的日志也会跳过。
+- 说明：该接口是管理端按时间范围手动清理**诊断日志**的入口，立即物理删除，仅供管理员使用。
+- 说明：清理范围对应 `system.log_diag_used`，覆盖 `monitor_sessions`、`stream_events` 与 `runtime_tool_metrics`（旧称 `tool_logs`）。线程日志与聊天历史不在此处删除，只能按用户整体清理或删除线程；产物记录（`runtime_artifact_resources`）按用户/会话清理，不参与时间范围删除。
+- 说明：除管理员手动清理外，`stream_events` 按 `observability.stream_event_retention_hours`（默认 168 小时，0 表示禁用）由每小时保留期清扫任务自动删除过期事件（线程历史永不自动删除）；用户删除会话后写入宽限期墓碑，`observability.deleted_session_log_grace_hours`（默认 24 小时，<=0 表示立即清理）到期后由清扫任务物理删除其日志。
+- 说明：运行中、排队中和等待审批线程的诊断日志会被跳过保护。
 - 说明：必须同时提供开始和结束时间，后端会拒绝空范围或无效范围；若开始时间大于结束时间，后端会自动交换顺序。
 
 ### 4.1.9 `/wunder/admin/monitor/{session_id}`

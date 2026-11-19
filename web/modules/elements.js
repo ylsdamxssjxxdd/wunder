@@ -514,6 +514,7 @@ export const elements = {
   metricDisk: document.getElementById("metricDisk"),
   metricDiskDetail: document.getElementById("metricDiskDetail"),
   metricLogUsage: document.getElementById("metricLogUsage"),
+  metricLogUsageDetail: document.getElementById("metricLogUsageDetail"),
   monitorLogManageBtn: document.getElementById("monitorLogManageBtn"),
   monitorLogCleanupModal: document.getElementById("monitorLogCleanupModal"),
   monitorLogCleanupClose: document.getElementById("monitorLogCleanupClose"),

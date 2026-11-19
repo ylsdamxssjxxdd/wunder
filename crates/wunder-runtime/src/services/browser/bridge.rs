@@ -251,6 +251,26 @@ fn is_pipeline_unready(error: &str) -> bool {
     .any(|needle| lower.contains(needle))
 }
 
+/// 沙箱里的 bridge 已经不在（空闲回收、容器重启、进程退出）。这类失败发生在
+/// 命令送达页面前，重建一次再重放是安全的，也应该由运行时自己完成。
+fn is_missing_remote_bridge(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("browser bridge is not running")
+        || lower.contains("bridge is not running in the sandbox")
+}
+
+/// 只对「命令确定没有执行」的错误重试。超时、页面报错都不在此列：重放它们
+/// 会让一个已经生效的点击或提交发生第二次。
+fn command_never_executed(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    is_missing_remote_bridge(error)
+        || lower.contains("closed before the command was queued")
+        || lower.contains("closed unexpectedly")
+        || lower.contains("is no longer alive")
+        || lower.contains("is being prepared by another call")
+        || lower.contains("pump gone")
+}
+
 impl WarmPool {
     fn warm_slot() -> u32 {
         static SLOT: AtomicU32 = AtomicU32::new(0);
@@ -507,6 +527,31 @@ impl BrowserBridge {
     }
 
     pub async fn send_command(
+        &self,
+        session_key: &str,
+        command: Value,
+        call_deadline: Duration,
+    ) -> Result<BridgeResponse, String> {
+        let first = self
+            .send_command_once(session_key, command.clone(), call_deadline)
+            .await;
+        match first {
+            // 只有「命令根本没送进页面」的失败才重放：这类错误重试一次就能
+            // 自愈（bridge 被回收、进程刚退出），而超时可能已经执行过，绝不重放。
+            Err(error) if command_never_executed(&error) => {
+                warn!(
+                    session_key,
+                    error = %error,
+                    "Browser command did not reach the page; retrying once against a fresh session"
+                );
+                self.send_command_once(session_key, command, call_deadline)
+                    .await
+            }
+            other => other,
+        }
+    }
+
+    async fn send_command_once(
         &self,
         session_key: &str,
         command: Value,
@@ -792,6 +837,7 @@ fn start_session(session_key: &str, spec: &LaunchSpec) -> Result<Arc<BridgeSessi
                     Box::new(RemoteExchange::new(
                         endpoint,
                         spawned.bridge_id,
+                        bridge_spec(&spec.config),
                         spawned.ready_line,
                         timeout,
                     )),
@@ -1401,26 +1447,35 @@ impl BridgeExchange for LocalExchange {
 struct RemoteExchange {
     endpoint: String,
     bridge_id: String,
+    /// Launch spec replayed when the sandbox lost the bridge (idle reap or a
+    /// container restart). Kept here because the recovery happens inside the
+    /// pump thread, which has no access to the runtime config.
+    spec: Value,
     ready_line: Option<String>,
     /// The page's own timeout plus room for the sandbox hop; a wedged page must
     /// fail the command instead of pinning the pump.
     command_timeout: Duration,
     transport_failures: u32,
+    /// 一个会话只自愈一次：连续消失说明沙箱本身有问题，不能无限重建。
+    recovered: bool,
 }
 
 impl RemoteExchange {
     fn new(
         endpoint: &str,
         bridge_id: String,
+        spec: Value,
         ready_line: String,
         command_timeout: Duration,
     ) -> Self {
         Self {
             endpoint: endpoint.trim_end_matches('/').to_string(),
             bridge_id,
+            spec,
             ready_line: Some(ready_line),
             command_timeout,
             transport_failures: 0,
+            recovered: false,
         }
     }
 
@@ -1446,7 +1501,7 @@ impl RemoteExchange {
     }
 }
 
-impl BridgeExchange for RemoteExchange {
+impl RemoteExchange {
     fn ready(&mut self) -> Result<(), String> {
         let line = self
             .ready_line
@@ -1455,9 +1510,70 @@ impl BridgeExchange for RemoteExchange {
         parse_ready_line(&line)
     }
 
+}
+
+impl RemoteExchange {
+    fn recover_missing_bridge(&mut self) -> Result<(), String> {
+        let payload = serde_json::json!({
+            "bridge_id": self.bridge_id,
+            "spec": self.spec,
+        });
+        let create_url = self.endpoint.clone() + "/browser/bridges";
+        let body = remote_post(&create_url, &payload, REMOTE_CREATE_TIMEOUT)?;
+        if body.get("ok").and_then(Value::as_bool) != Some(true) {
+            let error = body
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("sandbox rejected the browser bridge");
+            return Err(format!(
+                "Browser bridge could not be restarted in the sandbox: {error}"
+            ));
+        }
+        let ready = body
+            .get("line")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "Browser sandbox returned no readiness line".to_string())?
+            .to_string();
+        self.ready_line = Some(ready);
+        self.transport_failures = 0;
+        self.ready()
+    }
+
+}
+
+impl RemoteExchange {
     fn exchange(&mut self, line: &str) -> Result<BridgeResponse, String> {
+        match self.exchange_once(line) {
+            Ok(response) => Ok(response),
+            Err(error) if is_missing_remote_bridge(&error) && !self.recovered => {
+                self.recovered = true;
+                warn!(
+                    bridge_id = %self.bridge_id,
+                    error = %error,
+                    "Sandbox browser bridge was gone; restarting it and replaying the command"
+                );
+                self.recover_missing_bridge()?;
+                self.exchange_once(line)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn close(&mut self) {
+        let close_url = self.endpoint.clone() + "/browser/bridges/close";
+        let _ = remote_post(
+            &close_url,
+            &serde_json::json!({ "bridge_id": self.bridge_id }),
+            REMOTE_CLOSE_TIMEOUT,
+        );
+    }
+}
+
+impl RemoteExchange {
+    fn exchange_once(&mut self, line: &str) -> Result<BridgeResponse, String> {
+        let command_url = self.endpoint.clone() + "/browser/bridges/command";
         let body = match remote_post(
-            &format!("{}/browser/bridges/command", self.endpoint),
+            &command_url,
             &serde_json::json!({ "bridge_id": self.bridge_id, "line": line }),
             self.command_timeout,
         ) {
@@ -1482,13 +1598,19 @@ impl BridgeExchange for RemoteExchange {
         serde_json::from_str(reply.trim())
             .map_err(|err| format!("Failed to parse browser response: {err}"))
     }
+}
+
+impl BridgeExchange for RemoteExchange {
+    fn ready(&mut self) -> Result<(), String> {
+        RemoteExchange::ready(self)
+    }
+
+    fn exchange(&mut self, line: &str) -> Result<BridgeResponse, String> {
+        RemoteExchange::exchange(self, line)
+    }
 
     fn close(&mut self) {
-        let _ = remote_post(
-            &format!("{}/browser/bridges/close", self.endpoint),
-            &serde_json::json!({ "bridge_id": self.bridge_id }),
-            REMOTE_CLOSE_TIMEOUT,
-        );
+        RemoteExchange::close(self)
     }
 }
 
@@ -1713,6 +1835,7 @@ mod tests {
         let mut exchange = RemoteExchange::new(
             "http://sandbox.invalid",
             "bridge-1".to_string(),
+            json!({}),
             json!({"success":true}).to_string(),
             Duration::from_secs(1),
         );

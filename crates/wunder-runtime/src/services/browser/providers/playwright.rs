@@ -30,6 +30,8 @@ const OP_TYPE: &str = "type";
 const OP_HOVER: &str = "hover";
 const OP_SELECT_OPTION: &str = "select";
 const OP_DRAG: &str = "drag";
+const OP_SCROLL: &str = "scroll";
+const OP_CONSOLE: &str = "console";
 const OP_PRESS_KEY: &str = "press";
 const OP_WAIT_FOR: &str = "wait";
 const OP_SCREENSHOT: &str = "screenshot";
@@ -114,20 +116,22 @@ pub fn playwright_tool_specs() -> Vec<ToolSpec> {
             {"type":"array","items":{"type":"string","minLength":1},"minItems":1,"maxItems":64}
         ]},
         "l": {"type":"string","enum":["load","domcontentloaded","networkidle"]},
-        "q": {"type":"string","enum":["visible","hidden","attached","detached"]}
+        "q": {"type":"string","enum":["visible","hidden","attached","detached"]},
+        "d": {"type":"integer","minimum":-20000,"maximum":20000},
+        "c": {"type":"integer","minimum":0,"maximum":20000,"description":"Viewport coordinate in CSS pixels."}
     });
     vec![ToolSpec {
         name: TOOL_BROWSER.to_string(),
         title: None,
-        description: "Built-in browser automation, already bundled with the workspace — no install or download. Common flow: navigate -> observe_refs -> click/type/select/press -> observe_text or screenshot; re-observe after page changes. click/hover take exactly one of ref, selector or visible text (substring). type needs text, overwrites the field and accepts real JSON newlines; select needs the option value. press needs key and optionally ref or selector; without a target it uses the current keyboard focus. Element actions accept timeout_ms (default 5s). wait needs wait_ms or a selector/text/url/load_state condition; timeout_ms bounds each condition. navigate/tabs_new need url. tabs_* manage tabs and target_id selects one. screenshot saves a PNG (optional workspace-relative path) and attaches it for viewing. Observations default to 12000 chars; pass max_chars for more. A text cursor expires when the DOM changes, so dynamic pages are best read once with a larger max_chars.".to_string(),
+        description: "Built-in browser automation, already bundled — no install. Usual flow: navigate -> observe_refs -> click/type -> observe_text or screenshot, re-observing after changes. click/hover take one of ref, selector or visible text; type needs text (overwrites); select needs value; press needs key. drag: from_ref+to_ref, or from_x/from_y/to_x/to_y for canvas orbit; scroll: delta_x/delta_y is a real wheel event; console reads the tab's console output and uncaught errors. timeout_ms defaults to 5s; wait needs wait_ms or a selector/text/url/load_state condition. navigate takes url, or path to preview a workspace file over http://wunder.preview with no server. tabs_* manage tabs; target_id picks one. screenshot attaches a PNG plus a frame summary (blank/colors/luma). Observations default to 12000 chars.".to_string(),
         input_schema: json!({
             "type":"object",
             "$defs": defs,
             "properties": {
                 "action": {
                     "type":"string",
-                    "enum":["navigate","back","tabs_list","tabs_new","tabs_select","tabs_close","observe_refs","observe_text","screenshot","click","type","hover","select","drag","press","wait"],
-                    "description":"One browser action per call; tabs_* actions manage tabs, observe_* read the page, the rest interact with it."
+                    "enum":["navigate","back","tabs_list","tabs_new","tabs_select","tabs_close","observe_refs","observe_text","screenshot","click","type","hover","select","drag","scroll","press","wait","console"],
+                    "description":"One browser action per call; tabs_* actions manage tabs, observe_* and console read the page, the rest interact with it."
                 },
                 "url": reference("u"),
                 "target_id": reference("x"),
@@ -148,6 +152,15 @@ pub fn playwright_tool_specs() -> Vec<ToolSpec> {
                 "from_selector": reference("s"),
                 "to_ref": reference("r"),
                 "to_selector": reference("s"),
+                "from_x": reference("c"),
+                "from_y": reference("c"),
+                "to_x": reference("c"),
+                "to_y": reference("c"),
+                "delta_x": reference("d"),
+                "delta_y": reference("d"),
+                "x": reference("c"),
+                "y": reference("c"),
+                "clear": reference("f"),
                 "key": reference("x"),
                 "wait_ms": reference("n"),
                 "load_state": reference("l"),
@@ -188,12 +201,19 @@ fn validate_browser_action(args: &Value) -> Result<String> {
             "key",
         ],
     )?;
-    validate_optional_boolean(args, &["double_click", "submit", "full_page"])?;
+    validate_optional_boolean(args, &["double_click", "submit", "full_page", "clear"])?;
     validate_optional_integer(args, "max_chars", 1, 40_000)?;
     validate_optional_integer(args, "snapshot_timeout_ms", 0, 120_000)?;
     validate_optional_integer(args, "wait_ms", 0, 120_000)?;
     validate_optional_integer(args, "timeout_ms", 1, 120_000)?;
     validate_optional_integer(args, "index", 0, i64::MAX)?;
+    // 滚轮增量可以为负（向上/缩小），坐标只能是视口内的正数。
+    validate_optional_integer(args, "delta_x", -20_000, 20_000)?;
+    validate_optional_integer(args, "delta_y", -20_000, 20_000)?;
+    validate_optional_integer(args, "steps", 1, 60)?;
+    for key in ["x", "y", "from_x", "from_y", "to_x", "to_y"] {
+        validate_optional_integer(args, key, 0, 20_000)?;
+    }
     validate_optional_enum(
         args,
         "load_state",
@@ -207,7 +227,10 @@ fn validate_browser_action(args: &Value) -> Result<String> {
 
     match action.as_str() {
         "navigate" => {
-            required_str(args, "url")?;
+            // 工作区页面用 path 直接预览（无需自建 HTTP 服务），外部页面用 url。
+            if opt_str(args, "path").is_none() {
+                required_str(args, "url")?;
+            }
         }
         "tabs_select" | "tabs_close" => require_tab_target(args, &action)?,
         "type" => {
@@ -219,7 +242,8 @@ fn validate_browser_action(args: &Value) -> Result<String> {
             require_element_target(args, &action)?;
             validate_select_value(args, "browser action select")?;
         }
-        "drag" => require_drag_target(args, "browser action drag")?,
+        "drag" => require_drag_gesture(args)?,
+        "scroll" => require_scroll_delta(args)?,
         "press" => {
             required_str(args, "key")?;
             require_optional_element_target(args, &action)?;
@@ -248,14 +272,16 @@ const BROWSER_ACTIONS: &[&str] = &[
     "hover",
     "select",
     "drag",
+    "scroll",
     "press",
     "wait",
+    "console",
     "batch",
 ];
 
 fn browser_action_allowed_fields(action: &str) -> Option<&'static [&'static str]> {
     let allowed: &'static [&'static str] = match action {
-        "navigate" => &["action", "url", "target_id", "timeout_ms"],
+        "navigate" => &["action", "url", "path", "target_id", "timeout_ms"],
         "back" => &["action", "target_id"],
         "tabs_list" => &["action"],
         "tabs_new" => &["action", "url", "target_id"],
@@ -304,8 +330,15 @@ fn browser_action_allowed_fields(action: &str) -> Option<&'static [&'static str]
             "from_selector",
             "to_ref",
             "to_selector",
+            "from_x",
+            "from_y",
+            "to_x",
+            "to_y",
+            "steps",
             "timeout_ms",
         ],
+        "scroll" => &["action", "target_id", "delta_x", "delta_y", "x", "y", "timeout_ms"],
+        "console" => &["action", "target_id", "clear"],
         "press" => &[
             "action",
             "target_id",
@@ -444,6 +477,40 @@ fn require_drag_target(args: &Value, subject: &str) -> Result<()> {
     Ok(())
 }
 
+/// 拖拽有两种合法形态：元素到元素，或在画布上按坐标拖（3D 场景靠这条旋转）。
+fn require_drag_gesture(args: &Value) -> Result<()> {
+    let coordinates = ["from_x", "from_y", "to_x", "to_y"]
+        .into_iter()
+        .all(|key| args.get(key).is_some());
+    let any_coordinate = ["from_x", "from_y", "to_x", "to_y"]
+        .into_iter()
+        .any(|key| args.get(key).is_some());
+    if coordinates {
+        return Ok(());
+    }
+    if any_coordinate {
+        return Err(anyhow!(
+            "browser action drag needs all of from_x, from_y, to_x and to_y for a coordinate drag"
+        ));
+    }
+    require_drag_target(args, "browser action drag")
+}
+
+/// 滚轮必须带一个非零增量，否则这次调用什么也不会发生。
+fn require_scroll_delta(args: &Value) -> Result<()> {
+    let delta = |key: &str| {
+        args.get(key)
+            .and_then(Value::as_i64)
+            .filter(|value| *value != 0)
+    };
+    if delta("delta_x").is_none() && delta("delta_y").is_none() {
+        return Err(anyhow!(
+            "browser action scroll needs a non-zero delta_x or delta_y"
+        ));
+    }
+    Ok(())
+}
+
 fn require_tab_target(args: &Value, action: &str) -> Result<()> {
     let has_target_id = opt_str(args, "target_id").is_some();
     let has_index = args.get("index").is_some();
@@ -570,7 +637,7 @@ fn validate_batch_steps(steps: &Value) -> Result<()> {
                 require_element_target(step, &format!("batch step {index}"))?;
                 validate_select_value(step, &format!("browser batch step {index}"))?;
             }
-            "drag" => require_drag_target(step, &format!("browser batch step {index} drag"))?,
+            "drag" => require_drag_gesture(step)?,
             "press" => {
                 required_str(step, "key")?;
                 require_optional_element_target(step, &format!("batch step {index}"))?;
@@ -619,6 +686,8 @@ async fn dispatch(context: &ToolContext<'_>, tool: &str, args: &Value) -> Result
         "hover" => dispatch_operation(context, OP_HOVER, args).await,
         "select" => dispatch_operation(context, OP_SELECT_OPTION, args).await,
         "drag" => dispatch_operation(context, OP_DRAG, args).await,
+        "scroll" => dispatch_operation(context, OP_SCROLL, args).await,
+        "console" => dispatch_operation(context, OP_CONSOLE, args).await,
         "press" => dispatch_operation(context, OP_PRESS_KEY, args).await,
         "wait" => dispatch_operation(context, OP_WAIT_FOR, args).await,
         "batch" => dispatch_operation(context, OP_BATCH, args).await,
@@ -658,16 +727,32 @@ async fn dispatch_operation(
 
     match operation {
         OP_NAVIGATE => {
-            let url = required_str(args, "url")?;
             let mut call_args = Map::new();
-            call_args.insert("url".to_string(), json!(url));
+            match opt_str(args, "path") {
+                Some(relative) => {
+                    // 工作区页面走预览域名由 bridge 从磁盘直接应答：不需要
+                    // 自建 HTTP 服务，也不依赖 file:// 是否被允许。
+                    let relative = workspace_relative_path(&relative)?;
+                    let root = context.workspace.workspace_root(context.workspace_id);
+                    call_args.insert("preview_root".to_string(), json!(root.to_string_lossy()));
+                    call_args.insert("preview_path".to_string(), json!(relative));
+                }
+                None => {
+                    let url = required_str(args, "url")?;
+                    call_args.insert("url".to_string(), json!(url));
+                }
+            }
             copy_opt(args, &mut call_args, "timeout_ms");
             copy_opt(args, &mut call_args, "target_id");
             copy_snapshot_args(args, &mut call_args, true);
             let data = service
                 .execute(&scope, "navigate", &Value::Object(call_args))
                 .await?;
-            Ok(text_outcome(format!("Navigated to {url}."), data))
+            let label = match opt_str(args, "path") {
+                Some(relative) => format!("Opened workspace page {relative}."),
+                None => format!("Navigated to {}.", opt_str(args, "url").unwrap_or_default()),
+            };
+            Ok(text_outcome(label, data))
         }
         OP_NAVIGATE_BACK => {
             let request = json!({"kind": "back"});
@@ -801,6 +886,11 @@ async fn dispatch_operation(
                     "from_selector",
                     "to_ref",
                     "to_selector",
+                    "from_x",
+                    "from_y",
+                    "to_x",
+                    "to_y",
+                    "steps",
                     "timeout_ms",
                 ],
             );
@@ -809,9 +899,40 @@ async fn dispatch_operation(
                 &scope,
                 request,
                 target.as_deref(),
-                "Dragged the element.",
+                "Dragged.",
             )
             .await
+        }
+        OP_SCROLL => {
+            let request = request_with(
+                "scroll",
+                args,
+                &["delta_x", "delta_y", "x", "y", "timeout_ms"],
+            );
+            act_outcome(
+                service,
+                &scope,
+                request,
+                target.as_deref(),
+                "Scrolled.",
+            )
+            .await
+        }
+        OP_CONSOLE => {
+            let request = request_with("console", args, &["clear"]);
+            let data = service
+                .execute(
+                    &scope,
+                    "act",
+                    &act_args(request, target.as_deref()),
+                )
+                .await?;
+            let text = data
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            Ok(ProviderOutcome::text(text).with_structured(data))
         }
         OP_PRESS_KEY => {
             let key = required_str(args, "key")?;
@@ -974,6 +1095,21 @@ fn copy_opt(from: &Value, to: &mut Map<String, Value>, key: &str) {
     }
 }
 
+/// 预览只服务工作区里的相对路径：绝对路径与 `..` 一律拒绝，避免把预览域名
+/// 变成任意文件读取入口。
+fn workspace_relative_path(raw: &str) -> Result<String> {
+    let normalized = raw.trim().replace('\\', "/");
+    if normalized.is_empty() {
+        return Err(anyhow!("browser action navigate requires a non-empty path"));
+    }
+    if normalized.starts_with('/') || normalized.split('/').any(|part| part == "..") {
+        return Err(anyhow!(
+            "browser navigate path must be workspace-relative and must not contain '..'"
+        ));
+    }
+    Ok(normalized)
+}
+
 fn opt_str(args: &Value, key: &str) -> Option<String> {
     args.get(key)
         .and_then(Value::as_str)
@@ -1016,8 +1152,8 @@ fn normalize_image_mime(format: &str) -> String {
 mod tests {
     use super::{
         browser_action_allowed_fields, copy_snapshot_args, normalize_image_mime, truncate_chars,
-        validate_batch_steps, validate_browser_action, PlaywrightProvider, BROWSER_ACTIONS,
-        TOOL_BROWSER, TOOL_NAMES,
+        validate_batch_steps, validate_browser_action, workspace_relative_path, PlaywrightProvider,
+        BROWSER_ACTIONS, TOOL_BROWSER, TOOL_NAMES,
     };
     use crate::services::browser::provider::BrowserProvider;
     use serde_json::{json, Value};
@@ -1057,8 +1193,10 @@ mod tests {
         let actions = schema["properties"]["action"]["enum"]
             .as_array()
             .expect("action enum");
-        assert_eq!(actions.len(), 16);
+        assert_eq!(actions.len(), 18);
         assert!(actions.iter().any(|action| action == "navigate"));
+        assert!(actions.iter().any(|action| action == "scroll"));
+        assert!(actions.iter().any(|action| action == "console"));
         assert!(!actions.iter().any(|action| action == "batch"));
         assert_eq!(
             schema["properties"]["target_id"]["$ref"],
@@ -1298,5 +1436,76 @@ mod tests {
                 "model-visible field '{field}' is dead in every action"
             );
         }
+    }
+
+    #[test]
+    fn coordinate_drag_and_wheel_are_valid_without_a_locator() {
+        // 画布上的拖拽和滚轮是 3D 页面的主交互，二者都不该要求 ref/selector。
+        assert!(validate_browser_action(&json!({
+            "action": "drag",
+            "from_x": 40,
+            "from_y": 120,
+            "to_x": 260,
+            "to_y": 180
+        }))
+        .is_ok());
+        assert!(validate_browser_action(&json!({
+            "action": "scroll",
+            "delta_y": -120,
+            "x": 120,
+            "y": 80
+        }))
+        .is_ok());
+        // 只给一半坐标或零增量必须当场失败，而不是静默什么都不做。
+        let partial = validate_browser_action(&json!({
+            "action": "drag",
+            "from_x": 10,
+            "to_x": 40
+        }))
+        .expect_err("partial coordinates must be rejected");
+        assert!(partial.to_string().contains("from_x"), "{partial}");
+        let empty = validate_browser_action(&json!({
+            "action": "scroll",
+            "delta_x": 0,
+            "delta_y": 0
+        }))
+        .expect_err("zero delta must be rejected");
+        assert!(empty.to_string().contains("delta"), "{empty}");
+    }
+
+    #[test]
+    fn console_action_needs_no_locator_and_takes_clear() {
+        assert!(validate_browser_action(&json!({"action": "console"})).is_ok());
+        assert!(validate_browser_action(&json!({"action": "console", "clear": true})).is_ok());
+    }
+
+    #[test]
+    fn workspace_preview_paths_stay_inside_the_workspace() {
+        assert_eq!(
+            workspace_relative_path("pages/index.html").expect("relative path"),
+            "pages/index.html"
+        );
+        assert_eq!(
+            workspace_relative_path("pages\\index.html").expect("backslashes normalized"),
+            "pages/index.html"
+        );
+        for rejected in ["/etc/passwd", "../escape.html", "a/../../b.html", "  "] {
+            assert!(
+                workspace_relative_path(rejected).is_err(),
+                "{rejected} must not become a preview URL"
+            );
+        }
+    }
+
+    #[test]
+    fn navigate_accepts_a_workspace_path_instead_of_a_url() {
+        assert!(validate_browser_action(&json!({
+            "action": "navigate",
+            "path": "pages/index.html"
+        }))
+        .is_ok());
+        let missing = validate_browser_action(&json!({"action": "navigate"}))
+            .expect_err("navigate needs url or path");
+        assert!(missing.to_string().contains("url"), "{missing}");
     }
 }

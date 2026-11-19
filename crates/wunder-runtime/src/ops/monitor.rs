@@ -6,7 +6,7 @@ use crate::ops::sysinfo_compat::{
     collect_host_metrics, new_disks, new_system, MonitorDisks, MonitorSystem,
 };
 use crate::services::user_leveling::experience_from_runtime_seconds;
-use crate::storage::StorageBackend;
+use crate::storage::{LogUsage, StorageBackend};
 use chrono::{DateTime, Local, Utc};
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -847,7 +847,10 @@ pub struct SystemSnapshot {
     pub disk_used: u64,
     pub disk_free: u64,
     pub disk_percent: f32,
+    /// Total persisted log footprint: thread transcripts plus diagnostics.
     pub log_used: u64,
+    pub log_thread_used: u64,
+    pub log_diag_used: u64,
     pub workspace_used: u64,
     pub uptime_s: u64,
 }
@@ -869,6 +872,8 @@ impl Default for SystemSnapshot {
             disk_free: 0,
             disk_percent: 0.0,
             log_used: 0,
+            log_thread_used: 0,
+            log_diag_used: 0,
             workspace_used: 0,
             uptime_s: 0,
         }
@@ -878,6 +883,12 @@ impl Default for SystemSnapshot {
 #[derive(Debug, Default, Clone, Copy)]
 struct UsageCache {
     value: u64,
+    updated_ts: f64,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct LogUsageCache {
+    value: LogUsage,
     updated_ts: f64,
 }
 
@@ -906,7 +917,7 @@ pub struct MonitorState {
     // one refresh off the request path and let callers read the last sample.
     system_snapshot_refreshing: AtomicBool,
     workspace_root: PathBuf,
-    log_usage_cache: Mutex<UsageCache>,
+    log_usage_cache: Mutex<LogUsageCache>,
     workspace_usage_cache: Mutex<UsageCache>,
     workspace_usage_scan_state: Mutex<WorkspaceUsageScanState>,
     log_usage_ttl_s: f64,
@@ -972,7 +983,7 @@ impl MonitorState {
             system_snapshot_ttl_s: DEFAULT_SYSTEM_SNAPSHOT_TTL_S,
             system_snapshot_refreshing: AtomicBool::new(false),
             workspace_root,
-            log_usage_cache: Mutex::new(UsageCache::default()),
+            log_usage_cache: Mutex::new(LogUsageCache::default()),
             workspace_usage_cache: Mutex::new(UsageCache::default()),
             workspace_usage_scan_state: Mutex::new(WorkspaceUsageScanState::default()),
             log_usage_ttl_s: DEFAULT_LOG_USAGE_TTL_S,
@@ -2323,7 +2334,7 @@ impl MonitorState {
                     .map_err(|err| err.to_string())?;
                 {
                     let mut log_cache = self.log_usage_cache.lock();
-                    *log_cache = UsageCache::default();
+                    *log_cache = LogUsageCache::default();
                 }
                 {
                     let mut snapshot_cache = self.system_snapshot_cache.lock();
@@ -2383,7 +2394,7 @@ impl MonitorState {
         )
     }
 
-    fn resolve_log_usage(&self, now: f64) -> u64 {
+    fn resolve_log_usage(&self, now: f64) -> LogUsage {
         {
             let cache = self.log_usage_cache.lock();
             if cache.updated_ts > 0.0 && now - cache.updated_ts < self.log_usage_ttl_s {
@@ -2411,12 +2422,12 @@ impl MonitorState {
         value
     }
 
-    fn calc_log_usage(&self) -> u64 {
+    fn calc_log_usage(&self) -> LogUsage {
         match self.storage.get_log_usage() {
             Ok(value) => value,
             Err(error) => {
                 warn!("monitor log usage query failed: {error}");
-                0
+                LogUsage::default()
             }
         }
     }
@@ -2481,7 +2492,7 @@ impl MonitorState {
         drop(system);
 
         let now = now_ts();
-        let log_used = self.resolve_log_usage(now);
+        let log_usage = self.resolve_log_usage(now);
         let workspace_used = self.resolve_workspace_usage(now);
         let uptime_s = {
             let start = *self.app_start_ts.lock();
@@ -2501,7 +2512,9 @@ impl MonitorState {
             disk_used: host.disk_used,
             disk_free: host.disk_free,
             disk_percent: host.disk_percent,
-            log_used,
+            log_used: log_usage.total(),
+            log_thread_used: log_usage.thread_bytes,
+            log_diag_used: log_usage.diagnostic_bytes,
             workspace_used,
             uptime_s,
         }

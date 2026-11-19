@@ -1,6 +1,6 @@
 use super::runtime_log_store::PostgresRuntimeLogStorage;
 use super::PostgresStorage;
-use crate::storage::StorageLifecycle;
+use crate::storage::{LogUsage, StorageLifecycle};
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -21,7 +21,7 @@ pub(super) trait PostgresLogStatsStorage {
         since_time: Option<f64>,
         until_time: Option<f64>,
     ) -> Result<Vec<HashMap<String, Value>>>;
-    fn get_log_usage_impl(&self) -> Result<u64>;
+    fn get_log_usage_impl(&self) -> Result<LogUsage>;
     fn delete_logs_by_time_range_impl(
         &self,
         start_time: f64,
@@ -200,12 +200,27 @@ impl PostgresLogStatsStorage for PostgresStorage {
         Ok(sessions)
     }
 
-    fn get_log_usage_impl(&self) -> Result<u64> {
+    fn get_log_usage_impl(&self) -> Result<LogUsage> {
         self.ensure_initialized()?;
         let mut control = self.conn()?;
-        let control_bytes: i64 = control.query_one(
-            "SELECT COALESCE(pg_total_relation_size(to_regclass('monitor_sessions')),0) + COALESCE(pg_total_relation_size(to_regclass('stream_events')),0) + COALESCE(pg_total_relation_size(to_regclass('runtime_tool_metrics')),0) + COALESCE(pg_total_relation_size(to_regclass('runtime_artifact_resources')),0)", &[])? .get(0);
-        Ok(control_bytes.max(0) as u64)
+        // The admin monitor used to report only the small diagnostic tables,
+        // which is why a multi-gigabyte transcript showed up as a few
+        // megabytes. Count the canonical thread log and its display projection
+        // alongside the diagnostic records that `delete_logs_by_time_range`
+        // owns, so the number matches what the cleanup action can reclaim.
+        let row = control.query_one(
+            "SELECT
+                COALESCE(pg_total_relation_size(to_regclass('service_thread_records')),0)
+              + COALESCE(pg_total_relation_size(to_regclass('service_thread_items_v2')),0),
+                COALESCE(pg_total_relation_size(to_regclass('monitor_sessions')),0)
+              + COALESCE(pg_total_relation_size(to_regclass('stream_events')),0)
+              + COALESCE(pg_total_relation_size(to_regclass('runtime_tool_metrics')),0)",
+            &[],
+        )?;
+        Ok(LogUsage {
+            thread_bytes: row.get::<_, i64>(0).max(0) as u64,
+            diagnostic_bytes: row.get::<_, i64>(1).max(0) as u64,
+        })
     }
 
     fn delete_logs_by_time_range_impl(

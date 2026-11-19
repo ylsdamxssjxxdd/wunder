@@ -1307,9 +1307,12 @@ mod tests {
     /// JSON-heavy prompts, 1.6 for CJK) plus a reserve for the user turn,
     /// mounted-skill index, workspace tree and message framing.
     ///
-    /// 上限取 10.2k 而不是 10k：定位与阅读原本要两次往返（搜索一次、再 read_file
+    /// 上限取 10.4k 而不是 10k：定位与阅读原本要两次往返（搜索一次、再 read_file
     /// 读区间一次），把它们合成一次调用的两个参数（搜索的 context_matches、glob
     /// 的 offset）约占 60 token 的 schema 成本，比每问一次代码就多付一轮便宜。
+    /// 浏览器面新增 scroll（delta_x/delta_y）、console、navigate 的 path（工作区
+    /// 预览）三个动作各约 30 个 token 的固定成本，同时把模型面上不存在的 drag
+    /// 坐标字段收掉；这些是替代试错与额外往返的确定性信息，不是装饰。
     #[test]
     fn first_turn_prompt_budget_stays_under_10k_tokens() {
         const RESERVE_TOKENS: usize = 1_200;
@@ -1385,7 +1388,7 @@ mod tests {
                 tools_text.chars().count()
             );
             assert!(
-                total < 10_200,
+                total < 10_400,
                 "first-turn prompt is ~{total} tokens in {locale} mode (static {static_tokens}, tools {tools_tokens})"
             );
         }

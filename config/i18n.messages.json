@@ -3256,8 +3256,8 @@
     "zh-CN": "要写入的文件路径。"
   },
   "tool.spec.write.description": {
-    "en-US": "Create or fully replace a UTF-8 text file. path is required (file_path also accepted); content is required and must be a string. An explicit empty string clears the file; a missing content is an error. Existing files are overwritten after a snapshot is kept in temp/.history. The result is a receipt: line count, sha256 prefix, symbol ranges, syntax check and head line, so a full re-read is unnecessary. dry_run=true returns a unified diff (max 60 lines) without writing.",
-    "zh-CN": "创建或完整覆盖 UTF-8 文本文件。path 必填（也接受 file_path），content 必填且为字符串。显式空字符串表示清空文件；缺失 content 视为错误。已存在文件会被覆盖，覆盖前在 temp/.history 留一份快照。结果返回回执：行数、sha256 前缀、符号行区间、语法校验与首行，无需整篇回读。dry_run=true 返回 unified diff（最多 60 行），不落盘。"
+    "en-US": "Create or fully replace a UTF-8 text file. path is required (file_path also accepted); content is required and must be a string. An explicit empty string clears the file; a missing content is an error. Existing files are overwritten after a snapshot is kept in temp/.history. The result is a receipt: line count, sha256 prefix, symbol ranges, syntax check and head line, so a full re-read is unnecessary. dry_run=true returns a complete unified diff (no line truncation) without writing.",
+    "zh-CN": "创建或完整覆盖 UTF-8 文本文件。path 必填（也接受 file_path），content 必填且为字符串。显式空字符串表示清空文件；缺失 content 视为错误。已存在文件会被覆盖，覆盖前在 temp/.history 留一份快照。结果返回回执：行数、sha256 前缀、符号行区间、语法校验与首行，无需整篇回读。dry_run=true 返回完整 unified diff（不按行截断），不落盘。"
   },
   "tool.spec.subagent_control.description": {
     "zh-CN": "管理当前会话所属任务树的持久子智能体。流程 spawn(task) -> wait/status -> history，复用前先 list；list 默认列直属子线程，parent_id=root 或 /root 查根的直属子线程。spawn 的运行超时用 run_timeout_seconds（别名 timeout_seconds），wait 的等待时长用 wait_seconds（别名 timeout_seconds）。所有查询仅限同一用户、同一根任务树，独立会话线程不能接管。send 向运行中的工作线程追加指导，空闲时开始新任务；report 向直属父线程汇报。accepted 仅表示接收，不等于完成；执行心跳过期按中断处理，须显式 send 才能继续。",
@@ -3712,8 +3712,8 @@
     "en-US": "Optional paging start (default 0). Pass the previous next_offset back to continue instead of raising max_matches; the unit is files in mode=paths and hit lines otherwise."
   },
   "tool.spec.write.args.dry_run": {
-    "en-US": "Default false. true previews only: returns a unified diff (max 60 lines), writes nothing.",
-    "zh-CN": "默认 false。true 只预演：返回 unified diff（最多 60 行），不落盘。"
+    "en-US": "Default false. true previews only: returns a complete unified diff (no line truncation), writes nothing.",
+    "zh-CN": "默认 false。true 只预演：返回完整 unified diff（不按行截断），不落盘。"
   },
   "tool.spec.text_edit.args.start_line": {
     "en-US": "First line of the range (1-based, inclusive); needs end_line.",

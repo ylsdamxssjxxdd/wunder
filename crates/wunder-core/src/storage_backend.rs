@@ -369,6 +369,22 @@ pub trait ThreadLogStore {
     fn delete_thread_log_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
 }
 
+/// Persisted log footprint split by where the bytes come from. Thread logs are
+/// the durable transcript/event history of agent threads; diagnostic logs are
+/// the bounded operational records (tool metrics, monitor sessions, stream
+/// events, artifact logs) that the admin log cleanup owns.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LogUsage {
+    pub thread_bytes: u64,
+    pub diagnostic_bytes: u64,
+}
+
+impl LogUsage {
+    pub fn total(&self) -> u64 {
+        self.thread_bytes.saturating_add(self.diagnostic_bytes)
+    }
+}
+
 /// Log usage, statistics, and cleanup storage.
 pub trait LogStatsStore {
     fn get_user_chat_stats(&self) -> Result<HashMap<String, HashMap<String, i64>>>;
@@ -384,7 +400,7 @@ pub trait LogStatsStore {
         since_time: Option<f64>,
         until_time: Option<f64>,
     ) -> Result<Vec<HashMap<String, Value>>>;
-    fn get_log_usage(&self) -> Result<u64>;
+    fn get_log_usage(&self) -> Result<LogUsage>;
     fn delete_logs_by_time_range(
         &self,
         start_time: f64,

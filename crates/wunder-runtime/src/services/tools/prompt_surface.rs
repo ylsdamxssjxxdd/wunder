@@ -373,14 +373,20 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "browser",
-        brief_en: "Built-in browser: navigate -> observe_refs -> click/type/select/press -> observe_text/screenshot; re-observe after changes. click/hover take ref, selector or text; select needs value; press needs key + optional ref/selector; type overwrites with newlines. Element actions and wait conditions accept timeout_ms; wait_ms only applies to wait. tabs_* manage tabs; target_id picks one.",
-        brief_zh: "浏览器：navigate → observe_refs → click/type/select/press → observe_text/screenshot；click/hover 可用 ref、selector 或可见文字，select 传 value；press 传 key，可选 ref/selector；type 覆盖支持真换行。元素动作和 wait 条件可传 timeout_ms，wait_ms 仅 wait。tabs_* 管标签，target_id 选标签；变后重新 observe_refs。",
+        brief_en: "Built-in browser: navigate -> observe_refs -> click/type/select/press -> observe_text/screenshot, re-observe after changes. Target by ref, selector, text; type overwrites; select needs value; press needs key; timeout_ms on element actions and waits, wait_ms only applies to wait; tabs_* manage tabs by target_id. navigate path previews a workspace file; scroll takes delta_x/delta_y; console reads console output.",
+        brief_zh: "浏览器：navigate→observe_refs→交互→observe_text/screenshot，变化后重新 observe。元素用 ref/selector/文字定位；type 覆盖写入，select 传 value，press 传 key；元素动作与 wait 可传 timeout_ms，wait_ms 仅 wait；tabs_* 用 target_id 管标签；navigate 可传 path 预览工作区文件，scroll 传 delta_x/delta_y，console 读标签输出。",
         drop_actions: &["hover", "drag"],
         drop_fields: &[
+            // `drag` 不在模型面上，配套的起止目标与坐标字段一并收掉，
+            // 否则首轮固定成本里只留下对不上任何 action 的孤儿字段。
             "from_ref",
             "from_selector",
             "to_ref",
             "to_selector",
+            "from_x",
+            "from_y",
+            "to_x",
+            "to_y",
             "state",
             "load_state",
             "snapshot_timeout_ms",
