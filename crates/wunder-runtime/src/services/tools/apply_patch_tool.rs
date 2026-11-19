@@ -173,6 +173,38 @@ fn preserve_patch_tool_error(error: anyhow::Error) -> anyhow::Error {
     )
 }
 
+/// 把多个文件的块匹配失败合并成一条错误：文件之间也要一次报全，
+/// 否则一份多文件补丁要按「修一个文件、重发一次」的节奏来回好几轮。
+fn combine_file_chunk_failures(failures: Vec<(String, anyhow::Error)>) -> anyhow::Error {
+    let mut lines = Vec::with_capacity(failures.len());
+    let mut hints: Vec<String> = Vec::new();
+    for (path, err) in &failures {
+        lines.push(format!("- {}: {}", path, err));
+        if let Some(patch) = err.downcast_ref::<PatchToolError>() {
+            if let Some(hint) = &patch.hint {
+                if !hints.contains(hint) {
+                    hints.push(hint.clone());
+                }
+            }
+        }
+    }
+    patch_error_with_hint(
+        "PATCH_CONTEXT_NOT_FOUND",
+        format!(
+            "补丁应用失败：{} 个文件有块未匹配，未写入任何内容：\n{}",
+            failures.len(),
+            lines.join("\n")
+        ),
+        format!(
+            "Patch apply failed: {} file(s) have unmatched chunks; nothing was written:\n{}",
+            failures.len(),
+            lines.join("\n")
+        ),
+        hints.join("\n"),
+        hints.join("\n"),
+    )
+}
+
 fn patch_format_error(zh: impl Into<String>, en: impl Into<String>) -> anyhow::Error {
     patch_error_with_hint(
         "PATCH_FORMAT_INVALID",
@@ -541,6 +573,9 @@ fn apply_patch_ops_mode(
     let mut hunks_applied = 0usize;
     let mut no_effect_updates = Vec::new();
     let mut no_effect_chunk_effects = Vec::new();
+    // 文件级失败也收集起来：同一份补丁里 A 文件块对不上时，B 文件的块
+    // 仍然值得一起报出来，否则一次调用只能修一个文件。
+    let mut chunk_failures: Vec<(String, anyhow::Error)> = Vec::new();
 
     for (op_index, op) in ops.into_iter().enumerate() {
         if op_index % PATCH_CANCEL_CHECK_INTERVAL == 0 {
@@ -633,12 +668,18 @@ fn apply_patch_ops_mode(
                         "Ensure the Update File path exists, or create it first via Add File.",
                     ));
                 };
-                let (next_content, diff_blocks) = apply_update_chunks_with_diff_engine(
+                let (next_content, diff_blocks) = match apply_update_chunks_with_diff_engine(
                     &source_content,
                     &chunks,
                     &path,
                     cancel_probe,
-                )?;
+                ) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        chunk_failures.push((path.clone(), err));
+                        continue;
+                    }
+                };
                 let had_effect = next_content != source_content
                     || move_to_target
                         .as_ref()
@@ -698,6 +739,10 @@ fn apply_patch_ops_mode(
                 });
             }
         }
+    }
+
+    if !chunk_failures.is_empty() {
+        return Err(combine_file_chunk_failures(chunk_failures));
     }
 
     if !dry_run {

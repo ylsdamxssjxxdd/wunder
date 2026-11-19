@@ -529,13 +529,32 @@ fn extract_tool_calls_payload(item: &Value) -> Option<Value> {
 /// 历史再带一遍会按轮次重复计费——一次 35k 字符的写入，之后每一轮请求都要
 /// 多付约 16k tokens。
 ///
-/// 这里把超长字符串参数投影成“前若干字符 + 省略说明”，参数结构不变、仍是
-/// 合法 JSON。投影只取决于参数本身（纯函数、幂等），实时请求与历史重建得到
-/// 字节一致的结果，因此不破坏 append-only 前缀与 KV 缓存复用；完整的原始参数
-/// 仍留在持久化记录与落盘文件里，需要时可用读取文件重取。
+/// 这里把超长字符串参数投影成省略说明，参数结构不变、仍是合法 JSON。投影只
+/// 取决于参数本身（纯函数、幂等），实时请求与历史重建得到字节一致的结果，
+/// 因此不破坏 append-only 前缀与 KV 缓存复用；完整的原始参数仍留在持久化记录
+/// 与落盘文件里，需要时可用读取文件重取。
+///
+/// 写类工具（写入文件 / 文本编辑）不留头部：它们的回执已经写明落盘事实，留一段
+/// 开头会被模型读成“文件正文被截断”，进而整篇回读。其它工具仍需保留头部帮助
+/// 辨认内容，继续用“头 + 省略量”的投影。
 pub(crate) const HISTORY_TOOL_ARGS_MAX_STRING_CHARS: usize = 2_000;
 pub(crate) const HISTORY_TOOL_ARGS_KEEP_HEAD_CHARS: usize = 320;
 const HISTORY_TOOL_ARGS_MAX_DEPTH: usize = 6;
+
+/// 写类工具按原始名判断，避开 `resolve_tool_name` 每次构表；`apply_patch`
+/// 及其别名不在此列，它们的补丁正文仍保留头部供辨认。
+fn is_write_tool_for_history(name: &str) -> bool {
+    matches!(
+        name.trim(),
+        "write_file"
+            | "写入文件"
+            | "edit"
+            | "edit_file"
+            | "编辑"
+            | "文本编辑"
+            | "str_replace_editor"
+    )
+}
 
 pub(crate) fn project_tool_calls_for_history(tool_calls: &Value) -> Value {
     match tool_calls {
@@ -557,9 +576,14 @@ fn project_tool_call_for_history(call: &Value) -> Value {
     let Some(function) = map.get("function").and_then(Value::as_object) else {
         return call.clone();
     };
-    let Some(projected_arguments) =
-        project_tool_arguments_for_history(function.get("arguments").unwrap_or(&Value::Null))
-    else {
+    let tool_name = function
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let Some(projected_arguments) = project_tool_arguments_for_history(
+        function.get("arguments").unwrap_or(&Value::Null),
+        is_write_tool_for_history(tool_name),
+    ) else {
         return call.clone();
     };
     let mut projected_function = function.clone();
@@ -571,11 +595,11 @@ fn project_tool_call_for_history(call: &Value) -> Value {
 
 /// 参数既可能是 JSON 字符串（OpenAI 风格），也可能是已经展开的对象。返回
 /// `None` 表示“无需投影”，调用方保留原值以维持字节稳定。
-fn project_tool_arguments_for_history(arguments: &Value) -> Option<Value> {
+fn project_tool_arguments_for_history(arguments: &Value, write_tool: bool) -> Option<Value> {
     match arguments {
         Value::String(raw) => {
             let parsed = serde_json::from_str::<Value>(raw).ok()?;
-            let projected = elide_long_tool_argument_strings(&parsed, 0);
+            let projected = elide_long_tool_argument_strings(&parsed, 0, write_tool);
             if projected == parsed {
                 return None;
             }
@@ -583,13 +607,13 @@ fn project_tool_arguments_for_history(arguments: &Value) -> Option<Value> {
         }
         Value::Null => None,
         other => {
-            let projected = elide_long_tool_argument_strings(other, 0);
+            let projected = elide_long_tool_argument_strings(other, 0, write_tool);
             (projected != *other).then_some(projected)
         }
     }
 }
 
-fn elide_long_tool_argument_strings(value: &Value, depth: usize) -> Value {
+fn elide_long_tool_argument_strings(value: &Value, depth: usize, write_tool: bool) -> Value {
     if depth > HISTORY_TOOL_ARGS_MAX_DEPTH {
         return value.clone();
     }
@@ -598,6 +622,11 @@ fn elide_long_tool_argument_strings(value: &Value, depth: usize) -> Value {
             let chars = text.chars().count();
             if chars <= HISTORY_TOOL_ARGS_MAX_STRING_CHARS {
                 return value.clone();
+            }
+            if write_tool {
+                // 整段换掉，不保留任何正文片段：写类结果的回执才是落盘事实的
+                // 唯一来源，残缺的开头只会让模型怀疑文件被写短了。
+                return Value::String(history_write_arg_elision_marker(chars));
             }
             let head: String = text
                 .chars()
@@ -613,7 +642,7 @@ fn elide_long_tool_argument_strings(value: &Value, depth: usize) -> Value {
         Value::Array(items) => Value::Array(
             items
                 .iter()
-                .map(|item| elide_long_tool_argument_strings(item, depth + 1))
+                .map(|item| elide_long_tool_argument_strings(item, depth + 1, write_tool))
                 .collect(),
         ),
         Value::Object(map) => Value::Object(
@@ -621,7 +650,7 @@ fn elide_long_tool_argument_strings(value: &Value, depth: usize) -> Value {
                 .map(|(key, item)| {
                     (
                         key.clone(),
-                        elide_long_tool_argument_strings(item, depth + 1),
+                        elide_long_tool_argument_strings(item, depth + 1, write_tool),
                     )
                 })
                 .collect(),
@@ -634,6 +663,14 @@ fn history_tool_args_elision_marker(chars: usize) -> String {
     format!(
         "\n…[wunder] {chars} characters of this argument were omitted from model history. \
 The value was already applied (file on disk or tool record); re-read it if you need the exact text."
+    )
+}
+
+fn history_write_arg_elision_marker(chars: usize) -> String {
+    format!(
+        "…[wunder] {chars} characters of this argument were omitted from model history. \
+The paired tool result is the authoritative record of what was applied; when it reports success, \
+do not re-read the file just to confirm. Read a specific range only when you need the exact text for the next edit."
     )
 }
 
@@ -1062,7 +1099,7 @@ mod tests {
     use tokio::runtime::Builder;
 
     #[test]
-    fn history_projection_elides_oversized_tool_arguments_only() {
+    fn history_projection_replaces_oversized_write_argument_whole() {
         let body = "x".repeat(HISTORY_TOOL_ARGS_MAX_STRING_CHARS + 500);
         let payload = json!([{
             "id": "call_1",
@@ -1079,18 +1116,76 @@ mod tests {
         let parsed: Value =
             serde_json::from_str(arguments).expect("projected arguments stay valid JSON");
         let content = parsed["content"].as_str().expect("content field kept");
-        assert!(content.starts_with(&"x".repeat(HISTORY_TOOL_ARGS_KEEP_HEAD_CHARS)));
-        assert!(content.contains("characters of this argument were omitted from model history"));
-        // 报的是“省略掉的部分”，保留的头部不算在内。
-        let omitted = body.chars().count() - HISTORY_TOOL_ARGS_KEEP_HEAD_CHARS;
+        // 写类参数整段换掉：不留正文片段，避免模型把开头误读成被截断的文件。
+        assert!(
+            !content.contains("xxxx"),
+            "write arguments must not keep a body fragment: {content}"
+        );
         assert!(content.contains(&format!(
-            "{omitted} characters of this argument were omitted"
+            "{} characters of this argument were omitted from model history",
+            body.chars().count()
         )));
+        assert!(content.contains("do not re-read the file just to confirm"));
         assert!(content.len() < body.len());
         // 结构不变：短字段原样保留，模型仍能知道写了哪个文件。
         assert_eq!(parsed["path"], json!("/tmp/film.js"));
         // 幂等：再次投影不会二次裁剪，前缀因此保持稳定。
         assert_eq!(project_tool_calls_for_history(&projected), projected);
+    }
+
+    #[test]
+    fn history_projection_treats_localized_write_tool_names_whole() {
+        let body = "q".repeat(HISTORY_TOOL_ARGS_MAX_STRING_CHARS + 1);
+        for (name, arguments) in [
+            (
+                "写入文件",
+                json!({ "path": "a.txt", "content": body.clone() }),
+            ),
+            (
+                "文本编辑",
+                json!({ "file_path": "a.txt", "new_string": body.clone() }),
+            ),
+        ] {
+            let payload = json!([{
+                "id": "call_localized",
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": arguments.to_string()
+                }
+            }]);
+            let projected = project_tool_calls_for_history(&payload);
+            let raw = projected[0]["function"]["arguments"]
+                .as_str()
+                .expect("arguments stay a JSON string");
+            assert!(!raw.contains("qqqq"), "{name} kept a body fragment: {raw}");
+            assert!(raw.contains("do not re-read the file just to confirm"), "{name}");
+        }
+    }
+
+    #[test]
+    fn history_projection_keeps_a_head_for_non_write_arguments() {
+        let body = "y".repeat(HISTORY_TOOL_ARGS_MAX_STRING_CHARS + 500);
+        let payload = json!([{
+            "id": "call_cmd",
+            "type": "function",
+            "function": {
+                "name": "execute_command",
+                "arguments": json!({ "command": body }).to_string()
+            }
+        }]);
+        let projected = project_tool_calls_for_history(&payload);
+        let arguments = projected[0]["function"]["arguments"]
+            .as_str()
+            .expect("arguments stay a JSON string");
+        let parsed: Value =
+            serde_json::from_str(arguments).expect("projected arguments stay valid JSON");
+        let command = parsed["command"].as_str().expect("command field kept");
+        assert!(command.starts_with(&"y".repeat(HISTORY_TOOL_ARGS_KEEP_HEAD_CHARS)));
+        let omitted = body.chars().count() - HISTORY_TOOL_ARGS_KEEP_HEAD_CHARS;
+        assert!(command.contains(&format!(
+            "{omitted} characters of this argument were omitted"
+        )));
     }
 
     #[test]
@@ -1145,6 +1240,8 @@ mod tests {
             .as_str()
             .expect("arguments");
         assert!(arguments.contains("characters of this argument were omitted"));
+        assert!(!arguments.contains("yyyy"));
+        assert!(arguments.contains("do not re-read the file just to confirm"));
         assert!(arguments.len() < body.len());
     }
 

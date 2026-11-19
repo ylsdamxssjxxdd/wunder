@@ -94,6 +94,8 @@ struct RawSessionSpawnArgs {
         alias = "timeout_seconds"
     )]
     run_timeout_seconds: Option<f64>,
+    #[serde(default, rename = "runInBackground", alias = "run_in_background")]
+    run_in_background: Option<bool>,
     #[serde(default)]
     cleanup: Option<String>,
     #[serde(default, rename = "threadStrategy", alias = "thread_strategy")]
@@ -110,6 +112,9 @@ pub(crate) struct SessionSpawnArgs {
     pub(crate) agent_name: Option<String>,
     pub(crate) model: Option<String>,
     pub(crate) run_timeout_seconds: Option<f64>,
+    /// 默认后台：派出后立即返回，完成时自动唤醒父线程。
+    /// 只有下一步依赖子任务结果、必须在本轮内拿到时才置 false。
+    pub(crate) run_in_background: Option<bool>,
     pub(crate) cleanup: Option<String>,
     pub(crate) thread_strategy: Option<String>,
     pub(crate) reuse_thread: Option<bool>,
@@ -133,6 +138,7 @@ impl<'de> Deserialize<'de> for SessionSpawnArgs {
             agent_name: raw.agent_name,
             model: raw.model,
             run_timeout_seconds: raw.run_timeout_seconds,
+            run_in_background: raw.run_in_background,
             cleanup: raw.cleanup,
             thread_strategy: raw.thread_strategy,
             reuse_thread: raw.reuse_thread,
@@ -144,4 +150,31 @@ impl<'de> Deserialize<'de> for SessionSpawnArgs {
 #[derive(Debug, Deserialize)]
 pub(crate) struct SubagentControlArgs {
     pub(crate) action: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn spawn_args_separate_background_from_run_timeout() {
+        let args: SessionSpawnArgs = serde_json::from_value(json!({
+            "task": "整理目录",
+            "run_in_background": false,
+            "timeout_seconds": 90.0,
+            "fork_turns": 2,
+            "context_summary": "已知背景"
+        }))
+        .unwrap();
+        assert_eq!(args.run_in_background, Some(false));
+        assert_eq!(args.run_timeout_seconds, Some(90.0));
+
+        let default: SessionSpawnArgs =
+            serde_json::from_value(json!({ "task": "整理目录", "runTimeoutSeconds": 30.0 }))
+                .unwrap();
+        // 默认由 sessions_spawn 解释为后台；这里只确认超时不再暗含等待语义。
+        assert_eq!(default.run_in_background, None);
+        assert_eq!(default.run_timeout_seconds, Some(30.0));
+    }
 }

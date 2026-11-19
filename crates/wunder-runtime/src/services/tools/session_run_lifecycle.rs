@@ -212,10 +212,17 @@ pub(crate) fn prepare_child_session(
     let resolved_model_name = model_name.or_else(|| {
         resolve_effective_agent_model_name(context.config, child_agent_record.as_ref())
     });
-    let agent_prompt = child_agent_record
-        .as_ref()
-        .map(|record| record.system_prompt.trim().to_string())
-        .filter(|value| !value.is_empty());
+    let agent_prompt = {
+        let child_note = i18n::t("tool.subagent.child_system_note");
+        match child_agent_record
+            .as_ref()
+            .map(|record| record.system_prompt.trim().to_string())
+            .filter(|value| !value.is_empty())
+        {
+            Some(base) => Some(format!("{base}\n\n{child_note}")),
+            None => Some(child_note),
+        }
+    };
     let preview_skill = child_agent_record
         .as_ref()
         .map(|record| record.preview_skill)
@@ -535,6 +542,7 @@ pub(crate) async fn spawn_session_run(
         }
 
         // Use a dedicated runtime so high fan-out runs do not contend with the main runtime worker pool.
+        let request_language = request.language.clone().unwrap_or_default();
         let mut run_request = request;
         run_request.stream = true;
         let child_orchestrator = orchestrator.clone();
@@ -711,6 +719,7 @@ pub(crate) async fn spawn_session_run(
                     parent_model_round: announce.parent_model_round,
                     emit_parent_events: announce.emit_parent_events,
                     auto_wake: announce.auto_wake && !interrupted,
+                    language: request_language.clone(),
                 };
                 subagents::handle_child_completion(
                     storage.clone(),

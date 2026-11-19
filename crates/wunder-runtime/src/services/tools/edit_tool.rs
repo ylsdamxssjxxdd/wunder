@@ -21,7 +21,7 @@ use super::{
     tool_error::{build_failed_tool_result, ToolErrorMeta},
     touch_lsp_file, ToolContext,
 };
-use super::{edit_recovery, file_history, write_receipt};
+use super::{edit_batch, edit_match, edit_recovery, file_history, write_receipt};
 use crate::core::blocking;
 use crate::path_utils::{is_within_root, normalize_path_for_compare, normalize_target_path};
 use anyhow::{anyhow, Result};
@@ -46,7 +46,7 @@ pub(crate) fn has_patch_input(args: &Value) -> bool {
 
 /// 可区分的编辑失败原因，便于给出可复现的恢复提示。
 #[derive(Debug)]
-enum EditFailure {
+pub(super) enum EditFailure {
     NotFound,
     NoMatch {
         nearest: Vec<edit_recovery::Nearest>,
@@ -84,6 +84,10 @@ struct EditOutcome {
     snapshot: Option<file_history::Snapshot>,
     receipt: write_receipt::Receipt,
     range: Option<(usize, usize)>,
+    /// 定位档位：`exact` 之外说明这次替换是靠空白容错命中的。
+    tier: edit_match::MatchTier,
+    /// 批量替换（`edits`）的逐条报告；单条替换为 `None`。
+    batch: Option<edit_batch::BatchReport>,
 }
 
 /// 字面替换路由的 diff 构造：有界采样命中起点，块上限与有界性守卫都在
@@ -124,6 +128,11 @@ pub(crate) fn validate_edit_args(args: &Value) -> Option<Value> {
             false,
         ));
     };
+
+    // 批量替换：只给 file_path + edits（+ 可选 on_miss），与其它编辑形态互斥。
+    if edit_batch::batch_requested(args) {
+        return edit_batch::validate_batch_args(args);
+    }
 
     // 行区间替换：start_line/end_line + new_string，与 old_string 互斥。
     let range_mode = args.get("start_line").is_some() || args.get("end_line").is_some();
@@ -280,6 +289,12 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let dry_run = parse_dry_run(&args);
     let verify = args.get("verify").and_then(Value::as_bool).unwrap_or(true);
     let range = parse_range(args);
+    let batch = if edit_batch::batch_requested(&args) {
+        edit_batch::parse_batch(&args)
+    } else {
+        None
+    };
+    let batch_continue = edit_batch::continue_on_miss(&args);
 
     let workspace = context.workspace.clone();
     let user_id = context.workspace_id.to_string();
@@ -297,11 +312,20 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         }
         let fs_cap = local_fs();
         let content = fs_cap.read_text(&target)?;
-        let prepared = match range {
-            Some((start_line, end_line)) => {
-                prepare_range_edit(&content, start_line, end_line, &new_for_edit)?
+        let (prepared, batch_report) = match (&batch, range) {
+            (Some(steps), _) => {
+                let (prepared, report) =
+                    edit_batch::prepare(&content, steps, batch_continue).map_err(anyhow::Error::new)?;
+                (prepared, Some(report))
             }
-            None => prepare_literal_edit(&content, &old_for_edit, &new_for_edit, replace_all)?,
+            (None, Some((start_line, end_line))) => (
+                prepare_range_edit(&content, start_line, end_line, &new_for_edit)?,
+                None,
+            ),
+            (None, None) => (
+                prepare_literal_edit(&content, &old_for_edit, &new_for_edit, replace_all)?,
+                None,
+            ),
         };
         let workspace_root = workspace.workspace_root(&user_id);
         // 覆盖前的快照：写坏了能 diff 回滚；失败只是没有历史，不影响写入。
@@ -338,6 +362,8 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
             snapshot,
             receipt,
             range,
+            tier: prepared.tier,
+            batch: batch_report,
         })
     })
     .await;
@@ -347,6 +373,9 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         Err(err) => {
             if let Some(failure) = err.downcast_ref::<EditFailure>() {
                 return Ok(edit_failure_result(&file_path, dry_run, failure));
+            }
+            if let Some(failure) = err.downcast_ref::<edit_batch::BatchEditFailure>() {
+                return Ok(edit_batch::failure_result(&file_path, dry_run, failure));
             }
             if let Some(failure) = err.downcast_ref::<RangeFailure>() {
                 let mut data = Map::<String, Value>::new();
@@ -410,7 +439,7 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         &outcome.after,
         &outcome.diff,
     );
-    let mut data = build_edit_data(
+    let mut data = match build_edit_data(
         &file_path,
         outcome.occurrences,
         replace_all,
@@ -426,10 +455,27 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         &unified,
         unified_truncated,
         omitted_reason,
-    );
+    ) {
+        Value::Object(map) => map,
+        other => return Ok(other),
+    };
     if !outcome.changed {
         data["changed_files"] = json!(0);
         data["updated"] = json!(0);
+    }
+    // 定位档位常驻一个键：`exact` 之外说明这次靠空白容错命中，模型据此决定
+    // 要不要回读确认（取值是固定几个枚举字符串，键集不随情况变化）。
+    data.insert("match".to_string(), json!(outcome.tier.as_str()));
+    if !outcome.tier.is_exact() {
+        data.insert("match_note".to_string(), json!(outcome.tier.note()));
+    }
+    if let Some(report) = &outcome.batch {
+        data.insert("edits".to_string(), report.steps.clone());
+        data.insert("edits_applied".to_string(), json!(report.applied));
+        data.insert("edits_missed".to_string(), json!(report.missed));
+        if report.is_partial() {
+            data.insert("partial".to_string(), json!(true));
+        }
     }
 
     let state = if dry_run {
@@ -443,7 +489,22 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         format!("Validated edit against {file_path} without writing content.")
     } else if !outcome.changed {
         format!("No content change in {file_path}.")
-    } else {
+    } else if let Some(report) = &outcome.batch {
+        let total = report.steps.as_array().map(Vec::len).unwrap_or(0);
+        let missed = if report.is_partial() {
+            format!(", {} missed — see edits", report.missed)
+        } else {
+            String::new()
+        };
+        format!(
+            "Edited {file_path} ({} of {total} edits applied{}); {} lines, sha256 {}, syntax {}.",
+            report.applied,
+            missed,
+            outcome.receipt.lines,
+            outcome.receipt.sha256,
+            outcome.receipt.syntax
+        )
+    } else if outcome.tier.is_exact() {
         format!(
             "Edited {file_path} ({} replacement(s)); {} lines, sha256 {}, syntax {}.",
             outcome.occurrences,
@@ -451,22 +512,69 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
             outcome.receipt.sha256,
             outcome.receipt.syntax
         )
+    } else {
+        format!(
+            "Edited {file_path} ({} replacement(s), matched by {}); {} lines, sha256 {}, syntax {}.",
+            outcome.occurrences,
+            outcome.tier.as_str(),
+            outcome.receipt.lines,
+            outcome.receipt.sha256,
+            outcome.receipt.syntax
+        )
     };
-    Ok(build_model_tool_success("edit", state, summary, data))
+    Ok(build_model_tool_success(
+        "edit",
+        state,
+        summary,
+        Value::Object(data),
+    ))
 }
 
 /// 一次编辑的「改后状态」：字面替换与行区间替换共用。
 #[derive(Debug)]
-struct PreparedEdit {
-    updated: String,
-    occurrences: usize,
-    diff: LineDiff,
-    unavailable: Option<&'static str>,
-    changed: bool,
+pub(super) struct PreparedEdit {
+    pub(super) updated: String,
+    pub(super) occurrences: usize,
+    pub(super) diff: LineDiff,
+    pub(super) unavailable: Option<&'static str>,
+    pub(super) changed: bool,
+    /// 字面替换用的匹配档位；行区间替换恒为 `Exact`。
+    pub(super) tier: edit_match::MatchTier,
 }
 
 /// 失败时最多回几个最相似片段。
 const NEAREST_MATCH_LIMIT: usize = 3;
+
+/// 一次字面替换的纯计算：定位（含容错档位）→ 唯一性校验 → 生成新内容。
+///
+/// 拆成独立函数是为了让批量编辑在同一份内容上连续套用**同一套**语义：
+/// 定位放宽规则、唯一性判定、替换拼接只有一处实现。
+pub(super) fn replace_literal(
+    content: &str,
+    old: &str,
+    new: &str,
+    replace_all: bool,
+) -> Result<(String, edit_match::Found), EditFailure> {
+    let old_text = match_text_newlines(content, old);
+    let new_text = match_text_newlines(content, new);
+    let Some(found) = edit_match::find(content, old_text.as_ref()) else {
+        return Err(EditFailure::NoMatch {
+            nearest: edit_recovery::nearest_matches(
+                content,
+                old_text.as_ref(),
+                NEAREST_MATCH_LIMIT,
+            ),
+        });
+    };
+    if found.occurrences() > 1 && !replace_all {
+        return Err(EditFailure::NotUnique {
+            count: found.occurrences(),
+            lines: match_line_numbers(content, &found.starts()),
+        });
+    }
+    let updated = edit_match::replace(content, &found, new_text.as_ref(), replace_all);
+    Ok((updated, found))
+}
 
 fn prepare_literal_edit(
     content: &str,
@@ -474,52 +582,36 @@ fn prepare_literal_edit(
     new: &str,
     replace_all: bool,
 ) -> Result<PreparedEdit, anyhow::Error> {
-    let old_text = match_text_newlines(content, old);
-    let new_text = match_text_newlines(content, new);
-    let mut occurrences = 0usize;
-    let mut offsets = Vec::new();
-    for (index, _) in content.match_indices(old_text.as_ref()) {
-        occurrences += 1;
-        if offsets.len() < MAX_DIFF_OFFSETS {
-            offsets.push(index);
-        }
-    }
-    if occurrences == 0 {
-        return Err(anyhow::Error::new(EditFailure::NoMatch {
-            nearest: edit_recovery::nearest_matches(
-                content,
-                old_text.as_ref(),
-                NEAREST_MATCH_LIMIT,
-            ),
-        }));
-    }
-    if occurrences > 1 && !replace_all {
-        let lines = match_line_numbers(content, &offsets);
-        return Err(anyhow::Error::new(EditFailure::NotUnique {
-            count: occurrences,
-            lines,
-        }));
-    }
-    let updated = if replace_all {
-        content.replace(old_text.as_ref(), new_text.as_ref())
-    } else {
-        content.replacen(old_text.as_ref(), new_text.as_ref(), 1)
-    };
+    let (updated, found) = replace_literal(content, old, new, replace_all).map_err(anyhow::Error::new)?;
+    let occurrences = found.occurrences();
     let changed = content != updated;
-    let (diff, unavailable) = build_replace_diff(
-        content,
-        &updated,
-        &offsets,
-        occurrences,
-        old_text.len(),
-        new_text.as_ref(),
-    );
+    let (diff, unavailable) = if !changed {
+        (LineDiff::default(), None)
+    } else if found.tier.is_exact() {
+        // 逐字命中时按命中起点采样 diff 块，能省一次全文比对。
+        let offsets = found.starts();
+        let sampled = &offsets[..offsets.len().min(MAX_DIFF_OFFSETS)];
+        let needle_len = found.spans[0].1 - found.spans[0].0;
+        let new_text = match_text_newlines(content, new);
+        build_replace_diff(
+            content,
+            &updated,
+            sampled,
+            occurrences,
+            needle_len,
+            new_text.as_ref(),
+        )
+    } else {
+        // 容错命中时命中区间长度与 old_string 不等长，只能整块重算。
+        (diff_replaced(content, &updated), None)
+    };
     Ok(PreparedEdit {
         updated,
         occurrences,
         diff,
         unavailable,
         changed,
+        tier: found.tier,
     })
 }
 
@@ -543,6 +635,7 @@ fn prepare_range_edit(
         diff,
         unavailable: None,
         changed,
+        tier: edit_match::MatchTier::Exact,
     })
 }
 
@@ -651,7 +744,7 @@ fn edit_failure_result(path: &str, dry_run: bool, failure: &EditFailure) -> Valu
         ),
         EditFailure::NoMatch { nearest } => {
             let mut message = format!("文本编辑失败：old_string 未匹配 {}", path);
-            let mut hint = "old_string 必须逐字一致（含空白与引号）；可先按 nearest 的片段校正，或直接用 start_line/end_line 做 replace_range。".to_string();
+            let mut hint = "已自动放宽到行尾空白/块内缩进/行内空白三档仍不匹配，差异在内容本身（数值、标识符、引号、大小写）；按 nearest 的逐行差异校正，或直接用 start_line/end_line 做行区间替换（不必再 grep -n）。".to_string();
             if let Some(summary) = edit_recovery::summary_line(nearest) {
                 message.push_str("；");
                 message.push_str(&summary);

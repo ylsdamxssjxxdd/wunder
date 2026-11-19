@@ -1015,6 +1015,25 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .desc(t("tool.spec.text_edit.args.view_range"))
                     .items(super::schema::integer("_"))
                     .optional(),
+                super::schema::string("on_miss")
+                    .desc(t("tool.spec.text_edit.args.on_miss"))
+                    .enums(vec!["stop", "continue"])
+                    .optional(),
+                // `edits` 的 items 是对象，用 object_param + props 表达；字段说明放在
+                // 参数描述里，items 内部只留结构，省固定开销。
+                super::schema::array("edits")
+                    .desc(t("tool.spec.text_edit.args.edits"))
+                    .items(
+                        super::schema::object_param("_")
+                            .props(vec![
+                                super::schema::string("old_string").desc(""),
+                                super::schema::string("new_string").desc(""),
+                                super::schema::boolean("replace_all").desc("").optional(),
+                            ])
+                            .closed(),
+                    )
+                    .max_items(64)
+                    .optional(),
             ]),
         },
         ToolSpec {
@@ -1047,14 +1066,15 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                             "enum":["list","history","send","report","spawn","status","wait","interrupt","close","resume"],
                             "description":"spawn(task) -> wait/status -> history; send/report exchange messages; interrupt/close/resume control lifecycle. Selectors default to the current parent scope."
                         },
-                        "task": {"type":"string","minLength":1,"description":"spawn: work item for the new child."},
+                        "task": {"type":"string","minLength":1,"description":"spawn: self-contained brief for the new child. The child cannot see this thread, so include the goal, necessary context, constraints and the expected deliverable."},
                         "label": reference("s"),
                         "agent_id": reference("s"),
                         "model": reference("s"),
-                        "run_timeout_seconds": {"type":"number","minimum":0,"description":"spawn: run timeout and synchronous wait duration; alias: timeout_seconds."},
+                        "run_timeout_seconds": {"type":"number","minimum":0,"description":"spawn: child run time limit in seconds; it no longer controls the parent's synchronous wait. alias: timeout_seconds."},
+                        "run_in_background": {"type":"boolean","description":"spawn: default true. true dispatches and returns accepted immediately, and completion auto-wakes the parent; false blocks this turn until the child finishes. alias: runInBackground."},
                         "cleanup": reference("cleanup"),
-                        "fork_turns": {"type":"integer","minimum":0,"maximum":16},
-                        "context_summary": {"type":"string","minLength":1,"maxLength":16384},
+                        "fork_turns": {"type":"integer","minimum":0,"maximum":16,"description":"spawn: number of recent parent turns to quote into the child brief (0-16)."},
+                        "context_summary": {"type":"string","minLength":1,"maxLength":16384,"description":"spawn: parent-provided context appended to the child brief when the child needs background it cannot see."},
                         "message": reference("m"),
                         "message_id": reference("s"),
                         "timeout_seconds": {"type":"number","minimum":0,"description":"spawn: alias for run_timeout_seconds; wait: alias for wait_seconds; send/resume: response wait timeout."},
@@ -2425,13 +2445,17 @@ mod tests {
             // 这是有意增加的改图入口，故把总预算上调到 20.2k 而不是裁掉参数。
             // 之后又把尺寸/蒙版/seed/覆盖这些硬约束写进 brief（原先只能靠试错），
             // 再上调到 20.5k：这是替代“反复浪费调用”的确定性信息，不是装饰。
+            // 子智能体 brief 补上「默认后台、完成自动唤醒、交办要点、并行派发」
+            // 后英文面到 21.0k，这些规则能直接避免阻塞等待与空任务，故上调到 21.2k。
+            // 文本编辑公开 edits 批量替换结构（~0.3k）后到 21.33k：它替代的是模型
+            // 逐条重发替换与自写补丁脚本，属于减少轮次的确定性信息，故上调到 21.4k。
             let largest = rows.first().map(|row| row.0).unwrap_or(0);
             assert!(
                 largest < 2_500,
                 "largest model-facing tool spec is {largest} chars in {language}"
             );
             assert!(
-                total < 20_500,
+                total < 21_400,
                 "model-facing tool catalogue grew to {total} chars in {language}"
             );
             let authoritative_chars: usize = authoritative
@@ -2807,7 +2831,18 @@ mod tests {
         assert!(spec.input_schema["properties"]["file_path"].is_object());
         assert!(spec.input_schema["properties"]["command"].is_object());
         assert!(spec.input_schema["properties"]["view_range"].is_object());
-        assert!(spec.input_schema["properties"]["edits"].is_null());
+        // 批量替换是公开参数：数组里每条都是独立的替换步骤。
+        let edits = &spec.input_schema["properties"]["edits"];
+        assert_eq!(edits["type"], "array");
+        assert_eq!(edits["items"]["type"], "object");
+        assert_eq!(
+            edits["items"]["required"],
+            json!(["old_string", "new_string"])
+        );
+        assert_eq!(
+            spec.input_schema["properties"]["on_miss"]["enum"],
+            json!(["stop", "continue"])
+        );
         // 旧名与旧规范名全部回落到合并后的规范名。
         for alias in [
             "edit",
@@ -3251,15 +3286,21 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == "子智能体控制")
             .expect("subagent_control spec");
-        assert!(spec.description.contains("当前会话"));
-        assert!(spec
-            .description
-            .contains("spawn(task) -> wait/status -> history"));
+        assert!(spec.description.contains("run_in_background"));
+        assert!(spec.description.contains("自动唤醒"));
         let schema = &spec.input_schema;
         assert!(schema["oneOf"].is_null());
         assert_eq!(schema["additionalProperties"].as_bool(), Some(false));
         assert_eq!(schema["required"], json!(["action"]));
         assert!(schema["$defs"].is_object());
+        let properties = schema["properties"].as_object().expect("properties");
+        assert_eq!(
+            properties["run_in_background"]["type"].as_str(),
+            Some("boolean")
+        );
+        assert!(properties["run_timeout_seconds"]["description"]
+            .as_str()
+            .is_some_and(|text| text.contains("no longer controls")));
         let actions = schema["properties"]["action"]["enum"]
             .as_array()
             .expect("action enum");

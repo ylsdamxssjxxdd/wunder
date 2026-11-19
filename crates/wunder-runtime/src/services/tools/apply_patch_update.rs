@@ -17,6 +17,55 @@ pub(super) struct ChunkContextFailureDetail {
     pub(super) kind: ChunkContextFailureKind,
 }
 
+/// 单个变更块的失败描述。
+///
+/// 源问题：块匹配失败时只要撞到第一个就 `return Err`，一次 8 块的补丁要发 8 次
+/// 才改对；这里改成逐块收集，最后合成一条错误，一轮就能把全部块改对。落盘语义
+/// 不变——只要有任何一块失败，整次调用一个字节都不写。
+struct ChunkFailure {
+    zh: String,
+    en: String,
+    hint_zh: String,
+    hint_en: String,
+}
+
+/// 把同一文件里所有失败块合成一条错误：消息逐条列块，提示去重后合并。
+fn chunk_failures_error(path: &str, failures: &[ChunkFailure]) -> anyhow::Error {
+    let zh = failures
+        .iter()
+        .map(|failure| failure.zh.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let en = failures
+        .iter()
+        .map(|failure| failure.en.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut hint_zh: Vec<&str> = Vec::new();
+    let mut hint_en: Vec<&str> = Vec::new();
+    for failure in failures {
+        if !hint_zh.contains(&failure.hint_zh.as_str()) {
+            hint_zh.push(&failure.hint_zh);
+        }
+        if !hint_en.contains(&failure.hint_en.as_str()) {
+            hint_en.push(&failure.hint_en);
+        }
+    }
+    patch_error_with_hint(
+        "PATCH_CONTEXT_NOT_FOUND",
+        format!(
+            "补丁应用失败：{path} 有 {} 个变更块未匹配，未写入任何内容：\n{zh}",
+            failures.len()
+        ),
+        format!(
+            "Patch apply failed: {} chunk(s) in {path} did not match; nothing was written:\n{en}",
+            failures.len()
+        ),
+        hint_zh.join("\n"),
+        hint_en.join("\n"),
+    )
+}
+
 #[derive(Debug, Clone)]
 struct LineReplacement {
     start: usize,
@@ -110,6 +159,9 @@ fn compute_chunk_replacements(
     let mut replacements = Vec::new();
     let mut line_index = 0usize;
     let mut previous_context_only_chunk: Option<(usize, usize, Vec<String>)> = None;
+    // 逐块收集失败而不是撞到第一个就返回：一次调用常带多个块，逐块回报
+    // 会让模型多花好几轮；落盘仍是「有任何一块失败就整次不写」。
+    let mut failures: Vec<ChunkFailure> = Vec::new();
 
     for (index, chunk) in chunks.iter().enumerate() {
         if index % PATCH_CANCEL_CHECK_INTERVAL == 0 {
@@ -144,14 +196,14 @@ fn compute_chunk_replacements(
                         kind: ChunkContextFailureKind::Generic,
                     }),
                 );
-                return Err(patch_error_with_hint(
-                    "PATCH_CONTEXT_NOT_FOUND",
-                    format!(
-                        "补丁应用失败：{path} 第 {} 个变更块找不到 @@ 锚点 {}",
+                failures.push(ChunkFailure {
+                    zh: format!(
+                        "补丁应用失败：{} 第 {} 个变更块找不到 @@ 锚点 {}",
+                        path,
                         index + 1,
                         raw_anchor
                     ),
-                    format!(
+                    en: format!(
                         "Patch apply failed: chunk {} in {} cannot find @@ anchor {}",
                         index + 1,
                         path,
@@ -159,7 +211,8 @@ fn compute_chunk_replacements(
                     ),
                     hint_zh,
                     hint_en,
-                ));
+                });
+                continue;
             };
             line_index = anchor_index + 1;
         }
@@ -217,20 +270,21 @@ fn compute_chunk_replacements(
                         chunk,
                         Some(&failure),
                     );
-                    return Err(patch_error_with_hint(
-                        "PATCH_CONTEXT_NOT_FOUND",
-                        format!(
-                            "补丁应用失败：{path} 第 {} 个变更块找不到唯一插入位置",
+                    failures.push(ChunkFailure {
+                        zh: format!(
+                            "补丁应用失败：{} 第 {} 个变更块找不到唯一插入位置",
+                            path,
                             index + 1
                         ),
-                        format!(
+                        en: format!(
                             "Patch apply failed: chunk {} in {} has no unique insertion point",
                             index + 1,
                             path
                         ),
                         hint_zh,
                         hint_en,
-                    ));
+                    });
+                    continue;
                 }
             }
             previous_context_only_chunk = None;
@@ -271,20 +325,21 @@ fn compute_chunk_replacements(
                     chunk,
                     Some(&failure),
                 );
-                return Err(patch_error_with_hint(
-                    "PATCH_CONTEXT_NOT_FOUND",
-                    format!(
-                        "补丁应用失败：{path} 第 {} 个变更块找不到唯一插入位置",
+                failures.push(ChunkFailure {
+                    zh: format!(
+                        "补丁应用失败：{} 第 {} 个变更块找不到唯一插入位置",
+                        path,
                         index + 1
                     ),
-                    format!(
+                    en: format!(
                         "Patch apply failed: chunk {} in {} has no unique insertion point",
                         index + 1,
                         path
                     ),
                     hint_zh,
                     hint_en,
-                ));
+                });
+                continue;
             }
         }
         let mut found = seek_sequence(source_lines, &pattern, line_index, chunk.end_of_file);
@@ -322,20 +377,21 @@ fn compute_chunk_replacements(
                 chunk,
                 Some(&failure),
             );
-            return Err(patch_error_with_hint(
-                "PATCH_CONTEXT_NOT_FOUND",
-                format!(
-                    "补丁应用失败：{path} 第 {} 个变更块找不到匹配上下文",
+            failures.push(ChunkFailure {
+                zh: format!(
+                    "补丁应用失败：{} 第 {} 个变更块找不到匹配上下文",
+                    path,
                     index + 1
                 ),
-                format!(
+                en: format!(
                     "Patch apply failed: chunk {} in {} has no matching context",
                     index + 1,
                     path
                 ),
                 hint_zh,
                 hint_en,
-            ));
+            });
+            continue;
         };
 
         previous_context_only_chunk = None;
@@ -348,6 +404,9 @@ fn compute_chunk_replacements(
         line_index = found_index + pattern.len();
     }
 
+    if !failures.is_empty() {
+        return Err(chunk_failures_error(path, &failures));
+    }
     replacements.sort_by_key(|item| item.start);
     Ok(replacements)
 }

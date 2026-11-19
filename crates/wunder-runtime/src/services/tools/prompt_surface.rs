@@ -300,14 +300,12 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "子智能体控制",
-        brief_en: "Manage child agent sessions: list/history/status, spawn(task), send/report/wait, close. Select by session_id or run_id; list defaults to direct children (parent_id=root or /root = root level); selectors stay in the current tree. spawn timeout_seconds = run_timeout_seconds, wait = wait_seconds; accepted = received, not finished.",
-        brief_zh: "管理子智能体会话：list/history/status 查看，spawn(task) 创建，send/report/wait 通信，close 结束；用 session_id 或 run_id 定位，list 默认只看直接子级（parent_id=root 选根级），选择器限于当前根任务树；spawn 的 timeout_seconds 等同 run_timeout_seconds，wait 的等同 wait_seconds；accepted 仅表示已接收，不等于完成。",
+        brief_en: "spawn async by default: returns accepted + session_id/run_id, then auto-wakes you on completion — continue or end the turn; never poll/sleep/schedule a wait. run_in_background=false only when this turn needs the result. task must be self-contained; the child can't see this thread, so use context_summary/fork_turns. Send independent spawns in one message. run_timeout_seconds caps the child only; accepted ≠ finished.",
+        brief_zh: "spawn 默认后台：返回 accepted 与 session_id/run_id，完成自动唤醒——继续别的或结束本轮，不要轮询、sleep 或定时任务；只有本轮需要结果才 run_in_background=false。task 要自成一体，子线程看不到本线程，缺失背景用 context_summary/fork_turns。多个独立任务在同一条消息里发多个 spawn。run_timeout_seconds 只限制子任务；accepted 不等于完成。",
         drop_actions: &["interrupt", "resume"],
         drop_fields: &[
             "announce_persist_history",
             "announce_emit_parent_events",
-            "context_summary",
-            "fork_turns",
             "cleanup",
             "run_ids",
             "session_ids",
@@ -603,6 +601,43 @@ mod tests {
         // 只宣传一种写法：旧的 current 形态不许再出现，否则模型又会混着用。
         assert!(!rule.brief_zh.contains("current"));
         assert!(!rule.brief_en.contains("current"));
+    }
+
+    #[test]
+    fn subagent_brief_leads_with_background_and_briefing_rules() {
+        let rule = rule_for("子智能体控制").expect("subagent rule");
+        for needle in [
+            "默认后台",
+            "自动唤醒",
+            "轮询",
+            "run_in_background=false",
+            "context_summary",
+        ] {
+            assert!(rule.brief_zh.contains(needle), "zh brief missing {needle}");
+        }
+        for needle in [
+            "async by default",
+            "auto-wakes",
+            "never poll",
+            "run_in_background=false",
+            "context_summary",
+            "independent spawns",
+        ] {
+            assert!(rule.brief_en.contains(needle), "en brief missing {needle}");
+        }
+        let spec = crate::services::tools::catalog::builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == "子智能体控制")
+            .expect("subagent spec");
+        let projected = prompt_tool_spec(&spec, "zh-CN");
+        let props = projected.input_schema["properties"]
+            .as_object()
+            .expect("subagent properties");
+        // 后台开关与交办背景字段必须让模型看见，否则只能靠猜。
+        for field in ["run_in_background", "context_summary", "fork_turns", "task"] {
+            assert!(props.contains_key(field), "{field} must stay visible");
+        }
+        assert!(!props.contains_key("label"));
     }
 
     #[test]

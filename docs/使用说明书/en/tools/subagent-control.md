@@ -1,7 +1,7 @@
 ---
 title: Subagent Control
 summary: The 11 actions and dispatch parameters of `subagent_control`, context inheritance rules, single versus batch dispatch, wait and report semantics, and target resolution with its per-call caps.
-updated_at: 2026-10-16
+updated_at: 2026-11-20
 ---
 
 The tool is `subagent_control`. A subagent is a unit of work the main agent creates temporarily: it dispatches one task thread and reclaims it once the task ends. This is currently the only form of collaboration. All of these actions hang off the current thread; creating, switching, and archiving threads themselves is a separate matter, handled by [Thread Control](/docs/en/tools/thread-control/).
@@ -28,7 +28,8 @@ When dispatching, you can also specify:
 
 - `label`: a recognizable name for the child thread.
 - `agent_id`, `model`: override the subagent or the model it uses; both are checked against the current user's agent ownership.
-- `run_timeout_seconds`: the timeout of a single run; in a synchronous dispatch it is also the wait duration.
+- `run_timeout_seconds`: the time limit of a single run; it no longer doubles as the parent's synchronous wait duration.
+- `run_in_background`: `true` by default — the call returns `accepted` immediately and completion auto-wakes the parent thread; set it to `false` only when this turn's next step needs the result, which blocks the turn until the child finishes.
 - `fork_turns`: copy the most recent rounds of user context, 0–16, 0 by default.
 - `context_summary`: attach a background summary.
 - `cleanup`: how to wrap up, `keep` (the default) or `delete` (runtime state is cleaned up and the child is closed; its history remains inspectable).
@@ -39,14 +40,14 @@ The copied context and background summary are reference data and never change th
 
 ## Single and batch dispatch
 
-- One: when the timeout is 0 or negative it returns at once and runs in the background; when it is positive it waits synchronously for a result, sending progress every 5 seconds and returning a timeout if the wait expires.
+- One: asynchronous by default — it returns `accepted` (with `session_id`/`run_id`) at once and auto-wakes the parent with the result when the child finishes; the parent can keep working or end the turn and must not poll, `sleep`, or create scheduled jobs to wait. Set `run_in_background=false` only when this turn's next step needs the result; that path sends progress every 5 seconds, and the child's own `run_timeout_seconds` settles it as `timeout` when it expires.
 - A batch: context is prepared for every task first, and if any single preparation fails the whole batch is not dispatched (no half batch is left behind). It then dispatches one by one, reclaiming any that fails to start and marking it failed. The completion condition follows the strategy: run all in parallel / review then merge → wait for all; first success → finished at the first success. Once it finishes early, the remaining branches are kept by default, or interrupted by default under the first-success strategy.
 
 ## Waiting, reporting, and interrupting
 
 A wait subscribes to the completion signal first, and when there is no signal it polls at a fixed interval that settles around one second (between 0.2 and 5 seconds). A wait can end for three reasons: the completion condition is met, it times out, or the parent thread receives a message.
 
-When a child thread is running its current turn and its mailbox is open, a message sent to it goes straight into that turn; otherwise it starts a new one, and sending a message to itself raises an error. When a child reports back, an idle parent thread is woken automatically to receive it, and submitting the same message again does not enqueue it a second time.
+When a child thread is running its current turn and its mailbox is open, a message sent to it goes straight into that turn; otherwise it starts a new one, and sending a message to itself raises an error. When a child reports back while the parent is running a turn, the report is injected into the next model round of that turn as a hidden observation instead of creating a user bubble; an idle parent is woken with a new turn. Background dispatch completions use the same path and carry a "report to the user, do not poll again" hint in the wake payload. Submitting the same message again does not enqueue it a second time.
 
 An interrupt only requests cancellation of the run and does not change session state; a close sets the session state to closed and cancels the run along with it, and can also cascade to its descendants; a resume sets the state back to active.
 

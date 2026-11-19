@@ -2826,6 +2826,13 @@ fn project_file_write_success(data: &Value) -> Option<Value> {
             "diff_omitted",
         ],
     );
+    // 回执已逐项写明行数、sha256 与语法结论；重复的扁平字段只多占上下文。
+    // 结构化判定保留 `check`，其余事实以回执为准。
+    if projected.contains_key("receipt") {
+        projected.remove("lines");
+        projected.remove("sha256");
+        projected.remove("syntax");
+    }
     let dry_run = is_dry_run_preview(data, map);
     if dry_run {
         // 预览从未写盘：`changed` 只能表示「磁盘已变」，因此恒为 false。

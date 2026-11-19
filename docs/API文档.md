@@ -238,7 +238,8 @@ wunder 是一个**泛用型人工智能操作系统**（wunder = 模型 + 拘束
 - `status/wait`、会话级 `subagents` 列表以及聊天消息里的 `messages[].subagents[]` 会同步返回 `metadata/controller_session_id/depth/role/control_scope/spawn_mode` 等结构化字段，前端可以直接渲染子智能体工作区，不再依赖聊天文本推断谱系。
 - 流式事件新增 `subagent_dispatch_start/subagent_dispatch_item_update/subagent_dispatch_finish/subagent_status/subagent_interrupt/subagent_close/subagent_resume/subagent_announce`，其中批次开始/结束事件会携带 `strategy/completion_mode/remaining_action` 供前端工作流展示。
 - Codex 风格父子轮次语义：父智能体在成功派发子智能体后不必阻塞等待；父轮可以先发出 `turn_terminal` 并结束，本次对话在用户视角应视为“已结束”，子智能体继续在后台运行。
-- 当某个 `dispatch_id` 达到 `completion_mode` 收敛条件，或全部子任务完成后，系统会向父会话追加一条隐藏内部观察消息并自动唤醒父线程继续推理；该观察消息会参与轮次对齐，但在聊天历史里会标记 `hiddenInternal=true`，前端默认不渲染正文。
+- `spawn` 默认后台（`run_in_background=true`）：立即返回 `accepted`、`session_id` 与 `run_id`，子任务完成时自动唤醒父线程；`run_timeout_seconds` 只限制子任务自身运行时长，不再兼任父线程的同步等待时长。只有本轮下一步依赖结果时才 `run_in_background=false`，此时父轮阻塞到子任务结束；多个独立任务可在同一条消息里发多个 `spawn` 并行派出。子线程看不到父线程会话，交办文本要自成一体（目标、背景、约束、期望产出），缺失背景用 `context_summary` 或 `fork_turns` 传。
+- 当某个 `dispatch_id` 达到 `completion_mode` 收敛条件，或全部子任务完成后，系统会向父会话追加一条隐藏内部观察消息并自动唤醒父线程继续推理；父线程正在跑一轮时该观察消息进入当前轮的邮箱、在下一个模型轮次注入（不产生用户气泡），父线程空闲时才新起一条唤醒轮次。该观察消息在聊天历史里会标记 `hiddenInternal=true`，前端默认不渲染正文；后台派出的唤醒载荷带有 `next_step`，提示模型向用户汇报结果且不要再次轮询。
 - 新增会话级子智能体接口：
   - `GET /wunder/chat/sessions/{session_id}/subagents`：返回当前父会话可见的子智能体运行项列表，支持 `limit`、`dispatchId`、`parentTurnRef`、`parentUserRound`、`latestTurnOnly`
     - `latestTurnOnly=true` 时，服务端会按子智能体元数据中的 `parent_turn_ref / parent_user_round / parent_model_round` 自动收敛到当前最新父轮次，便于前端只回放本轮派生的子智能体，而不混入历史轮次分支

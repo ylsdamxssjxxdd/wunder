@@ -1,6 +1,35 @@
 use super::*;
 
 #[test]
+fn closed_heredoc_passes_the_guard() {
+    let script = "cat > /tmp/patch.py <<'EOF'\nprint(1)\nEOF\npython3 /tmp/patch.py";
+    assert_eq!(unterminated_heredoc(script), None);
+    // `<<-` 允许用制表符缩进的定界符收尾。
+    let tabbed = "cat <<-EOF\n\techo hi\n\tEOF\n";
+    assert_eq!(unterminated_heredoc(tabbed), None);
+}
+
+#[test]
+fn truncated_heredoc_is_reported_with_its_delimiter() {
+    let truncated = "cat > /tmp/patch.py <<'EOF'\nprint(1)\nprint(2)";
+    assert_eq!(unterminated_heredoc(truncated), Some("EOF".to_string()));
+    let quoted = "python3 <<\"PY\"\nprint(1)\n";
+    assert_eq!(unterminated_heredoc(quoted), Some("PY".to_string()));
+}
+
+#[test]
+fn shift_operators_and_herestrings_are_not_heredocs() {
+    // 移位运算出现在脚本正文里，不该被当成 heredoc 开头。
+    let script = "python3 -c \"x = a << b\"\necho done";
+    assert_eq!(unterminated_heredoc(script), None);
+    let herestring = "grep foo <<< \"bar baz\"";
+    assert_eq!(unterminated_heredoc(herestring), None);
+    // 正文里的 `<<` 行属于已闭合 heredoc 的内容，不应再开新 heredoc。
+    let nested = "cat > /tmp/a.txt <<'EOF'\nx << y\nEOF\n";
+    assert_eq!(unterminated_heredoc(nested), None);
+}
+
+#[test]
 fn background_command_plan_keeps_multiline_script_as_one_job() {
     let script = "printf 'a\\n'\nprintf 'b\\n'";
     assert_eq!(

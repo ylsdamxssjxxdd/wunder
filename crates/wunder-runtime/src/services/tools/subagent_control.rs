@@ -318,6 +318,8 @@ fn validate_action_fields(args: &Value, action: &str) -> Result<()> {
             "runTimeoutSeconds",
             "timeout_seconds",
             "timeoutSeconds",
+            "run_in_background",
+            "runInBackground",
             "cleanup",
             "thread_strategy",
             "threadStrategy",

@@ -512,3 +512,80 @@ async fn unified_diff_lists_every_replacement_past_the_block_budget() {
     assert_eq!(changed.len(), 12);
     assert_eq!(changed[0], json!(1));
 }
+
+#[tokio::test]
+async fn batch_edits_apply_in_order_and_write_once() {
+    let fixture = Fixture::new();
+    fixture.write("sample.txt", "alpha\nbeta\ngamma\n");
+    let result = fixture
+        .call(json!({
+            "file_path": "sample.txt",
+            "edits": [
+                {"old_string": "alpha", "new_string": "ALPHA"},
+                {"old_string": "gamma", "new_string": "GAMMA"},
+                {"old_string": "ALPHA", "new_string": "ALPHA2"}
+            ]
+        }))
+        .await;
+    assert_ok(&result);
+    assert_eq!(result["data"]["edits_applied"], 3);
+    assert_eq!(result["data"]["edits_missed"], 0);
+    assert_eq!(result["data"]["replacements"], 3);
+    assert_eq!(fixture.read("sample.txt"), "ALPHA2\nbeta\nGAMMA\n");
+}
+
+#[tokio::test]
+async fn batch_misses_report_every_step_and_stop_mode_never_writes() {
+    let fixture = Fixture::new();
+    fixture.write("sample.txt", "alpha\nbeta\n");
+    let before = fixture.read("sample.txt");
+    let result = fixture
+        .call(json!({
+            "file_path": "sample.txt",
+            "edits": [
+                {"old_string": "alpha", "new_string": "ALPHA"},
+                {"old_string": "missing", "new_string": "x"},
+                {"old_string": "beta", "new_string": "BETA"}
+            ]
+        }))
+        .await;
+    assert_eq!(result["error_meta"]["code"], "TOOL_EDIT_BATCH_MISSED");
+    let steps = result["data"]["edits"].as_array().expect("step reports");
+    assert_eq!(steps.len(), 3);
+    assert_eq!(steps[0]["status"], json!("applied"));
+    assert_eq!(steps[1]["status"], json!("missed"));
+    assert_eq!(steps[2]["status"], json!("applied"));
+    assert_eq!(fixture.read("sample.txt"), before);
+
+    let partial = fixture
+        .call(json!({
+            "file_path": "sample.txt",
+            "on_miss": "continue",
+            "edits": [
+                {"old_string": "alpha", "new_string": "ALPHA"},
+                {"old_string": "missing", "new_string": "x"}
+            ]
+        }))
+        .await;
+    assert_ok(&partial);
+    assert_eq!(partial["data"]["edits_missed"], 1);
+    assert_eq!(partial["data"]["partial"], json!(true));
+    assert_eq!(fixture.read("sample.txt"), "ALPHA\nbeta\n");
+}
+
+#[tokio::test]
+async fn tolerant_match_names_the_tier_it_used() {
+    let fixture = Fixture::new();
+    fixture.write("sample.txt", "fn main() {   \n    run();\n}\n");
+    let result = fixture
+        .call(json!({
+            "file_path": "sample.txt",
+            "old_string": "fn main() {\n    run();\n}",
+            "new_string": "fn main() {\n    stop();\n}"
+        }))
+        .await;
+    assert_ok(&result);
+    assert_eq!(result["data"]["match"], json!("trailing_whitespace"));
+    assert!(result["data"]["match_note"].is_string());
+    assert_eq!(fixture.read("sample.txt"), "fn main() {\n    stop();\n}\n");
+}

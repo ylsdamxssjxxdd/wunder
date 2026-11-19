@@ -2613,6 +2613,7 @@ fn dry_run_state_marks_preview_even_without_the_data_flag() {
 }
 
 /// 写入回执与 unified diff 必须存活到模型投影：压缩后只剩计数就等于没有证据。
+/// 回执已含行数、sha256 与语法结论，扁平副本不再重复回给模型。
 #[test]
 fn write_receipt_and_unified_diff_survive_the_projection() {
     let projected = project_file_write_success(&json!({
@@ -2639,8 +2640,12 @@ fn write_receipt_and_unified_diff_survive_the_projection() {
         projected["receipt"],
         json!("file: temp/sketch.py (2 lines, 24 B, sha256: 9f3a1c2d4e5f)")
     );
-    assert_eq!(projected["syntax"], json!("OK (py_compile)"));
-    assert_eq!(projected["lines"], json!(2));
+    for duplicated in ["lines", "sha256", "syntax"] {
+        assert!(
+            projected.get(duplicated).is_none(),
+            "{duplicated} repeats the receipt: {projected}"
+        );
+    }
     assert_eq!(projected["history"], json!("temp/.history/sketch.py@3"));
     assert!(projected["unified_diff"]
         .as_str()

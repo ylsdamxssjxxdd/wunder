@@ -180,6 +180,96 @@ fn is_broken_pipe_exit(command: &str, returncode: i32, stderr: &str) -> bool {
     lowered.contains("broken pipe") || lowered.contains("epipe")
 }
 
+/// 检查未闭合的 heredoc，返回那个定界符。
+///
+/// 源问题：`cat > x.py <<'EOF'` 贴长脚本时，一旦内容被截断（输出上限、手工粘贴、
+/// 复制少了几行），bash 只会打一条 `here-document ... delimited by end-of-file`
+/// 警告，然后把**半截脚本**当成正文执行或落盘——错在静默处，最难查。
+///
+/// 判定只认「确实在喂脚本/喂文件」的 `<<`：同一行 `<<` 之前要有 `>` 重定向，或该行
+/// 以 cat / tee / python / sh 等读入命令开头。这样 `a << b` 这类移位不会误报。
+fn unterminated_heredoc(content: &str) -> Option<String> {
+    if !content.contains('\n') {
+        return None;
+    }
+    let lines = content.lines().collect::<Vec<_>>();
+    let mut index = 0usize;
+    while index < lines.len() {
+        match heredoc_open(lines[index]) {
+            Some((delimiter, strip_tabs)) => {
+                match find_heredoc_end(&lines[index + 1..], &delimiter, strip_tabs) {
+                    Some(offset) => index += offset + 2,
+                    None => return Some(delimiter),
+                }
+            }
+            None => index += 1,
+        }
+    }
+    None
+}
+
+/// 解析一行里的 heredoc 开头，返回（定界符, 是否 `<<-` 去制表符模式）。
+fn heredoc_open(line: &str) -> Option<(String, bool)> {
+    let trimmed = line.trim();
+    if trimmed.starts_with('#') {
+        return None;
+    }
+    let marker = line.find("<<")?;
+    let before = &line[..marker];
+    if before.ends_with('<') {
+        return None; // herestring `<<<`，不是 heredoc
+    }
+    let head = trimmed.split_whitespace().next().unwrap_or_default();
+    let feeds_program = before.contains('>')
+        || matches!(
+            head,
+            "cat" | "tee" | "python" | "python3" | "bash" | "sh" | "zsh" | "node" | "sqlite3" | "psql"
+        );
+    if !feeds_program {
+        return None;
+    }
+    let rest = &line[marker + 2..];
+    let (rest, strip_tabs) = match rest.strip_prefix('-') {
+        Some(stripped) => (stripped, true),
+        None => (rest, false),
+    };
+    let rest = rest.trim_start();
+    let (delimiter, tail) = match rest.chars().next()? {
+        quote @ ('\'' | '"') => {
+            let inner = &rest[quote.len_utf8()..];
+            let end = inner.find(quote)?;
+            (&inner[..end], &inner[end + quote.len_utf8()..])
+        }
+        _ => {
+            let end = rest
+                .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                .unwrap_or(rest.len());
+            (&rest[..end], &rest[end..])
+        }
+    };
+    // 定界符必须是一个完整的 shell 词：后面要么行尾，要么空白接别的重定向。
+    // `python3 -c "x = a << b"` 这种移位因此不会被误认成 heredoc。
+    if !tail.is_empty() && !tail.starts_with(char::is_whitespace) {
+        return None;
+    }
+    if delimiter.is_empty() {
+        return None;
+    }
+    Some((delimiter.to_string(), strip_tabs))
+}
+
+/// 定界符必须独占一行（`<<-` 时忽略行首制表符），和 bash 的规则一致。
+fn find_heredoc_end(lines: &[&str], delimiter: &str, strip_tabs: bool) -> Option<usize> {
+    lines.iter().position(|line| {
+        let candidate = if strip_tabs {
+            line.trim_start_matches('\t')
+        } else {
+            line
+        };
+        candidate.trim_end() == delimiter
+    })
+}
+
 pub(crate) fn extract_direct_patch_from_command(content: &str) -> Option<String> {
     let trimmed = content.trim();
     if trimmed.starts_with("*** Begin Patch") && trimmed.ends_with("*** End Patch") {
@@ -2322,6 +2412,23 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             ToolErrorMeta::new(
                 "TOOL_EXEC_SLEEP_NOT_ALLOWED",
                 Some("不要用 sleep 空等：未结束的命令会返回 command_session_id，请用 write_stdin 等待输出。".to_string()),
+                false,
+                None,
+            ),
+            false,
+        ));
+    }
+    // heredoc 没闭合就交给 shell 等于执行半截脚本：先拦下来，指向 write_file。
+    if let Some(delimiter) = unterminated_heredoc(&content) {
+        return Ok(build_failed_tool_result(
+            format!("命令里的 heredoc 没有闭合（定界符 {delimiter}），未执行任何内容"),
+            json!({ "command": content, "heredoc_delimiter": delimiter }),
+            ToolErrorMeta::new(
+                "TOOL_EXEC_HEREDOC_UNTERMINATED",
+                Some(
+                    "heredoc 内容被截断时 shell 只会执行半截脚本。长脚本请先用写入文件落盘，再执行该文件；短命令保持原样即可。"
+                        .to_string(),
+                ),
                 false,
                 None,
             ),

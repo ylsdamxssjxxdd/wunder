@@ -24,6 +24,8 @@ mod desktop_control;
 mod desktop_control_impl;
 mod dispatch;
 mod edit_args;
+mod edit_batch;
+mod edit_match;
 mod edit_recovery;
 mod edit_tool;
 mod file_history;

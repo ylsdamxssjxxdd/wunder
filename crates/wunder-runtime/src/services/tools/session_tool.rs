@@ -2,11 +2,11 @@ use super::{
     build_effective_tool_names, build_model_tool_success, build_parent_follow_up_announce,
     build_session_tool_result, clamp_limit, insert_run_metadata_field, load_agent_record,
     load_session_messages, normalize_optional_string, now_ts, parse_cleanup_mode,
-    prepare_child_session, session_cleanup_label, should_auto_wake_parent_after_child_run,
-    should_auto_wake_parent_follow_up, spawn_session_run, sync_announce_auto_wake,
-    ChildSessionToolMode, PreparedChildSession, SessionCleanup, SessionHistoryArgs,
-    SessionListArgs, SessionRunMeta, SessionSendArgs, SessionSpawnArgs, ToolContext,
-    MAX_SESSION_HISTORY_ITEMS, MAX_SESSION_LIST_ITEMS, MAX_SESSION_MESSAGE_ITEMS,
+    prepare_child_session, session_cleanup_label, should_auto_wake_parent_follow_up,
+    spawn_session_run, sync_announce_auto_wake, ChildSessionToolMode, PreparedChildSession,
+    SessionCleanup, SessionHistoryArgs, SessionListArgs, SessionRunMeta, SessionSendArgs,
+    SessionSpawnArgs, ToolContext, MAX_SESSION_HISTORY_ITEMS, MAX_SESSION_LIST_ITEMS,
+    MAX_SESSION_MESSAGE_ITEMS,
 };
 use crate::i18n;
 use crate::schemas::WunderRequest;
@@ -392,12 +392,14 @@ pub(crate) async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> R
     } = prepared;
     let run_id = format!("run_{}", Uuid::new_v4().simple());
     let cleanup = parse_cleanup_mode(payload.cleanup.as_deref());
-    let wait_seconds = payload.run_timeout_seconds.unwrap_or(0.0).max(0.0);
-    sync_announce_auto_wake(
-        &mut announce,
-        Some(&mut run_metadata),
-        should_auto_wake_parent_after_child_run(false, wait_seconds),
-    );
+    // 后台是默认：派出即返回，完成时自动唤醒父线程。run_timeout_seconds 只
+    // 约束子任务自身的运行时长，不再兼任父线程的同步等待时长；只有下一步
+    // 依赖结果、必须在本轮拿到时才显式 run_in_background=false 前台等待。
+    let background = payload.run_in_background.unwrap_or(true);
+    let run_timeout = payload
+        .run_timeout_seconds
+        .filter(|value| value.is_finite() && *value > 0.0);
+    sync_announce_auto_wake(&mut announce, Some(&mut run_metadata), background);
     insert_run_metadata_field(&mut run_metadata, "context_inheritance", context_metadata);
     insert_run_metadata_field(&mut run_metadata, "spawn_mode", json!("single"));
     insert_run_metadata_field(
@@ -408,9 +410,9 @@ pub(crate) async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> R
     insert_run_metadata_field(
         &mut run_metadata,
         "run_timeout_seconds",
-        json!(wait_seconds),
+        json!(run_timeout.unwrap_or(0.0)),
     );
-    insert_run_metadata_field(&mut run_metadata, "background", json!(wait_seconds <= 0.0));
+    insert_run_metadata_field(&mut run_metadata, "background", json!(background));
     let mut receiver = spawn_session_run(
         context,
         request,
@@ -426,7 +428,7 @@ pub(crate) async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> R
         },
         Some(announce),
         cleanup,
-        payload.run_timeout_seconds,
+        run_timeout,
     )
     .await?;
     if let Some(emitter) = context.event_emitter.as_ref() {
@@ -448,7 +450,7 @@ pub(crate) async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> R
             }),
         );
     }
-    if wait_seconds <= 0.0 {
+    if background {
         return Ok(build_session_tool_result(
             "spawn",
             "accepted",
@@ -457,10 +459,7 @@ pub(crate) async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> R
             None,
             None,
             None,
-            Some(
-                "spawn already dispatched the initial child task. Use status/wait/history before sending another turn or reporting completion."
-                    .to_string(),
-            ),
+            Some(i18n::t("tool.subagent.background_next_step")),
         ));
     }
     let summary = i18n::t("monitor.summary.subagent_wait");
@@ -478,12 +477,12 @@ pub(crate) async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> R
         tokio::time::Instant::now() + Duration::from_secs(5),
         Duration::from_secs(5),
     );
-    let deadline = tokio::time::sleep(Duration::from_secs_f64(wait_seconds));
-    tokio::pin!(deadline);
+    // 前台等待到子任务结束；子任务自身的 run_timeout_seconds 会把超时变成
+    // timeout 终态，因此这里不再另设父线程的等待上限。
     let outcome = loop {
         tokio::select! {
             result = &mut receiver => {
-                break Ok(result);
+                break result;
             }
             _ = heartbeat.tick() => {
                 if let Some(emitter) = context.event_emitter.as_ref() {
@@ -496,13 +495,10 @@ pub(crate) async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> R
                     }));
                 }
             }
-            _ = &mut deadline => {
-                break Err("timeout");
-            }
         }
     };
     match outcome {
-        Ok(Ok(outcome)) => {
+        Ok(outcome) => {
             if outcome.status == "success" {
                 Ok(build_session_tool_result(
                     "spawn",
@@ -527,7 +523,7 @@ pub(crate) async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> R
                 ))
             }
         }
-        Ok(Err(err)) => Ok(build_session_tool_result(
+        Err(err) => Ok(build_session_tool_result(
             "spawn",
             "error",
             Some(child_session_id.clone()),
@@ -536,19 +532,6 @@ pub(crate) async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> R
             Some(err.to_string()),
             None,
             None,
-        )),
-        Err(_) => Ok(build_session_tool_result(
-            "spawn",
-            "timeout",
-            Some(child_session_id),
-            run_id,
-            None,
-            Some("timeout".to_string()),
-            None,
-            Some(
-                "The child session may still be running. Use status/wait/history before retrying or sending another turn."
-                    .to_string(),
-            ),
         )),
     }
 }

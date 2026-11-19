@@ -58,6 +58,8 @@ pub struct ParentDispatchConfig {
     pub parent_model_round: Option<i64>,
     pub emit_parent_events: bool,
     pub auto_wake: bool,
+    /// 派生子任务时父线程的语言，用于唤醒说明与结果提示。
+    pub language: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -840,6 +842,22 @@ async fn append_parent_stream_event(
         .await
 }
 
+/// 父线程有打开的一轮时接收完成观测；没有活跃轮次（或邮箱已满）返回 false，
+/// 由调用方退回持久唤醒。
+fn try_mailbox_wake(
+    monitor: Option<&MonitorState>,
+    user_id: &str,
+    parent_session_id: &str,
+    message: crate::services::runtime::thread::mailbox::AgentMessage,
+) -> bool {
+    monitor.is_some_and(|monitor| {
+        matches!(
+            monitor.mailboxes.send(user_id, parent_session_id, message),
+            Ok(true)
+        )
+    })
+}
+
 fn schedule_parent_auto_wake(
     orchestrator: Arc<Orchestrator>,
     storage: Arc<dyn StorageBackend>,
@@ -892,6 +910,29 @@ fn schedule_parent_auto_wake(
         return;
     }
     let payload = message_payload::bounded_completion(build_auto_wake_payload(payload, &dispatch));
+    let message_id = auto_wake_run_id
+        .clone()
+        .map(|id| format!("completion_{id}"))
+        .unwrap_or_else(|| format!("completion_{}", uuid::Uuid::new_v4().simple()));
+    // 父线程正在跑：完成结果进当前轮的邮箱，在下一个模型轮次作为隐藏观测注入，
+    // 不另起一条用户气泡；线程空闲或邮箱已关闭时才走持久唤醒。
+    let message = crate::services::runtime::thread::mailbox::AgentMessage {
+        id: message_id.clone(),
+        source: dispatch
+            .cancellation_guard
+            .as_ref()
+            .map(|guard| guard.session_id().to_string())
+            .unwrap_or_default(),
+        kind: "completion".into(),
+        text: serde_json::to_string(&payload).unwrap_or_default(),
+        cancellation: dispatch
+            .cancellation_guard
+            .as_ref()
+            .map(|guard| guard.token.clone()),
+    };
+    if try_mailbox_wake(monitor.as_deref(), &user_id, &parent_session_id, message) {
+        return;
+    }
     let request = match build_parent_auto_wake_request(
         storage.as_ref(),
         &user_id,
@@ -944,10 +985,7 @@ fn schedule_parent_auto_wake(
             return;
         }
         let message = crate::services::runtime::thread::mailbox::AgentMessage {
-            id: auto_wake_run_id
-                .clone()
-                .map(|id| format!("completion_{id}"))
-                .unwrap_or_else(|| format!("completion_{}", uuid::Uuid::new_v4().simple())),
+            id: message_id,
             source: _cancellation_guard
                 .as_ref()
                 .map(|guard| guard.session_id().to_string())
@@ -1325,6 +1363,7 @@ fn build_auto_wake_payload(payload: Value, dispatch: &ParentDispatchConfig) -> V
     let mut wake_payload = json!({
         "kind": "subagent_auto_wake",
         "instruction": "Background subagent work has produced new observations. Continue the parent task using the latest subagent state.",
+        "next_step": crate::i18n::t_in_language("tool.subagent.wake_next_step", &dispatch.language),
         "dispatch": payload,
     });
     if let Some(object) = wake_payload.as_object_mut() {
@@ -1849,7 +1888,8 @@ mod tests {
         encode_parent_turn_ref, is_auto_wake_consumed, is_failed_status, is_terminal_status,
         list_parent_subagents_with_options, parent_session_blocks_auto_wake,
         resolve_effective_status, select_effective_run, suppress_auto_wake_from_wait_result,
-        suppress_auto_wake_from_wait_result_with_parent, ParentSubagentListOptions,
+        suppress_auto_wake_from_wait_result_with_parent, try_mailbox_wake,
+        ParentSubagentListOptions,
     };
     use crate::storage::*;
     use serde_json::{json, Value};
@@ -2566,5 +2606,51 @@ mod tests {
             !parent_session_blocks_auto_wake(&storage, None, user_id, parent_session_id)
                 .expect("inspect auto wake gate")
         );
+    }
+
+    #[test]
+    fn completion_wake_prefers_an_open_parent_turn_mailbox() {
+        let (dir, storage) = build_storage();
+        let monitor = crate::monitor::MonitorState::new(
+            std::sync::Arc::new(storage),
+            crate::config::Config::default().observability,
+            dir.path().to_string_lossy().into(),
+        );
+        let user_id = "user_subagents";
+        let parent_session_id = "sess_parent_mailbox";
+        let message = || crate::services::runtime::thread::mailbox::AgentMessage {
+            id: "completion_run_mailbox".to_string(),
+            source: "sess_child".to_string(),
+            kind: "completion".to_string(),
+            text: json!({"kind":"subagent_auto_wake","next_step":"report"}).to_string(),
+            cancellation: None,
+        };
+        let inbox = monitor
+            .mailboxes
+            .open(user_id, parent_session_id)
+            .expect("open parent mailbox");
+        assert!(try_mailbox_wake(
+            Some(&monitor),
+            user_id,
+            parent_session_id,
+            message()
+        ));
+        let delivered = inbox.take(true);
+        assert_eq!(delivered.len(), 1);
+        assert_eq!(delivered[0].id, "completion_run_mailbox");
+        // 轮次收尾后邮箱关闭：同一份完成观测退回持久唤醒。
+        drop(inbox);
+        assert!(!try_mailbox_wake(
+            Some(&monitor),
+            user_id,
+            parent_session_id,
+            message()
+        ));
+        assert!(!try_mailbox_wake(
+            None,
+            user_id,
+            parent_session_id,
+            message()
+        ));
     }
 }
