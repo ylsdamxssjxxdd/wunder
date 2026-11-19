@@ -19,9 +19,8 @@
 use super::capabilities::{local_fs, FsCapability};
 use super::context::collect_allow_roots;
 use super::line_diff::{
-    diff_added_file, diff_replaced, diff_source_too_large, insert_diff_fields, mark_text_omission,
-    new_file_notice, unified_diff, LineDiff, DIFF_UNAVAILABLE_OVERSIZE, OMITTED_BUDGET,
-    OMITTED_NEW_FILE,
+    changed_lines, diff_added_file, diff_replaced, diff_source_too_large, insert_diff_fields,
+    render_write_diff, DiffEcho, LineDiff, DIFF_UNAVAILABLE_OVERSIZE,
 };
 use super::{
     build_model_tool_success,
@@ -329,7 +328,17 @@ fn create_command(
     }
     let diff = diff_added_file(&file_text);
     let data = build_edit_data(path, "add", &diff, None);
-    let data = with_receipt(path, "", &file_text, &diff, None, None, verify, data, true);
+    let data = with_receipt(
+        path,
+        "",
+        &file_text,
+        &diff,
+        None,
+        None,
+        verify,
+        data,
+        DiffEcho::NewFile,
+    );
     Ok(write_outcome("create", path, data, dry_run, true))
 }
 
@@ -447,7 +456,11 @@ fn insert_command(
         snapshot.as_ref(),
         verify,
         data,
-        false,
+        if dry_run {
+            DiffEcho::Full
+        } else {
+            DiffEcho::Authored
+        },
     );
     Ok(write_outcome("insert", path, data, dry_run, changed))
 }
@@ -538,6 +551,7 @@ fn apply_history_step(
         (diff_replaced(before, &restored), None)
     };
     let data = build_edit_data(path, "update", &diff, unavailable);
+    // 恢复快照的内容不是这次调用写的：必须给 diff，模型才知道回滚到了什么。
     let mut data = with_receipt(
         path,
         before,
@@ -547,7 +561,7 @@ fn apply_history_step(
         None,
         verify,
         data,
-        false,
+        DiffEcho::Full,
     );
     if let Some(map) = data.as_object_mut() {
         map.insert("restored_from".to_string(), json!(step.display));
@@ -650,18 +664,14 @@ fn with_receipt(
     snapshot: Option<&file_history::Snapshot>,
     verify: bool,
     mut data: Value,
-    omit_body: bool,
+    echo: DiffEcho,
 ) -> Value {
     let receipt = write_receipt::build(path, after, verify);
-    // 与写入文件、字面编辑同一口径：回执带 diff，但受 `line_diff` 的 32KB
-    // 结构预算约束；`create` 的正文就是调用方刚发出去的内容，只给一行说明。
-    let (unified, unified_truncated) = if omit_body {
-        (new_file_notice(path, after.lines().count()), true)
-    } else {
-        let rendered = unified_diff(path, before, after, diff);
-        let truncated = rendered.truncated();
-        (rendered.text, truncated)
-    };
+    // 与写入文件、字面编辑同一口径：落盘内容就是这次调用发出去的时候不给 diff
+    // 正文（`create` / `insert` / `str_replace`），只留回执 + `changed_lines`。
+    // 例外是 `dry_run` 预览与 `undo_edit` 恢复快照——那些内容不是这次调用写的。
+    let (unified, unified_truncated, omitted_reason) =
+        render_write_diff(echo, path, after.lines().count(), before, after, diff);
     if let Some(map) = data.as_object_mut() {
         if let Some(snapshot) = snapshot {
             map.insert("history".to_string(), json!(snapshot.display));
@@ -673,15 +683,10 @@ fn with_receipt(
             "unified_diff_truncated".to_string(),
             json!(unified_truncated),
         );
-        if unified_truncated {
-            mark_text_omission(
-                map,
-                if omit_body {
-                    OMITTED_NEW_FILE
-                } else {
-                    OMITTED_BUDGET
-                },
-            );
+        if let Some(reason) = omitted_reason {
+            map.insert("diff_omitted".to_string(), json!(reason));
+            // 没有正文时，`changed_lines` 就是「改在哪」的答案。
+            map.insert("changed_lines".to_string(), json!(changed_lines(diff)));
         }
         if let Some(reason) = unavailable {
             map.insert("diff_unavailable".to_string(), json!(reason));

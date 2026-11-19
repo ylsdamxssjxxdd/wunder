@@ -333,6 +333,7 @@ fn create_and_insert_data_pin_the_patch_family_key_set() {
         "added",
         "added_lines",
         "changed_files",
+        "changed_lines",
         "check",
         "deleted",
         "deleted_lines",
@@ -353,9 +354,10 @@ fn create_and_insert_data_pin_the_patch_family_key_set() {
     ];
     assert_eq!(sorted_keys(&created["data"]), base);
     let mut expected = base.clone();
-    // `history`/`history_rev` 排在最前面的 `files` 之前（`diff_omitted` 之后算起）。
-    expected.insert(10, "history");
-    expected.insert(11, "history_rev");
+    // 覆盖类写人才有 history/history_rev；键集仍按字典序比较。
+    expected.push("history");
+    expected.push("history_rev");
+    expected.sort_unstable();
     let inserted = run(
         &ws,
         "insert",

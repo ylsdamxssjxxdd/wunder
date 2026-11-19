@@ -902,7 +902,7 @@ async fn write_tool_never_echoes_what_the_call_already_sent() {
             .is_some_and(|lines| lines.len() <= 80)
     );
 
-    // 覆盖写：diff 是模型没直接说过的事实，留着；但受 64KB 结构预算约束。
+    // 覆盖写：落盘的就是这次发出去的正文，模型面同样不回灌 diff；只给落点。
     let mut replaced = String::new();
     for index in 0..3000 {
         replaced.push_str(&format!("row {:05} REWRITTEN payload payload\n", index));
@@ -917,19 +917,37 @@ async fn write_tool_never_echoes_what_the_call_already_sent() {
     assert_eq!(updated["data"]["added_lines"], 3000);
     assert_eq!(updated["data"]["deleted_lines"], 3000);
     assert_eq!(updated["data"]["unified_diff_truncated"], true);
+    assert_eq!(updated["data"]["diff_omitted"], json!("authored"));
+    assert_eq!(updated["data"]["changed_lines"], json!([1]));
     let updated_diff = updated["data"]["unified_diff"].as_str().expect("diff");
     assert!(
-        updated_diff.len() <= 32 * 1024,
-        "diff must stay inside the structural budget, got {}",
-        updated_diff.len()
-    );
-    assert!(
-        updated_diff.contains("line(s) omitted (diff budget)"),
-        "omission must be explicit: {}",
+        updated_diff.contains("diff omitted"),
+        "big overwrite must not replay its body: {}",
         &updated_diff[..updated_diff.len().min(160)]
     );
+    assert!(updated_diff.len() < 512, "{}", updated_diff.len());
+
+    // 唯一的例外：dry_run 预览问的就是「会变成什么样」，必须给真 diff。
+    invoke(
+        &fixture,
+        "write_file",
+        json!({ "path": "bulk/preview.txt", "content": "alpha\nbeta\n" }),
+    )
+    .await;
+    let preview = invoke(
+        &fixture,
+        "write_file",
+        json!({ "path": "bulk/preview.txt", "content": "alpha\nBETA\n", "dry_run": true }),
+    )
+    .await;
+    assert_eq!(preview["ok"], true, "{preview}");
+    assert_eq!(preview["data"]["dry_run"], true);
+    let preview_diff = preview["data"]["unified_diff"].as_str().expect("preview");
     assert!(
-        updated_diff.lines().any(|line| line.starts_with("@@ -1,3000 +1,3000 @@")),
-        "the changed range must stay visible"
+        preview_diff.contains("-beta") && preview_diff.contains("+BETA"),
+        "preview must show the real diff: {}",
+        &preview_diff[..preview_diff.len().min(200)]
     );
+    assert!(preview["data"]["diff_omitted"].is_null(), "{preview}");
+    assert!(updated["data"]["bytes"].as_u64().unwrap_or(0) > 0);
 }

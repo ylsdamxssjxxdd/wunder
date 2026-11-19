@@ -338,11 +338,13 @@ async fn range_replace_rewrites_lines_and_returns_a_verifiable_receipt() {
         syntax.contains("py_compile") || syntax.contains("skipped"),
         "{syntax}"
     );
+    // 正文由这次调用给出：模型面只收回执 + 落点，不回灌 diff。
     let unified = result["data"]["unified_diff"]
         .as_str()
         .expect("unified diff");
-    assert!(unified.contains("-    x = 1"), "{unified}");
-    assert!(unified.contains("+    x = 10"), "{unified}");
+    assert!(unified.contains("diff omitted"), "{unified}");
+    assert_eq!(result["data"]["diff_omitted"], json!("authored"));
+    assert_eq!(result["data"]["changed_lines"], json!([2]));
     // 覆盖前的内容留在 temp/.history，可直接 diff 回滚。
     let snapshot = result["data"]["history"]
         .as_str()
@@ -450,8 +452,9 @@ async fn write_file_returns_a_receipt_a_snapshot_and_a_preview_diff() {
         "x = 1\n"
     );
     let unified = result["data"]["unified_diff"].as_str().expect("unified");
-    assert!(unified.contains("-x = 1"), "{unified}");
-    assert!(unified.contains("+x = 2"), "{unified}");
+    assert!(unified.contains("diff omitted"), "{unified}");
+    assert_eq!(result["data"]["diff_omitted"], json!("authored"));
+    assert_eq!(result["data"]["unified_diff_truncated"], json!(true));
     assert_eq!(fixture.read("sketch.py"), "x = 2\ny = 3\n");
 
     let preview = fixture
@@ -495,13 +498,17 @@ async fn unified_diff_lists_every_replacement_past_the_block_budget() {
     assert_ok(&result);
     assert_eq!(result["data"]["hunks_applied"], json!(15));
     assert!(result["data"]["diff_lines_omitted"].as_u64().unwrap_or(0) > 0);
+    // 正文是这次调用发出去的，模型面不再回灌 diff；改在哪由 changed_lines 回答。
     let unified = result["data"]["unified_diff"]
         .as_str()
         .expect("unified diff");
-    assert_eq!(unified.matches("@@ -").count(), 15, "{unified}");
-    assert!(unified.contains("+TOKEN 28"), "{unified}");
-    // 边界行只出现一次；已改行不会再被当成下一块的上下文重复打印。
-    assert_eq!(unified.matches(" keep 1\n").count(), 1, "{unified}");
-    assert_eq!(unified.matches(" TOKEN 2\n").count(), 0, "{unified}");
-    assert_eq!(result["data"]["unified_diff_truncated"], json!(false));
+    assert!(unified.contains("diff omitted"), "{unified}");
+    assert_eq!(result["data"]["diff_omitted"], json!("authored"));
+    assert_eq!(result["data"]["unified_diff_truncated"], json!(true));
+    // 结构化块被 12 块预算截断，所以落点只列前 12 处；总块数由 hunks_applied 给。
+    let changed = result["data"]["changed_lines"]
+        .as_array()
+        .expect("changed lines");
+    assert_eq!(changed.len(), 12);
+    assert_eq!(changed[0], json!(1));
 }

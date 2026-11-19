@@ -1,7 +1,7 @@
 use super::line_diff::{
-    diff_added_file, diff_replaced, diff_source_too_large, insert_diff_fields, mark_text_omission,
-    new_file_notice, unified_diff, LineDiff, DIFF_UNAVAILABLE_BINARY, DIFF_UNAVAILABLE_OVERSIZE,
-    DIFF_UNAVAILABLE_UNREADABLE, MAX_DIFF_SOURCE_BYTES, OMITTED_BUDGET, OMITTED_NEW_FILE,
+    changed_lines, diff_added_file, diff_replaced, diff_source_too_large, insert_diff_fields,
+    render_write_diff, DiffEcho, LineDiff, DIFF_UNAVAILABLE_BINARY, DIFF_UNAVAILABLE_OVERSIZE,
+    DIFF_UNAVAILABLE_UNREADABLE, MAX_DIFF_SOURCE_BYTES,
 };
 use super::{
     build_model_tool_success, build_model_tool_success_with_hint, collect_allow_roots,
@@ -2709,23 +2709,27 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
         touch_lsp_file(context, &write_outcome.target, true).await
     };
     let previous_text = write_outcome.previous_text.as_deref().unwrap_or("");
-    // diff 与回执都以「真正落盘的字节」为准（可能补回了 BOM）。
-    //
-    // 新建文件的正文就是这次调用发出去的内容，回灌一遍是 100% 冗余，只给回执
-    // 与行数；覆盖写才给 diff（BOM 回填、行裁剪这些是模型没直接说过的事实），
-    // 且受 `line_diff` 的 32KB 结构预算约束：超了按 hunk 折叠并注明省略量。
-    let (unified, unified_truncated) = if write_outcome.existed {
-        let rendered = unified_diff(
-            &path,
-            previous_text,
-            &write_outcome.written,
-            &write_outcome.diff.diff,
-        );
-        let truncated = rendered.truncated();
-        (rendered.text, truncated)
+    // 模型面回执默认不带 diff 正文：落盘的内容就是这次调用发出去的，回灌没有
+    // 信息增量（模型面只留回执 + `changed_lines`）。只有三种情况给正文：
+    // - 新建文件：正文之外没什么可说，只留回执与行数（`DiffEcho::NewFile`）；
+    // - `dry_run` 预览：问题本身就是「会变成什么样」；
+    // - 落盘字节与提交内容不一致：BOM 回填这类模型没直接说过的改动。
+    // 给正文时仍受 `line_diff` 的 32KB 结构预算约束。
+    let echo = if !write_outcome.existed {
+        DiffEcho::NewFile
+    } else if dry_run || write_outcome.written.as_bytes() != content.as_bytes() {
+        DiffEcho::Full
     } else {
-        (new_file_notice(&path, write_outcome.receipt.lines), true)
+        DiffEcho::Authored
     };
+    let (unified, unified_truncated, omitted_reason) = render_write_diff(
+        echo,
+        &path,
+        write_outcome.receipt.lines,
+        previous_text,
+        &write_outcome.written,
+        &write_outcome.diff.diff,
+    );
     let data = build_write_data(
         &path,
         write_outcome.written.len(),
@@ -2738,6 +2742,7 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
         write_outcome.snapshot.as_ref(),
         &unified,
         unified_truncated,
+        omitted_reason,
     );
     let receipt = &write_outcome.receipt;
     let summary = if dry_run {
@@ -2777,6 +2782,7 @@ fn build_write_data(
     snapshot: Option<&file_history::Snapshot>,
     unified: &str,
     unified_truncated: bool,
+    omitted_reason: Option<&'static str>,
 ) -> Value {
     let mut data = Map::<String, Value>::new();
     insert_diff_fields(&mut data, diff.action, path, &diff.diff, diff.unavailable);
@@ -2799,15 +2805,10 @@ fn build_write_data(
         "unified_diff_truncated".to_string(),
         json!(unified_truncated),
     );
-    if unified_truncated {
-        mark_text_omission(
-            &mut data,
-            if existed {
-                OMITTED_BUDGET
-            } else {
-                OMITTED_NEW_FILE
-            },
-        );
+    if let Some(reason) = omitted_reason {
+        data.insert("diff_omitted".to_string(), json!(reason));
+        // 没有正文时，`changed_lines` 就是「改在哪」的答案。
+        data.insert("changed_lines".to_string(), json!(changed_lines(&diff.diff)));
     }
     Value::Object(data)
 }
@@ -3220,6 +3221,7 @@ mod write_result_tests {
             None,
             "",
             false,
+            None,
         );
         assert_eq!(data["added_lines"], json!(2));
         assert_eq!(data["deleted_lines"], json!(0));
@@ -3249,6 +3251,7 @@ mod write_result_tests {
             None,
             "",
             false,
+            None,
         );
         assert_eq!(data["added_lines"], json!(1));
         assert_eq!(data["deleted_lines"], json!(1));
@@ -3280,6 +3283,7 @@ mod write_result_tests {
             None,
             "",
             false,
+            None,
         );
         assert_eq!(data["diff_unavailable"], json!(DIFF_UNAVAILABLE_BINARY));
         // 放弃 diff 时计数报 null：0 会被误读成「文件没变」。

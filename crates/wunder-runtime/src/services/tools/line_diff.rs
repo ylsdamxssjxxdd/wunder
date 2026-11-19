@@ -38,6 +38,9 @@ pub(super) const OMITTED_BUDGET: &str = "budget";
 /// `diff_omitted` 的短原因串：新建文件的正文就是调用方刚发出去的内容，
 /// 有意不回灌（体积与文件大小无关）。
 pub(super) const OMITTED_NEW_FILE: &str = "new_file";
+/// `diff_omitted` 的短原因串：覆盖写/编辑落盘的内容就是这次调用发出去的，
+/// 回灌没有信息增量。
+pub(super) const OMITTED_AUTHORED: &str = "authored";
 
 #[derive(Debug, Clone)]
 struct DiffLine {
@@ -524,13 +527,70 @@ impl UnifiedDiff {
     }
 }
 
-/// 新建文件的 diff 正文就是调用方刚发出去的内容，回灌没有信息增量：只给一个
-/// 与 unified diff 同形的三行说明，体积与文件大小无关。
-pub(super) fn new_file_notice(path: &str, lines: usize) -> String {
-    format!(
-        "--- a/{path}\n+++ b/{path}\nnew file: {lines} lines written \
-         (diff body omitted: content is what this call sent)"
-    )
+/// 模型面写回执要不要带 diff 正文。
+///
+/// 默认不带：写/编辑落盘的内容就是这次调用发出去的那份，回灌一遍只是把已经
+/// 付过一次 token 的字节再付一次。三种情况例外，仍给（有界）diff：
+/// 干跑预览（问的就是「会变成什么样」）、恢复快照（内容不是模型写的）、
+/// 落盘字节与提交内容不一致（BOM 回填等模型没说过的事实）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DiffEcho {
+    Full,
+    Authored,
+    NewFile,
+}
+
+impl DiffEcho {
+    /// 模型面没给正文时的省略原因；`Full` 表示正文已给。
+    pub(super) fn omitted_reason(self) -> Option<&'static str> {
+        match self {
+            DiffEcho::Full => None,
+            DiffEcho::Authored => Some(OMITTED_AUTHORED),
+            DiffEcho::NewFile => Some(OMITTED_NEW_FILE),
+        }
+    }
+}
+
+/// 没有 diff 正文时的替代文本：与 unified diff 同形，体积与文件大小无关。
+pub(super) fn omitted_diff_text(echo: DiffEcho, path: &str, lines: usize) -> String {
+    let body = match echo {
+        DiffEcho::NewFile => format!(
+            "new file: {lines} lines written (diff body omitted: content is what this call sent)"
+        ),
+        DiffEcho::Authored => format!(
+            "diff omitted: applied exactly what this call sent ({lines} lines)"
+        ),
+        DiffEcho::Full => String::new(),
+    };
+    format!("--- a/{path}\n+++ b/{path}\n{body}")
+}
+
+/// 写类回执的模型面形态：`(正文, 是否省略, 省略原因)`。
+///
+/// `Full` 走 [`unified_diff`]，可能因结构预算折叠；其余两种只给一行说明。
+pub(super) fn render_write_diff(
+    echo: DiffEcho,
+    path: &str,
+    lines: usize,
+    before: &str,
+    after: &str,
+    diff: &LineDiff,
+) -> (String, bool, Option<&'static str>) {
+    if echo == DiffEcho::Full {
+        let rendered = unified_diff(path, before, after, diff);
+        let truncated = rendered.truncated();
+        return (rendered.text, truncated, None);
+    }
+    (omitted_diff_text(echo, path, lines), true, echo.omitted_reason())
+}
+
+/// 变更落点：每个结构化块的起始行（新侧 1-based）。给不了 diff 正文时，它就是
+/// 「改在哪」的答案，体积随 hunk 数增长而与文件大小无关。
+pub(super) fn changed_lines(diff: &LineDiff) -> Vec<usize> {
+    diff.blocks
+        .iter()
+        .map(|block| block.start_line_after.max(1))
+        .collect()
 }
 
 /// 把（旧文本，新文本）渲染成 unified diff 文本：`---`/`+++`/`@@` + 上下文 + `-`/`+`。
@@ -657,14 +717,6 @@ pub(super) fn unified_diff(path: &str, before: &str, after: &str, diff: &LineDif
         text: out.join("\n"),
         omitted_hunks,
         omitted_lines,
-    }
-}
-
-/// 模型面文本被省掉时，`diff_omitted` 也要给出原因：留着 null 会和
-/// `unified_diff_truncated: true` 自相矛盾，读者只能猜。
-pub(super) fn mark_text_omission(map: &mut Map<String, Value>, reason: &'static str) {
-    if map.get("diff_omitted").is_none_or(Value::is_null) {
-        map.insert("diff_omitted".to_string(), json!(reason));
     }
 }
 

@@ -1056,7 +1056,7 @@ component ToolsPage inherits Rectangle {
                         Action {
                             width: 78px;
                             height: 32px;
-                            icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/book.svg");
+                            icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-upload.svg");
                             label: I18n.tm_import;
                             show-label: true;
                             clicked => { root.import-skill(); }
@@ -1102,7 +1102,7 @@ component ToolsPage inherits Rectangle {
                                     padding-top: 8px;
                                     padding-bottom: 4px;
                                     spacing: 8px;
-                                    Action { width: 64px; height: 30px; icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/file-lines.svg"); label: I18n.tm_export; show-label: true; clicked => { root.export-skill(skill.name); } }
+                                    Action { width: 64px; height: 30px; icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-download.svg"); label: I18n.tm_export; show-label: true; clicked => { root.export-skill(skill.name); } }
                                     Action { width: 64px; height: 30px; icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/plus.svg"); label: "新建"; show-label: true; enabled: !skill.readonly; opacity: skill.readonly ? 0.45 : 1; clicked => { root.new-file-name = ""; root.new-file-open = true; } }
                                     Action { width: 64px; height: 30px; icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/upload.svg"); label: "上传"; show-label: true; enabled: !skill.readonly; opacity: skill.readonly ? 0.45 : 1; clicked => { root.upload-files(); } }
                                     Action { width: 64px; height: 30px; icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/trash.svg"); label: I18n.common_delete; show-label: true; danger: true; enabled: !skill.readonly; opacity: skill.readonly ? 0.45 : 1; clicked => { root.pending-tab = 2; root.pending-name = skill.name; root.confirm-delete = true; } }

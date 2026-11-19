@@ -11,8 +11,8 @@
 use super::capabilities::{local_fs, FsCapability};
 use super::context::collect_allow_roots;
 use super::line_diff::{
-    diff_literal_replaces, diff_replaced, insert_diff_fields, mark_text_omission, unified_diff,
-    LineDiff, OMITTED_BUDGET,
+    changed_lines, diff_literal_replaces, diff_replaced, insert_diff_fields, render_write_diff,
+    DiffEcho, LineDiff,
 };
 use super::{
     build_model_tool_success,
@@ -394,11 +394,22 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         touch_lsp_file(context, &outcome.target, true).await
     };
 
-    // 编辑回执给 diff：模型靠它确认自己改过的地方。但它受 `line_diff` 的
-    // 32KB 结构预算约束，超预算时按 hunk 折叠并明确写出省略了多少行。
-    let rendered = unified_diff(&file_path, &outcome.before, &outcome.after, &outcome.diff);
-    let unified_truncated = rendered.truncated();
-    let unified = rendered.text;
+    // 编辑落盘的内容就是这次调用发出去的（old_string/new_string、行区间替换），
+    // 回灌 diff 没有信息增量：默认只回回执 + `changed_lines`。`dry_run` 例外——
+    // 预览问的就是「会变成什么样」。
+    let echo = if dry_run {
+        DiffEcho::Full
+    } else {
+        DiffEcho::Authored
+    };
+    let (unified, unified_truncated, omitted_reason) = render_write_diff(
+        echo,
+        &file_path,
+        outcome.receipt.lines,
+        &outcome.before,
+        &outcome.after,
+        &outcome.diff,
+    );
     let mut data = build_edit_data(
         &file_path,
         outcome.occurrences,
@@ -414,6 +425,7 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         outcome.range,
         &unified,
         unified_truncated,
+        omitted_reason,
     );
     if !outcome.changed {
         data["changed_files"] = json!(0);
@@ -731,6 +743,7 @@ fn build_edit_data(
     range: Option<(usize, usize)>,
     unified: &str,
     unified_truncated: bool,
+    omitted_reason: Option<&'static str>,
 ) -> Value {
     let mut data = Map::<String, Value>::new();
     data.insert("path".to_string(), json!(path));
@@ -757,8 +770,10 @@ fn build_edit_data(
         "unified_diff_truncated".to_string(),
         json!(unified_truncated),
     );
-    if unified_truncated {
-        mark_text_omission(&mut data, OMITTED_BUDGET);
+    if let Some(reason) = omitted_reason {
+        data.insert("diff_omitted".to_string(), json!(reason));
+        // 没有正文时，`changed_lines` 就是「改在哪」的答案。
+        data.insert("changed_lines".to_string(), json!(changed_lines(diff)));
     }
     Value::Object(data)
 }
@@ -834,8 +849,14 @@ mod tests {
         let (diff, unavailable) =
             build_replace_diff(before, after, offsets, occurrences, needle.len(), new);
         let receipt = write_receipt::build("a.txt", after, false);
-        let rendered = unified_diff("a.txt", before, after, &diff);
-        let unified = rendered.text;
+        let (unified, truncated, omitted) = render_write_diff(
+            DiffEcho::Authored,
+            "a.txt",
+            receipt.lines,
+            before,
+            after,
+            &diff,
+        );
         build_edit_data(
             "a.txt",
             occurrences,
@@ -850,7 +871,8 @@ mod tests {
             None,
             None,
             &unified,
-            false,
+            truncated,
+            omitted,
         )
     }
 
@@ -920,6 +942,7 @@ mod tests {
             None,
             "",
             false,
+            None,
         );
         assert_eq!(offsets.len(), MAX_DIFF_OFFSETS);
         // 采样截断只影响块数，不影响替换次数。
@@ -958,6 +981,7 @@ mod tests {
             None,
             "",
             false,
+            None,
         );
         assert_eq!(data["diff_unavailable"], json!("oversize"));
         // 超限时计数是「没算」而不是「0 行」，否则会被读成「改了个寂寞」。
@@ -985,6 +1009,7 @@ mod tests {
                 "bytes_after",
                 "bytes_before",
                 "changed_files",
+                "changed_lines",
                 "check",
                 "deleted",
                 "deleted_lines",

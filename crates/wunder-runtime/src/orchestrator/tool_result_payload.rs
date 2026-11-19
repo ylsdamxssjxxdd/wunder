@@ -2819,6 +2819,11 @@ fn project_file_write_success(data: &Value) -> Option<Value> {
             "cursor",
             "unified_diff",
             "unified_diff_truncated",
+            // 不给 diff 正文时，「改在哪 / 改了几处」靠这两个字段回答。
+            "changed_lines",
+            "replacements",
+            "range",
+            "diff_omitted",
         ],
     );
     let dry_run = is_dry_run_preview(data, map);

@@ -261,8 +261,8 @@ export component ToolsPage inherits Rectangle {
                     ToolCountPill { text: "\{root.resources.length}"; }
                     ToolButton { icon: @image-url("../assets/icons/rotate-right.svg"); label: I18n.common_refresh; enabled: !root.loading && !root.working; clicked => { root.refresh(); } }
                     if root.tab == 1 : ToolButton { icon: @image-url("../assets/icons/plus.svg"); primary: true; label: I18n.tm_add; enabled: !root.working; clicked => { root.open-mcp-dialog(true); } }
-                    if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/book.svg"); label: I18n.tm_import; enabled: !root.working; clicked => { ToolsDialog.import-skill(); } }
-                    if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/file-lines.svg"); label: I18n.tm_export; enabled: root.active && !root.working; clicked => { root.edit("export"); } }
+                    if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/lc-upload.svg"); label: I18n.tm_import; enabled: !root.working; clicked => { ToolsDialog.import-skill(); } }
+                    if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/lc-download.svg"); label: I18n.tm_export; enabled: root.active && !root.working; clicked => { root.edit("export"); } }
                     if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/trash.svg"); danger: true; label: I18n.common_delete; enabled: root.active && !root.readonly && !root.working; clicked => { root.deleting = true; } }
                 }
                 Rectangle { height: 1px; background: Theme.border; }

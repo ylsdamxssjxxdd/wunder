@@ -22,7 +22,7 @@
           :aria-label="t('userTools.skills.action.upload')"
           @click="triggerUpload"
         >
-          <i class="fa-solid fa-plus" aria-hidden="true"></i>
+          <i class="fa-solid fa-upload" aria-hidden="true"></i>
         </button>
         <button
           class="mst-btn mst-btn--icon"
@@ -32,7 +32,7 @@
           :aria-label="t('userTools.skills.action.export')"
           @click="exportSkill"
         >
-          <i class="fa-solid fa-file-zipper" aria-hidden="true"></i>
+          <i class="fa-solid fa-download" aria-hidden="true"></i>
         </button>
         <button
           class="mst-btn mst-btn--icon"
