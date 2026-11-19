@@ -1,5 +1,22 @@
 use super::*;
 
+#[test]
+fn background_command_plan_keeps_multiline_script_as_one_job() {
+    let script = "printf 'a\\n'\nprintf 'b\\n'";
+    assert_eq!(
+        build_command_plan(script, false, true),
+        vec![script.to_string()]
+    );
+    assert_eq!(
+        build_command_plan(script, true, false),
+        vec![script.to_string()]
+    );
+    assert_eq!(
+        build_command_plan(script, false, false),
+        vec!["printf 'a\\n'".to_string(), "printf 'b\\n'".to_string()]
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn decode_command_output_recovers_gbk_chinese() {

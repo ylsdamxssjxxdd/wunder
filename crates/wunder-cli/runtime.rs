@@ -267,6 +267,19 @@ impl CliRuntime {
         if let Err(err) = runtime.apply_user_notify() {
             eprintln!("[warn] ignoring notify setting: {err}");
         }
+        // 上一进程遗留的后台命令记录：沙盒会话恢复观察，本地会话结算失联。
+        {
+            let state = runtime.state.clone();
+            tokio::spawn(async move {
+                match wunder_server::startup::recover_background_commands(state).await {
+                    Ok(0) => {}
+                    Ok(recovered) => {
+                        eprintln!("[wunder] recovered {recovered} background command(s)")
+                    }
+                    Err(error) => eprintln!("[warn] recover background commands failed: {error}"),
+                }
+            });
+        }
         cli_startup_point("init_done", startup_boot);
         Ok(runtime)
     }

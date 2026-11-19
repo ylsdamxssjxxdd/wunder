@@ -757,6 +757,22 @@ impl NativeDesktop {
                 "desktop:settle_orphaned_tasks",
                 stage_start.elapsed().as_secs_f64() * 1000.0,
             );
+            // 后台命令的会话记录写在 MetaStore：沙盒会话跨重启后重新挂
+            // observer，本地会话结算为失联并通知一次。
+            {
+                let state = Arc::clone(&desktop.state);
+                runtime.spawn(async move {
+                    match wunder_server::startup::recover_background_commands(state).await {
+                        Ok(0) => {}
+                        Ok(recovered) => {
+                            tracing::info!(recovered, "recovered background command sessions")
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, "recover background command sessions failed")
+                        }
+                    }
+                });
+            }
         }
         let open_threads: Arc<Mutex<HashMap<String, u64>>> = Arc::new(Mutex::new(HashMap::new()));
         let chat_snapshot_cache = Arc::new(Mutex::new(HashMap::new()));

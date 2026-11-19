@@ -180,7 +180,7 @@ struct CommandSessionRecord {
 
 impl CommandSessionRecord {
     fn from_start_spec(spec: CommandSessionStartSpec, command_session_id: String) -> Self {
-        let now = Utc::now();
+        let now = spec.started_at.unwrap_or_else(Utc::now);
         Self {
             command_session_id,
             tool_call_id: spec.tool_call_id,
@@ -1017,6 +1017,7 @@ mod tests {
             launch_mode: CommandSessionLaunchMode::Shell,
             tty: false,
             interactive: false,
+            started_at: None,
         }
     }
 
@@ -1089,6 +1090,7 @@ mod tests {
             launch_mode: CommandSessionLaunchMode::Shell,
             tty: false,
             interactive: false,
+            started_at: None,
         });
 
         let scoped = broker.list_session_snapshots("user_a", "sess_1");
@@ -1428,6 +1430,7 @@ mod tests {
             launch_mode: CommandSessionLaunchMode::Direct,
             tty: false,
             interactive: false,
+            started_at: None,
         });
         let own = Arc::new(CommandProcessHandle::new(None));
         let other = Arc::new(CommandProcessHandle::new(None));

@@ -112,12 +112,12 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
     ]
   },
   mcp: {
-    icon: 'fa-solid fa-plug',
+    icon: 'svg:plug',
     titleKey: 'messenger.settingsPage.cat.mcp.title',
     keywords: ['mcp', '服务', '连接', '外部工具', '工具', 'server']
   },
   skill: {
-    icon: 'fa-solid fa-book',
+    icon: 'svg:book',
     titleKey: 'messenger.settingsPage.cat.skill.title',
     keywords: ['技能', '脚本', '导入', '导出', 'skill']
   },
@@ -142,7 +142,7 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
     keywords: ['记忆', '碎片', 'memory']
   },
   channels: {
-    icon: 'svg:plug',
+    icon: 'svg:messages-square',
     titleKey: 'messenger.settingsPage.cat.channels.title',
     keywords: ['渠道', '扫码', '绑定', '重连', 'channel', 'qr', 'bind']
   },

@@ -7,7 +7,7 @@
 //! 为了避免打扰，通知还有三道闸：用户已停止/归档线程时不唤醒；模型自己用
 //! 命令会话读到过终态时不再重复通知；短窗口内的多条完成合并成一条消息。
 
-use crate::core::long_task;
+use crate::core::{blocking, long_task};
 use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
@@ -19,11 +19,73 @@ use crate::services::tools::command_sessions::{
 use crate::services::tools::ToolContext;
 use crate::storage::StorageBackend;
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use tokio::time::Duration;
 use tracing::warn;
+
+/// 跨重启恢复用的待跟踪记录；进程退出后仍留在 MetaStore 里。
+pub(crate) const PENDING_BACKGROUND_PREFIX: &str = "bgcmd:";
+const PENDING_MAX_AGE_S: f64 = 24.0 * 3600.0;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct PendingBackgroundCommand {
+    pub user_id: String,
+    pub session_id: String,
+    pub workspace_id: String,
+    pub command_session_id: String,
+    pub command: String,
+    pub cwd: String,
+    /// "sandbox" 可跨重启继续观察；"local" 的输出通道随进程消失。
+    pub mode: String,
+    pub started_at: f64,
+    pub language: String,
+}
+
+pub(crate) fn parse_pending_background(value: &str) -> Option<PendingBackgroundCommand> {
+    serde_json::from_str(value).ok()
+}
+
+pub(crate) fn pending_background_is_stale(record: &PendingBackgroundCommand, now: f64) -> bool {
+    (now - record.started_at).max(0.0) > PENDING_MAX_AGE_S
+}
+
+fn pending_background_key(user_id: &str, session_id: &str, command_session_id: &str) -> String {
+    format!("{PENDING_BACKGROUND_PREFIX}{user_id}\u{1f}{session_id}\u{1f}{command_session_id}")
+}
+
+pub(crate) async fn persist_pending_command(
+    storage: Arc<dyn StorageBackend>,
+    record: &PendingBackgroundCommand,
+) -> anyhow::Result<()> {
+    let value = serde_json::to_string(record)?;
+    let key = pending_background_key(
+        &record.user_id,
+        &record.session_id,
+        &record.command_session_id,
+    );
+    blocking::run_db("tools.command.persist_background", move || {
+        storage.set_meta(&key, &value)
+    })
+    .await?;
+    Ok(())
+}
+
+pub(crate) async fn clear_pending_command(
+    storage: Arc<dyn StorageBackend>,
+    user_id: &str,
+    session_id: &str,
+    command_session_id: &str,
+) -> anyhow::Result<()> {
+    let key = pending_background_key(user_id, session_id, command_session_id);
+    blocking::run_db("tools.command.clear_background", move || {
+        storage.delete_meta_prefix(&key)
+    })
+    .await?;
+    Ok(())
+}
 
 /// 同一线程的多条后台命令在这么短的窗口内先后结束就合并成一条通知。
 const BATCH_WINDOW: Duration = Duration::from_millis(1_200);
@@ -95,6 +157,71 @@ impl CommandNotifier {
             session_id: context.session_id.to_string(),
             language: i18n::get_language(),
         }))
+    }
+
+    /// 启动恢复等没有 ToolContext 的场景用它重新组装通知器。
+    pub(crate) fn from_parts(
+        storage: Arc<dyn StorageBackend>,
+        monitor: Option<Arc<MonitorState>>,
+        orchestrator: Arc<Orchestrator>,
+        broker: Arc<CommandSessionBroker>,
+        user_id: String,
+        session_id: String,
+        language: String,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            storage,
+            monitor,
+            orchestrator,
+            broker,
+            user_id,
+            session_id,
+            language,
+        })
+    }
+
+    pub(crate) async fn persist_pending(
+        &self,
+        command_session_id: &str,
+        command: &str,
+        cwd: &str,
+        workspace_id: &str,
+        mode: &str,
+        started_at: f64,
+    ) {
+        let record = PendingBackgroundCommand {
+            user_id: self.user_id.clone(),
+            session_id: self.session_id.clone(),
+            workspace_id: workspace_id.to_string(),
+            command_session_id: command_session_id.to_string(),
+            command: command.to_string(),
+            cwd: cwd.to_string(),
+            mode: mode.to_string(),
+            started_at,
+            language: self.language.clone(),
+        };
+        if let Err(err) = persist_pending_command(self.storage.clone(), &record).await {
+            warn!(
+                "persist background command failed: command_session_id={}, error={err}",
+                command_session_id
+            );
+        }
+    }
+
+    pub(crate) async fn clear_pending(&self, command_session_id: &str) {
+        if let Err(err) = clear_pending_command(
+            self.storage.clone(),
+            &self.user_id,
+            &self.session_id,
+            command_session_id,
+        )
+        .await
+        {
+            warn!(
+                "clear background command record failed: command_session_id={}, error={err}",
+                command_session_id
+            );
+        }
     }
 
     /// 从命令会话快照生成通知项；仍在运行或会话已被回收时返回 None。
@@ -219,14 +346,15 @@ impl CommandNotifier {
     }
 }
 
-/// 命令工具里的统一收口：终态会话生成通知项并交给合并窗口。
-pub(crate) fn schedule_snapshot_notification(
+/// 命令工具里的统一收口：终态会话先清掉待恢复记录，再生成通知项交给合并窗口。
+pub(crate) async fn schedule_snapshot_notification(
     notifier: &Option<Arc<CommandNotifier>>,
     command_session_id: &str,
 ) {
     let Some(notifier) = notifier.as_ref() else {
         return;
     };
+    notifier.clear_pending(command_session_id).await;
     if let Some(completion) = notifier.completion_for(command_session_id) {
         notifier.schedule(completion);
     }
@@ -314,6 +442,7 @@ fn completion_payload_with_tail_budget(
         "count": items.len(),
         "commands": commands,
         "note": i18n::t_in_language("tool.command_completion.hint", language),
+        "next_step": i18n::t_in_language("tool.command_completion.next_step", language),
     })
 }
 
@@ -401,6 +530,50 @@ mod tests {
         let many = completion_summary(3, "zh-CN");
         assert_ne!(single, many);
         assert!(many.contains('3'));
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "sqlite-storage")]
+    async fn pending_background_records_roundtrip_and_clear() {
+        use crate::storage::SqliteStorage;
+        let dir = tempfile::tempdir().unwrap();
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            dir.path()
+                .join("state.sqlite3")
+                .to_string_lossy()
+                .into_owned(),
+        ));
+        storage.ensure_initialized().unwrap();
+        let record = PendingBackgroundCommand {
+            user_id: "user_a".to_string(),
+            session_id: "sess_1".to_string(),
+            workspace_id: "ws_1".to_string(),
+            command_session_id: "sandcmd_x".to_string(),
+            command: "sleep 60".to_string(),
+            cwd: "/workspace".to_string(),
+            mode: "sandbox".to_string(),
+            started_at: 1_000.0,
+            language: "zh-CN".to_string(),
+        };
+        persist_pending_command(storage.clone(), &record)
+            .await
+            .unwrap();
+        let listed = storage.list_meta_prefix(PENDING_BACKGROUND_PREFIX).unwrap();
+        assert_eq!(listed.len(), 1);
+        let parsed = parse_pending_background(&listed[0].1).expect("pending record");
+        assert_eq!(parsed.command_session_id, "sandcmd_x");
+        assert!(!pending_background_is_stale(&parsed, 1_001.0));
+        assert!(pending_background_is_stale(
+            &parsed,
+            1_000.0 + PENDING_MAX_AGE_S + 1.0
+        ));
+        clear_pending_command(storage.clone(), "user_a", "sess_1", "sandcmd_x")
+            .await
+            .unwrap();
+        assert!(storage
+            .list_meta_prefix(PENDING_BACKGROUND_PREFIX)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

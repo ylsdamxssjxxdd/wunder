@@ -395,7 +395,7 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     };
 
     // 编辑回执给 diff：模型靠它确认自己改过的地方。但它受 `line_diff` 的
-    // 64KB 结构预算约束，超预算时按 hunk 折叠并明确写出省略了多少行。
+    // 32KB 结构预算约束，超预算时按 hunk 折叠并明确写出省略了多少行。
     let rendered = unified_diff(&file_path, &outcome.before, &outcome.after, &outcome.diff);
     let unified_truncated = rendered.truncated();
     let unified = rendered.text;

@@ -178,6 +178,16 @@
   mask-image: url('../../assets/lc-plug.svg');
 }
 
+.messenger-settings-frame-nav-icon-svg-book {
+  -webkit-mask-image: url('../../assets/lc-book.svg');
+  mask-image: url('../../assets/lc-book.svg');
+}
+
+.messenger-settings-frame-nav-icon-svg-messages-square {
+  -webkit-mask-image: url('../../assets/lc-messages-square.svg');
+  mask-image: url('../../assets/lc-messages-square.svg');
+}
+
 .messenger-settings-frame-nav-icon-svg-satellite-dish {
   -webkit-mask-image: url('../../assets/lc-satellite-dish.svg');
   mask-image: url('../../assets/lc-satellite-dish.svg');

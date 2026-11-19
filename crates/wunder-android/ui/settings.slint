@@ -2816,13 +2816,13 @@ component SettingsHome inherits Rectangle {
                         clicked => { root.open-page(8); }
                     }
                     NavRow {
-                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/plug.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-plug.svg");
                         label: I18n.stc_mcp;
                         detail: root.server-count > 0 ? root.server-count + " 个服务" : "连接外部 MCP 服务";
                         clicked => { root.open-tools(1); }
                     }
                     NavRow {
-                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/book.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-book.svg");
                         label: I18n.stc_skills;
                         detail: root.skill-count > 0 ? root.skill-count + " 个技能" : "导入、导出与编辑技能";
                         last: true;
@@ -2853,7 +2853,7 @@ component SettingsHome inherits Rectangle {
                         clicked => { root.open-page(10); }
                     }
                     NavRow {
-                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-plug.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-messages-square.svg");
                         label: "渠道";
                         detail: root.channel-count > 0 ? root.channel-count + " 个渠道账号" : "暂无渠道账号";
                         clicked => { root.open-page(14); }

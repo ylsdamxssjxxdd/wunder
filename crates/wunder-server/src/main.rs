@@ -103,6 +103,11 @@ async fn run_server(runtime_threads: runtime_tuning::ServerRuntimeThreads) -> an
             Ok(settled) => info!(settled, "settled restarted activity"),
             Err(error) => warn!(%error, "settle restarted activity failed"),
         }
+        match wunder_server::startup::recover_background_commands(settle_state.clone()).await {
+            Ok(0) => {}
+            Ok(recovered) => info!(recovered, "recovered background command sessions"),
+            Err(error) => warn!(%error, "recover background command sessions failed"),
+        }
         tokio::time::sleep(std::time::Duration::from_secs(150)).await;
         match wunder_server::startup::settle_restarted_activity(settle_state).await {
             Ok(0) => {}

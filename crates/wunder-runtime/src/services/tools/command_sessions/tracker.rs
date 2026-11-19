@@ -103,6 +103,7 @@ impl CommandSessionTracker {
             launch_mode,
             tty,
             interactive,
+            started_at: None,
         };
         let existed = broker.as_ref().is_some_and(|broker| {
             start_spec
@@ -177,6 +178,42 @@ impl CommandSessionTracker {
             command: snapshot.command,
             cwd: snapshot.cwd,
             _finish_guard: finish_guard,
+        })
+    }
+
+    /// 启动恢复专用：没有工具上下文与事件发射器，只重建 broker 里的会话，
+    /// 后续由 observer 继续把远端增量写回 broker（UI 通过 broker 广播订阅）。
+    pub(crate) fn start_from_broker(
+        broker: Arc<CommandSessionBroker>,
+        spec: CommandSessionStartSpec,
+    ) -> Option<Self> {
+        let existed = spec
+            .command_session_id
+            .as_deref()
+            .and_then(|id| broker.snapshot_for_scope(&spec.user_id, &spec.session_id, id))
+            .is_some();
+        let snapshot = broker.start_session(spec);
+        if !existed {
+            broker.publish_event(
+                &snapshot.command_session_id,
+                "command_session_start",
+                snapshot.start_event_payload(),
+            );
+        }
+        let finish_guard = Arc::new(CommandSessionFinishGuard {
+            broker: Arc::clone(&broker),
+            emitter: None,
+            command_session_id: snapshot.command_session_id.clone(),
+        });
+        Some(Self {
+            broker: Some(broker),
+            emitter: None,
+            command_session_id: snapshot.command_session_id,
+            command_index: snapshot.command_index,
+            fallback_seq: Arc::new(AtomicU64::new(snapshot.seq)),
+            command: snapshot.command,
+            cwd: snapshot.cwd,
+            _finish_guard: Some(finish_guard),
         })
     }
 

@@ -1047,14 +1047,14 @@ export component SettingsPage inherits Rectangle {
                         SettingsNavItem {
                             visible: root.settings-category-flags[4];
                             // MCP 与技能各自成项；知识库与管理员开放工具页已隐藏。
-                            icon: @image-url("../assets/icons/plug.svg");
+                            icon: @image-url("../assets/icons/lc-plug.svg");
                             title: I18n.stc_mcp;
                             selected: root.settings-tab == 2;
                             clicked => { root.tools-tab = 1; root.tools-selected = -1; root.settings-tab = 2; root.refresh(); }
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[5];
-                            icon: @image-url("../assets/icons/book.svg");
+                            icon: @image-url("../assets/icons/lc-book.svg");
                             title: I18n.stc_skills;
                             selected: root.settings-tab == 15;
                             clicked => { root.tools-tab = 2; root.tools-selected = -1; root.settings-tab = 15; root.refresh(); }
@@ -1089,7 +1089,7 @@ export component SettingsPage inherits Rectangle {
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[10];
-                            icon: @image-url("../assets/icons/lc-plug.svg");
+                            icon: @image-url("../assets/icons/lc-messages-square.svg");
                             title: I18n.stc_channels;
                             selected: root.settings-tab == 7;
                             clicked => { root.settings-tab = 7; root.refresh(); }

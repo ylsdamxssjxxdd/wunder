@@ -505,7 +505,7 @@ const UNIFIED_CONTEXT_LINES: usize = 2;
 ///
 /// 写类结果不参与观察层压缩（见 `orchestrator::tool_result_payload`），所以这一层
 /// 必须自己兜底：整份文件回灌只会在下一次编辑前就撑爆上下文。
-pub(super) const MAX_UNIFIED_DIFF_BYTES: usize = 64 * 1024;
+pub(super) const MAX_UNIFIED_DIFF_BYTES: usize = 32 * 1024;
 
 /// 给末尾的省略说明预留的空间，保证它不会被预算本身挤掉。
 const UNIFIED_DIFF_MARKER_RESERVE: usize = 256;
@@ -804,6 +804,23 @@ mod tests {
         assert!(rendered.text.contains("hunk(s) / "));
         // 折叠后仍要看得出改在哪：至少保留了一部分真实 hunk 头。
         assert!(rendered.text.contains("@@ -1,1 +1,1 @@"));
+    }
+
+    #[test]
+    fn a_fifty_kilobyte_edit_is_already_folded() {
+        // 3000 行 ≈ 51 KB：旧口径（64 KB）会整份回灌，新口径必须折叠。
+        let mut before = String::new();
+        for index in 0..3000 {
+            before.push_str(&format!("line {:05} value\n", index));
+        }
+        let after = "only line\n";
+        let diff = diff_replaced(&before, after);
+        let rendered = unified_diff("editme.txt", &before, after, &diff);
+        assert!(rendered.truncated());
+        assert!(rendered.text.len() <= MAX_UNIFIED_DIFF_BYTES);
+        assert!(rendered
+            .text
+            .contains("3000 removed / 1 added line(s) omitted (diff budget)"));
     }
 
     #[test]

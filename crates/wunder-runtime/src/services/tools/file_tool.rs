@@ -2713,7 +2713,7 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
     //
     // 新建文件的正文就是这次调用发出去的内容，回灌一遍是 100% 冗余，只给回执
     // 与行数；覆盖写才给 diff（BOM 回填、行裁剪这些是模型没直接说过的事实），
-    // 且受 `line_diff` 的 64KB 结构预算约束：超了按 hunk 折叠并注明省略量。
+    // 且受 `line_diff` 的 32KB 结构预算约束：超了按 hunk 折叠并注明省略量。
     let (unified, unified_truncated) = if write_outcome.existed {
         let rendered = unified_diff(
             &path,

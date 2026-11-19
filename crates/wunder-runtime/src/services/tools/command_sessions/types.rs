@@ -39,6 +39,8 @@ pub(crate) struct CommandSessionStartSpec {
     pub launch_mode: CommandSessionLaunchMode,
     pub tty: bool,
     pub interactive: bool,
+    /// 启动恢复时沿用原始开始时间，保证耗时与完成通知准确。
+    pub started_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize)]

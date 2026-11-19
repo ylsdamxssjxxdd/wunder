@@ -148,6 +148,18 @@ fn tick(bridge: &mut Bridge) {
     bridge.expanded.retain(|id| live.contains(id.as_str()));
     bridge.details.retain(|id, _| live.contains(id.as_str()));
 
+    // 展开行每秒刷新一次输出尾部：后台命令动辄跑几分钟，停在展开瞬间的
+    // 内容没有意义；只有用户主动展开的那几行才搬运这几 KB。
+    for id in &bridge.expanded {
+        let Some(detail) = bridge.desktop.command_task_detail(&session, id) else {
+            continue;
+        };
+        let text = tail(&detail_text(&detail));
+        if bridge.details.get(id) != Some(&text) {
+            bridge.details.insert(id.clone(), text);
+        }
+    }
+
     let rows = bridge.rows_for(&tasks);
     publish(bridge, rows);
 }

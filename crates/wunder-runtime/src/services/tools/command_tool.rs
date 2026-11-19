@@ -145,6 +145,18 @@ fn is_bare_sleep_command(command: &str) -> bool {
     duration_args >= 1
 }
 
+fn build_command_plan(content: &str, allow_all: bool, background: bool) -> Vec<String> {
+    if allow_all || background {
+        return vec![content.to_string()];
+    }
+    content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
 fn content_is_bare_sleep(content: &str) -> bool {
     let lines = content
         .lines()
@@ -1445,10 +1457,26 @@ async fn run_command_streaming(
             Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
                 if let Some(notifier) = notifier {
                     let notify_session_id = session_id.clone();
+                    let started_at = context
+                        .command_sessions
+                        .as_ref()
+                        .and_then(|broker| broker.snapshot(&notify_session_id))
+                        .map(|snapshot| snapshot.started_at.timestamp_millis() as f64 / 1000.0)
+                        .unwrap_or_else(|| chrono::Utc::now().timestamp_millis() as f64 / 1000.0);
+                    notifier
+                        .persist_pending(
+                            &notify_session_id,
+                            &command_text,
+                            &cwd.to_string_lossy(),
+                            context.workspace_id,
+                            "local",
+                            started_at,
+                        )
+                        .await;
                     long_task::spawn("tools.command.completion_notify", async move {
                         // 监督任务退出前已写入会话终态；等它结束后直接读快照。
                         let _ = result_rx.await;
-                        schedule_snapshot_notification(&Some(notifier), &notify_session_id);
+                        schedule_snapshot_notification(&Some(notifier), &notify_session_id).await;
                     });
                 }
                 return Ok(running_command_result(session_id));
@@ -1937,6 +1965,27 @@ fn compact_sandbox_poll_result(mut data: Value) -> Value {
 
 /// A single runtime task owns remote output forwarding. Model polls only read
 /// the local broker, so they cannot duplicate events or delay live output.
+/// 启动恢复复用的 observer 入口：与正常后台会话共用同一套输出转发、退出结算
+/// 与完成通知逻辑。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn spawn_sandbox_command_observer(
+    config: Config,
+    user_id: String,
+    session_id: String,
+    tracker: CommandSessionTracker,
+    broker: Arc<super::command_sessions::CommandSessionBroker>,
+    notifier: Option<Arc<CommandNotifier>>,
+    cancel: tokio_util::sync::CancellationToken,
+    start_seq: u64,
+) {
+    long_task::spawn(
+        "tools.sandbox_command_output",
+        observe_sandbox_command(
+            config, user_id, session_id, tracker, broker, notifier, cancel, start_seq,
+        ),
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn observe_sandbox_command(
     config: Config,
@@ -1956,7 +2005,7 @@ async fn observe_sandbox_command(
             _ = cancel.cancelled() => {
                 let _ = crate::sandbox::cancel_command_session(&config, &user_id, &session_id, &id).await;
                 tracker.emit_exit(None, false, Some("command cancelled".to_string()));
-                schedule_snapshot_notification(&notifier, &id);
+                schedule_snapshot_notification(&notifier, &id).await;
                 break;
             }
             result = crate::sandbox::control_command_session(
@@ -1981,7 +2030,7 @@ async fn observe_sandbox_command(
                     false,
                     Some("sandbox command output unavailable".to_string()),
                 );
-                schedule_snapshot_notification(&notifier, &id);
+                schedule_snapshot_notification(&notifier, &id).await;
                 break;
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
@@ -2005,7 +2054,7 @@ async fn observe_sandbox_command(
                     .and_then(Value::as_str)
                     .map(str::to_string),
             );
-            schedule_snapshot_notification(&notifier, &id);
+            schedule_snapshot_notification(&notifier, &id).await;
             break;
         }
     }
@@ -2243,6 +2292,10 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
         .unwrap_or("")
         .trim()
         .to_string();
+    let run_in_background = args
+        .get("run_in_background")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     if let Some(patch_input) = extract_direct_patch_from_command(&content) {
         // Route accidental inline patch payloads to apply_patch to keep edit semantics stable.
         let payload = json!({
@@ -2261,7 +2314,8 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
         }
         return Ok(result);
     }
-    if content_is_bare_sleep(&content) {
+    // 裸 sleep 在后台是合法作业（延迟执行）；只有前台空等才拦截。
+    if !run_in_background && content_is_bare_sleep(&content) {
         return Ok(build_failed_tool_result(
             i18n::t("tool.exec.sleep_not_allowed"),
             json!({ "command": content }),
@@ -2291,10 +2345,6 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             })
         });
     let context = scoped_context.as_ref().unwrap_or(context);
-    let run_in_background = args
-        .get("run_in_background")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
     let background_notifier = if run_in_background {
         CommandNotifier::from_context(context)
     } else {
@@ -2532,6 +2582,29 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                             false,
                         ));
                     }
+                    if run_in_background {
+                        if let Some(notifier) = background_notifier.as_ref() {
+                            let record_session_id = tracker.command_session_id().to_string();
+                            let started_at = broker
+                                .snapshot(&record_session_id)
+                                .map(|snapshot| {
+                                    snapshot.started_at.timestamp_millis() as f64 / 1000.0
+                                })
+                                .unwrap_or_else(|| {
+                                    chrono::Utc::now().timestamp_millis() as f64 / 1000.0
+                                });
+                            notifier
+                                .persist_pending(
+                                    &record_session_id,
+                                    &content,
+                                    args.get("workdir").and_then(Value::as_str).unwrap_or(""),
+                                    context.workspace_id,
+                                    "sandbox",
+                                    started_at,
+                                )
+                                .await;
+                        }
+                    }
                     long_task::spawn(
                         "tools.sandbox_command_output",
                         observe_sandbox_command(
@@ -2661,16 +2734,9 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
     let effective_output_budget_bytes = stdout_policy
         .max_bytes()
         .saturating_add(stderr_policy.max_bytes());
-    let commands = if allow_all {
-        vec![content.clone()]
-    } else {
-        content
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-    };
+    // 后台模式把整段文本当成一条脚本作业：顺序语义不变，只有一个会话、
+    // 一个退出码和一条完成通知；前台仍按行拆分，保留逐条输出与失败处理。
+    let commands = build_command_plan(&content, allow_all, run_in_background);
     // 单条命令才做「已有一模一样的会话在跑」的复用检查；批量脚本按顺序照跑。
     let single_command = commands.len() == 1;
     if commands.is_empty() {
@@ -2728,20 +2794,32 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             }),
         ));
     }
-    // 后台模式只接受单条命令：多行脚本本来就按顺序执行，逐条后台化会让
-    // 模型分不清该等哪一条，也失去「一次调用一个进程」的直观语义。
-    if run_in_background && commands.len() > 1 {
-        return Ok(build_failed_tool_result(
-            i18n::t("tool.exec.background_single_command"),
-            json!({ "command_count": commands.len() }),
-            ToolErrorMeta::new(
-                "TOOL_EXEC_BACKGROUND_MULTI_COMMAND",
-                Some("请拆成多次调用，只把需要长时间运行的那条命令设为后台执行。".to_string()),
-                true,
-                None,
-            ),
-            false,
-        ));
+    // 整段脚本必须逐行通过白名单，不能只检查第一行；后台作业会交给 shell
+    // 顺序执行，越权行同样会被放出去。
+    if run_in_background && !allow_all {
+        for line in content
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+        {
+            let lower = line.to_lowercase();
+            if !normalized_allow_commands
+                .iter()
+                .any(|item| lower.starts_with(item))
+            {
+                return Ok(build_failed_tool_result(
+                    i18n::t("tool.exec.not_allowed"),
+                    json!({ "command": line }),
+                    ToolErrorMeta::new(
+                        "TOOL_EXEC_NOT_ALLOWED",
+                        Some("后台脚本里的每一行都必须在 allow_commands 白名单内。".to_string()),
+                        false,
+                        None,
+                    ),
+                    false,
+                ));
+            }
+        }
     }
     for (command_index, command) in commands.into_iter().enumerate() {
         if command.trim().is_empty() {

@@ -919,7 +919,7 @@ async fn write_tool_never_echoes_what_the_call_already_sent() {
     assert_eq!(updated["data"]["unified_diff_truncated"], true);
     let updated_diff = updated["data"]["unified_diff"].as_str().expect("diff");
     assert!(
-        updated_diff.len() <= 64 * 1024,
+        updated_diff.len() <= 32 * 1024,
         "diff must stay inside the structural budget, got {}",
         updated_diff.len()
     );

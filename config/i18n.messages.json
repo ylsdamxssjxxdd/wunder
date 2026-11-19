@@ -2172,16 +2172,12 @@
     "zh-CN": "命令仍在运行，输出会自动推送到界面。用命令会话传 {\"command_session_id\":\"<上面的 id>\",\"chars\":\"\"} 读取新增输出；需要多等一会儿可提高 yield_time_ms（最大 30000），或传 wait_for=exit 直接等到退出。复用同一 id 直到拿到 exit_code；不要重跑命令，也不要用 sleep 空等。"
   },
   "tool.exec.background_notify_next_step": {
-    "en-US": "The command is running in the background and its output streams to the UI. You will be notified automatically when it exits; continue with other work or end your turn. Do not poll and do not rerun the command.",
-    "zh-CN": "命令已在后台运行，输出会自动推送到界面。命令结束时会自动通知你，你可以继续其他工作或直接结束本轮。无需轮询，也不要重跑同一条命令。"
+    "en-US": "The command is running in the background and its output streams to the UI. You will be notified automatically when it exits; continue with other work or end your turn now. Do not poll, do not sleep, do not create a scheduled job to wait for it, and do not rerun the command.",
+    "zh-CN": "命令已在后台运行，输出会自动推送到界面，结束时会自动通知你。现在可以直接结束本轮或继续其他工作；不要轮询、不要 sleep、不要用定时任务等待，也不要重跑同一条命令。"
   },
   "tool.exec.background_unavailable": {
     "en-US": "Background execution is unavailable in this runtime. Rerun the command in the foreground without run_in_background.",
     "zh-CN": "当前运行环境不支持后台执行。请去掉 run_in_background 后前台执行。"
-  },
-  "tool.exec.background_single_command": {
-    "en-US": "run_in_background accepts a single command only. Split the script into separate calls and mark only the long-running command as background.",
-    "zh-CN": "run_in_background 只支持单条命令。请把脚本拆成多次调用，只把需要长时间运行的那条命令设为后台。"
   },
   "tool.command_completion.header": {
     "en-US": "Background command finished.",
@@ -2195,13 +2191,21 @@
     "en-US": "Exit status, timing and bounded output tails are included. Use command_session with the listed id if you need the full output.",
     "zh-CN": "已附带退出状态、耗时与有界输出尾部；需要完整输出时用命令会话按对应 id 读取。"
   },
+  "tool.command_completion.next_step": {
+    "en-US": "This is an automatic wake-up for a finished background command, not a new user message. Summarize the result to the user (exit code, duration, key output) or continue the work that depended on it; do not wait or poll again.",
+    "zh-CN": "这是运行时因后台命令结束自动唤醒的消息，不是用户的新消息。请直接向用户简报结果（退出码、耗时、关键输出），或继续之前依赖它的工作；不要再次等待或轮询。"
+  },
+  "tool.command_completion.restart_lost": {
+    "en-US": "The runtime restarted, so this background command can no longer be tracked. It may still be running in the system; verify the process and its artifacts before rerunning.",
+    "zh-CN": "运行时已重启，无法继续跟踪这条后台命令；它可能仍在系统后台运行，请先确认进程与产物状态，再决定是否重跑。"
+  },
   "tool.command_session.keep_waiting": {
     "en-US": "The command is still running. Call command_session again with the same command_session_id and empty chars to read new output. Reuse it until exit_code is present; never idle with sleep.",
     "zh-CN": "命令仍在运行。继续用同一 command_session_id 调用命令会话，chars 留空即可读取新增输出；复用到拿到 exit_code，不要用 sleep 空等。"
   },
   "tool.exec.sleep_not_allowed": {
-    "en-US": "Do not idle with a bare sleep command. execute_command returns a command_session_id for ongoing work; wait for output with command_session instead.",
-    "zh-CN": "不要用单独的 sleep 空等。执行命令会为未结束的工作返回 command_session_id，请用命令会话等待新增输出。"
+    "en-US": "Do not idle with a bare sleep command. Long work belongs in run_in_background and wakes you automatically when it exits; to read a running command's output use command_session. Never use sleep or scheduled jobs to wait for a background command.",
+    "zh-CN": "不要用单独的 sleep 空等。长任务用 run_in_background 交给后台，结束时会自动唤醒你；需要读取运行中命令的输出就用命令会话。不要用 sleep 或定时任务等待后台命令。"
   },
   "tool.exec.non_zero_exit_note": {
     "en-US": "The command exited with a non-zero code. Exit codes are command semantics, not tool failures (grep no-match=1, pkill no-process=1, diff differences=1). Judge from stdout/stderr whether a fix is needed; do not retry blindly or mask with || true.",
@@ -2720,8 +2724,8 @@
     "zh-CN": "去重key。"
   },
   "tool.spec.schedule_task.description": {
-    "en-US": "Create and manage scheduled jobs. Prefer flat fields (action, job_id, schedule_text, message, session, enabled). session=main interrupts the bound thread and runs there; session=isolated runs in its own child thread and posts the completed result turn back. run is asynchronous: queued means accepted, not finished, so end the reply instead of polling. One-shot delays such as '3 分钟后' are supported and self-delete by default; schedule.at must be ISO 8601.",
-    "zh-CN": "创建和管理定时任务。优先使用扁平字段（action、job_id、schedule_text、message、session、enabled）。session=main 触发时打断绑定线程并在其中执行；session=isolated 在独立子线程执行，完成后把结果轮次发回绑定线程。run 是异步触发，queued 仅代表受理，应结束当前回复而不要轮询。支持“3 分钟后”这类一次性调度并默认执行后自删；schedule.at 必须是 ISO 8601。"
+    "en-US": "Create and manage scheduled jobs for explicit user requests (reminders, recurring jobs, actions at a specific time). Prefer flat fields (action, job_id, schedule_text, message, session, enabled). Never use it to poll or wait for a background command: command completion wakes the agent automatically. session=main interrupts the bound thread and runs there; session=isolated runs in its own child thread and posts the completed result turn back. run is asynchronous: queued means accepted, not finished, so end the reply instead of polling. One-shot delays such as '3 分钟后' are supported and self-delete by default; schedule.at must be ISO 8601.",
+    "zh-CN": "创建和管理定时任务，只用于用户明确要求的提醒、周期任务或到点动作。优先使用扁平字段（action、job_id、schedule_text、message、session、enabled）。不要用它轮询或等待后台命令：命令完成会自动唤醒智能体。session=main 触发时打断绑定线程并在其中执行；session=isolated 在独立子线程执行，完成后把结果轮次发回绑定线程。run 是异步触发，queued 仅代表受理，应结束当前回复而不要轮询。支持“3 分钟后”这类一次性调度并默认执行后自删；schedule.at 必须是 ISO 8601。"
   },
   "tool.spec.user_world.args.action": {
     "en-US": "Action: list_users/send_message.",

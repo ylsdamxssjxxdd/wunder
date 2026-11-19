@@ -378,7 +378,8 @@ impl NativeDesktop {
                 if UPDATE_GITHUB_REPO.is_empty() {
                     let mut state = self.lock_update();
                     state.phase = "failed".into();
-                    state.error = "GitHub 更新源不可用（仓库未配置），请使用云端账号检查更新".into();
+                    state.error =
+                        "GitHub 更新源不可用（仓库未配置），请使用云端账号检查更新".into();
                     bail!(state.error.clone());
                 }
                 self.runtime.block_on(source_client().fetch_github_latest(

@@ -653,7 +653,7 @@ fn with_receipt(
     omit_body: bool,
 ) -> Value {
     let receipt = write_receipt::build(path, after, verify);
-    // 与写入文件、字面编辑同一口径：回执带 diff，但受 `line_diff` 的 64KB
+    // 与写入文件、字面编辑同一口径：回执带 diff，但受 `line_diff` 的 32KB
     // 结构预算约束；`create` 的正文就是调用方刚发出去的内容，只给一行说明。
     let (unified, unified_truncated) = if omit_body {
         (new_file_notice(path, after.lines().count()), true)

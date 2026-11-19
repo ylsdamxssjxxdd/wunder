@@ -14,6 +14,7 @@ mod catalog;
 mod child_pool_tests;
 pub(crate) mod command_notify;
 pub(crate) mod command_options;
+pub(crate) use command_tool::spawn_sandbox_command_observer;
 pub(crate) mod command_output_guard;
 pub mod command_sessions;
 mod command_tool;
