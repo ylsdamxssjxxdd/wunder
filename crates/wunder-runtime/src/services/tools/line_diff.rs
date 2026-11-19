@@ -522,71 +522,61 @@ pub(super) fn unified_diff(path: &str, before: &str, after: &str, diff: &LineDif
     let mut out: Vec<String> = Vec::with_capacity(16);
     out.push("--- a/".to_string() + path);
     out.push("+++ b/".to_string() + path);
-    let mut last_old = 0usize;
+    // 已输出到的旧文本行（0-based，不含）。上下文统一从旧文本取：旧实现用 new
+    // 行号去限制 old 上下文，插入/删除后两侧行号错位，边界行会在两个块里各打印
+    // 一次（同一个 `+TOKEN 2` 既出现在后置上下文又出现在下一块前置上下文）。
+    let mut emitted_old_end = 0usize;
 
-    for region in &regions {
-        let old_start = region.old_start + 1;
-        let new_start = region.new_start + 1;
+    for (index, region) in regions.iter().enumerate() {
+        let old_start = region.old_start;
         let old_len = region.old_len;
+        let new_start = region.new_start;
         let new_len = region.new_len;
-        let end_line_before = if old_len == 0 {
-            region.old_start
-        } else {
-            region.old_start + old_len
-        };
-        let end_line_after = if new_len == 0 {
-            region.new_start
-        } else {
-            region.new_start + new_len
-        };
+        // 下一块的删除区起点：后置上下文不能把下一块要改的行当成上下文先打印。
+        let next_old_start = regions
+            .get(index + 1)
+            .map(|next| next.old_start)
+            .unwrap_or(old.len());
 
-        // 前置上下文：最多两行，且不与上一个块已经输出过的行重叠。
-        if old_len > 0 || new_len > 0 {
-            let from = old_start
-                .saturating_sub(UNIFIED_CONTEXT_LINES)
-                .max(last_old + 1);
-            for line_no in from..old_start {
-                let Some(text) = old.get(line_no - 1) else {
-                    break;
-                };
+        // 前置上下文：最多两行，且不与上一块已经输出过的行重叠。
+        let context_from = old_start
+            .saturating_sub(UNIFIED_CONTEXT_LINES)
+            .max(emitted_old_end);
+        if context_from < old_start {
+            for text in old.get(context_from..old_start).unwrap_or(&[]) {
                 out.push(" ".to_string() + text);
             }
         }
 
         let mut header = String::from("@@ -");
-        header.push_str(&old_start.to_string());
+        header.push_str(&(old_start + 1).to_string());
         header.push(',');
         header.push_str(&old_len.to_string());
         header.push_str(" +");
-        header.push_str(&new_start.to_string());
+        header.push_str(&(new_start + 1).to_string());
         header.push(',');
         header.push_str(&new_len.to_string());
         header.push_str(" @@");
         out.push(header);
 
-        for text in old
-            .get(region.old_start..region.old_start + old_len)
-            .unwrap_or(&[])
-        {
+        for text in old.get(old_start..old_start + old_len).unwrap_or(&[]) {
             out.push("-".to_string() + text);
         }
-        for text in new
-            .get(region.new_start..region.new_start + new_len)
-            .unwrap_or(&[])
-        {
+        for text in new.get(new_start..new_start + new_len).unwrap_or(&[]) {
             out.push("+".to_string() + text);
         }
-        last_old = end_line_before.max(old_start.saturating_sub(1));
 
-        // 后置上下文：接在本次块之后，下一块的前置上下文会自动去重。
-        for offset in 1..=UNIFIED_CONTEXT_LINES {
-            let line_no = end_line_after + offset;
-            let Some(text) = new.get(line_no.saturating_sub(1)) else {
-                break;
-            };
-            out.push(" ".to_string() + text);
-            last_old = line_no;
+        // 后置上下文：接在删除区之后，不越过下一块的删除区起点。
+        let post_from = old_start + old_len;
+        let post_to = (post_from + UNIFIED_CONTEXT_LINES)
+            .min(next_old_start)
+            .min(old.len());
+        if post_from < post_to {
+            for text in old.get(post_from..post_to).unwrap_or(&[]) {
+                out.push(" ".to_string() + text);
+            }
         }
+        emitted_old_end = post_to.max(post_from);
     }
 
     out.join("\n")
@@ -667,6 +657,28 @@ mod tests {
             assert!(text.lines().any(|line| line == removed), "{index}");
             assert!(text.lines().any(|line| line == added), "{index}");
         }
+    }
+
+    #[test]
+    fn adjacent_blocks_do_not_repeat_context_lines() {
+        // 交替替换：每块前后都有边界行，同一行只能在 diff 里出现一次。
+        let before = "x0\nk1\nx2\nk3\nx4\nk5\n";
+        let after = "y0\nk1\ny2\nk3\ny4\nk5\n";
+        let diff = diff_replaced(before, after);
+        assert_eq!(diff.hunks, 3);
+        let text = unified_diff("x.txt", before, after, &diff);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(text.matches("@@ -").count(), 3, "{text}");
+        for context in [" k1", " k3", " k5"] {
+            assert_eq!(
+                lines.iter().filter(|line| **line == context).count(),
+                1,
+                "context {context} repeated in {text}"
+            );
+        }
+        // 头 + 3 块 *（头 + -/+ 两行 + 1 行后置上下文）
+        assert_eq!(lines.len(), 2 + 3 * 4, "{text}");
+        assert!(text.contains("@@ -3,1 +3,1 @@"), "{text}");
     }
 
     fn kinds(diff: &LineDiff) -> Vec<&'static str> {

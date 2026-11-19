@@ -473,5 +473,8 @@ async fn unified_diff_lists_every_replacement_past_the_block_budget() {
         .expect("unified diff");
     assert_eq!(unified.matches("@@ -").count(), 15, "{unified}");
     assert!(unified.contains("+TOKEN 28"), "{unified}");
+    // 边界行只出现一次；已改行不会再被当成下一块的上下文重复打印。
+    assert_eq!(unified.matches(" keep 1\n").count(), 1, "{unified}");
+    assert_eq!(unified.matches(" TOKEN 2\n").count(), 0, "{unified}");
     assert_eq!(result["data"]["unified_diff_truncated"], json!(false));
 }
