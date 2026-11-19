@@ -2936,8 +2936,8 @@
     "zh-CN": "可选，文转声模型配置名；留空使用默认文转声模型。"
   },
   "tool.spec.generate_speech.args.voice": {
-    "en-US": "Optional voice / speaker parameter.",
-    "zh-CN": "可选，音色 / 说话人参数。"
+    "en-US": "Optional voice / speaker parameter. Leave empty to keep the voice pinned in the model config, which is what keeps multiple segments in the same timbre.",
+    "zh-CN": "可选，音色 / 说话人参数。多段语音要保持同一音色时留空，沿用模型配置里固定的 tts_voice。"
   },
   "tool.spec.generate_speech.args.instructions": {
     "en-US": "Optional style instructions for the speech model.",
@@ -2952,16 +2952,16 @@
     "zh-CN": "可选，播放速度。"
   },
   "tool.spec.generate_speech.args.reference_path": {
-    "en-US": "Optional workspace-relative path to a reference audio file for voice cloning. The server converts it to a data URL before calling the upstream TTS API.",
-    "zh-CN": "可选，用于声音克隆的工作区相对参考音频路径。服务端会先转成 data URL 再调用上游文转声接口。"
+    "en-US": "Optional workspace-relative reference audio for voice cloning (Base checkpoints only). It overrides the voice pinned in the model config; omit it when segments must share one voice.",
+    "zh-CN": "可选，用于声音克隆的工作区相对参考音频路径（仅 Base 音色克隆权重）。它会覆盖模型配置里固定的音色；多段需同一音色时不要传。"
   },
   "tool.spec.generate_speech.args.ref_audio": {
     "en-US": "Optional direct reference audio for voice cloning. Supports HTTP(S) URLs, data URLs, or local workspace/workdir file paths that can be resolved on the server.",
     "zh-CN": "可选，直接提供用于声音克隆的参考音频。支持 HTTP(S) 链接、data URL，或服务端可解析的工作区/工作目录文件路径。"
   },
   "tool.spec.generate_speech.args.ref_text": {
-    "en-US": "Optional transcript of the reference audio. Some upstream clone models require this field.",
-    "zh-CN": "可选，参考音频的转写文本。部分上游克隆模型要求提供此字段。"
+    "en-US": "Optional transcript of the reference audio. In-context clone models require it unless x-vector-only mode is enabled.",
+    "zh-CN": "可选，参考音频的转写文本。上下文克隆（ICL）需要它；只提说话人向量时可省略。"
   },
   "tool.spec.generate_speech.args.model_specific_params": {
     "en-US": "Optional extra JSON object forwarded to the upstream TTS API for model-specific clone parameters such as task_type.",

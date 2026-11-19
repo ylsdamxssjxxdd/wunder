@@ -811,6 +811,20 @@ pub struct LlmModelConfig {
     pub tts_response_format: Option<String>,
     #[serde(default)]
     pub tts_speed: Option<f32>,
+    /// TTS 任务类型（Qwen3-TTS：CustomVoice / Base / VoiceDesign）。
+    /// 显式填写可避免上游按 ref_audio 自动推断成 Base 而拒绝当前权重。
+    #[serde(default)]
+    pub tts_task_type: Option<String>,
+    /// 固定随机种子：多段合成共用同一音色时压住采样漂移。
+    #[serde(default)]
+    pub tts_seed: Option<i64>,
+    /// 默认参考音频：http(s)/data/file:// URI，或本地路径（自动转 file://）。
+    /// 仅 Base（音色克隆）任务可用；CustomVoice 预设音色不需要。
+    #[serde(default)]
+    pub tts_ref_audio: Option<String>,
+    /// 默认参考音频的准确原文；Base 任务的 ICL 克隆必填，留空则走 x-vector。
+    #[serde(default)]
+    pub tts_ref_text: Option<String>,
     #[serde(default)]
     pub asr_language: Option<String>,
     #[serde(default)]

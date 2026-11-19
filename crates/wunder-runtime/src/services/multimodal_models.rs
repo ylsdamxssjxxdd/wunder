@@ -425,10 +425,11 @@ async fn synthesize_speech_with_model(
             "tts voice is required by the upstream service; configure tts_voice or expose /v1/audio/voices"
         ));
     }
+    let effective = apply_configured_speech_defaults(config, request)?;
     let payload = build_speech_payload(
         config,
         model,
-        request,
+        &effective,
         &response_format,
         resolved_voice.as_deref(),
     );
@@ -705,6 +706,18 @@ fn build_speech_payload(
         if let Some(voice) = resolved_voice {
             map.insert("voice".to_string(), json!(voice));
         }
+        // 任务类型与随机种子固定下来，多段合成都走同一条件，减少音色/韵律漂移。
+        if let Some(task_type) = config
+            .tts_task_type
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            map.insert("task_type".to_string(), json!(task_type));
+        }
+        if let Some(seed) = config.tts_seed {
+            map.insert("seed".to_string(), json!(seed));
+        }
         if let Some(instructions) = request
             .instructions
             .as_deref()
@@ -763,6 +776,123 @@ fn build_speech_payload(
         }
     }
     payload
+}
+
+/// 把模型配置里的 TTS 默认条件并入请求。
+///
+/// - 参考音频/原文只在调用方没有显式提供时补位，调用方始终可以覆盖；
+/// - 参考音频只对 Base（音色克隆）任务有效，与显式非 Base 任务同时出现时直接报错，
+///   避免上游把 CustomVoice 权重按 Base 推断后整段失败；
+/// - 本地路径转成 `file://` URI（vllm-omni 需要 --allowed-local-media-path）。
+fn apply_configured_speech_defaults(
+    config: &LlmModelConfig,
+    request: &SpeechSynthesisRequest,
+) -> Result<SpeechSynthesisRequest> {
+    let mut effective = request.clone();
+    let configured_ref = config
+        .tts_ref_audio
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(normalize_configured_ref_audio)
+        .transpose()?;
+    let configured_ref_text = config
+        .tts_ref_text
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    // 只有调用方完全没给参考音频时才补配置级默认值：配置里的 ref_text 属于配置里的
+    // 音频，套到调用方自己的参考音频上会得到错误转写，反而破坏克隆。
+    if effective.ref_audio.is_none() {
+        effective.ref_audio = configured_ref;
+        if effective.ref_text.is_none() {
+            effective.ref_text = configured_ref_text;
+        }
+    }
+    if effective.ref_audio.is_none() && effective.ref_text.is_some() {
+        return Err(anyhow!(
+            "tts_ref_text 需要同时配置 tts_ref_audio 或提供 reference_path"
+        ));
+    }
+
+    let explicit_task = request
+        .model_specific_params
+        .as_ref()
+        .and_then(|params| params.get("task_type"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            config
+                .tts_task_type
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        });
+    if effective.ref_audio.is_some() {
+        if let Some(task_type) = explicit_task.as_deref() {
+            if !task_type.eq_ignore_ascii_case("base") {
+                return Err(anyhow!(
+                    "参考音频只用于 Base（音色克隆）任务，但当前任务类型为 {task_type}；请改用 Base 权重，或移除 tts_ref_audio"
+                ));
+            }
+        }
+    }
+    Ok(effective)
+}
+
+/// 配置里的参考音频可以是 http(s)/data/file:// URI，也可以是本地路径。
+/// 本地路径转成绝对 `file://` URI，交给上游自己读取，避免每段都 base64 编码整段音频。
+fn normalize_configured_ref_audio(value: &str) -> Result<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("tts_ref_audio 不能为空"));
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("data:")
+        || lower.starts_with("file://")
+    {
+        return Ok(trimmed.to_string());
+    }
+    let expanded = expand_home_path(trimmed);
+    let path = Path::new(&expanded);
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .context("resolve tts_ref_audio working directory")?
+            .join(path)
+    };
+    if !absolute.is_file() {
+        return Err(anyhow!(
+            "tts_ref_audio 指向的文件不存在: {}",
+            absolute.display()
+        ));
+    }
+    let mut normalized = absolute.to_string_lossy().replace('\\', "/");
+    if !normalized.starts_with('/') {
+        normalized.insert(0, '/');
+    }
+    Ok(format!("file://{}", normalized))
+}
+
+fn expand_home_path(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(|value| value.to_string_lossy().to_string())
+            .filter(|value| !value.is_empty())
+        {
+            return format!("{}/{}", home, rest);
+        }
+    }
+    path.to_string()
 }
 
 fn normalize_tts_response_format(value: Option<&str>) -> String {
@@ -2032,9 +2162,10 @@ pub fn image_generation_resource_path() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_image_payload, build_speech_payload, image_input_file_from_bytes,
-        list_asr_model_names, list_image_model_names, list_tts_model_names, list_video_model_names,
-        normalize_asr_response_format, resolve_asr_model, resolve_image_model, resolve_tts_model,
+        apply_configured_speech_defaults, build_image_payload, build_speech_payload,
+        image_input_file_from_bytes, list_asr_model_names, list_image_model_names,
+        list_tts_model_names, list_video_model_names, normalize_asr_response_format,
+        normalize_configured_ref_audio, resolve_asr_model, resolve_image_model, resolve_tts_model,
         resolve_video_model,
     };
     use crate::config::{Config, LlmModelConfig};
@@ -2195,6 +2326,169 @@ mod tests {
             Some(false)
         );
         assert_eq!(payload.get("voice").and_then(Value::as_str), Some("Vivian"));
+    }
+
+    #[test]
+    fn tts_payload_applies_configured_task_type_and_seed() {
+        let mut config = model("tts");
+        config.tts_task_type = Some("CustomVoice".to_string());
+        config.tts_seed = Some(20261119);
+        let request = super::SpeechSynthesisRequest {
+            text: "hello".to_string(),
+            model_name: None,
+            voice: None,
+            instructions: None,
+            response_format: None,
+            speed: None,
+            ref_audio: None,
+            ref_text: None,
+            model_specific_params: None,
+        };
+
+        let payload = build_speech_payload(&config, "tts-model", &request, "wav", Some("vivian"));
+
+        assert_eq!(
+            payload.get("task_type").and_then(Value::as_str),
+            Some("CustomVoice")
+        );
+        assert_eq!(payload.get("seed").and_then(Value::as_i64), Some(20261119));
+    }
+
+    #[test]
+    fn tts_seed_from_model_specific_params_overrides_config() {
+        let mut config = model("tts");
+        config.tts_seed = Some(1);
+        let request = super::SpeechSynthesisRequest {
+            text: "hello".to_string(),
+            model_name: None,
+            voice: None,
+            instructions: None,
+            response_format: None,
+            speed: None,
+            ref_audio: None,
+            ref_text: None,
+            model_specific_params: Some(serde_json::json!({ "seed": 7 })),
+        };
+
+        let payload = build_speech_payload(&config, "tts-model", &request, "wav", Some("vivian"));
+
+        assert_eq!(payload.get("seed").and_then(Value::as_i64), Some(7));
+    }
+
+    #[test]
+    fn configured_reference_audio_fills_missing_request_reference() {
+        let mut config = model("tts");
+        config.tts_task_type = Some("Base".to_string());
+        config.tts_ref_audio = Some("https://example.com/ref.wav".to_string());
+        config.tts_ref_text = Some("reference text".to_string());
+        let request = super::SpeechSynthesisRequest {
+            text: "hello".to_string(),
+            model_name: None,
+            voice: None,
+            instructions: None,
+            response_format: None,
+            speed: None,
+            ref_audio: None,
+            ref_text: None,
+            model_specific_params: None,
+        };
+
+        let effective =
+            apply_configured_speech_defaults(&config, &request).expect("defaults apply");
+
+        assert_eq!(
+            effective.ref_audio.as_deref(),
+            Some("https://example.com/ref.wav")
+        );
+        assert_eq!(effective.ref_text.as_deref(), Some("reference text"));
+    }
+
+    #[test]
+    fn request_reference_audio_wins_over_configured_default() {
+        let mut config = model("tts");
+        config.tts_task_type = Some("Base".to_string());
+        config.tts_ref_audio = Some("https://example.com/config.wav".to_string());
+        config.tts_ref_text = Some("config text".to_string());
+        let request = super::SpeechSynthesisRequest {
+            text: "hello".to_string(),
+            model_name: None,
+            voice: None,
+            instructions: None,
+            response_format: None,
+            speed: None,
+            ref_audio: Some("data:audio/wav;base64,AAAA".to_string()),
+            ref_text: Some("call text".to_string()),
+            model_specific_params: None,
+        };
+
+        let effective =
+            apply_configured_speech_defaults(&config, &request).expect("defaults apply");
+
+        assert_eq!(
+            effective.ref_audio.as_deref(),
+            Some("data:audio/wav;base64,AAAA")
+        );
+        assert_eq!(effective.ref_text.as_deref(), Some("call text"));
+    }
+
+    #[test]
+    fn configured_reference_text_is_not_applied_to_caller_reference() {
+        let mut config = model("tts");
+        config.tts_task_type = Some("Base".to_string());
+        config.tts_ref_text = Some("config text".to_string());
+        let request = super::SpeechSynthesisRequest {
+            text: "hello".to_string(),
+            model_name: None,
+            voice: None,
+            instructions: None,
+            response_format: None,
+            speed: None,
+            ref_audio: Some("data:audio/wav;base64,AAAA".to_string()),
+            ref_text: None,
+            model_specific_params: None,
+        };
+
+        let effective =
+            apply_configured_speech_defaults(&config, &request).expect("defaults apply");
+
+        assert_eq!(effective.ref_text, None);
+    }
+
+    #[test]
+    fn configured_reference_audio_rejected_for_non_base_task() {
+        let mut config = model("tts");
+        config.tts_task_type = Some("CustomVoice".to_string());
+        config.tts_ref_audio = Some("https://example.com/ref.wav".to_string());
+        let request = super::SpeechSynthesisRequest {
+            text: "hello".to_string(),
+            model_name: None,
+            voice: None,
+            instructions: None,
+            response_format: None,
+            speed: None,
+            ref_audio: None,
+            ref_text: None,
+            model_specific_params: None,
+        };
+
+        let error = apply_configured_speech_defaults(&config, &request).expect_err("must reject");
+        assert!(error.to_string().contains("Base"));
+    }
+
+    #[test]
+    fn local_reference_audio_becomes_file_uri() {
+        let path = std::env::temp_dir().join(format!(
+            "wunder-tts-ref-{}-{:?}.wav",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::write(&path, b"RIFF").expect("write temp reference");
+
+        let uri = normalize_configured_ref_audio(path.to_str().expect("utf8 path"))
+            .expect("normalize local path");
+
+        assert!(uri.starts_with("file:///"), "unexpected uri: {uri}");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

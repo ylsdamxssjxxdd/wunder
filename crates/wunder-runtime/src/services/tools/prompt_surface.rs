@@ -218,8 +218,8 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "语音生成",
-        brief_en: "Synthesize speech from text with voice/speed; path sets the output file, reference_path clones a voice.",
-        brief_zh: "按 text 合成语音，voice/speed 控制音色语速，path 指定输出文件，reference_path 复刻音色。",
+        brief_en: "Synthesize speech from text with voice/speed; path sets the output file, reference_path clones a voice. For multi-segment output keep the configured voice: omit voice/reference_path unless the user asks for another voice.",
+        brief_zh: "按 text 合成语音，voice/speed 控制音色语速，path 指定输出文件，reference_path 复刻音色。多段语音用同一音色时不要传 voice/reference_path，沿用配置里固定的音色。",
         drop_actions: &[],
         drop_fields: &[
             "instructions",
