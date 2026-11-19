@@ -1270,19 +1270,8 @@ export component SettingsPage inherits Rectangle {
                                         PathBrowseButton { enabled: !root.saving && !root.loading; clicked => { root.pick-shell-path(); } }
                                     }
                                 }
-                                Rectangle { height: 8px; }
-                                HorizontalLayout { height: 34px;
-                                    Action { width: 128px; label: root.importing-supplement ? I18n.st_supplement_importing : I18n.st_supplement_import; show-label: true; primary: true; enabled: !root.importing-supplement && !root.saving && !root.loading; clicked => { root.import-supplement(); } }
-                                    Rectangle { horizontal-stretch: 1; }
-                                }
-                                Text { height: 18px; text: root.supplement-status; color: root.supplement-status.starts-with("导入失败") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; visible: root.supplement-status != ""; }
-                            }
-                            // ---- 语法检查：写回文件后的解析器宿主 ----
-                            // 只对需要外部解释器的语言生效（.py / .js / .ts / .sh / .ps1）。
-                            // 字段留空即自动探测，显示的是引擎此刻真正会用的那个二进制。
-                            SettingsCard {
-                                SettingsCardHeader { title: I18n.st_syntax_title; subtitle: I18n.st_syntax_note; }
-                                Rectangle { height: 10px; }
+                                // Node 与 Bash 既是脚本运行时，也是写回 `.js`/`.ts`/`.sh`
+                                // 时的语法校验宿主，直接跟着本卡的路径走。
                                 HorizontalLayout { height: 62px; spacing: 10px;
                                     FormField { horizontal-stretch: 1; label: I18n.st_node_path; text <=> root.node-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
                                     VerticalLayout { width: 92px; alignment: end; padding-bottom: 5px;
@@ -1295,7 +1284,13 @@ export component SettingsPage inherits Rectangle {
                                         PathBrowseButton { enabled: !root.saving && !root.loading; clicked => { root.pick-bash-path(); } }
                                     }
                                 }
-                                Text { height: 18px; text: I18n.st_syntax_map; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                Text { height: 18px; text: I18n.st_runtime_syntax_map; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                Rectangle { height: 8px; }
+                                HorizontalLayout { height: 34px;
+                                    Action { width: 128px; label: root.importing-supplement ? I18n.st_supplement_importing : I18n.st_supplement_import; show-label: true; primary: true; enabled: !root.importing-supplement && !root.saving && !root.loading; clicked => { root.import-supplement(); } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                Text { height: 18px; text: root.supplement-status; color: root.supplement-status.starts-with("导入失败") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; visible: root.supplement-status != ""; }
                             }
                         }
                     }

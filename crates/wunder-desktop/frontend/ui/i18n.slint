@@ -452,9 +452,6 @@ export global I18n {
     out property <string> st_shell_path: zh ? "shell 路径" : "Shell path";
     out property <string> st_node_path: zh ? "Node 路径（.js / .ts）" : "Node path (.js / .ts)";
     out property <string> st_bash_path: zh ? "Bash 路径（.sh）" : "Bash path (.sh)";
-    out property <string> st_syntax_title: zh ? "语法检查" : "Syntax check";
-    out property <string> st_syntax_note: zh ? "写回文件后只做解析、不改内容；缺解释器时回执降级为跳过。留空自动探测，字段里显示的就是此刻生效的路径。" : "Files are parsed after a write and never blocked. A missing interpreter only downgrades the receipt. Leave empty to auto-detect; the field shows the path in effect right now.";
-    out property <string> st_syntax_map: zh ? ".py Python · .js .ts Node · .sh Bash · .ps1 PowerShell（复用上面的 shell 路径）· .json .yaml .css .html 内置解析" : ".py Python · .js .ts Node · .sh Bash · .ps1 PowerShell (reuses the shell path above) · .json .yaml .css .html built in";
     out property <string> st_stress_count: zh ? "个数" : "Count";
     out property <string> st_wunder_model_hint: zh ? "在新浏览器窗口打开 3D 展示" : "Open the 3D viewer in a new browser window";
     out property <string> st_wunder_model_open: zh ? "眺望心舰" : "Behold Wunder";
@@ -1075,7 +1072,8 @@ export global I18n {
     out property <string> st_language: zh ? "运行时语言" : "Runtime language";
     out property <string> st_language_hint: zh ? "zh-CN 或 en-US" : "zh-CN or en-US";
     out property <string> st_exec_paths: zh ? "执行文件路径" : "Executable paths";
-    out property <string> st_exec_paths_note: zh ? "指定 Python / Git / rg 路径，保存后对新启动的工具生效；留空自动检测。补充包统一导入用户目录 .wunder/opt，与命令行共用；设置 WUNDER_HOME 时使用该目录。" : "Set Python / Git / rg paths for newly started tools; leave empty to auto-detect. Supplements are imported into .wunder/opt in your home and shared with the CLI. WUNDER_HOME overrides this location.";
+    out property <string> st_exec_paths_note: zh ? "指定 Python / Git / rg / Node / Bash 路径，保存后对新启动的工具生效；留空自动检测。补充包统一导入用户目录 .wunder/opt，与命令行共用；设置 WUNDER_HOME 时使用该目录。" : "Set Python / Git / rg / Node / Bash paths for newly started tools; leave empty to auto-detect. Supplements are imported into .wunder/opt in your home and shared with the CLI. WUNDER_HOME overrides this location.";
+    out property <string> st_runtime_syntax_map: zh ? ".py Python · .js .ts Node · .sh Bash · .ps1 上面的 shell 路径 · .json .yaml .css .html 内置解析；写回只解析、不阻断" : ".py Python · .js .ts Node · .sh Bash · .ps1 the shell path above · .json .yaml .css .html built in; parse-only, writes are never blocked";
     out property <string> st_python_path: zh ? "Python 路径" : "Python path";
     out property <string> st_python_hint: zh ? "留空自动检测，可指向 python 可执行文件" : "Empty auto-detects; may point to a python executable";
     out property <string> st_git_path: zh ? "Git 路径" : "Git path";

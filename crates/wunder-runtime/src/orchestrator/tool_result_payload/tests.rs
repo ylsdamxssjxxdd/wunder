@@ -2655,6 +2655,41 @@ fn write_receipt_and_unified_diff_survive_the_projection() {
 }
 
 #[test]
+fn match_tier_and_batch_report_survive_the_projection() {
+    // 定位档位与批量逐条结果是「怎么改的」唯一证据；投影白名单漏掉它们时，
+    // 模型只看到 replacements/changed，等于容错与批量能力被静默吞掉。
+    let projected = project_file_write_success(&json!({
+        "action": "edit",
+        "state": "completed",
+        "data": {
+            "path": "temp/sketch.rs",
+            "replacements": 2,
+            "changed_files": 1,
+            "match": "indentation",
+            "match_note": "按块内缩进归一匹配",
+            "edits": [
+                {"index": 1, "status": "applied", "replacements": 1, "match": "exact"},
+                {"index": 2, "status": "applied", "replacements": 1, "match": "indentation"}
+            ],
+            "edits_applied": 2,
+            "edits_missed": 1,
+            "partial": true,
+            "receipt": "file: temp/sketch.rs (2 lines, 24 B, sha256: 9f3a1c2d4e5f)"
+        }
+    }))
+    .expect("projection");
+    assert_eq!(projected["match"], json!("indentation"));
+    assert_eq!(projected["match_note"], json!("按块内缩进归一匹配"));
+    assert_eq!(projected["edits_applied"], json!(2));
+    assert_eq!(projected["edits_missed"], json!(1));
+    assert_eq!(projected["partial"], json!(true));
+    assert_eq!(
+        projected["edits"].as_array().expect("step reports").len(),
+        2
+    );
+}
+
+#[test]
 fn structured_check_and_undo_source_survive_the_projection() {
     // `check` 是给程序判定的结构化结论，`restored_*` 是撤销的来源；
     // 二者都必须在写入类观测压缩后仍然可见，否则模型只看到一行 syntax。

@@ -2277,21 +2277,6 @@
   "en": "Bash path (.sh)"
  },
  {
-  "key": "st_syntax_title",
-  "zh": "语法检查",
-  "en": "Syntax check"
- },
- {
-  "key": "st_syntax_note",
-  "zh": "写回文件后只做解析、不改内容；缺解释器时回执降级为跳过。留空自动探测，字段里显示的就是此刻生效的路径。",
-  "en": "Files are parsed after a write and never blocked. A missing interpreter only downgrades the receipt. Leave empty to auto-detect; the field shows the path in effect right now."
- },
- {
-  "key": "st_syntax_map",
-  "zh": ".py Python · .js .ts Node · .sh Bash · .ps1 PowerShell（复用上面的 shell 路径）· .json .yaml .css .html 内置解析",
-  "en": ".py Python · .js .ts Node · .sh Bash · .ps1 PowerShell (reuses the shell path above) · .json .yaml .css .html built in"
- },
- {
   "key": "st_stress_count",
   "zh": "个数",
   "en": "Count"
@@ -5408,8 +5393,13 @@
  },
  {
   "key": "st_exec_paths_note",
-  "zh": "指定 Python / Git / rg 路径，保存后对新启动的工具生效；留空自动检测。补充包统一导入用户目录 .wunder/opt，与命令行共用；设置 WUNDER_HOME 时使用该目录。",
-  "en": "Set Python / Git / rg paths for newly started tools; leave empty to auto-detect. Supplements are imported into .wunder/opt in your home and shared with the CLI. WUNDER_HOME overrides this location."
+  "zh": "指定 Python / Git / rg / Node / Bash 路径，保存后对新启动的工具生效；留空自动检测。补充包统一导入用户目录 .wunder/opt，与命令行共用；设置 WUNDER_HOME 时使用该目录。",
+  "en": "Set Python / Git / rg / Node / Bash paths for newly started tools; leave empty to auto-detect. Supplements are imported into .wunder/opt in your home and shared with the CLI. WUNDER_HOME overrides this location."
+ },
+ {
+  "key": "st_runtime_syntax_map",
+  "zh": ".py Python · .js .ts Node · .sh Bash · .ps1 上面的 shell 路径 · .json .yaml .css .html 内置解析；写回只解析、不阻断",
+  "en": ".py Python · .js .ts Node · .sh Bash · .ps1 the shell path above · .json .yaml .css .html built in; parse-only, writes are never blocked"
  },
  {
   "key": "st_python_path",

@@ -2823,6 +2823,14 @@ fn project_file_write_success(data: &Value) -> Option<Value> {
             "changed_lines",
             "replacements",
             "range",
+            // 定位档位：`exact` 之外的命中是靠空白容错拿到的，模型据此决定要不要回读。
+            "match",
+            "match_note",
+            // 批量替换的逐条结果：哪些落了、哪些 MISS、各自用了哪档。
+            "edits",
+            "edits_applied",
+            "edits_missed",
+            "partial",
             "diff_omitted",
         ],
     );

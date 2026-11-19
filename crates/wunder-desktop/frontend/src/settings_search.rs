@@ -16,7 +16,7 @@
 /// category — it opens from a button on the general page.
 const SETTINGS_CATEGORY_LABELS: &[&[&str]] = &[
     &["常规", "常规设置", "general"],
-    &["本地运行时", "运行时", "runtime"],
+    &["本地运行时", "运行时", "runtime", "node bash 路径 语法"],
     &["账号", "个人资料 眺望心舰", "account 3d wunder"],
     &["模型设置", "模型配置", "models"],
     &["MCP 服务", "MCP", "mcp", "工具"],

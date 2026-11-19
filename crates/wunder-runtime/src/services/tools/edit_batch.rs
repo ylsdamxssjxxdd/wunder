@@ -230,7 +230,13 @@ pub(super) fn prepare(
     }
 
     if missed > 0 && !continue_on_miss {
-        let message = format!("批量编辑未命中 {missed}/{} 条，文件未改动", steps.len());
+        // 失败结果在观察层会被压缩到「只剩 error 文本」，所以未命中的定位
+        // 要点必须写进 message 本身，`data.edits` 只是给未压缩通路的备份。
+        let message = format!(
+            "批量编辑未命中 {missed}/{} 条，文件未改动：{}",
+            steps.len(),
+            miss_summary(&reports)
+        );
         return Err(BatchEditFailure {
             message,
             hint: miss_hint(&reports),
@@ -267,13 +273,16 @@ pub(super) fn prepare(
 }
 
 /// 单条失败的结构化报告：`nearest` 让人不必回读文件就能改对。
+///
+/// 批量里每条只留**最相似的那一个**片段：一份 8 条的调用若每条都带 3 段预览，
+/// 结果会膨胀成几 KB，而定位只需要最近的一处。
 fn step_failure_json(index: usize, failure: &EditFailure, content: &str) -> Value {
     match failure {
         EditFailure::NoMatch { nearest } => json!({
             "index": index + 1,
             "status": "missed",
             "reason": "no_match",
-            "nearest": edit_recovery::to_json(nearest),
+            "nearest": edit_recovery::to_json(&nearest[..nearest.len().min(1)]),
         }),
         EditFailure::NotUnique { count, lines } => json!({
             "index": index + 1,
@@ -289,6 +298,65 @@ fn step_failure_json(index: usize, failure: &EditFailure, content: &str) -> Valu
             "file_lines": content.lines().count(),
         }),
     }
+}
+
+/// 未命中清单（写进错误正文）：每条给出序号、原因与定位要点，最多 8 条。
+///
+/// 失败结果在观察层会被压缩成「只剩 error 文本」，这份清单是模型实际能看到的
+/// 诊断，必须自解释：不需要再读 `data`、也不需要重跑一遍才知道哪条错了。
+fn miss_summary(reports: &[Value]) -> String {
+    let mut items = Vec::new();
+    for report in reports {
+        if report.get("status").and_then(Value::as_str) != Some("missed") {
+            continue;
+        }
+        if items.len() >= 8 {
+            items.push("……（其余未逐条列出）".to_string());
+            break;
+        }
+        let index = report.get("index").and_then(Value::as_u64).unwrap_or(0);
+        let detail = match report.get("reason").and_then(Value::as_str) {
+            Some("not_unique") => {
+                let count = report
+                    .get("matches")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                let first_line = report
+                    .get("lines")
+                    .and_then(Value::as_array)
+                    .and_then(|lines| lines.first())
+                    .and_then(Value::as_u64);
+                match first_line {
+                    Some(line) => format!("第 {index} 条匹配到 {count} 处（首个在第 {line} 行）"),
+                    None => format!("第 {index} 条匹配到 {count} 处"),
+                }
+            }
+            Some("not_found") => format!("第 {index} 条目标文件已不存在"),
+            _ => {
+                let nearest = report
+                    .get("nearest")
+                    .and_then(Value::as_array)
+                    .and_then(|items| items.first());
+                let line = nearest
+                    .and_then(|first| first.get("line"))
+                    .and_then(Value::as_u64);
+                let similarity = nearest
+                    .and_then(|first| first.get("similarity"))
+                    .and_then(Value::as_u64);
+                match (line, similarity) {
+                    (Some(line), Some(similarity)) => format!(
+                        "第 {index} 条未匹配（最近片段在第 {line} 行，相似度 {similarity}%）"
+                    ),
+                    (Some(line), None) => {
+                        format!("第 {index} 条未匹配（最近片段在第 {line} 行）")
+                    }
+                    _ => format!("第 {index} 条未匹配"),
+                }
+            }
+        };
+        items.push(detail);
+    }
+    items.join("；")
 }
 
 /// 失败提示：直接指向第一个未命中步骤的最相近片段，省掉一轮 grep。
@@ -379,6 +447,9 @@ mod tests {
         ]));
         let failure = prepare(content, &steps, false).expect_err("two misses");
         assert!(failure.message.contains("2/3"));
+        // 未命中的定位要点必须在正文里：失败结果在观察层会被压成只剩 error 文本。
+        assert!(failure.message.contains("第 1 条未匹配"), "{}", failure.message);
+        assert!(failure.message.contains("第 3 条未匹配"), "{}", failure.message);
         let reports = failure.data.get("edits").expect("report list");
         assert_eq!(reports[0]["status"], json!("missed"));
         assert_eq!(reports[1]["status"], json!("applied"));

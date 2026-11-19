@@ -744,7 +744,7 @@ fn edit_failure_result(path: &str, dry_run: bool, failure: &EditFailure) -> Valu
         ),
         EditFailure::NoMatch { nearest } => {
             let mut message = format!("文本编辑失败：old_string 未匹配 {}", path);
-            let mut hint = "已自动放宽到行尾空白/块内缩进/行内空白三档仍不匹配，差异在内容本身（数值、标识符、引号、大小写）；按 nearest 的逐行差异校正，或直接用 start_line/end_line 做行区间替换（不必再 grep -n）。".to_string();
+            let mut hint = "已按行尾空白、块内缩进、行内空白、去掉全部空白逐级放宽仍不匹配，差异在内容本身（数值、标识符、引号、大小写）；按 nearest 的逐行差异校正，或直接用 start_line/end_line 做行区间替换（不必再 grep -n）。".to_string();
             if let Some(summary) = edit_recovery::summary_line(nearest) {
                 message.push_str("；");
                 message.push_str(&summary);

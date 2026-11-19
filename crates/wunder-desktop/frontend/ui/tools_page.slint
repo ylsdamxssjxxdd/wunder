@@ -1,6 +1,6 @@
 import { Theme, ToolCard, FileCard, WorkspaceFileRow } from "theme.slint";
 import { WorkspaceFilesPanel } from "workspace_files.slint";
-import { ToolText, ToolButton, ToolCountPill } from "tools_widgets.slint";
+import { ToolText, ToolButton } from "tools_widgets.slint";
 import { I18n } from "i18n.slint";
 import { ModalDialog, ConfirmDialog, FormField } from "components.slint";
 import { TextFieldActivation } from "text_field.slint";
@@ -252,13 +252,12 @@ export component ToolsPage inherits Rectangle {
             background: Theme.surface;
             VerticalLayout {
                 padding: 14px; spacing: 10px;
-                // 卡片头：标题 + 说明 + 计数药丸 + 右侧动作。
+                // 卡片头：标题 + 说明 + 右侧动作。
                 HorizontalLayout { height: 40px; spacing: 8px;
                     VerticalLayout { horizontal-stretch: 1; spacing: 3px;
                         ToolText { height: 19px; text: root.tab == 1 ? I18n.tl_cat_mcp : I18n.tm_skills; font-size: Theme.font-lg; font-weight: 700; color: Theme.text; }
                         ToolText { height: 15px; text: root.tab == 1 ? I18n.tm_mcp_tip : I18n.tm_skill_tip; color: Theme.muted; font-size: Theme.font-xs; }
                     }
-                    ToolCountPill { text: "\{root.resources.length}"; }
                     ToolButton { icon: @image-url("../assets/icons/rotate-right.svg"); label: I18n.common_refresh; enabled: !root.loading && !root.working; clicked => { root.refresh(); } }
                     if root.tab == 1 : ToolButton { icon: @image-url("../assets/icons/plus.svg"); primary: true; label: I18n.tm_add; enabled: !root.working; clicked => { root.open-mcp-dialog(true); } }
                     if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/lc-upload.svg"); label: I18n.tm_import; enabled: !root.working; clicked => { ToolsDialog.import-skill(); } }

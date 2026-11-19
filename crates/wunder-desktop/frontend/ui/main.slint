@@ -638,7 +638,8 @@ export component MainWindow inherits Window {
     in-out property <string> runtime-rg;
     in-out property <string> runtime-ffmpeg;
     in-out property <string> runtime-browser;
-    // `.js`/`.ts` 与 `.sh` 的写后语法校验宿主（引擎探测，可被用户路径覆盖）。
+    // Node / Bash 运行时路径，同时也是 `.js`/`.ts`/`.sh` 写回后的语法校验宿主
+    // （留空时由引擎自行探测，可被这里的路径覆盖）。
     in-out property <string> runtime-node;
     in-out property <string> runtime-bash;
     in-out property <string> runtime-shell;
