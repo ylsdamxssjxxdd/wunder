@@ -19,10 +19,10 @@
 use super::capabilities::{local_fs, FsCapability};
 use super::context::collect_allow_roots;
 use super::line_diff::{
-    diff_added_file, diff_replaced, diff_source_too_large, insert_diff_fields, unified_diff,
-    LineDiff, DIFF_UNAVAILABLE_OVERSIZE,
+    diff_added_file, diff_replaced, diff_source_too_large, insert_diff_fields, mark_text_omission,
+    new_file_notice, unified_diff, LineDiff, DIFF_UNAVAILABLE_OVERSIZE, OMITTED_BUDGET,
+    OMITTED_NEW_FILE,
 };
-use super::{file_history, write_receipt};
 use super::{
     build_model_tool_success,
     command_options::parse_dry_run,
@@ -30,6 +30,7 @@ use super::{
     tool_error::{build_failed_tool_result, ToolErrorMeta},
     ToolContext,
 };
+use super::{file_history, write_receipt};
 use crate::core::blocking;
 use crate::path_utils::{is_within_root, normalize_path_for_compare, normalize_target_path};
 use crate::workspace::WorkspaceManager;
@@ -328,9 +329,7 @@ fn create_command(
     }
     let diff = diff_added_file(&file_text);
     let data = build_edit_data(path, "add", &diff, None);
-    let data = with_receipt(
-        path, "", &file_text, &diff, None, None, verify, data,
-    );
+    let data = with_receipt(path, "", &file_text, &diff, None, None, verify, data, true);
     Ok(write_outcome("create", path, data, dry_run, true))
 }
 
@@ -448,6 +447,7 @@ fn insert_command(
         snapshot.as_ref(),
         verify,
         data,
+        false,
     );
     Ok(write_outcome("insert", path, data, dry_run, changed))
 }
@@ -538,7 +538,17 @@ fn apply_history_step(
         (diff_replaced(before, &restored), None)
     };
     let data = build_edit_data(path, "update", &diff, unavailable);
-    let mut data = with_receipt(path, before, &restored, &diff, unavailable, None, verify, data);
+    let mut data = with_receipt(
+        path,
+        before,
+        &restored,
+        &diff,
+        unavailable,
+        None,
+        verify,
+        data,
+        false,
+    );
     if let Some(map) = data.as_object_mut() {
         map.insert("restored_from".to_string(), json!(step.display));
         map.insert("cursor".to_string(), json!(step.cursor_display));
@@ -594,7 +604,6 @@ fn no_redo(path: &str) -> Value {
     )
 }
 
-
 fn write_outcome(
     action: &str,
     path: &str,
@@ -641,11 +650,18 @@ fn with_receipt(
     snapshot: Option<&file_history::Snapshot>,
     verify: bool,
     mut data: Value,
+    omit_body: bool,
 ) -> Value {
     let receipt = write_receipt::build(path, after, verify);
-    // 与写入文件、字面编辑同一口径：回执里的 diff 给完整内容，不按行截断。
-    let unified = unified_diff(path, before, after, diff);
-    let unified_truncated = false;
+    // 与写入文件、字面编辑同一口径：回执带 diff，但受 `line_diff` 的 64KB
+    // 结构预算约束；`create` 的正文就是调用方刚发出去的内容，只给一行说明。
+    let (unified, unified_truncated) = if omit_body {
+        (new_file_notice(path, after.lines().count()), true)
+    } else {
+        let rendered = unified_diff(path, before, after, diff);
+        let truncated = rendered.truncated();
+        (rendered.text, truncated)
+    };
     if let Some(map) = data.as_object_mut() {
         if let Some(snapshot) = snapshot {
             map.insert("history".to_string(), json!(snapshot.display));
@@ -657,6 +673,16 @@ fn with_receipt(
             "unified_diff_truncated".to_string(),
             json!(unified_truncated),
         );
+        if unified_truncated {
+            mark_text_omission(
+                map,
+                if omit_body {
+                    OMITTED_NEW_FILE
+                } else {
+                    OMITTED_BUDGET
+                },
+            );
+        }
         if let Some(reason) = unavailable {
             map.insert("diff_unavailable".to_string(), json!(reason));
         }
@@ -667,7 +693,6 @@ fn with_receipt(
 fn parse_verify(args: &Value) -> bool {
     args.get("verify").and_then(Value::as_bool).unwrap_or(true)
 }
-
 
 fn write_target(
     ws: &WorkspaceManager,

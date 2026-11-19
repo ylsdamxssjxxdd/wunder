@@ -40,9 +40,7 @@ pub(crate) fn nearest_matches(content: &str, needle: &str, limit: usize) -> Vec<
     if limit == 0 {
         return Vec::new();
     }
-    let needle_lines: Vec<&str> = split_lines(needle)
-        .into_iter()
-        .collect::<Vec<_>>();
+    let needle_lines: Vec<&str> = split_lines(needle).into_iter().collect::<Vec<_>>();
     let needle_lines = trim_trailing_empty(needle_lines);
     if needle_lines.is_empty() {
         return Vec::new();
@@ -291,7 +289,10 @@ mod tests {
         let first = &nearest[0];
         assert_eq!(first.line, 1);
         assert!(first.similarity >= 60, "{:?}", first);
-        assert!(first.differences.iter().any(|note| note.contains("第 3 行")));
+        assert!(first
+            .differences
+            .iter()
+            .any(|note| note.contains("第 3 行")));
         assert!(first.snippet.contains("pouch = [(385, 114)"));
     }
 
@@ -299,7 +300,10 @@ mod tests {
     fn unrelated_needle_still_points_at_the_closest_block() {
         let nearest = nearest_matches(SOURCE, "def draw_bike(t):\n    wheel = (41, 80)", 3);
         assert_eq!(nearest[0].line, 1);
-        assert!(nearest[0].differences.iter().any(|note| note.contains("第 2 行")));
+        assert!(nearest[0]
+            .differences
+            .iter()
+            .any(|note| note.contains("第 2 行")));
     }
 
     #[test]

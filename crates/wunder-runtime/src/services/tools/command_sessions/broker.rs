@@ -173,6 +173,8 @@ struct CommandSessionRecord {
     delta_bytes: usize,
     model_cursor: u64,
     dropped_through_seq: u64,
+    /// 模型侧已经通过命令会话读到过终态：后台完成通知不必再重复一遍。
+    model_observed: bool,
     changed: Arc<Notify>,
 }
 
@@ -208,6 +210,7 @@ impl CommandSessionRecord {
             delta_bytes: 0,
             model_cursor: 0,
             dropped_through_seq: 0,
+            model_observed: false,
             changed: Arc::new(Notify::new()),
         }
     }
@@ -690,6 +693,10 @@ impl CommandSessionBroker {
             notified.as_mut().enable();
             {
                 let mut record = record.lock();
+                if record.status != CommandSessionStatus::Running {
+                    // 模型亲自读到了终态：完成通知不再重复打扰。
+                    record.model_observed = true;
+                }
                 if record.status != CommandSessionStatus::Running
                     || (!wait_for_exit && record.seq > cursor)
                     || tokio::time::Instant::now() >= deadline
@@ -755,6 +762,31 @@ impl CommandSessionBroker {
         }
         record.model_cursor = target;
         true
+    }
+
+    /// 沙盒会话的终态由远端轮询返回，不走本地 `poll`；那条路径也要登记
+    /// 「模型已读到终态」，否则后台完成通知会与模型自己拿到结果重复。
+    pub(crate) fn mark_model_observed(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        command_session_id: &str,
+    ) -> bool {
+        let Some(entry) = self.sessions.get(command_session_id) else {
+            return false;
+        };
+        let mut record = entry.value().lock();
+        if record.user_id != user_id || record.session_id != session_id {
+            return false;
+        }
+        record.model_observed = true;
+        true
+    }
+
+    pub(crate) fn is_model_observed(&self, command_session_id: &str) -> bool {
+        self.sessions
+            .get(command_session_id)
+            .is_some_and(|entry| entry.value().lock().model_observed)
     }
 
     pub(crate) fn terminate_scope(&self, user_id: &str, session_id: &str) -> usize {
@@ -1105,6 +1137,46 @@ mod tests {
             )
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn terminal_poll_marks_model_observed_for_wake_dedupe() {
+        let broker = CommandSessionBroker::new();
+        broker.start_session(build_start_spec());
+        assert!(!broker.is_model_observed("cmd_test"));
+
+        // 运行中的普通轮询不算「读到终态」。
+        broker.append_delta("cmd_test", CommandSessionStream::Stdout, b"tick\n");
+        let _ = broker
+            .poll(
+                "user_a",
+                "sess_1",
+                "cmd_test",
+                None,
+                std::time::Duration::ZERO,
+                false,
+            )
+            .await
+            .unwrap();
+        assert!(!broker.is_model_observed("cmd_test"));
+
+        broker.finish_session("cmd_test", Some(0), false, None);
+        let _ = broker
+            .poll(
+                "user_a",
+                "sess_1",
+                "cmd_test",
+                None,
+                std::time::Duration::ZERO,
+                true,
+            )
+            .await
+            .unwrap();
+        assert!(broker.is_model_observed("cmd_test"));
+
+        // 错误作用域不能代为标记。
+        assert!(!broker.mark_model_observed("user_b", "sess_1", "cmd_test"));
+        assert!(broker.is_model_observed("cmd_test"));
     }
 
     #[tokio::test]

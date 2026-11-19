@@ -329,16 +329,30 @@ async fn range_replace_rewrites_lines_and_returns_a_verifiable_receipt() {
     assert_eq!(result["data"]["lines"], json!(8));
     let receipt = result["data"]["receipt"].as_str().expect("receipt");
     assert!(receipt.contains("sha256:"), "{receipt}");
-    assert!(receipt.contains("symbols:") && receipt.contains("draw(1-4)"), "{receipt}");
+    assert!(
+        receipt.contains("symbols:") && receipt.contains("draw(1-4)"),
+        "{receipt}"
+    );
     let syntax = result["data"]["syntax"].as_str().expect("syntax");
-    assert!(syntax.contains("py_compile") || syntax.contains("skipped"), "{syntax}");
-    let unified = result["data"]["unified_diff"].as_str().expect("unified diff");
+    assert!(
+        syntax.contains("py_compile") || syntax.contains("skipped"),
+        "{syntax}"
+    );
+    let unified = result["data"]["unified_diff"]
+        .as_str()
+        .expect("unified diff");
     assert!(unified.contains("-    x = 1"), "{unified}");
     assert!(unified.contains("+    x = 10"), "{unified}");
     // 覆盖前的内容留在 temp/.history，可直接 diff 回滚。
-    let snapshot = result["data"]["history"].as_str().expect("history").to_string();
+    let snapshot = result["data"]["history"]
+        .as_str()
+        .expect("history")
+        .to_string();
     assert!(fixture.path(&snapshot).exists(), "{snapshot}");
-    assert_eq!(std::fs::read_to_string(fixture.path(&snapshot)).unwrap(), source);
+    assert_eq!(
+        std::fs::read_to_string(fixture.path(&snapshot)).unwrap(),
+        source
+    );
 }
 
 #[tokio::test]
@@ -362,7 +376,10 @@ async fn range_replace_beyond_eof_reports_the_real_line_count() {
 #[tokio::test]
 async fn missing_old_string_returns_the_nearest_fragment_and_a_range_hint() {
     let fixture = Fixture::new();
-    fixture.write("sketch.py", "def draw(t):\n    x = 1\n    y = 2\n    return x + y\n");
+    fixture.write(
+        "sketch.py",
+        "def draw(t):\n    x = 1\n    y = 2\n    return x + y\n",
+    );
     let result = fixture
         .call(json!({
             "file_path": "sketch.py",
@@ -376,7 +393,9 @@ async fn missing_old_string_returns_the_nearest_fragment_and_a_range_hint() {
     assert_eq!(nearest[0]["end_line"], json!(4));
     let details = nearest[0]["differences"].as_array().expect("differences");
     assert!(
-        details.iter().any(|note| note.as_str().unwrap_or("").contains("第 3 行")),
+        details
+            .iter()
+            .any(|note| note.as_str().unwrap_or("").contains("第 3 行")),
         "{nearest:?}"
     );
     let hint = result["error_meta"]["hint"].as_str().unwrap_or("");
@@ -399,7 +418,10 @@ async fn dry_run_previews_a_unified_diff_without_writing_or_snapshotting() {
     assert_ok(&result);
     assert_eq!(result["state"], "dry_run");
     let unified = result["data"]["unified_diff"].as_str().expect("unified");
-    assert!(unified.contains("-beta") && unified.contains("+BETA"), "{unified}");
+    assert!(
+        unified.contains("-beta") && unified.contains("+BETA"),
+        "{unified}"
+    );
     assert_eq!(fixture.read("sketch.py"), "alpha\nbeta\ngamma\n");
     assert!(result["data"].get("history").is_none());
 }
@@ -419,7 +441,10 @@ async fn write_file_returns_a_receipt_a_snapshot_and_a_preview_diff() {
     let receipt = result["data"]["receipt"].as_str().expect("receipt");
     assert!(receipt.contains("file: sketch.py (2 lines"), "{receipt}");
     assert!(receipt.contains("sha256:"), "{receipt}");
-    let snapshot = result["data"]["history"].as_str().expect("history").to_string();
+    let snapshot = result["data"]["history"]
+        .as_str()
+        .expect("history")
+        .to_string();
     assert_eq!(
         std::fs::read_to_string(fixture.path(&snapshot)).unwrap(),
         "x = 1\n"
@@ -437,7 +462,9 @@ async fn write_file_returns_a_receipt_a_snapshot_and_a_preview_diff() {
         .await;
     assert_ok(&preview);
     assert_eq!(preview["state"], "dry_run");
-    let preview_diff = preview["data"]["unified_diff"].as_str().expect("preview diff");
+    let preview_diff = preview["data"]["unified_diff"]
+        .as_str()
+        .expect("preview diff");
     assert!(preview_diff.contains("+z = 9"), "{preview_diff}");
     assert_eq!(fixture.read("sketch.py"), "x = 2\ny = 3\n");
     assert!(preview["data"].get("history").is_none());

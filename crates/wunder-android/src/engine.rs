@@ -711,10 +711,6 @@ pub struct ModelEditor {
 /// the native page size (200 entries).
 #[derive(Clone, Default)]
 pub struct ToolsView {
-    pub builtin: Vec<MobileTool>,
-    pub mcp_tools: Vec<MobileTool>,
-    pub skill_tools: Vec<MobileTool>,
-    pub knowledge_tools: Vec<MobileTool>,
     pub servers: Vec<MobileToolResource>,
     pub skills: Vec<MobileToolResource>,
     pub bases: Vec<MobileToolResource>,
@@ -4053,13 +4049,6 @@ fn agent_selection(shared: &Arc<Mutex<Shared>>) -> (Vec<String>, Vec<String>) {
 }
 
 fn refresh_tools(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
-    let catalog = match desktop.list_tools() {
-        Ok(catalog) => catalog,
-        Err(error) => {
-            set_tools_error(shared, format!("无法读取工具列表：{error}"));
-            return;
-        }
-    };
     let manager = match desktop.tool_manager() {
         Ok(manager) => manager,
         Err(error) => {
@@ -4068,26 +4057,6 @@ fn refresh_tools(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
         }
     };
     let tools = ToolsView {
-        builtin: catalog
-            .iter()
-            .filter(|tool| tool.category == "内置工具")
-            .map(|tool| mobile_tool(tool, false))
-            .collect(),
-        mcp_tools: catalog
-            .iter()
-            .filter(|tool| tool.category == "MCP 工具")
-            .map(|tool| mobile_tool(tool, false))
-            .collect(),
-        skill_tools: catalog
-            .iter()
-            .filter(|tool| tool.category == "技能")
-            .map(|tool| mobile_tool(tool, false))
-            .collect(),
-        knowledge_tools: catalog
-            .iter()
-            .filter(|tool| tool.category == "知识库")
-            .map(|tool| mobile_tool(tool, false))
-            .collect(),
         servers: manager.servers.into_iter().map(mobile_resource).collect(),
         skills: manager.skills.into_iter().map(mobile_resource).collect(),
         bases: manager.bases.into_iter().map(mobile_resource).collect(),

@@ -41,9 +41,9 @@ use std::time::{Duration, SystemTime};
 
 mod sweep;
 
+use sweep::maybe_sweep;
 #[cfg(test)]
 use sweep::{collect_entries, read_usage, sweep, sweep_with_limits, write_usage, Usage};
-use sweep::maybe_sweep;
 
 /// 单个快照的内容上限；超过就跳过（只丢历史，不影响写入）。
 const MAX_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
@@ -178,11 +178,7 @@ pub(crate) fn history_root(workspace_root: &Path) -> PathBuf {
 /// 覆盖/编辑前调用：把 `previous` 压栈，返回可回读的路径。
 ///
 /// 任何 IO 失败都只返回 `None`：快照是增强能力，不是写入的前置条件。
-pub(crate) fn snapshot(
-    target: &Path,
-    workspace_root: &Path,
-    previous: &str,
-) -> Option<Snapshot> {
+pub(crate) fn snapshot(target: &Path, workspace_root: &Path, previous: &str) -> Option<Snapshot> {
     if !enabled() || previous.len() > MAX_SNAPSHOT_BYTES {
         return None;
     }
@@ -485,12 +481,7 @@ fn write_cursor(dir: &Path, name: &str, text: &str) -> Option<()> {
 }
 
 /// 把游标写成某一版的文件名；`None` 表示已到最早。
-fn write_cursor_at(
-    dir: &Path,
-    name: &str,
-    rev: Option<u32>,
-    workspace_root: &Path,
-) -> Option<()> {
+fn write_cursor_at(dir: &Path, name: &str, rev: Option<u32>, workspace_root: &Path) -> Option<()> {
     match rev {
         None => write_cursor(dir, name, CURSOR_AT_OLDEST),
         Some(rev) => {
@@ -737,7 +728,6 @@ fn prune(dir: &Path, name: &str, current: u32) {
         total = total.saturating_sub(bytes);
     }
 }
-
 
 fn workspace_relative(path: &Path, workspace_root: &Path) -> String {
     path.strip_prefix(workspace_root)

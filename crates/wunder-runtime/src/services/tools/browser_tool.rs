@@ -681,12 +681,7 @@ mod tests {
         }
         let mut png = Vec::new();
         image::codecs::png::PngEncoder::new(&mut png)
-            .write_image(
-                &rgba,
-                width,
-                height,
-                image::ExtendedColorType::Rgba8,
-            )
+            .write_image(&rgba, width, height, image::ExtendedColorType::Rgba8)
             .expect("encode png");
         png
     }

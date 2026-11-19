@@ -135,3 +135,4 @@ metadata_win7.json
 videos/
 .venv*/
 frontend/dist-new/
+.screenshots/

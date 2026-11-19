@@ -28,6 +28,10 @@ export component TextEditBase inherits Rectangle {
     // Caret geometry, in UTF-8 bytes. The composer needs "is the caret glued to
     // one end of the draft" to decide whether ArrowUp/ArrowDown may recall a
     // previous message; Rust does the byte math, this only forwards the offsets.
+    // Text the input method is still composing. It is not part of `text` until
+    // the IME commits it, so hosts must not act on the draft while it is open
+    // (the composer uses it to keep Enter from sending half a word).
+    out property <string> preedit-text: text-input.preedit-text;
     out property <int> cursor-offset: text-input.cursor-position-byte-offset;
     out property <int> anchor-offset: text-input.anchor-position-byte-offset;
     in-out property <length> content-x <=> scroll-view.content-x;

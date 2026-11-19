@@ -88,7 +88,9 @@ def build() -> int:
         if source.name == "markdown-rich.slint":
             text, removed = shim_sheet(text)
             removed_total += removed
-        target.write_text(text, encoding="utf-8", newline="")
+        # 3.8 的 Path.write_text 还没有 newline 参数，沿用 open 的写法。
+        with target.open("w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
     for ref in sorted(refs):
         relative = ref[len("../assets/") :]
         source = ASSETS / relative

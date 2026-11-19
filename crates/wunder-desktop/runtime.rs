@@ -53,8 +53,9 @@ pub struct DesktopRuntime {
 pub struct DesktopSettings {
     pub workspace_root: String,
     pub desktop_token: String,
-    /// Update source chosen on the settings page: `cloud` (default) or
-    /// `github`. Empty values from older settings files read as `cloud`.
+    /// Update source chosen on the settings page: `github` (default, no login
+    /// needed) or `cloud` (signed-in server). Empty values from older settings
+    /// files read as the default `github`.
     #[serde(default)]
     pub update_source: String,
     #[serde(default)]

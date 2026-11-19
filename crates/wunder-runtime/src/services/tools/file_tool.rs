@@ -1,7 +1,7 @@
 use super::line_diff::{
-    diff_added_file, diff_replaced, diff_source_too_large, insert_diff_fields, LineDiff,
-    DIFF_UNAVAILABLE_BINARY, DIFF_UNAVAILABLE_OVERSIZE, DIFF_UNAVAILABLE_UNREADABLE,
-    MAX_DIFF_SOURCE_BYTES, unified_diff,
+    diff_added_file, diff_replaced, diff_source_too_large, insert_diff_fields, mark_text_omission,
+    new_file_notice, unified_diff, LineDiff, DIFF_UNAVAILABLE_BINARY, DIFF_UNAVAILABLE_OVERSIZE,
+    DIFF_UNAVAILABLE_UNREADABLE, MAX_DIFF_SOURCE_BYTES, OMITTED_BUDGET, OMITTED_NEW_FILE,
 };
 use super::{
     build_model_tool_success, build_model_tool_success_with_hint, collect_allow_roots,
@@ -2653,7 +2653,8 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
             _ => None,
         };
         // 旧文件带 BOM 就继续带：写入不该静默改掉文件的编码标记。
-        let content_for_write = write_guard::preserve_bom(previous_text.as_deref(), &content_for_write);
+        let content_for_write =
+            write_guard::preserve_bom(previous_text.as_deref(), &content_for_write);
         if !dry_run {
             let default_workspace_target = workspace.resolve_path(&user_id, &path_for_write)?;
             if is_within_root(&workspace_root, &target)
@@ -2708,16 +2709,23 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
         touch_lsp_file(context, &write_outcome.target, true).await
     };
     let previous_text = write_outcome.previous_text.as_deref().unwrap_or("");
-    // diff 与回执都以「真正落盘的字节」为准（可能补回了 BOM）。写入结果里的
-    // unified diff 不做行数截断：模型靠它确认自己写进去的到底是什么，截断只会
-    // 换来一次多余的重读。
-    let unified = unified_diff(
-        &path,
-        previous_text,
-        &write_outcome.written,
-        &write_outcome.diff.diff,
-    );
-    let unified_truncated = false;
+    // diff 与回执都以「真正落盘的字节」为准（可能补回了 BOM）。
+    //
+    // 新建文件的正文就是这次调用发出去的内容，回灌一遍是 100% 冗余，只给回执
+    // 与行数；覆盖写才给 diff（BOM 回填、行裁剪这些是模型没直接说过的事实），
+    // 且受 `line_diff` 的 64KB 结构预算约束：超了按 hunk 折叠并注明省略量。
+    let (unified, unified_truncated) = if write_outcome.existed {
+        let rendered = unified_diff(
+            &path,
+            previous_text,
+            &write_outcome.written,
+            &write_outcome.diff.diff,
+        );
+        let truncated = rendered.truncated();
+        (rendered.text, truncated)
+    } else {
+        (new_file_notice(&path, write_outcome.receipt.lines), true)
+    };
     let data = build_write_data(
         &path,
         write_outcome.written.len(),
@@ -2791,6 +2799,16 @@ fn build_write_data(
         "unified_diff_truncated".to_string(),
         json!(unified_truncated),
     );
+    if unified_truncated {
+        mark_text_omission(
+            &mut data,
+            if existed {
+                OMITTED_BUDGET
+            } else {
+                OMITTED_NEW_FILE
+            },
+        );
+    }
     Value::Object(data)
 }
 
@@ -3191,7 +3209,17 @@ mod write_result_tests {
         let diff = build_write_diff(false, &PreviousContent::Absent, "first\nsecond\n");
         let receipt = write_receipt::build("sample.txt", "first\nsecond\n", false);
         let data = build_write_data(
-            "sample.txt", 13, false, false, 0, Value::Null, &diff, &receipt, None, "", false,
+            "sample.txt",
+            13,
+            false,
+            false,
+            0,
+            Value::Null,
+            &diff,
+            &receipt,
+            None,
+            "",
+            false,
         );
         assert_eq!(data["added_lines"], json!(2));
         assert_eq!(data["deleted_lines"], json!(0));
@@ -3210,7 +3238,17 @@ mod write_result_tests {
         let diff = build_write_diff(true, &previous, "alpha\nbeta two\ngamma\n");
         let receipt = write_receipt::build("sample.txt", "alpha\nbeta two\ngamma\n", false);
         let data = build_write_data(
-            "sample.txt", 21, false, true, 17, Value::Null, &diff, &receipt, None, "", false,
+            "sample.txt",
+            21,
+            false,
+            true,
+            17,
+            Value::Null,
+            &diff,
+            &receipt,
+            None,
+            "",
+            false,
         );
         assert_eq!(data["added_lines"], json!(1));
         assert_eq!(data["deleted_lines"], json!(1));
@@ -3231,7 +3269,17 @@ mod write_result_tests {
         );
         let receipt = write_receipt::build("sample.txt", "next\n", false);
         let data = build_write_data(
-            "sample.txt", 5, false, true, 4, Value::Null, &diff, &receipt, None, "", false,
+            "sample.txt",
+            5,
+            false,
+            true,
+            4,
+            Value::Null,
+            &diff,
+            &receipt,
+            None,
+            "",
+            false,
         );
         assert_eq!(data["diff_unavailable"], json!(DIFF_UNAVAILABLE_BINARY));
         // 放弃 diff 时计数报 null：0 会被误读成「文件没变」。

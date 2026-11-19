@@ -89,11 +89,7 @@ pub(crate) fn parse_command_session_input(args: &Value) -> CommandSessionInput<'
 
 /// Share the same wait policy with the orchestrator's outer tool deadline.
 pub(crate) fn parse_command_session_wait(args: &Value) -> CommandSessionWaitOptions {
-    let kind = match args
-        .get("wait_for")
-        .and_then(Value::as_str)
-        .map(str::trim)
-    {
+    let kind = match args.get("wait_for").and_then(Value::as_str).map(str::trim) {
         Some(value) if value.eq_ignore_ascii_case("exit") => CommandSessionWaitKind::Exit,
         Some(value) if value.eq_ignore_ascii_case("output") => CommandSessionWaitKind::Output,
         _ => CommandSessionWaitKind::Poll,
@@ -101,10 +97,9 @@ pub(crate) fn parse_command_session_wait(args: &Value) -> CommandSessionWaitOpti
     // 一次「只读一眼」不该长期占住模型轮次；显式要求等退出或等下一条输出时
     // 才放开到分钟级窗口。
     let (default_ms, max_ms) = match kind {
-        CommandSessionWaitKind::Poll => (
-            DEFAULT_COMMAND_SESSION_POLL_MS,
-            MAX_COMMAND_SESSION_POLL_MS,
-        ),
+        CommandSessionWaitKind::Poll => {
+            (DEFAULT_COMMAND_SESSION_POLL_MS, MAX_COMMAND_SESSION_POLL_MS)
+        }
         CommandSessionWaitKind::Output => (30_000, MAX_COMMAND_SESSION_WAIT_MS),
         CommandSessionWaitKind::Exit => (60_000, MAX_COMMAND_SESSION_WAIT_MS),
     };

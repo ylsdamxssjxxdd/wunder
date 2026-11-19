@@ -11,15 +11,16 @@
 
 /// Category keywords for the search box. i18n lives on the Slint side, so the
 /// filter keys off the same two languages the shell ships. The order is the
-/// navigation order: general, account, models, tools, agent, companion, cron,
-/// memory, channels and archived threads. Help is not a category — it opens
-/// from a button on the general page.
+/// navigation order: general, runtime, account, models, MCP, skills, agent,
+/// companion, cron, memory, channels and archived threads. Help is not a
+/// category — it opens from a button on the general page.
 const SETTINGS_CATEGORY_LABELS: &[&[&str]] = &[
     &["常规", "常规设置", "general"],
     &["本地运行时", "运行时", "runtime"],
     &["账号", "个人资料 眺望心舰", "account 3d wunder"],
     &["模型设置", "模型配置", "models"],
-    &["工具管理", "工具", "tools"],
+    &["MCP 服务", "MCP", "mcp", "工具"],
+    &["技能", "技能工具", "skill", "skills"],
     &["智能体设置", "智能体", "agent"],
     &["伙伴", "桌宠", "形象库", "companion"],
     &["定时任务", "计划任务", "scheduled"],
@@ -66,7 +67,7 @@ mod tests {
         assert_eq!(models.iter().filter(|flag| **flag).count(), 1);
         assert!(models[3], "models should match its english keyword");
         let chinese = category_flags("记忆");
-        assert!(chinese[8], "memories should match its chinese label");
+        assert!(chinese[9], "memories should match its chinese label");
         assert!(!chinese[0]);
     }
 
@@ -81,6 +82,6 @@ mod tests {
     /// The shell hard-codes the initial flag list, so the count is a contract.
     #[test]
     fn category_count_matches_the_navigation() {
-        assert_eq!(SETTINGS_CATEGORY_COUNT, 11);
+        assert_eq!(SETTINGS_CATEGORY_COUNT, 12);
     }
 }

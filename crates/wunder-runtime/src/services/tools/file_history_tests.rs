@@ -238,7 +238,10 @@ fn tampered_snapshot_is_dropped_instead_of_restored() {
 
     // 名字是对的（sha 取自真内容），里面的内容被换成假的。
     let path = dir.join(entry_name(&name, 1, "A\n"));
-    assert_eq!(read_snapshot(&dir, &name, 1).expect("intact").content, "A\n");
+    assert_eq!(
+        read_snapshot(&dir, &name, 1).expect("intact").content,
+        "A\n"
+    );
     fs::write(&path, "fake-40\n").expect("forge");
     assert_eq!(
         read_snapshot(&dir, &name, 1).unwrap_err(),
@@ -277,7 +280,11 @@ fn corrupt_middle_snapshot_does_not_hide_earlier_history() {
     ));
     assert_eq!(read(&target), "C\n");
     assert_eq!(revs_of(workspace, "temp/seq.css"), vec![1]);
-    assert_eq!(stored_cursor_rev(&dir, &name), Some(1), "游标要跟着压实到 @1");
+    assert_eq!(
+        stored_cursor_rev(&dir, &name),
+        Some(1),
+        "游标要跟着压实到 @1"
+    );
 
     // 更早的 @1 不能被跳过：继续撤销要退到 A。
     let back = step_back(&target, workspace, "C\n").expect("undo to earliest");
@@ -303,7 +310,11 @@ fn stale_cursor_after_a_manual_delete_falls_back_to_the_nearest_revision() {
 
     // 旧版本删中间格但不压实会留下这种状态：cursor=2，@2 已不在。
     remove_rev(&dir, &name, 2);
-    assert_eq!(stored_cursor_rev(&dir, &name), Some(2), "游标仍指着已被删掉的 @2");
+    assert_eq!(
+        stored_cursor_rev(&dir, &name),
+        Some(2),
+        "游标仍指着已被删掉的 @2"
+    );
 
     // 不能宣布「已到最早」：要退到游标之下最近还在的 @1。
     let back = step_back(&target, workspace, "C\n").expect("fallback to @1");
@@ -406,7 +417,10 @@ fn global_cap_drops_the_oldest_versions_until_it_fits() {
     let revs = revs_in(&history, "big.py");
     assert_eq!(revs, vec![1, 2], "超出上限先砍最旧，剩下的编号要压实");
     let kept = read(&history.join("big.py@2"));
-    assert!(kept.starts_with("v6"), "留下的必须是最新内容，实际 {kept:.8}");
+    assert!(
+        kept.starts_with("v6"),
+        "留下的必须是最新内容，实际 {kept:.8}"
+    );
     let total: u64 = revs
         .iter()
         .filter_map(|rev| rev_bytes(&history, "big.py", *rev))
@@ -434,7 +448,10 @@ fn written_bytes_trigger_a_sweep_before_the_interval_expires() {
     assert!(stale.exists(), "写入量小、间隔也没到，不该扫全目录");
 
     maybe_sweep(&history, workspace, SWEEP_BYTES_TRIGGER);
-    assert!(!stale.exists(), "累计写入越过阈值必须马上回收，不能等 6 小时");
+    assert!(
+        !stale.exists(),
+        "累计写入越过阈值必须马上回收，不能等 6 小时"
+    );
     assert_eq!(
         read_usage(&history).expect("usage").written,
         0,
@@ -466,7 +483,10 @@ fn byte_cap_reclaims_the_oldest_snapshots() {
         .iter()
         .filter_map(|rev| rev_bytes(&history, "huge.bin", *rev))
         .sum();
-    assert!(total <= 64 * 1024 * 1024, "回收后要落回字节上限内，实际 {total}");
+    assert!(
+        total <= 64 * 1024 * 1024,
+        "回收后要落回字节上限内，实际 {total}"
+    );
 }
 
 #[test]
@@ -483,10 +503,17 @@ fn file_count_cap_reclaims_many_small_snapshots() {
             let path = history.join(stack_name(file) + "@" + &rev.to_string());
             fs::write(&path, &body).expect("seed");
             // 修改时间递增，回收顺序才确定。
-            set_mtime(&path, base + Duration::from_secs(u64::from(file * 20 + rev)));
+            set_mtime(
+                &path,
+                base + Duration::from_secs(u64::from(file * 20 + rev)),
+            );
         }
     }
-    assert_eq!(revs_in(&history, "f0.txt").len(), 20, "每文件正好 20 版，单文件上限不触发");
+    assert_eq!(
+        revs_in(&history, "f0.txt").len(),
+        20,
+        "每文件正好 20 版，单文件上限不触发"
+    );
 
     sweep_with_limits(&history, workspace, MAX_TOTAL_BYTES, 40);
 
@@ -577,7 +604,12 @@ fn sweep_keeps_the_snapshot_the_cursor_points_at() {
 
     let revs = revs_in(&dir, &name);
     assert_eq!(revs.len(), 1, "只该留下游标指向的那一版");
-    assert_eq!(read_snapshot(&dir, &name, revs[0]).expect("survivor").content, "B\n");
+    assert_eq!(
+        read_snapshot(&dir, &name, revs[0])
+            .expect("survivor")
+            .content,
+        "B\n"
+    );
     // 压实之后游标要跟着改名，仍然指向那一版，而不是指着一个不存在的文件。
     assert_eq!(
         stored_cursor_rev(&dir, &name),

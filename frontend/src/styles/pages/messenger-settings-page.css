@@ -247,48 +247,9 @@
   min-height: 0;
 }
 
-/* ------------------------------------------------------- 工具管理选项卡 */
+/* ------------------------------------------------------- 工具面板（MCP / 技能） */
 
-/* 对齐桌面端：工具管理以「内置工具 / MCP / 知识与资源」选项卡组织。 */
-.messenger-settings-tools-tabs {
-  display: flex;
-  flex-shrink: 0;
-  width: fit-content;
-  gap: 4px;
-  padding: 3px;
-  border: 1px solid var(--mz-border);
-  border-radius: var(--mz-radius-btn);
-  background: var(--mz-bg);
-}
-
-.messenger-settings-tools-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 14px;
-  border: 0;
-  border-radius: 8px;
-  color: var(--mz-text-secondary);
-  background: transparent;
-  font: inherit;
-  font-size: var(--mz-font-md);
-  cursor: pointer;
-}
-
-.messenger-settings-tools-tab:hover {
-  color: var(--mz-text);
-  background: var(--mz-hover);
-}
-
-.messenger-settings-tools-tab.is-active {
-  color: var(--mz-text);
-  background: var(--mz-surface);
-  box-shadow: inset 0 0 0 1px var(--mz-border);
-  font-weight: 500;
-}
-
-/* 选项卡面板宿主：内含 MCP / 技能 / 知识库三面板（紧凑布局见
+/* 面板宿主：MCP 与技能各自是独立的设置分类（紧凑布局见
    `messenger-tools-panes.css`）。在设置卡片内给自适应高度，面板内部自行滚动。
    必须是 flex 列容器：面板根节点靠 `flex: 1 1 auto` 撑高，其左右两栏布局
    又依赖父级高度，block 容器下两栏会被压成 0 高度。 */
@@ -302,58 +263,6 @@
   flex-direction: column;
   height: clamp(360px, calc(100vh - 204px), 520px);
   min-height: 0;
-}
-
-/* 「全局工具」页签的四类分区：分区标题行 + 该类的 chip 云。 */
-.messenger-settings-tools-groups {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.messenger-settings-tools-group-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.messenger-settings-tools-group-title {
-  color: var(--mz-text);
-  font-size: var(--mz-font-md);
-  font-weight: 600;
-}
-
-/* chip 药丸云：浅暖底药丸 + 彩色图标方块（AbilityIconBadge）+ 标签。 */
-.messenger-settings-chip-cloud {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.messenger-settings-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 100%;
-  padding: 4px 12px 4px 4px;
-  border: 1px solid var(--mz-border);
-  border-radius: 18px;
-  background: var(--mz-primary-tint);
-  transition: border-color 120ms ease, background-color 120ms ease;
-}
-
-.messenger-settings-chip:hover {
-  border-color: var(--mz-primary-soft);
-  background: var(--mz-surface);
-}
-
-.messenger-settings-chip-label {
-  overflow: hidden;
-  color: var(--mz-text);
-  font-size: var(--mz-font-md);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* ------------------------------------------------------- 分组卡片与设置项 */

@@ -61,6 +61,14 @@ fn start_isolated() -> Result<NativeDesktop, Box<dyn std::error::Error>> {
 fn preferences_validate_and_persist() {
     let _serial = serial();
     let runtime = start_isolated().expect("isolated runtime");
+    // 首次启动没有 update_source 字段：默认走 GitHub 源，不要求先登录云端。
+    assert_eq!(
+        runtime
+            .get_desktop_settings()
+            .expect("fresh settings")
+            .update_source,
+        "github"
+    );
     assert!(
         runtime
             .save_preferences("dark", "enter", 14, "cloud")
@@ -99,8 +107,8 @@ fn preferences_validate_and_persist() {
     assert_eq!(reloaded.send_key, "none");
     assert_eq!(reloaded.font_size, 18);
     assert_eq!(reloaded.update_source, "cloud", "last save wins");
-    // Unknown values normalize to the cloud default instead of poisoning the
-    // settings file.
+    // Unknown values normalize to the default GitHub source instead of
+    // poisoning the settings file.
     runtime
         .save_preferences("honey", "enter", 14, "  ")
         .expect("blank source save");
@@ -109,8 +117,35 @@ fn preferences_validate_and_persist() {
             .get_desktop_settings()
             .expect("reload")
             .update_source,
-        "cloud"
+        "github"
     );
+}
+
+/// 本地运行时页把 node / bash 的探测结论直接填进输入框：结论必须是绝对路径，
+/// 不能只是一个 PATH 里的裸命令名。
+#[test]
+fn syntax_hosts_project_absolute_paths() {
+    let _serial = serial();
+    let runtime = start_isolated().expect("isolated runtime");
+    let settings = runtime.get_desktop_settings().expect("settings");
+    let mut seen = 0;
+    for entry in settings
+        .tool_status
+        .iter()
+        .filter(|entry| entry.tool == "node" || entry.tool == "bash")
+    {
+        if entry.effective.is_empty() {
+            continue;
+        }
+        seen += 1;
+        assert!(
+            std::path::Path::new(&entry.effective).is_absolute(),
+            "{} should be absolute: {}",
+            entry.tool,
+            entry.effective
+        );
+    }
+    assert!(seen > 0, "the test host should provide a shell and/or node");
 }
 
 #[test]

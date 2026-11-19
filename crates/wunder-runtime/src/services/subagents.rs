@@ -1592,7 +1592,7 @@ fn monitor_record_blocks_auto_wake(record: &Value) -> bool {
     )
 }
 
-fn parent_session_blocks_auto_wake(
+pub(crate) fn parent_session_blocks_auto_wake(
     storage: &dyn StorageBackend,
     monitor: Option<&MonitorState>,
     user_id: &str,

@@ -58,7 +58,13 @@ const NODE_ENVS: &[(&str, &str)] = &[("NODE_SKIP_PLATFORM_CHECK", "1")];
 /// 解释器探测的等待上限：探测也走子进程，不能比校验本身更没边。
 const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 /// PowerShell 探测参数：不加载 profile、不交互，避免被用户配置拖慢或挂住。
-const PS_PROBE_ARGS: &[&str] = &["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "exit 0"];
+const PS_PROBE_ARGS: &[&str] = &[
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    "exit 0",
+];
 
 /// 一次校验的时间预算。排队和子进程运行共享同一个截止时刻，所以最坏耗时只有
 /// 一份 [`SYNTAX_BUDGET`]，而不是「排队等一份、运行再等一份」。
@@ -207,18 +213,27 @@ impl Verdict {
     /// 结构化字段：`{`tool, status, line, message}`，空值不出现。
     pub(crate) fn to_json(&self) -> serde_json::Value {
         let mut map = serde_json::Map::new();
-        map.insert("tool".to_string(), serde_json::Value::String(self.tool.to_string()));
+        map.insert(
+            "tool".to_string(),
+            serde_json::Value::String(self.tool.to_string()),
+        );
         let status = match self.status {
             Status::Ok => "ok",
             Status::Error => "error",
             Status::Skipped => "skipped",
         };
-        map.insert("status".to_string(), serde_json::Value::String(status.to_string()));
+        map.insert(
+            "status".to_string(),
+            serde_json::Value::String(status.to_string()),
+        );
         if let Some(line) = self.line {
             map.insert("line".to_string(), serde_json::json!(line));
         }
         if let Some(message) = self.message.as_deref() {
-            map.insert("message".to_string(), serde_json::Value::String(message.to_string()));
+            map.insert(
+                "message".to_string(),
+                serde_json::Value::String(message.to_string()),
+            );
         }
         serde_json::Value::Object(map)
     }
@@ -265,10 +280,21 @@ pub(crate) fn javascript(content: &str) -> Verdict {
         return Verdict::skipped("node --check", "no node");
     };
     let budget = Budget::start();
-    match run_with_stdin_env(Family::Node, node, &["--check", "-"], content, NODE_ENVS, budget) {
+    match run_with_stdin_env(
+        Family::Node,
+        node,
+        &["--check", "-"],
+        content,
+        NODE_ENVS,
+        budget,
+    ) {
         Ok((true, _, _)) => Verdict::ok("node --check"),
         Ok((false, stdout, stderr)) => {
-            let text = if stderr.trim().is_empty() { stdout } else { stderr };
+            let text = if stderr.trim().is_empty() {
+                stdout
+            } else {
+                stderr
+            };
             if looks_like_module_syntax(&text) {
                 return match run_with_stdin_env(
                     Family::Node,
@@ -280,10 +306,16 @@ pub(crate) fn javascript(content: &str) -> Verdict {
                 ) {
                     Ok((true, _, _)) => Verdict::ok("node --check"),
                     Ok((false, stdout, stderr)) => {
-                        let esm = if stderr.trim().is_empty() { stdout } else { stderr };
+                        let esm = if stderr.trim().is_empty() {
+                            stdout
+                        } else {
+                            stderr
+                        };
                         node_error_verdict("node --check", &esm)
                     }
-                    Err(err) => Verdict::skipped("node --check", "node ".to_string() + err.reason()),
+                    Err(err) => {
+                        Verdict::skipped("node --check", "node ".to_string() + err.reason())
+                    }
                 };
             }
             node_error_verdict("node --check", &text)
@@ -339,7 +371,9 @@ pub(crate) fn typescript(content: &str, path: &str) -> Verdict {
             Some(result) => Verdict::error(
                 tool_for(&result.tool),
                 result.line,
-                result.message.unwrap_or_else(|| "unknown error".to_string()),
+                result
+                    .message
+                    .unwrap_or_else(|| "unknown error".to_string()),
             ),
             // 检查脚本自己挂了（stdout 不是 JSON）：不能让模型以为是源码错。
             None => Verdict::skipped("ts syntax", "ts checker failed"),
@@ -371,7 +405,11 @@ pub(crate) fn shell(content: &str) -> Verdict {
     ) {
         Ok((true, _, _)) => Verdict::ok(tool),
         Ok((false, stdout, stderr)) => {
-            let text = if stderr.trim().is_empty() { stdout } else { stderr };
+            let text = if stderr.trim().is_empty() {
+                stdout
+            } else {
+                stderr
+            };
             shell_error_verdict(tool, &text)
         }
         Err(err) => Verdict::skipped(tool, "shell ".to_string() + err.reason()),
@@ -439,17 +477,15 @@ pub(crate) fn css(content: &str) -> Verdict {
                 line += 1;
                 index += 1;
             }
-            b'/' if bytes.get(index + 1) == Some(&b'*') => {
-                match content[index + 2..].find("*/") {
-                    Some(offset) => {
-                        line += content[index..index + offset + 4].matches('\n').count();
-                        index += offset + 4;
-                    }
-                    None => {
-                        return Verdict::error("css braces", Some(line as u32), "注释没有闭合");
-                    }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => match content[index + 2..].find("*/") {
+                Some(offset) => {
+                    line += content[index..index + offset + 4].matches('\n').count();
+                    index += offset + 4;
                 }
-            }
+                None => {
+                    return Verdict::error("css braces", Some(line as u32), "注释没有闭合");
+                }
+            },
             b'\'' | b'"' => {
                 let quote = bytes[index];
                 let mut cursor = index + 1;
@@ -599,7 +635,12 @@ const PS_CHECK_SCRIPT: &str = concat!(
 /// 检查脚本自身的降级标记：输出里出现它就说明环境没有解析器，不是源码写错。
 const PS_UNSUPPORTED_MARK: &str = "unsupported: no parser";
 /// PowerShell 校验参数：`-EncodedCommand` 后面跟 UTF-16LE + Base64 的检查脚本。
-const PS_CHECK_ARGS: &[&str] = &["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand"];
+const PS_CHECK_ARGS: &[&str] = &[
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-EncodedCommand",
+];
 
 /// 检查脚本的 `-EncodedCommand` 形态：只算一次，之后复用（编码结果几百字节）。
 fn ps_encoded_command() -> &'static str {
@@ -847,7 +888,11 @@ fn windows_shell_candidates_in(roots: &[PathBuf], exe: &str) -> Vec<String> {
     ];
     roots
         .iter()
-        .flat_map(|root| LAYOUTS.iter().map(move |layout| root.join(layout).join(exe)))
+        .flat_map(|root| {
+            LAYOUTS
+                .iter()
+                .map(move |layout| root.join(layout).join(exe))
+        })
         .map(|path| path.to_string_lossy().into_owned())
         .collect()
 }
@@ -903,12 +948,69 @@ fn first_working_env(
     envs: &[(&str, &str)],
 ) -> Option<&'static str> {
     for candidate in candidates {
-        if probe_works(candidate, check_args, envs) {
-            let leaked: &'static str = Box::leak(candidate.clone().into_boxed_str());
+        // 裸命令名（`node`、`bash`）先按 PATH 展开成绝对路径：设置页要显示真正
+        // 生效的二进制位置，回执与日志里也不该只有一个相对名字。
+        let resolved = absolute_program(candidate);
+        if probe_works(&resolved, check_args, envs) {
+            let leaked: &'static str = Box::leak(resolved.into_boxed_str());
             return Some(leaked);
         }
     }
     None
+}
+
+/// 把候选解释器归一成绝对路径：已有目录成分的候选（补充包、环境变量里写死的
+/// 全路径、可执行文件旁边的便携 node）原样返回；裸命令名按 PATH + PATHEXT 查找，
+/// 找到就用命中的绝对路径，找不到仍返回原样的名字（探测随后会失败，不影响判定）。
+fn absolute_program(candidate: &str) -> String {
+    let trimmed = candidate.trim();
+    let has_dir = trimmed.contains('/') || trimmed.contains('\\');
+    if trimmed.is_empty() || Path::new(trimmed).is_absolute() || has_dir {
+        return trimmed.to_string();
+    }
+    match find_on_path(trimmed) {
+        Some(path) => path.to_string_lossy().into_owned(),
+        None => trimmed.to_string(),
+    }
+}
+
+/// PATH 查找：Windows 按 `.exe` 与 `PATHEXT` 依次补扩展名，Unix 直接用命令名。
+/// 相对 PATH 项按当前工作目录展开，保证返回的是绝对路径。
+fn find_on_path(program: &str) -> Option<PathBuf> {
+    let names: Vec<String> = if cfg!(windows) {
+        if Path::new(program).extension().is_some() {
+            vec![program.to_string()]
+        } else {
+            let mut names = Vec::new();
+            if let Ok(pathext) = std::env::var("PATHEXT") {
+                for extension in pathext.split(';').map(str::trim).filter(|e| !e.is_empty()) {
+                    names.push(program.to_string() + &extension.to_ascii_lowercase());
+                }
+            }
+            if !names.iter().any(|name| name.ends_with(".exe")) {
+                names.push(program.to_string() + ".exe");
+            }
+            names
+        }
+    } else {
+        vec![program.to_string()]
+    };
+    let path = std::env::var_os("PATH")?;
+    let cwd = std::env::current_dir().ok();
+    std::env::split_paths(&path).find_map(|dir| {
+        let dir = if dir.is_absolute() {
+            dir
+        } else {
+            match cwd.as_deref() {
+                Some(cwd) => cwd.join(dir),
+                None => return None,
+            }
+        };
+        names
+            .iter()
+            .map(|name| dir.join(name))
+            .find(|candidate| candidate.is_file())
+    })
 }
 
 /// 单个候选的启动探测。必须有上限：PowerShell 冷启动被实时防护扫描拖住时，
@@ -1185,10 +1287,42 @@ mod tests {
     }
 
     #[test]
+    fn bare_command_names_resolve_through_path() {
+        // 探测候选本来就是裸命令名时，命中 PATH 的结论必须是绝对路径。
+        let probe = if cfg!(windows) { "cmd" } else { "sh" };
+        let found = find_on_path(probe).expect("system shell on PATH");
+        assert!(found.is_absolute(), "{}", found.display());
+        assert_eq!(
+            absolute_program(probe),
+            found.to_string_lossy(),
+            "bare name should expand to the PATH hit"
+        );
+        // 已带目录成分的候选不做二次查找。
+        let absolute = found.to_string_lossy().into_owned();
+        assert_eq!(absolute_program(&absolute), absolute);
+    }
+
+    #[test]
+    fn detected_hosts_are_absolute_paths() {
+        // 设置页把探测结论直接填进输入框：裸命令名（`node` / `bash`）必须展开成
+        // 绝对路径，否则用户看到的是一句命令而不是真正生效的二进制位置。
+        let hosts = syntax_hosts();
+        for path in [hosts.node, hosts.shell].into_iter().flatten() {
+            assert!(
+                Path::new(&path).is_absolute(),
+                "host should be an absolute path: {path}"
+            );
+        }
+    }
+
+    #[test]
     fn css_balances_braces_and_ignores_strings() {
         assert_eq!(css(".a { color: red; }").render(), "OK (css braces)");
         // 字符串里的花括号不参与配平。
-        assert_eq!(css(".a::after { content: \"}\"; }").render(), "OK (css braces)");
+        assert_eq!(
+            css(".a::after { content: \"}\"; }").render(),
+            "OK (css braces)"
+        );
         let unclosed = css(".a {\n  color: red;\n").render();
         assert!(has(&unclosed, "未闭合的左花括号 始于第 1 行"), "{unclosed}");
         let surplus = css(".a { }\n}\n").render();
@@ -1217,7 +1351,8 @@ mod tests {
 
     #[test]
     fn javascript_accepts_commonjs_and_esm_shapes() {
-        let code = javascript("const a = require('node:path');\nmodule.exports = { a };\n").render();
+        let code =
+            javascript("const a = require('node:path');\nmodule.exports = { a };\n").render();
         if code.starts_with("skipped") {
             return;
         }
@@ -1276,15 +1411,13 @@ mod tests {
     #[test]
     fn shell_accepts_scripts_and_reports_syntax_errors() {
         let valid =
-            shell("#!/bin/bash\nset -e\nf() { echo hi; }\nif [[ -n \"$1\" ]]; then f; fi\n").render();
+            shell("#!/bin/bash\nset -e\nf() { echo hi; }\nif [[ -n \"$1\" ]]; then f; fi\n")
+                .render();
         if valid.starts_with("skipped") {
             assert!(has(&valid, "no bash") || has(&valid, "disabled"), "{valid}");
             return;
         }
-        assert!(
-            valid == "OK (bash -n)" || valid == "OK (sh -n)",
-            "{valid}"
-        );
+        assert!(valid == "OK (bash -n)" || valid == "OK (sh -n)", "{valid}");
         let broken = shell("if true; then\n  echo hi\n").render();
         assert!(broken.starts_with("ERROR"), "{broken}");
         assert!(has(&broken, "-n)"), "{broken}");
@@ -1343,7 +1476,10 @@ mod tests {
             .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
             .collect();
         assert_eq!(String::from_utf16(&units).unwrap(), PS_CHECK_SCRIPT);
-        assert!(ps_encoded_command().len() < 4096, "command line stays short");
+        assert!(
+            ps_encoded_command().len() < 4096,
+            "command line stays short"
+        );
     }
 
     #[test]
@@ -1367,7 +1503,11 @@ mod tests {
     fn powershell_verdict_never_blames_the_source_for_checker_failures() {
         // 结论行前面可能带 BOM（.NET 的 UTF8Encoding 默认写 BOM），行号不能丢。
         let bom = char::from_u32(0xFEFF).unwrap().to_string();
-        let head = [bom.as_str(), "line 7: Missing closing '}' in statement block."].concat();
+        let head = [
+            bom.as_str(),
+            "line 7: Missing closing '}' in statement block.",
+        ]
+        .concat();
         let error = powershell_error_verdict(&head).render();
         assert!(error.starts_with("ERROR line 7:"), "{}", error);
         assert!(has(&error, "(ps parse)"), "{}", error);
@@ -1411,7 +1551,9 @@ mod tests {
         // 长文件同样只看源码本身：拼一份 300+ 行的合法脚本再喂一次。
         let mut long = String::new();
         for index in 0..60 {
-            long.push_str(&format!("class C{index}:\n    def f(self):\n        return {index}\n\n"));
+            long.push_str(&format!(
+                "class C{index}:\n    def f(self):\n        return {index}\n\n"
+            ));
         }
         assert_eq!(python(&long).render(), "OK (py_compile)");
         // 回归护栏：报错必须来自用户源码，而不是检查脚本自己那层壳。
@@ -1452,7 +1594,11 @@ mod tests {
         // 降级文案：调用方拼成 `skipped (node checker busy)`，文件照常落盘。
         assert_eq!(RunError::Busy.reason(), "checker busy");
         assert_eq!(
-            Verdict::skipped("node --check", "node ".to_string() + RunError::Busy.reason()).render(),
+            Verdict::skipped(
+                "node --check",
+                "node ".to_string() + RunError::Busy.reason()
+            )
+            .render(),
             "skipped (node checker busy)"
         );
     }

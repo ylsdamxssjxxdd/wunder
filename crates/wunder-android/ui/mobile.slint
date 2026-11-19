@@ -491,13 +491,8 @@ export component MobileWindow inherits Window {
     in property <string> editor-probed-context: "";
 
     // ---- tool manager -------------------------------------------------
-    in property <[MobileTool]> settings-tools-builtin: [];
-    in property <[MobileTool]> settings-tools-mcp: [];
-    in property <[MobileTool]> settings-tools-skills: [];
-    in property <[MobileTool]> settings-tools-knowledge: [];
     in property <[MobileToolResource]> settings-tools-servers: [];
     in property <[MobileToolResource]> settings-tools-skill-resources: [];
-    in property <[MobileToolResource]> settings-tools-bases: [];
     in property <[MobileTool]> settings-tool-server-tools: [];
     in property <string> settings-tool-active-server: "";
     in property <string> settings-tool-active-resource: "";
@@ -1814,13 +1809,8 @@ export component MobileWindow inherits Window {
         editor-probe: root.editor-probe;
         editor-probing: root.editor-probing;
         editor-probed-context: root.editor-probed-context;
-        tools-builtin: root.settings-tools-builtin;
-        tools-mcp: root.settings-tools-mcp;
-        tools-skills: root.settings-tools-skills;
-        tools-knowledge: root.settings-tools-knowledge;
         tool-servers: root.settings-tools-servers;
         tool-skill-resources: root.settings-tools-skill-resources;
-        tool-bases: root.settings-tools-bases;
         tool-server-tools: root.settings-tool-server-tools;
         tool-active-server: root.settings-tool-active-server;
         tool-active-resource: root.settings-tool-active-resource;

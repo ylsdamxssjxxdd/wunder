@@ -136,7 +136,11 @@ pub(super) fn sweep_with_limits(
     let mut removed: Vec<PathBuf> = Vec::new();
     for (path, bytes, modified) in entries {
         // 时钟回拨时 duration_since 会报错：按「不算过期」处理，别拿它当回收依据。
-        let expired = now.duration_since(modified).unwrap_or(Duration::ZERO).as_secs() > MAX_AGE_SECS;
+        let expired = now
+            .duration_since(modified)
+            .unwrap_or(Duration::ZERO)
+            .as_secs()
+            > MAX_AGE_SECS;
         if expired && !protected.contains(&path) && fs::remove_file(&path).is_ok() {
             removed.push(path);
             continue;

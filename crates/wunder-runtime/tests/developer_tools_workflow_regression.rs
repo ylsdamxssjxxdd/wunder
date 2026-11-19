@@ -866,3 +866,70 @@ async fn search_content_reports_phrase_fallback_strategy() {
         "phrase hits must report an exact strategy: {result}"
     );
 }
+
+#[tokio::test]
+async fn write_tool_never_echoes_what_the_call_already_sent() {
+    let fixture = ToolFixture::new();
+
+    // 新建文件：正文就是这次调用发出去的内容，回执里给行数与指纹就够了。
+    let mut fresh = String::new();
+    for index in 0..3000 {
+        fresh.push_str(&format!("row {:05} payload payload payload\n", index));
+    }
+    let created = invoke(
+        &fixture,
+        "write_file",
+        json!({ "path": "bulk/created.txt", "content": fresh }),
+    )
+    .await;
+    assert_eq!(created["ok"], true, "{created}");
+    assert_eq!(created["data"]["added_lines"], 3000);
+    assert_eq!(created["data"]["unified_diff_truncated"], true);
+    let created_diff = created["data"]["unified_diff"].as_str().expect("diff");
+    assert!(
+        created_diff.contains("diff body omitted"),
+        "new file must not replay its own body: {created_diff}"
+    );
+    assert!(
+        created_diff.len() < 512,
+        "new file diff must be a notice, got {} bytes",
+        created_diff.len()
+    );
+    // 前端差异卡片仍保留有界块（80 行上限），但它不进模型上下文。
+    assert!(
+        created["data"]["files"][0]["diff_blocks"][0]["lines"]
+            .as_array()
+            .is_some_and(|lines| lines.len() <= 80)
+    );
+
+    // 覆盖写：diff 是模型没直接说过的事实，留着；但受 64KB 结构预算约束。
+    let mut replaced = String::new();
+    for index in 0..3000 {
+        replaced.push_str(&format!("row {:05} REWRITTEN payload payload\n", index));
+    }
+    let updated = invoke(
+        &fixture,
+        "write_file",
+        json!({ "path": "bulk/created.txt", "content": replaced }),
+    )
+    .await;
+    assert_eq!(updated["ok"], true, "{updated}");
+    assert_eq!(updated["data"]["added_lines"], 3000);
+    assert_eq!(updated["data"]["deleted_lines"], 3000);
+    assert_eq!(updated["data"]["unified_diff_truncated"], true);
+    let updated_diff = updated["data"]["unified_diff"].as_str().expect("diff");
+    assert!(
+        updated_diff.len() <= 64 * 1024,
+        "diff must stay inside the structural budget, got {}",
+        updated_diff.len()
+    );
+    assert!(
+        updated_diff.contains("line(s) omitted (diff budget)"),
+        "omission must be explicit: {}",
+        &updated_diff[..updated_diff.len().min(160)]
+    );
+    assert!(
+        updated_diff.lines().any(|line| line.starts_with("@@ -1,3000 +1,3000 @@")),
+        "the changed range must stay visible"
+    );
+}

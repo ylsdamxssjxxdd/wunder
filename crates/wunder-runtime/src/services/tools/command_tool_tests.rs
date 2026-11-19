@@ -554,6 +554,7 @@ async fn sandbox_background_output_streams_independently_and_polls_incrementally
         "thread".into(),
         tracker,
         broker.clone(),
+        None,
         handle.cancellation_token(),
         0,
     ));
@@ -637,6 +638,7 @@ async fn sandbox_background_output_streams_independently_and_polls_incrementally
         "thread".into(),
         short_tracker,
         broker.clone(),
+        None,
         short_handle.cancellation_token(),
         0,
     ));
@@ -1257,9 +1259,7 @@ async fn duplicate_command_reuses_the_running_session() {
     assert_eq!(second["data"]["reused"], true, "{second}");
     assert_eq!(second["data"]["command_session_id"], json!(id), "{second}");
     assert_eq!(
-        broker
-            .running_tasks("fixture-user", "fixture-thread")
-            .len(),
+        broker.running_tasks("fixture-user", "fixture-thread").len(),
         1,
         "duplicate launch must not create a second process"
     );
@@ -1268,6 +1268,169 @@ async fn duplicate_command_reuses_the_running_session() {
         &json!({"command_session_id": id, "chars": "\x03"}),
     )
     .await;
+}
+
+#[tokio::test]
+#[cfg(feature = "sqlite-storage")]
+async fn background_command_without_wake_chain_is_rejected() {
+    let root = tempfile::tempdir().unwrap();
+    let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+        root.path()
+            .join("state.sqlite3")
+            .to_string_lossy()
+            .into_owned(),
+    ));
+    storage.ensure_initialized().unwrap();
+    let workspace = Arc::new(WorkspaceManager::new(
+        root.path().join("workspace").to_string_lossy().as_ref(),
+        storage.clone(),
+        0,
+        &HashMap::new(),
+    ));
+    let lsp_manager = LspManager::new(workspace.clone());
+    let mut config = Config::default();
+    config.server.mode = "cli".into();
+    config.security.allow_commands = vec!["*".into()];
+    let skills = SkillRegistry::default();
+    let http = reqwest::Client::new();
+    let broker = Arc::new(CommandSessionBroker::new());
+    let context = ToolContext {
+        user_id: "fixture-user",
+        session_id: "fixture-thread",
+        workspace_id: "fixture-user",
+        agent_id: None,
+        user_round: None,
+        model_round: None,
+        is_admin: true,
+        storage,
+        orchestrator: None,
+        monitor: None,
+        workspace,
+        lsp_manager,
+        config: &config,
+        skills: &skills,
+        gateway: None,
+        user_world: None,
+        cron_wake_signal: None,
+        user_tool_manager: None,
+        user_tool_bindings: None,
+        user_tool_store: None,
+        request_config_overrides: None,
+        allow_roots: None,
+        read_roots: None,
+        command_sessions: Some(broker),
+        event_emitter: None,
+        http: &http,
+    };
+    // 没有线程唤醒链路就不能假装后台：明确拒绝，让模型回退前台执行。
+    let result = execute_command(
+        &context,
+        &json!({"content": "echo hi", "run_in_background": true}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result["ok"], false, "{result}");
+    assert_eq!(
+        result["error_meta"]["code"], "TOOL_EXEC_BACKGROUND_UNAVAILABLE",
+        "{result}"
+    );
+}
+
+#[tokio::test]
+#[cfg(feature = "sqlite-storage")]
+async fn background_command_returns_running_session_before_exit() {
+    if cfg!(windows) {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+        root.path()
+            .join("state.sqlite3")
+            .to_string_lossy()
+            .into_owned(),
+    ));
+    storage.ensure_initialized().unwrap();
+    let workspace = Arc::new(WorkspaceManager::new(
+        root.path().join("workspace").to_string_lossy().as_ref(),
+        storage.clone(),
+        0,
+        &HashMap::new(),
+    ));
+    let lsp_manager = LspManager::new(workspace.clone());
+    let mut config = Config::default();
+    config.server.mode = "cli".into();
+    config.security.allow_commands = vec!["*".into()];
+    let skills = SkillRegistry::default();
+    let http = reqwest::Client::new();
+    let broker = Arc::new(CommandSessionBroker::new());
+    let context = ToolContext {
+        user_id: "fixture-user",
+        session_id: "fixture-thread",
+        workspace_id: "fixture-user",
+        agent_id: None,
+        user_round: None,
+        model_round: None,
+        is_admin: true,
+        storage,
+        orchestrator: None,
+        monitor: None,
+        workspace: workspace.clone(),
+        lsp_manager,
+        config: &config,
+        skills: &skills,
+        gateway: None,
+        user_world: None,
+        cron_wake_signal: None,
+        user_tool_manager: None,
+        user_tool_bindings: None,
+        user_tool_store: None,
+        request_config_overrides: None,
+        allow_roots: None,
+        read_roots: None,
+        command_sessions: Some(broker.clone()),
+        event_emitter: None,
+        http: &http,
+    };
+    let (stdout_policy, stderr_policy) = derive_capture_policies(None);
+    let user_root = workspace.ensure_user_root("fixture-user").unwrap();
+    let started = std::time::Instant::now();
+    let run = run_command_streaming(
+        &context,
+        "printf 'bg\\n'; sleep 3; printf 'done\\n'",
+        &user_root,
+        Some(Duration::from_secs(30)),
+        "execute_command",
+        stdout_policy,
+        stderr_policy,
+        0,
+        None,
+        true,
+        None,
+        false,
+    )
+    .await
+    .unwrap();
+    // 后台模式不等待进程结束：立即交回会话 id。
+    assert!(run.running);
+    assert!(started.elapsed() < Duration::from_secs(1));
+    let id = run.command_session_id.expect("session id");
+    let data = broker
+        .poll(
+            "fixture-user",
+            "fixture-thread",
+            &id,
+            None,
+            Duration::from_secs(10),
+            true,
+        )
+        .await
+        .unwrap();
+    assert_eq!(data["status"], "exited", "{data}");
+    assert_eq!(data["exit_code"], 0, "{data}");
+    let snapshot = broker.snapshot(&id).expect("snapshot");
+    assert!(snapshot.stdout_tail.contains("done"), "{snapshot:?}");
+    // 模型自己等到终态后，完成通知应被抑制。
+    assert!(broker.is_model_observed(&id));
 }
 
 #[tokio::test]
@@ -1348,9 +1511,7 @@ async fn command_session_without_id_lists_thread_tasks() {
     assert!(sessions[0]["elapsed_ms"].as_i64().unwrap_or(-1) >= 0);
     // 列表是只读的：会话仍在跑。
     assert_eq!(
-        broker
-            .running_tasks("fixture-user", "fixture-thread")
-            .len(),
+        broker.running_tasks("fixture-user", "fixture-thread").len(),
         1
     );
     let _ = command_session_control(
@@ -1437,9 +1598,7 @@ async fn aborted_tool_call_leaves_the_process_running_and_pollable() {
         .to_string();
     assert_eq!(sessions[0]["running"], json!(true), "{listed}");
     // 命令自然跑完后产物落盘，说明它确实继续执行到了最后。
-    let output = workspace
-        .workspace_root("fixture-user")
-        .join("aborted.txt");
+    let output = workspace.workspace_root("fixture-user").join("aborted.txt");
     let deadline = std::time::Instant::now() + Duration::from_secs(15);
     while std::time::Instant::now() < deadline {
         if output.exists() {

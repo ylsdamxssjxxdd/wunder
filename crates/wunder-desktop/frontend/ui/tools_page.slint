@@ -1,6 +1,6 @@
 import { Theme, ToolCard, FileCard, WorkspaceFileRow } from "theme.slint";
 import { WorkspaceFilesPanel } from "workspace_files.slint";
-import { ToolText, ToolButton, ToolTab, ToolCountPill, ToolGroup } from "tools_widgets.slint";
+import { ToolText, ToolButton, ToolCountPill } from "tools_widgets.slint";
 import { I18n } from "i18n.slint";
 import { ModalDialog, ConfirmDialog, FormField } from "components.slint";
 import { TextFieldActivation } from "text_field.slint";
@@ -32,7 +32,8 @@ export global ToolsDialog {
     in property <[string]> transport-model: ["auto", "sse", "http", "streamable-http"];
     callback refresh-mcp-feedback();
     callback save-mcp();
-    // Knowledge base add/edit form.
+    // 知识库表单入口已从客户端隐藏（知识库工具页不再展示）；
+    // 字段保留给原生侧配置读写，重新开放入口时无需改数据层。
     in-out property <bool> kb-open: false;
     in-out property <bool> kb-new: true;
     in-out property <string> kb-previous;
@@ -194,20 +195,17 @@ export component ToolsPage inherits Rectangle {
     in property <bool> loading;
     in property <bool> working;
     in property <string> status;
-    in property <[ToolCard]> builtin-tools;
-    in property <[ToolCard]> mcp-tools;
-    in property <[ToolCard]> skill-tools;
-    in property <[ToolCard]> knowledge-tools;
+    // 只保留 MCP 与技能两类；知识库与管理员开放工具页已从客户端引导中移除。
     in property <[ToolResource]> servers;
     in property <[ToolResource]> skills;
-    in property <[ToolResource]> bases;
     in property <[FileCard]> files;
     in property <[WorkspaceFileRow]> file-rows;
     private property <string> active-file;
     private property <int> active-file-index: -1;
     changed selected => { root.active-file = ""; root.active-file-index = -1; }
     in property <[ToolCard]> server-tools;
-    in-out property <int> tab: 0;
+    // 单一类别页面：1 表示 MCP，2 表示技能（由设置导航固定传入）。
+    in property <int> tab: 1;
     in-out property <int> selected: -1;
     in-out property <string> file-path;
     in-out property <string> content;
@@ -225,11 +223,10 @@ export component ToolsPage inherits Rectangle {
     private property <string> operation;
     private property <string> draft-name;
     private property <bool> deleting: false;
-    private property <[ToolResource]> resources: root.tab == 1 ? root.servers : root.tab == 2 ? root.skills : root.bases;
+    private property <[ToolResource]> resources: root.tab == 1 ? root.servers : root.skills;
     private property <bool> active: root.selected >= 0 && root.selected < root.resources.length;
     private property <bool> readonly: root.active && root.resources[root.selected].readonly;
     background: Theme.chat;
-    function switch-tab(value: int) { if !root.working { root.tab = value; root.selected = -1; root.search = ""; root.file-path = ""; root.content = ""; root.select-resource(value, -1); } }
     function edit(op: string) { root.operation = op; root.draft-name = op == "edit" && root.active ? root.resources[root.selected].name : ""; }
     function open-mcp-dialog(new: bool) {
         if new {
@@ -240,35 +237,12 @@ export component ToolsPage inherits Rectangle {
         }
         ToolsDialog.mcp-open = true;
     }
-    function open-kb-dialog(new: bool) {
-        if new {
-            ToolsDialog.reset-kb();
-        } else {
-            if !root.active { return; }
-            ToolsDialog.open-kb-edit(ToolsDialog.base-configs[root.selected]);
-        }
-        ToolsDialog.kb-open = true;
-    }
     // 云端版工具页骨架：顶部 pill 页签条 + 下方单张卡片。卡片内部固定高度，
     // 列表在卡片里滚动，页面本身不滚。
     VerticalLayout {
         width: parent.width; height: parent.height;
         padding: 24px; spacing: 12px;
-        Rectangle {
-            height: 36px;
-            width: tab-row.preferred-width + 6px;
-            border-radius: Theme.radius-md;
-            background: Theme.hover;
-            tab-row := HorizontalLayout {
-                x: 3px; y: 3px; width: parent.width - 6px; height: 30px;
-                spacing: 4px;
-                for label[i] in [I18n.tm_admin, I18n.tl_cat_mcp, I18n.tm_skills, I18n.tm_knowledge] : ToolTab {
-                    label: label;
-                    selected: root.tab == i;
-                    clicked => { root.switch-tab(i); }
-                }
-            }
-        }
+        // 页签条已移除：MCP 与技能各自是设置里独立的入口，本页只呈现单一类别。
         Rectangle {
             vertical-stretch: 1;
             min-height: 0px;
@@ -281,31 +255,19 @@ export component ToolsPage inherits Rectangle {
                 // 卡片头：标题 + 说明 + 计数药丸 + 右侧动作。
                 HorizontalLayout { height: 40px; spacing: 8px;
                     VerticalLayout { horizontal-stretch: 1; spacing: 3px;
-                        ToolText { height: 19px; text: root.tab == 0 ? I18n.tm_admin : root.tab == 1 ? I18n.tl_cat_mcp : root.tab == 2 ? I18n.tm_skills : I18n.tm_knowledge; font-size: Theme.font-lg; font-weight: 700; color: Theme.text; }
-                        ToolText { height: 15px; text: root.tab == 0 ? I18n.tm_admin_desc : root.tab == 1 ? I18n.tm_mcp_tip : root.tab == 2 ? I18n.tm_skill_tip : I18n.tm_kb_tip; color: Theme.muted; font-size: Theme.font-xs; }
+                        ToolText { height: 19px; text: root.tab == 1 ? I18n.tl_cat_mcp : I18n.tm_skills; font-size: Theme.font-lg; font-weight: 700; color: Theme.text; }
+                        ToolText { height: 15px; text: root.tab == 1 ? I18n.tm_mcp_tip : I18n.tm_skill_tip; color: Theme.muted; font-size: Theme.font-xs; }
                     }
-                    ToolCountPill { text: "\{root.tab == 0 ? root.builtin-tools.length + root.mcp-tools.length + root.skill-tools.length + root.knowledge-tools.length : root.resources.length}"; }
+                    ToolCountPill { text: "\{root.resources.length}"; }
                     ToolButton { icon: @image-url("../assets/icons/rotate-right.svg"); label: I18n.common_refresh; enabled: !root.loading && !root.working; clicked => { root.refresh(); } }
                     if root.tab == 1 : ToolButton { icon: @image-url("../assets/icons/plus.svg"); primary: true; label: I18n.tm_add; enabled: !root.working; clicked => { root.open-mcp-dialog(true); } }
                     if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/book.svg"); label: I18n.tm_import; enabled: !root.working; clicked => { ToolsDialog.import-skill(); } }
                     if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/file-lines.svg"); label: I18n.tm_export; enabled: root.active && !root.working; clicked => { root.edit("export"); } }
                     if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/trash.svg"); danger: true; label: I18n.common_delete; enabled: root.active && !root.readonly && !root.working; clicked => { root.deleting = true; } }
-                    if root.tab == 3 : ToolButton { icon: @image-url("../assets/icons/plus.svg"); primary: true; label: I18n.tm_add; enabled: !root.working; clicked => { root.open-kb-dialog(true); } }
-                    if root.tab == 3 : ToolButton { icon: @image-url("../assets/icons/pen.svg"); label: I18n.tm_edit; enabled: root.active && !root.working; clicked => { root.open-kb-dialog(false); } }
-                    if root.tab == 3 : ToolButton { icon: @image-url("../assets/icons/trash.svg"); danger: true; label: I18n.common_delete; enabled: root.active && !root.working; clicked => { root.deleting = true; } }
                 }
                 Rectangle { height: 1px; background: Theme.border; }
-                if root.tab == 0 : ScrollView {
-                    vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
-                    VerticalLayout { alignment: start; spacing: 10px;
-                        ToolGroup { title: I18n.tl_cat_builtin; tools: root.builtin-tools; inspect(name, description) => { root.inspect(name, description); } }
-                        ToolGroup { title: I18n.tl_cat_mcp; tools: root.mcp-tools; inspect(name, description) => { root.inspect(name, description); } }
-                        ToolGroup { title: I18n.tm_skills; tools: root.skill-tools; inspect(name, description) => { root.inspect(name, description); } }
-                        ToolGroup { title: I18n.tm_knowledge; tools: root.knowledge-tools; inspect(name, description) => { root.inspect(name, description); } }
-                    }
-                }
-                // MCP / 技能 / 知识库：左列表 + 右详情的主从布局。
-                if root.tab != 0 : HorizontalLayout {
+                // MCP / 技能：左列表 + 右详情的主从布局。
+                HorizontalLayout {
                     vertical-stretch: 1; spacing: 12px;
                     Rectangle {
                         width: 200px;
@@ -336,7 +298,7 @@ export component ToolsPage inherits Rectangle {
                         }
                         if root.resources.length == 0 : ToolText {
                             x: 10px; y: 10px; width: parent.width - 20px; height: 20px;
-                            text: root.loading ? I18n.tl_loading : root.tab == 1 ? I18n.tm_no_servers : root.tab == 2 ? I18n.tm_no_skills : I18n.tm_no_kb;
+                            text: root.loading ? I18n.tl_loading : root.tab == 1 ? I18n.tm_no_servers : I18n.tm_no_skills;
                             color: Theme.muted; font-size: Theme.font-sm;
                         }
                     }
@@ -377,20 +339,13 @@ export component ToolsPage inherits Rectangle {
                             }
                         }
                     }
-                    if root.tab == 2 || root.tab == 3 : VerticalLayout {
-                        // 技能页文件区吃满剩余宽度；知识库页让位给右侧编辑器。
-                        horizontal-stretch: root.tab == 2 ? 1 : 0;
+                    if root.tab == 2 : VerticalLayout {
+                        // 技能页文件区吃满剩余宽度。
+                        horizontal-stretch: 1;
                         min-width: 0px;
-                        preferred-width: root.tab == 3 ? 260px : 100000px;
-                        max-width: root.tab == 3 ? 260px : 100000px;
                         spacing: 8px;
-                        if root.tab == 3 : HorizontalLayout { height: 30px; spacing: 8px;
-                            ToolText { horizontal-stretch: 1; min-width: 0px; text: I18n.tm_files; font-size: Theme.font-lg; color: Theme.text; }
-                            ToolButton { icon: @image-url("../assets/icons/upload.svg"); label: I18n.tm_upload; enabled: root.active && !root.readonly && !root.working; clicked => { root.edit("upload"); } }
-                            ToolButton { icon: @image-url("../assets/icons/plus.svg"); label: I18n.tm_add; enabled: root.active && !root.working; clicked => { root.edit("file"); } }
-                        }
-                        // 技能与知识库的文件区共用聊天停靠面板的右键操作。
-                        if root.tab == 2 : WorkspaceFilesPanel {
+                        // 技能文件区复用聊天停靠面板的右键操作。
+                        WorkspaceFilesPanel {
                             vertical-stretch: 1; min-height: 0px;
                             resource-mode: true; local: true;
                             title: root.active ? root.resources[root.selected].name : I18n.tm_select_skill;
@@ -430,72 +385,6 @@ export component ToolsPage inherits Rectangle {
                                     }
                                 }
                                 if action == 9 { root.select-resource(root.tab, root.selected); }
-                            }
-                        }
-                        if root.tab == 3 : ContextMenuArea {
-                            vertical-stretch: 1; min-height: 0px;
-                            enabled: !root.working;
-                            Menu {
-                                MenuItem { title: I18n.tm_upload; enabled: root.active && !root.readonly && !root.working; activated => { root.edit("upload"); } }
-                                MenuItem { title: I18n.tm_add; enabled: root.active && !root.working; activated => { root.edit("file"); } }
-                                MenuItem { title: I18n.common_refresh; activated => { root.refresh(); } }
-                            }
-                            Rectangle {
-                                border-radius: Theme.radius-md; border-width: 1px; border-color: Theme.border; background: Theme.surface;
-                                clip: true;
-                                ListView { x: 4px; y: 4px; width: parent.width - 8px; height: parent.height - 8px;
-                                    for file in root.files : ContextMenuArea {
-                                        height: 30px;
-                                        Menu {
-                                            MenuItem { title: I18n.common_open; activated => { root.open-file(file.path, file.entry-type == "dir"); } }
-                                            MenuItem { title: I18n.dk_copy_path; activated => { root.copy-path(file.path); } }
-                                            MenuItem { title: I18n.common_refresh; activated => { root.refresh(); } }
-                                        }
-                                        Rectangle {
-                                            file-hot := TouchArea {
-                                                width: parent.width; height: parent.height;
-                                                enabled: !root.working;
-                                                mouse-cursor: pointer;
-                                                clicked => { root.open-file(file.path, file.entry-type == "dir"); }
-                                                Rectangle {
-                                                    background: file-hot.has-hover || root.file-path == file.path ? Theme.accent-soft : transparent;
-                                                    HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 8px; cross-axis-alignment: center;
-                                                        Image { width: 12px; height: 12px; source: @image-url("../assets/icons/chevron-right.svg"); visible: file.entry-type == "dir"; colorize: Theme.muted; }
-                                                        Image { width: 18px; height: 18px; source: file.icon; }
-                                                        ToolText { horizontal-stretch: 1; min-width: 0px; text: file.name; color: Theme.text; font-size: Theme.font-md; }
-                                                        ToolText { text: file.entry-type == "dir" ? I18n.tm_folder : file.size; color: Theme.muted; font-size: Theme.font-2xs; }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            if !root.active : ToolText {
-                                x: 10px; y: 10px; width: parent.width - 20px; height: 20px;
-                                text: root.tab == 3 ? I18n.tm_select_kb : I18n.tm_select_skill;
-                                color: Theme.muted; font-size: Theme.font-sm;
-                            }
-                        }
-                        if root.tab == 3 && root.has-more : ToolButton { width: 96px; label: I18n.tm_more; show-label: true; enabled: !root.working; clicked => { root.more-files(); } }
-                    }
-                    if root.tab == 3 : VerticalLayout {
-                        horizontal-stretch: 1; min-width: 0px; spacing: 8px;
-                        HorizontalLayout { height: 30px; spacing: 8px;
-                            ToolText { horizontal-stretch: 1; min-width: 0px; text: root.file-path == "" ? I18n.tm_select_file : root.file-path; font-size: Theme.font-md; font-weight: 600; color: Theme.text; }
-                            ToolButton { icon: @image-url("../assets/icons/save.svg"); primary: true; label: I18n.tm_save; enabled: root.file-path != "" && !root.working; clicked => { root.action("save", root.file-path, root.content); } }
-                        }
-                        Rectangle {
-                            vertical-stretch: 1; min-height: 0px;
-                            border-radius: Theme.radius-md; border-width: 1px; border-color: Theme.input-border; background: Theme.input-bg;
-                            clip: true;
-                            if root.file-path == "" : ToolText { x: 10px; y: 10px; width: parent.width - 20px; height: 20px; text: I18n.tm_select_file; color: Theme.muted; font-size: Theme.font-sm; }
-                            if root.file-path != "" : TextEdit {
-                                x: 4px; y: 4px; width: parent.width - 8px; height: parent.height - 8px;
-                                text <=> root.content; read-only: root.working;
-                                changed has-focus => {
-                                    if self.has-focus && !self.read-only && self.enabled { TextFieldActivation.activated(); }
-                                }
                             }
                         }
                     }
@@ -565,67 +454,6 @@ export component ToolsPage inherits Rectangle {
                 FormArea { label: I18n.tm_headers; placeholder: "{\"Authorization\":\"Bearer ...\"}"; text <=> ToolsDialog.mcp-headers; edited => { ToolsDialog.refresh-mcp-feedback(); } }
                 if ToolsDialog.mcp-headers-error != "" : ToolText { height: 16px; text: ToolsDialog.mcp-headers-error; color: Theme.danger; }
                 FormArea { label: I18n.tm_struct_preview; placeholder: I18n.tm_struct_ph; text <=> ToolsDialog.mcp-preview; read-only: true; height: 150px; }
-            }
-        }
-    }
-    // Knowledge base form, aligned with the web knowledge dialog.
-    if ToolsDialog.kb-open : FormDialog {
-        title: ToolsDialog.kb-new ? I18n.tm_kb_add_title : I18n.tm_kb_edit_title;
-        card-width: 560px;
-        card-height: 640px;
-        dismissable: !root.working;
-        save-enabled: !root.working && ToolsDialog.kb-name != "";
-        dismissed => { ToolsDialog.kb-open = false; }
-        saved => { ToolsDialog.save-kb(); ToolsDialog.kb-open = false; }
-        ScrollView {
-            vertical-stretch: 1;
-            horizontal-scrollbar-policy: always-off;
-            VerticalLayout { spacing: 14px; alignment: start;
-                FormField { label: I18n.tm_name; placeholder: I18n.tm_kb_name_ph; enabled: !root.working; read-only: !ToolsDialog.kb-new; text <=> ToolsDialog.kb-name; }
-                FormArea { label: I18n.tm_desc; placeholder: I18n.tm_desc_ph; text <=> ToolsDialog.kb-description; height: 130px; }
-                VerticalLayout { spacing: 6px;
-                    FormFieldLabel { text: I18n.tm_type; }
-                    ComboBox {
-                        height: 34px;
-                        model: ToolsDialog.kb-type-model;
-                        current-index <=> ToolsDialog.kb-type-index;
-                        enabled: !root.working && ToolsDialog.kb-new;
-                    }
-                }
-                VerticalLayout { spacing: 10px;
-                    Rectangle {
-                        height: 44px;
-                        border-radius: 10px;
-                        background: Theme.panel;
-                        border-width: 1px;
-                        border-color: Theme.border;
-                        HorizontalLayout {
-                            padding-left: 14px; padding-right: 12px; spacing: 8px;
-                            ToolText { height: parent.height; text: I18n.tm_advanced; font-size: 14px; font-weight: 700; color: Theme.text; }
-                            Rectangle { horizontal-stretch: 1; }
-                            Image {
-                                width: 12px; height: 12px;
-                                source: @image-url("../assets/icons/chevron-down.svg");
-                                colorize: Theme.text-secondary;
-                                transform-rotation: ToolsDialog.kb-advanced-open ? 180deg : 0deg;
-                            }
-                        }
-                        TouchArea { mouse-cursor: pointer; clicked => { ToolsDialog.kb-advanced-open = !ToolsDialog.kb-advanced-open; } }
-                    }
-                    if ToolsDialog.kb-advanced-open && ToolsDialog.kb-type-index == 0 : VerticalLayout { spacing: 14px;
-                        FormField { label: I18n.tm_embedding_model; placeholder: I18n.tm_embedding_ph; text <=> ToolsDialog.kb-embedding-model; }
-                        HorizontalLayout { spacing: 10px;
-                            FormField { label: I18n.tm_chunk_size; placeholder: I18n.tm_chunk_size_ph; horizontal-stretch: 1; text <=> ToolsDialog.kb-chunk-size; }
-                            FormField { label: I18n.tm_chunk_overlap; placeholder: I18n.tm_chunk_overlap_ph; horizontal-stretch: 1; text <=> ToolsDialog.kb-chunk-overlap; }
-                        }
-                        ToolText { height: 18px; text: I18n.tm_kb_vector_tip; color: Theme.muted; }
-                    }
-                    if ToolsDialog.kb-advanced-open && ToolsDialog.kb-type-index == 2 : VerticalLayout { spacing: 14px;
-                        FormField { label: I18n.tm_dataset_id; placeholder: I18n.tm_dataset_ph; text <=> ToolsDialog.kb-dataset-id; }
-                        ToolText { height: 18px; text: I18n.tm_kb_ragflow_tip; color: Theme.muted; }
-                    }
-                    if ToolsDialog.kb-advanced-open && ToolsDialog.kb-type-index == 1 : ToolText { height: 18px; text: I18n.tm_kb_literal_tip; color: Theme.muted; }
-                }
             }
         }
     }

@@ -1,5 +1,6 @@
 use super::{
     apply_patch_tool, build_model_tool_success, build_model_tool_success_with_hint,
+    command_notify::{schedule_snapshot_notification, CommandNotifier},
     command_options::{
         apply_time_budget_secs, parse_command_budget, parse_command_session_input,
         parse_command_session_wait, parse_command_yield_time, parse_dry_run, CommandSessionInput,
@@ -1213,6 +1214,8 @@ async fn run_command_streaming(
     stderr_policy: CommandOutputPolicy,
     command_index: usize,
     yield_time: Option<Duration>,
+    background: bool,
+    notifier: Option<Arc<CommandNotifier>>,
     force_shell_launch: bool,
 ) -> Result<CommandRunResult> {
     let command_text = command.to_string();
@@ -1264,8 +1267,8 @@ async fn run_command_streaming(
     // 只能永远挂住——这就是 pwsh「挂死」的常见起点。null 让它们立刻 EOF。
     // 判定必须与下面的 detach 条件完全一致：yield_time 为 0 时走的是前台
     // 阻塞路径，不能因为 Some(0) 就留下一个永不关闭的 stdin 写端。
-    let detach_capable =
-        yield_time.is_some_and(|wait| wait > Duration::ZERO) && context.command_sessions.is_some();
+    let detach_capable = (background || yield_time.is_some_and(|wait| wait > Duration::ZERO))
+        && context.command_sessions.is_some();
     cmd.kill_on_drop(true);
     cmd.stdin(if detach_capable {
         Stdio::piped()
@@ -1370,13 +1373,15 @@ async fn run_command_streaming(
         )
         .await;
     };
-    let Some(wait) = yield_time.filter(|wait| *wait > Duration::ZERO) else {
+    if !background && !yield_time.is_some_and(|wait| wait > Duration::ZERO) {
         // 前台阻塞路径：执行期间登记会话级取消令牌，面板的「终止」由此取消它，
         // 守卫在函数返回时摘除。
         let (_cancel_guard, session_cancel) = context
             .command_sessions
             .as_ref()
-            .map(|broker| SessionCancelGuard::register(broker, command_session.command_session_id()))
+            .map(|broker| {
+                SessionCancelGuard::register(broker, command_session.command_session_id())
+            })
             .unzip();
         return run_spawned_child_streaming(
             context,
@@ -1391,7 +1396,7 @@ async fn run_command_streaming(
             tree,
         )
         .await;
-    };
+    }
     // 可脱离路径必须有 broker 才能接管进程；拿不到就退回前台阻塞，语义不变。
     let Some(broker) = context.command_sessions.as_ref().cloned() else {
         return run_spawned_child_streaming(
@@ -1433,6 +1438,28 @@ async fn run_command_streaming(
         result_tx,
     )
     .await?;
+    if background {
+        // 后台模式不等窗口：已经跑完的直接交完整结果，仍在跑的交给完成通知。
+        match result_rx.try_recv() {
+            Ok(result) => return result,
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
+                if let Some(notifier) = notifier {
+                    let notify_session_id = session_id.clone();
+                    long_task::spawn("tools.command.completion_notify", async move {
+                        // 监督任务退出前已写入会话终态；等它结束后直接读快照。
+                        let _ = result_rx.await;
+                        schedule_snapshot_notification(&Some(notifier), &notify_session_id);
+                    });
+                }
+                return Ok(running_command_result(session_id));
+            }
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                // 监督任务异常提前结束：仍按运行中交还会话，让会话守卫收尾。
+                return Ok(running_command_result(session_id));
+            }
+        }
+    }
+    let wait = yield_time.unwrap_or_else(|| Duration::from_millis(DEFAULT_COMMAND_YIELD_MS));
     // 等待窗口内退出就把完整结果交回去；窗口到点则只交会话，进程继续跑。
     match tokio::time::timeout(wait, &mut result_rx).await {
         Ok(Ok(result)) => return result,
@@ -1446,7 +1473,11 @@ async fn run_command_streaming(
             }
         }
     }
-    Ok(CommandRunResult {
+    Ok(running_command_result(session_id))
+}
+
+fn running_command_result(session_id: String) -> CommandRunResult {
+    CommandRunResult {
         returncode: -1,
         stdout: String::new(),
         stderr: String::new(),
@@ -1455,7 +1486,7 @@ async fn run_command_streaming(
         stderr_capture: CommandOutputCaptureMeta::empty(),
         command_session_id: Some(session_id),
         running: true,
-    })
+    }
 }
 
 /// `命令会话` 不带 id 时：列出本线程的命令任务。
@@ -1583,6 +1614,8 @@ pub(crate) async fn command_session_control(
     if matches!(input, CommandSessionInput::Interrupt) {
         if let Some(broker) = broker {
             broker.terminate_task(context.user_id, context.session_id, session_id);
+            // 模型主动终止：完成通知无需再报告一次取消。
+            broker.mark_model_observed(context.user_id, context.session_id, session_id);
         }
         if sandbox_backed
             && !crate::sandbox::cancel_command_session(
@@ -1667,6 +1700,11 @@ pub(crate) async fn command_session_control(
                 if let Value::Object(ref mut map) = data {
                     map.insert("error".to_string(), Value::Null);
                     map.insert("interrupted".to_string(), Value::Bool(true));
+                }
+            }
+            if data.get("status").and_then(Value::as_str) != Some("running") {
+                if let Some(broker) = broker {
+                    broker.mark_model_observed(context.user_id, context.session_id, session_id);
                 }
             }
             return Ok(build_command_session_result(data));
@@ -1899,12 +1937,14 @@ fn compact_sandbox_poll_result(mut data: Value) -> Value {
 
 /// A single runtime task owns remote output forwarding. Model polls only read
 /// the local broker, so they cannot duplicate events or delay live output.
+#[allow(clippy::too_many_arguments)]
 async fn observe_sandbox_command(
     config: Config,
     user_id: String,
     session_id: String,
     tracker: CommandSessionTracker,
     broker: Arc<super::command_sessions::CommandSessionBroker>,
+    notifier: Option<Arc<CommandNotifier>>,
     cancel: tokio_util::sync::CancellationToken,
     start_seq: u64,
 ) {
@@ -1916,6 +1956,7 @@ async fn observe_sandbox_command(
             _ = cancel.cancelled() => {
                 let _ = crate::sandbox::cancel_command_session(&config, &user_id, &session_id, &id).await;
                 tracker.emit_exit(None, false, Some("command cancelled".to_string()));
+                schedule_snapshot_notification(&notifier, &id);
                 break;
             }
             result = crate::sandbox::control_command_session(
@@ -1940,6 +1981,7 @@ async fn observe_sandbox_command(
                     false,
                     Some("sandbox command output unavailable".to_string()),
                 );
+                schedule_snapshot_notification(&notifier, &id);
                 break;
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
@@ -1963,6 +2005,7 @@ async fn observe_sandbox_command(
                     .and_then(Value::as_str)
                     .map(str::to_string),
             );
+            schedule_snapshot_notification(&notifier, &id);
             break;
         }
     }
@@ -2248,6 +2291,45 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             })
         });
     let context = scoped_context.as_ref().unwrap_or(context);
+    let run_in_background = args
+        .get("run_in_background")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let background_notifier = if run_in_background {
+        CommandNotifier::from_context(context)
+    } else {
+        None
+    };
+    if run_in_background && !dry_run && background_notifier.is_none() {
+        return Ok(build_failed_tool_result(
+            i18n::t("tool.exec.background_unavailable"),
+            json!({ "run_in_background": true }),
+            ToolErrorMeta::new(
+                "TOOL_EXEC_BACKGROUND_UNAVAILABLE",
+                Some(
+                    "当前运行环境没有命令会话或线程唤醒能力，请去掉 run_in_background 后前台执行。"
+                        .to_string(),
+                ),
+                false,
+                None,
+            ),
+            false,
+        ));
+    }
+    if run_in_background
+        && !dry_run
+        && !context
+            .command_sessions
+            .as_ref()
+            .is_some_and(|broker| broker.has_process_capacity())
+    {
+        return Ok(build_failed_tool_result(
+            "command process capacity reached",
+            json!({ "run_in_background": true }),
+            ToolErrorMeta::new("TOOL_COMMAND_SESSION_CAPACITY", None, true, Some(500)),
+            false,
+        ));
+    }
     // 后台名额满时退回前台阻塞：短命令照常跑完，长命令由自己的 timeout_s
     // 回收并如实报超时，不会出现「进程跑着、会话却登记不上」的半截状态。
     let yield_time = context
@@ -2265,20 +2347,33 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
         DEFAULT_COMMAND_TIMEOUT_S
     };
     // 等待窗口与进程寿命分离：到点返回会话，不把仍在工作的进程误判为超时。
-    let process_timeout_s = if yield_time.is_some() {
+    // 后台模式同样要按长寿命处理，否则默认 120s 会把仍在跑的任务误杀。
+    let process_timeout_s = if run_in_background || yield_time.is_some() {
         INTERACTIVE_COMMAND_MAX_S
     } else {
         timeout_s
     };
     let timeout = Some(Duration::from_secs_f64(process_timeout_s));
     if crate::sandbox::sandbox_enabled(context.config) && !dry_run && !content.is_empty() {
+        // 沙盒启动接口按 yield_time_ms 决定首次返回前等多久；后台模式尽快交还会话，
+        // 是否结束由常驻 observer 负责。
+        let mut sandbox_args = args.clone();
+        if run_in_background {
+            if let Value::Object(map) = &mut sandbox_args {
+                map.insert("run_in_background".to_string(), json!(true));
+                map.insert("yield_time_ms".to_string(), json!(50));
+                // 服务端对后台会话只按显式 timeout_s 计时；把工具层的长寿命
+                // 窗口传过去，避免后台任务被默认 120s 误杀。
+                map.insert("timeout_s".to_string(), json!(process_timeout_s));
+            }
+        }
         if let Some(result) = crate::sandbox::launch_command_session(
             context.config,
             context.workspace.as_ref(),
             context.user_id,
             context.workspace_id,
             context.session_id,
-            &args,
+            &sandbox_args,
             context.user_tool_bindings,
         )
         .await
@@ -2344,61 +2439,65 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                             false,
                         ));
                     };
-                    // 阻塞等待期间也要能被「终止」：把会话级取消令牌挂到
-                    // broker，用户停止/线程取消时由 watcher 取消远端会话，
-                    // 不能等到工具超时才发现命令还在跑。
-                    let (_sandbox_cancel_guard, sandbox_cancel) = context
-                        .command_sessions
-                        .as_ref()
-                        .map(|broker| SessionCancelGuard::register(broker, command_session_id))
-                        .unzip();
-                    let _cancel_watcher = CancelWatcherGuard(sandbox_cancel.map(|cancel| {
-                        let cancel_config = context.config.clone();
-                        let cancel_user = context.user_id.to_string();
-                        let cancel_session = context.session_id.to_string();
-                        let cancel_id = command_session_id.to_string();
-                        long_task::spawn("tools.sandbox_command_cancel", async move {
-                            cancel.cancelled().await;
-                            let _ = crate::sandbox::cancel_command_session(
-                                &cancel_config,
-                                &cancel_user,
-                                &cancel_session,
-                                &cancel_id,
-                            )
-                            .await;
-                        })
-                    }));
-                    match await_sandbox_command_exit(
-                        context,
-                        command_session_id,
-                        yield_time
-                            .map(|wait| wait.as_secs_f64())
-                            .unwrap_or(DEFAULT_COMMAND_YIELD_MS as f64 / 1000.0),
-                        tracker.as_ref(),
-                    )
-                    .await
-                    {
-                        Some((final_data, resume_after_seq)) => {
-                            let still_running =
-                                final_data.get("status").and_then(Value::as_str) == Some("running");
-                            data = final_data;
-                            completed = !still_running;
-                            if still_running {
-                                escalated_after_seq = Some(resume_after_seq);
+                    // 后台模式立即交还会话，由常驻 observer 盯退出并触发通知。
+                    if !run_in_background {
+                        // 阻塞等待期间也要能被「终止」：把会话级取消令牌挂到
+                        // broker，用户停止/线程取消时由 watcher 取消远端会话，
+                        // 不能等到工具超时才发现命令还在跑。
+                        let (_sandbox_cancel_guard, sandbox_cancel) = context
+                            .command_sessions
+                            .as_ref()
+                            .map(|broker| SessionCancelGuard::register(broker, command_session_id))
+                            .unzip();
+                        let _cancel_watcher = CancelWatcherGuard(sandbox_cancel.map(|cancel| {
+                            let cancel_config = context.config.clone();
+                            let cancel_user = context.user_id.to_string();
+                            let cancel_session = context.session_id.to_string();
+                            let cancel_id = command_session_id.to_string();
+                            long_task::spawn("tools.sandbox_command_cancel", async move {
+                                cancel.cancelled().await;
+                                let _ = crate::sandbox::cancel_command_session(
+                                    &cancel_config,
+                                    &cancel_user,
+                                    &cancel_session,
+                                    &cancel_id,
+                                )
+                                .await;
+                            })
+                        }));
+                        match await_sandbox_command_exit(
+                            context,
+                            command_session_id,
+                            yield_time
+                                .map(|wait| wait.as_secs_f64())
+                                .unwrap_or(DEFAULT_COMMAND_YIELD_MS as f64 / 1000.0),
+                            tracker.as_ref(),
+                        )
+                        .await
+                        {
+                            Some((final_data, resume_after_seq)) => {
+                                let still_running =
+                                    final_data.get("status").and_then(Value::as_str)
+                                        == Some("running");
+                                data = final_data;
+                                completed = !still_running;
+                                if still_running {
+                                    escalated_after_seq = Some(resume_after_seq);
+                                }
                             }
-                        }
-                        None => {
-                            return Ok(build_failed_tool_result(
-                                "sandbox command session poll failed",
-                                json!({ "command_session_id": command_session_id }),
-                                ToolErrorMeta::new(
-                                    "TOOL_COMMAND_SESSION_UNAVAILABLE",
-                                    Some("轮询沙盒命令会话失败，可用命令会话工具按该 command_session_id 重试。".to_string()),
-                                    true,
-                                    Some(500),
-                                ),
-                                false,
-                            ));
+                            None => {
+                                return Ok(build_failed_tool_result(
+                                    "sandbox command session poll failed",
+                                    json!({ "command_session_id": command_session_id }),
+                                    ToolErrorMeta::new(
+                                        "TOOL_COMMAND_SESSION_UNAVAILABLE",
+                                        Some("轮询沙盒命令会话失败，可用命令会话工具按该 command_session_id 重试。".to_string()),
+                                        true,
+                                        Some(500),
+                                    ),
+                                    false,
+                                ));
+                            }
                         }
                     }
                 }
@@ -2441,23 +2540,36 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                             context.session_id.to_string(),
                             tracker,
                             Arc::clone(broker),
+                            background_notifier.clone(),
                             handle.cancellation_token(),
                             escalated_after_seq.unwrap_or(0),
                         ),
                     );
                 }
-                let guidance = i18n::t("tool.exec.background_next_step");
+                let guidance = if run_in_background {
+                    i18n::t("tool.exec.background_notify_next_step")
+                } else {
+                    i18n::t("tool.exec.background_next_step")
+                };
                 if let Value::Object(ref mut map) = data {
+                    map.insert("background".to_string(), json!(run_in_background));
                     map.insert("next_step".to_string(), Value::String(guidance.clone()));
-                    map.insert(
-                        "yield_time_ms".to_string(),
-                        json!(yield_time.map(|wait| wait.as_millis())),
-                    );
+                    if !run_in_background {
+                        map.insert(
+                            "yield_time_ms".to_string(),
+                            json!(yield_time.map(|wait| wait.as_millis())),
+                        );
+                    }
                 }
+                let message = if run_in_background {
+                    format!("Command started in the background. {guidance}")
+                } else {
+                    format!("Command is still running. {guidance}")
+                };
                 return Ok(build_model_tool_success(
                     "execute_command",
                     "running",
-                    format!("Command is still running. {guidance}"),
+                    message,
                     data,
                 ));
             }
@@ -2616,6 +2728,21 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             }),
         ));
     }
+    // 后台模式只接受单条命令：多行脚本本来就按顺序执行，逐条后台化会让
+    // 模型分不清该等哪一条，也失去「一次调用一个进程」的直观语义。
+    if run_in_background && commands.len() > 1 {
+        return Ok(build_failed_tool_result(
+            i18n::t("tool.exec.background_single_command"),
+            json!({ "command_count": commands.len() }),
+            ToolErrorMeta::new(
+                "TOOL_EXEC_BACKGROUND_MULTI_COMMAND",
+                Some("请拆成多次调用，只把需要长时间运行的那条命令设为后台执行。".to_string()),
+                true,
+                None,
+            ),
+            false,
+        ));
+    }
     for (command_index, command) in commands.into_iter().enumerate() {
         if command.trim().is_empty() {
             continue;
@@ -2668,7 +2795,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
         // 同一条命令已经在本线程跑着：直接交回那条会话，不重复启动。
         // 渲染器、桌面应用这类单实例程序第二次启动只会被自己拦住，模型再
         // 靠 ps 判断"到底跑没跑"，白白丢掉一轮。
-        if single_command && yield_time.is_some() {
+        if !run_in_background && single_command && yield_time.is_some() {
             if let Some(snapshot) = running_duplicate_session(context, &command, &cwd) {
                 context.workspace.mark_tree_dirty(context.workspace_id);
                 return Ok(build_reused_command_result(context, &snapshot));
@@ -2683,7 +2810,9 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             stdout_policy,
             stderr_policy,
             command_index,
-            yield_time,
+            if run_in_background { None } else { yield_time },
+            run_in_background,
+            background_notifier.clone(),
             force_shell_launch,
         )
         .await?;
@@ -2729,7 +2858,11 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
         results.push(result_entry);
         if run.running {
             context.workspace.mark_tree_dirty(context.workspace_id);
-            let guidance = i18n::t("tool.exec.background_next_step");
+            let guidance = if run_in_background {
+                i18n::t("tool.exec.background_notify_next_step")
+            } else {
+                i18n::t("tool.exec.background_next_step")
+            };
             let session_id = run.command_session_id.clone().unwrap_or_default();
             let partial_output = context.command_sessions.as_ref().and_then(|broker| {
                 broker.snapshot_for_scope(context.user_id, context.session_id, &session_id)
@@ -2758,17 +2891,26 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                     }
                 }
             }
+            let mut data = json!({
+                "command_session_id": session_id,
+                "status": "running",
+                "background": run_in_background,
+                "next_step": guidance,
+                "results": compact_command_results_for_model(&results),
+            });
+            if !run_in_background {
+                data["yield_time_ms"] = json!(parse_command_yield_time(&args).as_millis());
+            }
+            let message = if run_in_background {
+                format!("Command started in the background. {guidance}")
+            } else {
+                format!("Command is still running. {guidance}")
+            };
             return Ok(build_model_tool_success(
                 "execute_command",
                 "running",
-                format!("Command is still running. {guidance}"),
-                json!({
-                    "command_session_id": session_id,
-                    "status": "running",
-                    "next_step": guidance,
-                    "results": compact_command_results_for_model(&results),
-                    "yield_time_ms": parse_command_yield_time(&args).as_millis(),
-                }),
+                message,
+                data,
             ));
         }
         if run.timed_out {

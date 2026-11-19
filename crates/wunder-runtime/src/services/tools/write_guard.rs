@@ -11,13 +11,12 @@
 
 /// 已知二进制扩展名：这些文件的字节不是文本，文本写入必然造成损坏。
 const BINARY_EXTENSIONS: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tif", "tiff", "psd", "heic", "avif",
-    "pdf", "zip", "gz", "tgz", "bz2", "xz", "zst", "7z", "rar", "jar", "apk", "doc", "docx",
-    "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp",
-    "woff", "woff2", "ttf", "otf", "eot",
-    "mp3", "wav", "flac", "ogg", "m4a", "aac", "mp4", "m4v", "mov", "avi", "mkv", "webm",
-    "exe", "dll", "so", "dylib", "o", "a", "lib", "bin", "wasm", "pyc", "class", "node",
-    "sqlite", "sqlite3", "db", "mdb",
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tif", "tiff", "psd", "heic", "avif", "pdf",
+    "zip", "gz", "tgz", "bz2", "xz", "zst", "7z", "rar", "jar", "apk", "doc", "docx", "xls",
+    "xlsx", "ppt", "pptx", "odt", "ods", "odp", "woff", "woff2", "ttf", "otf", "eot", "mp3", "wav",
+    "flac", "ogg", "m4a", "aac", "mp4", "m4v", "mov", "avi", "mkv", "webm", "exe", "dll", "so",
+    "dylib", "o", "a", "lib", "bin", "wasm", "pyc", "class", "node", "sqlite", "sqlite3", "db",
+    "mdb",
 ];
 
 /// U+FEFF（BOM）；用 `from_u32` 生成，源码里不出现不可见字符。
@@ -84,7 +83,10 @@ mod tests {
         assert_eq!(preserve_bom(Some("alpha\n"), "beta\n"), "beta\n");
         // 新文件、新内容自带 BOM 都按原样写。
         assert_eq!(preserve_bom(None, "plain\n"), "plain\n");
-        assert_eq!(preserve_bom(None, &(bom.clone() + "plain\n")), bom.clone() + "plain\n");
+        assert_eq!(
+            preserve_bom(None, &(bom.clone() + "plain\n")),
+            bom.clone() + "plain\n"
+        );
     }
 
     #[test]

@@ -1834,13 +1834,41 @@ export component Composer inherits Rectangle {
                 // The send key preference: "enter" sends on plain Enter;
                 // "ctrl_enter" sends only with Ctrl+Enter; "none" leaves all
                 // newlines to the editor and sends via the button only.
-                if event.text == "\n" && !event.modifiers.shift && !event.modifiers.control {
-                    if root.send-key == "enter" && root.send-enabled { root.send(); }
-                    return root.send-key == "enter" ? accept : reject;
-                }
-                if event.text == "\n" && event.modifiers.control {
-                    if root.send-key == "ctrl_enter" && root.send-enabled { root.send(); return accept; }
-                    return reject;
+                //
+                // The preference only chooses *which* Enter sends — it must
+                // never let a stray newline slip into the draft. Two cases
+                // used to fall through to the editor and read as "Enter 变成
+                // 换行了" instead of sending:
+                //  - an IME composition is still open. `draft` does not hold
+                //    the characters being typed yet, so sending now would ship
+                //    half a word and the commit would land in the emptied
+                //    editor; inserting the key would even append a newline to
+                //    that commit. Consume the key and leave the commit to the
+                //    IME — the next Enter sends the finished word.
+                //  - the preference is not one of the three ids (not
+                //    projected yet, or a stale/garbled saved value). Fall back
+                //    to the default "enter" instead of silently turning Enter
+                //    into a newline.
+                // Keymaps and XIM key echoes hand over "\r" as well as "\n",
+                // so both are treated as the same key.
+                if event.text == "\n" || event.text == "\u{d}" {
+                    if editor.preedit-text != "" { return accept; }
+                    // Button-only: every newline stays in the editor.
+                    if root.send-key == "none" { return reject; }
+                    if event.modifiers.shift { return reject; }
+                    if root.send-key == "ctrl_enter" {
+                        // Plain Enter is the newline in this mode; Ctrl+Enter
+                        // is claimed either way so a disabled send never turns
+                        // into an editor newline.
+                        if !event.modifiers.control { return reject; }
+                        if root.send-enabled { root.send(); }
+                        return accept;
+                    }
+                    // Default (and unknown-value) mode: plain Enter sends,
+                    // Ctrl+Enter stays a newline.
+                    if event.modifiers.control { return reject; }
+                    if root.send-enabled { root.send(); }
+                    return accept;
                 }
                 return reject;
                 }

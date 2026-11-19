@@ -460,6 +460,15 @@ export component SettingsPage inherits Rectangle {
     in property <[ModelCard]> models;
     in property <int> selected-model: -1;
     in property <ModelCard> selected-card;
+    // 模型列表右侧标记的尺寸：默认模型只画一枚金色星标（与名称同一行），
+    // 云条目保留「云」分类徽标。标记宽度决定名称的可用宽度，名称在标记前省略。
+    private property <length> model-badge-inset: 10px;
+    private property <length> model-badge-gap: 6px;
+    private property <length> model-text-right-gap: 8px;
+    // 字号偏好会缩放列表文字，标记跟着缩放，避免大字号下与大标题错位。
+    private property <length> model-badge-height: 18px * Theme.font-scale;
+    private property <length> model-default-star-size: 12px * Theme.font-scale;
+    private property <length> model-cloud-badge-width: (I18n.zh ? 28px : 44px) * Theme.font-scale;
     callback delete-model(string);
     in-out property <string> workspace-root;
     in-out property <string> language;
@@ -536,7 +545,7 @@ export component SettingsPage inherits Rectangle {
     in-out property <string> update-current-version;
     // Update source: `cloud` (the signed-in server) or `github` (public
     // releases). Persisted with the other preferences.
-    in-out property <string> update-source: "cloud";
+    in-out property <string> update-source: "github";
     // Current target the native auto-check settled on (`desktop` | `cli` |
     // `supplement`); the reader no longer picks it.
     in-out property <string> update-target: "desktop";
@@ -572,7 +581,8 @@ export component SettingsPage inherits Rectangle {
         : root.update-phase == "staged" ? (root.update-target == "supplement" ? I18n.st_upd_staged_supplement : root.update-target == "cli" ? I18n.st_upd_staged_cli : I18n.st_upd_staged)
         : root.update-phase == "applying" ? I18n.st_upd_applying
         : root.update-phase == "applied" ? I18n.st_upd_applied
-        : !root.cloud-logged-in ? I18n.st_upd_need_login
+        // 默认的 GitHub 源不需要登录，只有选了云端账号且未登录才提示登录。
+        : root.update-source == "cloud" && !root.cloud-logged-in ? I18n.st_upd_need_login
         : "";
     property <bool> update-busy: root.update-phase == "checking" || root.update-phase == "downloading" || root.update-phase == "applying";
     // Engine-managed cloud entries (`cloud/<id>`): the editor locks them and
@@ -670,22 +680,22 @@ export component SettingsPage inherits Rectangle {
     in-out property <float> font-size: 14;
     in property <string> status;
     // Tab ids are stable labels, not list positions: 0 general, 13 account,
-    // 1 models, 2 tools, 3 agent, 4 companion, 5 scheduled tasks, 6 memories,
-    // 7 channels, 10 archived threads. Help lives on a button in the general
-    // category and opens its own window, so it is not a category. The
-    // navigation lists them in the web messenger's category order: general,
-    // account, models, tools, agent, companion, cron, memory, channels and
-    // archived threads.
+    // 1 models, 2 MCP, 15 skills, 3 agent, 4 companion, 5 scheduled tasks,
+    // 6 memories, 7 channels, 10 archived threads. Help lives on a button in
+    // the general category and opens its own window, so it is not a category.
+    // The navigation keeps the web messenger's category order minus the
+    // knowledge-base and administrator-tools pages: general, account, models,
+    // MCP, skills, agent, companion, cron, memory, channels, archived threads.
     in-out property <int> settings-tab: 0;
     // Category filter typed into the navigation search box. Slint 1.18 strings
     // have no substring test, so the filter runs natively and the matching
     // categories come back as a bit set (bit N = category N).
     in-out property <string> settings-query: "";
-    // One flag per category, in navigation order (11 categories). Slint 1.18 has
+    // One flag per category, in navigation order (12 categories). Slint 1.18 has
     // no bitwise operators, so the native search projection ships booleans rather
     // than a mask; an all-true list means "no query". Index = nav position, not
     // tab id.
-    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true];
+    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true];
     out property <bool> settings-has-matches: root.count-visible() > 0;
     out property <int> settings-visible-count: root.count-visible();    // How many categories the current query keeps; the empty state and the test
     // projections both read this instead of re-deriving the flags.
@@ -700,7 +710,8 @@ export component SettingsPage inherits Rectangle {
             + (root.settings-category-flags[7] ? 1 : 0)
             + (root.settings-category-flags[8] ? 1 : 0)
             + (root.settings-category-flags[9] ? 1 : 0)
-            + (root.settings-category-flags[10] ? 1 : 0);
+            + (root.settings-category-flags[10] ? 1 : 0)
+            + (root.settings-category-flags[11] ? 1 : 0);
     }
     // 换了模型类型后，当前提供方若不在新类型的预设里就切到该类型的默认
     // 提供方；服务地址只在「空着」或「还是上一个预设的地址」时替换，用户
@@ -732,15 +743,10 @@ export component SettingsPage inherits Rectangle {
     in-out property <string> tool-manager-status;
     in-out property <bool> tools-loading: false;
     in-out property <bool> tools-working: false;
-    in-out property <int> tools-tab: 0;
+    in-out property <int> tools-tab: 1;
     in-out property <int> tools-selected: -1;
-    in-out property <[ToolCard]> tools-builtin;
-    in-out property <[ToolCard]> tools-mcp;
-    in-out property <[ToolCard]> tools-skills;
-    in-out property <[ToolCard]> tools-knowledge;
     in-out property <[ToolResource]> tools-servers;
     in-out property <[ToolResource]> tools-skill-resources;
-    in-out property <[ToolResource]> tools-bases;
     in-out property <[ToolCard]> tools-server-tools;
     in-out property <[FileCard]> tools-files;
     in property <[WorkspaceFileRow]> tools-file-rows;
@@ -1016,8 +1022,7 @@ export component SettingsPage inherits Rectangle {
                             clicked => { root.settings-tab = 0;  }
                         }
                         SettingsNavItem {
-                            // Runtime is the local toolchain, not a toolbox — the
-                            // toolbox glyph belongs to "工具" below.
+                            // Runtime is the local toolchain, not a toolbox.
                             visible: root.settings-category-flags[1];
                             icon: @image-url("../assets/icons/terminal.svg");
                             title: I18n.st_tab_runtime;
@@ -1041,49 +1046,56 @@ export component SettingsPage inherits Rectangle {
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[4];
-                            // 空心螺丝刀+扳手，云端版 tools 分类同款意象。
-                            icon: @image-url("../assets/icons/tools-outline.svg");
-                            title: I18n.stc_tools;
+                            // MCP 与技能各自成项；知识库与管理员开放工具页已隐藏。
+                            icon: @image-url("../assets/icons/plug.svg");
+                            title: I18n.stc_mcp;
                             selected: root.settings-tab == 2;
-                            clicked => { root.settings-tab = 2; root.refresh(); }
+                            clicked => { root.tools-tab = 1; root.tools-selected = -1; root.settings-tab = 2; root.refresh(); }
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[5];
+                            icon: @image-url("../assets/icons/book.svg");
+                            title: I18n.stc_skills;
+                            selected: root.settings-tab == 15;
+                            clicked => { root.tools-tab = 2; root.tools-selected = -1; root.settings-tab = 15; root.refresh(); }
+                        }
+                        SettingsNavItem {
+                            visible: root.settings-category-flags[6];
                             icon: @image-url("../assets/icons/lc-bot.svg");
                             title: I18n.stc_agent;
                             selected: root.settings-tab == 3;
                             clicked => { root.settings-tab = 3;  }
                         }
                         SettingsNavItem {
-                            visible: root.settings-category-flags[6];
+                            visible: root.settings-category-flags[7];
                             icon: @image-url("../assets/icons/lc-paw-print.svg");
                             title: I18n.stc_pet;
                             selected: root.settings-tab == 4;
                             clicked => { root.settings-tab = 4;  }
                         }
                         SettingsNavItem {
-                            visible: root.settings-category-flags[7];
+                            visible: root.settings-category-flags[8];
                             icon: @image-url("../assets/icons/lc-clock.svg");
                             title: I18n.stc_cron;
                             selected: root.settings-tab == 5;
                             clicked => { root.settings-tab = 5; root.refresh(); }
                         }
                         SettingsNavItem {
-                            visible: root.settings-category-flags[8];
+                            visible: root.settings-category-flags[9];
                             icon: @image-url("../assets/icons/fluent-brain.svg");
                             title: I18n.stc_memory;
                             selected: root.settings-tab == 6;
                             clicked => { root.settings-tab = 6; root.refresh(); }
                         }
                         SettingsNavItem {
-                            visible: root.settings-category-flags[9];
+                            visible: root.settings-category-flags[10];
                             icon: @image-url("../assets/icons/lc-plug.svg");
                             title: I18n.stc_channels;
                             selected: root.settings-tab == 7;
                             clicked => { root.settings-tab = 7; root.refresh(); }
                         }
                         SettingsNavItem {
-                            visible: root.settings-category-flags[10];
+                            visible: root.settings-category-flags[11];
                             icon: @image-url("../assets/icons/lc-archive.svg");
                             title: I18n.stc_archives;
                             selected: root.settings-tab == 10;
@@ -1159,16 +1171,6 @@ export component SettingsPage inherits Rectangle {
                                     }
                                 }
                             }
-                            
-                            // 帮助：手册在独立窗口打开（节省设置弹窗空间）。
-                            SettingsCard {
-                                SettingsCardHeader { title: I18n.stc_help; }
-                                Rectangle { height: 10px; }
-                                HorizontalLayout { height: 34px; spacing: 10px;
-                                    Action { width: 140px; label: I18n.st_help_open; show-label: true; primary: true; enabled: !root.loading; clicked => { root.open-help(); } }
-                                    Rectangle { horizontal-stretch: 1; }
-                                }
-                            }
                             // 软件更新：选定更新源后一键检测并更新全部有新版本的组件
                             // （桌面版本体、命令行与补充包）；状态机在原生侧，这里只渲染阶段
                             // 并回传一次性请求。
@@ -1194,6 +1196,16 @@ export component SettingsPage inherits Rectangle {
                                 if root.update-phase == "available" || root.update-phase == "staged" : HorizontalLayout { height: 34px; spacing: 10px;
                                     // 一键更新：自动把每个有新版本/已暂存的组件依次下载并应用。
                                     Action { width: 130px; label: root.update-phase == "staged" && root.update-target == "desktop" ? I18n.st_upd_restart : I18n.st_upd_update; show-label: true; primary: true; enabled: !root.update-busy; clicked => { root.run-update(); } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                            }
+                            
+                            // 帮助：手册在独立窗口打开（节省设置弹窗空间）。
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.stc_help; }
+                                Rectangle { height: 10px; }
+                                HorizontalLayout { height: 34px; spacing: 10px;
+                                    Action { width: 140px; label: I18n.st_help_open; show-label: true; primary: true; enabled: !root.loading; clicked => { root.open-help(); } }
                                     Rectangle { horizontal-stretch: 1; }
                                 }
                             }
@@ -1518,27 +1530,35 @@ export component SettingsPage inherits Rectangle {
                                             move-by(delta) => { root.move-model(index, round((DragPreview.pointer-y - DragPreview.source-y) / 64px)); }
                                             clip: true;
                                             Image { x: 10px; y: (parent.height - 18px) / 2; width: 18px; height: 18px; source: root.model-icon(model.model-type); colorize: Theme.accent-ink; }
-                                            // Cloud entries keep room for their badge next to the key.
-                                            Text { x: 36px; y: 11px; width: parent.width - (model.is-default ? 94px : 48px) - (model.is-cloud ? 34px : 0px); height: 18px; text: model.key; color: Theme.text; font-size: Theme.font-sm; font-weight: 600; overflow: elide; }
-                                            Text { x: 36px; y: 32px; width: parent.width - (model.is-default ? 94px : 48px) - (model.is-cloud ? 34px : 0px); height: 15px; text: (model.model == "" && model.base-url == "") ? I18n.st_models_no_info : (model.model + " · " + model.base-url); color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
+                                            // 名称可用宽度 = 行宽 - 图标与内边距 - 右侧标记宽度；
+                                            // 标记是右对齐的，名称在它前面省略。
+                                            property <length> label-width: parent.width - 36px - root.model-badge-inset - root.model-text-right-gap
+                                                - (model.is-default ? root.model-default-star-size : 0px)
+                                                - (model.is-cloud ? root.model-cloud-badge-width : 0px)
+                                                - (model.is-default && model.is-cloud ? root.model-badge-gap : 0px);
+                                            Text { x: 36px; y: 11px; width: label-width; height: 18px; text: model.key; color: Theme.text; font-size: Theme.font-sm; font-weight: 600; overflow: elide; }
+                                            Text { x: 36px; y: 32px; width: label-width; height: 15px; text: (model.model == "" && model.base-url == "") ? I18n.st_models_no_info : (model.model + " · " + model.base-url); color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
                                             // Engine-managed cloud entries (`cloud/<id>`): the
                                             // badge marks them in the list; they are
                                             // refreshed on sign-in and removed on logout.
                                             if model.is-cloud : Rectangle {
-                                                x: parent.width - (model.is-default ? 82px : 52px); y: (parent.height - 16px) / 2; width: 26px; height: 16px;
-                                                border-radius: 8px; background: Theme.accent-soft;
-                                                Text { width: parent.width; height: parent.height; text: I18n.st_cl_badge; color: Theme.accent-ink; font-size: Theme.font-2xs; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                                                x: model.is-default
+                                                    ? parent.width - root.model-badge-inset - root.model-default-star-size - root.model-badge-gap - root.model-cloud-badge-width
+                                                    : parent.width - root.model-badge-inset - root.model-cloud-badge-width;
+                                                y: (parent.height - root.model-badge-height) / 2;
+                                                width: root.model-cloud-badge-width; height: root.model-badge-height;
+                                                border-radius: root.model-badge-height / 2; background: Theme.accent-soft;
+                                                Text { width: parent.width; height: parent.height; text: I18n.st_cl_badge; color: Theme.accent-ink; font-size: Theme.font-2xs; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
                                             }
-                                            // Default models carry the web's hanging bookmark ribbon.
-                                            if model.is-default : Rectangle {
-                                                x: parent.width - 44px; y: 0px; width: 32px; height: 19px;
-                                                background: @linear-gradient(180deg, #FFF8E1 0%, #FFE08A 100%);
-                                                Text { y: 2px; width: parent.width; height: 15px; text: I18n.st_models_default_badge; color: Theme.gold-ink; font-size: Theme.font-2xs; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
-                                            }
-                                            if model.is-default : Rectangle {
-                                                x: parent.width - 32.5px; y: 14.5px; width: 9px; height: 9px;
-                                                transform-rotation: 45deg;
-                                                background: #FFD54F;
+                                            // Default models get a single golden star, centered on the
+                                            // name line (not the whole row), so it reads as a mark of
+                                            // the title instead of a floating badge.
+                                            if model.is-default : Image {
+                                                x: parent.width - root.model-badge-inset - root.model-default-star-size;
+                                                y: 11px + (18px - root.model-default-star-size) / 2;
+                                                width: root.model-default-star-size; height: root.model-default-star-size;
+                                                source: @image-url("../assets/icons/fa-star.svg");
+                                                colorize: Theme.gold-deep;
                                             }
                                         }
                                         if root.models.length == 0 : PageState { height: 48px; kind: root.loading ? PageStateKind.loading : PageStateKind.empty; message: root.loading ? I18n.st_models_loading : I18n.st_models_empty; }
@@ -1766,13 +1786,13 @@ export component SettingsPage inherits Rectangle {
                             }
                         }
                     }
-                    if root.settings-tab == 2 : ToolsPage {
+                    // MCP（2）与技能（15）共用同一个管理器实例：类别由
+                    // `tools-tab` 固定，导航切换时先改类别再刷新资源列表。
+                    if root.settings-tab == 2 || root.settings-tab == 15 : ToolsPage {
                         loading: root.tools-loading; working: root.tools-working; status: root.tool-manager-status;
-                        builtin-tools: root.tools-builtin; mcp-tools: root.tools-mcp;
-                        skill-tools: root.tools-skills; knowledge-tools: root.tools-knowledge;
-                        servers: root.tools-servers; skills: root.tools-skill-resources; bases: root.tools-bases;
+                        servers: root.tools-servers; skills: root.tools-skill-resources;
                         files: root.tools-files; file-rows: root.tools-file-rows; server-tools: root.tools-server-tools;
-                        tab <=> root.tools-tab; selected <=> root.tools-selected;
+                        tab: root.tools-tab; selected <=> root.tools-selected;
                         file-path <=> root.tools-file-path; content <=> root.tools-content;
                         has-more: root.tools-has-more; directory: root.tools-directory;
                         search <=> root.tools-search;
@@ -2130,18 +2150,29 @@ export component SettingsPage inherits Rectangle {
                                 for archive in root.expert-archives : Rectangle {
                                     height: 54px;
                                     Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.border; }
-                                    Text { x: 0px; y: 8px; width: max(0px, parent.width - 228px); height: 20px; text: archive.title; color: Theme.text; font-size: Theme.font-md; font-weight: 600; vertical-alignment: center; overflow: elide; }
-                                    Text { x: 0px; y: 29px; width: max(0px, parent.width - 228px); height: 17px; text: I18n.stc_archives_workspace + " · " + (archive.workspace == "" ? I18n.stc_archives_workspace_missing : archive.workspace) + " · " + archive.time; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
-                                    Action { x: parent.width - 220px; y: 13px; width: 66px; label: I18n.stc_archives_open; show-label: true; enabled: !root.expert-saving; clicked => { root.open-expert-archive(archive.id); } }
-                                    Action { x: parent.width - 146px; y: 13px; width: 66px; label: I18n.stc_archives_restore; show-label: true; enabled: !root.expert-saving; clicked => { root.restore-expert-archive(archive.id); } }
-                                    Action { x: parent.width - 72px; y: 13px; width: 66px; label: I18n.common_delete; show-label: true; danger: true; enabled: !root.expert-saving; clicked => { root.delete-expert-archive(archive.id); } }
+                                    // 条目右侧只留「还原 / 删除」两个图标按钮（悬停有说明），
+                                    // 查看改由点击整行完成，名称因此多出一截可用宽度。
+                                    Text { x: 0px; y: 8px; width: max(0px, parent.width - 84px); height: 20px; text: archive.title; color: Theme.text; font-size: Theme.font-md; font-weight: 600; vertical-alignment: center; overflow: elide; }
+                                    Text { x: 0px; y: 29px; width: max(0px, parent.width - 84px); height: 17px; text: I18n.stc_archives_workspace + " · " + (archive.workspace == "" ? I18n.stc_archives_workspace_missing : archive.workspace) + " · " + archive.time; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                    Action {
+                                        x: parent.width - 66px; y: 12px;
+                                        icon: @image-url("../assets/icons/clock-rotate-left.svg");
+                                        label: I18n.stc_archives_restore;
+                                        enabled: !root.expert-saving;
+                                        clicked => { root.restore-expert-archive(archive.id); }
+                                    }
+                                    Action {
+                                        x: parent.width - 30px; y: 12px;
+                                        icon: @image-url("../assets/icons/trash.svg");
+                                        label: I18n.common_delete; danger: true;
+                                        enabled: !root.expert-saving;
+                                        clicked => { root.delete-expert-archive(archive.id); }
+                                    }
                                     // Keep the row hit target to the left of the
-                                    // action buttons.  The previous width covered
-                                    // the restore/delete controls, so a click on
-                                    // those buttons could be routed to the row's
-                                    // open-detail handler instead.
+                                    // action buttons so a click on restore/delete
+                                    // never falls through to the open handler.
                                     archive-row := TouchArea {
-                                        x: 0px; y: 0px; width: max(0px, parent.width - 228px); height: parent.height;
+                                        x: 0px; y: 0px; width: max(0px, parent.width - 84px); height: parent.height;
                                         mouse-cursor: pointer;
                                         clicked => { root.open-expert-archive(archive.id); }
                                     }

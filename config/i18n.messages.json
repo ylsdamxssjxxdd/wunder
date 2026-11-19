@@ -2171,6 +2171,30 @@
     "en-US": "The command is still running and output streams to the UI automatically. Call command_session with {\"command_session_id\":\"<id above>\",\"chars\":\"\"} to read new output. Increase yield_time_ms up to 30000 when waiting is useful, or pass wait_for=exit to block until it exits. Reuse the same id until exit_code is present; do not rerun the command or sleep to wait.",
     "zh-CN": "命令仍在运行，输出会自动推送到界面。用命令会话传 {\"command_session_id\":\"<上面的 id>\",\"chars\":\"\"} 读取新增输出；需要多等一会儿可提高 yield_time_ms（最大 30000），或传 wait_for=exit 直接等到退出。复用同一 id 直到拿到 exit_code；不要重跑命令，也不要用 sleep 空等。"
   },
+  "tool.exec.background_notify_next_step": {
+    "en-US": "The command is running in the background and its output streams to the UI. You will be notified automatically when it exits; continue with other work or end your turn. Do not poll and do not rerun the command.",
+    "zh-CN": "命令已在后台运行，输出会自动推送到界面。命令结束时会自动通知你，你可以继续其他工作或直接结束本轮。无需轮询，也不要重跑同一条命令。"
+  },
+  "tool.exec.background_unavailable": {
+    "en-US": "Background execution is unavailable in this runtime. Rerun the command in the foreground without run_in_background.",
+    "zh-CN": "当前运行环境不支持后台执行。请去掉 run_in_background 后前台执行。"
+  },
+  "tool.exec.background_single_command": {
+    "en-US": "run_in_background accepts a single command only. Split the script into separate calls and mark only the long-running command as background.",
+    "zh-CN": "run_in_background 只支持单条命令。请把脚本拆成多次调用，只把需要长时间运行的那条命令设为后台。"
+  },
+  "tool.command_completion.header": {
+    "en-US": "Background command finished.",
+    "zh-CN": "后台命令已结束。"
+  },
+  "tool.command_completion.header_many": {
+    "en-US": "{count} background commands finished.",
+    "zh-CN": "{count} 条后台命令已结束。"
+  },
+  "tool.command_completion.hint": {
+    "en-US": "Exit status, timing and bounded output tails are included. Use command_session with the listed id if you need the full output.",
+    "zh-CN": "已附带退出状态、耗时与有界输出尾部；需要完整输出时用命令会话按对应 id 读取。"
+  },
   "tool.command_session.keep_waiting": {
     "en-US": "The command is still running. Call command_session again with the same command_session_id and empty chars to read new output. Reuse it until exit_code is present; never idle with sleep.",
     "zh-CN": "命令仍在运行。继续用同一 command_session_id 调用命令会话，chars 留空即可读取新增输出；复用到拿到 exit_code，不要用 sleep 空等。"
@@ -2199,13 +2223,17 @@
     "en-US": "Initial wait for output in milliseconds (default 10000, max 30000). Commands that finish sooner return immediately. If the command is still running, the result includes command_session_id and the current seq; continue it with command_session. This is a wait window, not a kill timeout.",
     "zh-CN": "首次等待输出的时间（毫秒），默认 10000，最大 30000；命令提前结束会立即返回。仍在运行时结果带 command_session_id 与当前 seq，之后用命令会话继续。该参数只控制等待窗口，不会到点杀死命令。"
   },
+  "tool.spec.exec.args.run_in_background": {
+    "en-US": "Default false. true launches the command in the background and returns command_session_id immediately: keep working or end the turn, and you will be notified automatically with the exit status and output tail when it finishes. Only for genuinely long-running work; short commands should stay in the foreground.",
+    "zh-CN": "默认 false。true 表示放到后台运行并立即返回 command_session_id：可以继续其他工作或结束本轮，命令结束时运行时会自动通知你退出状态和输出尾部。只用于确实耗时的任务；短命令保持前台执行。"
+  },
   "tool.spec.exec.args.workdir": {
     "en-US": "Optional. Working directory relative to the current workspace only (no absolute paths).",
     "zh-CN": "可选，工作目录仅支持工作区内相对路径（不允许绝对路径）。"
   },
   "tool.spec.exec.description": {
-    "en-US": "Run a shell command in the workspace and stream its output. content is the command; workdir is a workspace-relative directory; description is a short user-facing action. The call waits up to yield_time_ms (default 10000) and returns immediately on exit. A still-running command returns command_session_id, the current seq and partial output: continue the same process with command_session (empty chars to read, non-empty chars to write, after_seq to resume, wait_for=exit to block), never rerun it just to poll. A non-zero exit code is normal result data, not a tool failure. Large output is bounded and may be available as a paged tool-result handle. Never use a bare sleep command to idle-wait.",
-    "zh-CN": "在工作区执行 shell 命令并流式输出。content 是命令，workdir 是工作区内相对目录，description 是给用户看的简短动作。调用最多等待 yield_time_ms（默认 10000），命令提前退出会立即返回。仍在运行时返回 command_session_id、当前 seq 和已有输出：用命令会话继续同一进程（chars 为空读取、非空写入，after_seq 续读，wait_for=exit 等到退出），不要为了轮询而重跑。非 0 退出码是正常结果数据，不是工具失败。大输出会有界截断，并可能保存为可分页的结果句柄。不要用单独的 sleep 空等。"
+    "en-US": "Run a shell command in the workspace and stream its output. content is the command; workdir is a workspace-relative directory; description is a short user-facing action. The call waits up to yield_time_ms (default 10000) and returns immediately on exit. A still-running command returns command_session_id, the current seq and partial output: continue the same process with command_session (empty chars to read, non-empty chars to write, after_seq to resume, wait_for=exit to block), never rerun it just to poll. Set run_in_background=true for long-running work: it returns immediately and you will be notified automatically when the command exits, so you can continue with other work or end the turn. A non-zero exit code is normal result data, not a tool failure. Large output is bounded and may be available as a paged tool-result handle. Never use a bare sleep command to idle-wait.",
+    "zh-CN": "在工作区执行 shell 命令并流式输出。content 是命令，workdir 是工作区内相对目录，description 是给用户看的简短动作。调用最多等待 yield_time_ms（默认 10000），命令提前退出会立即返回。仍在运行时返回 command_session_id、当前 seq 和已有输出：用命令会话继续同一进程（chars 为空读取、非空写入，after_seq 续读，wait_for=exit 等到退出），不要为了轮询而重跑。长时间的活可用 run_in_background=true：立即返回，命令结束时自动通知你，期间可以继续其他工作或结束本轮。非 0 退出码是正常结果数据，不是工具失败。大输出会有界截断，并可能保存为可分页的结果句柄。不要用单独的 sleep 空等。"
   },
   "tool.spec.exec.shell_bash": {
     "en-US": "Shell environment: POSIX bash. Write POSIX commands: pipes, &&, ;, grep, sed, awk, find, ssh, ls, cat, head, tail, tar, curl, etc. On Windows use /c/... or forward-slash C:/... paths (avoid backslashes) and invoke cmd as `cmd //c ...`. Output is UTF-8. Do not use cmd or PowerShell syntax (e.g. dir, type, copy, del, set, %VAR%).",

@@ -73,7 +73,6 @@ fn selected(app: &MainWindow) -> Option<(ToolResourceKind, String)> {
     let rows = match app.get_tools_tab() {
         1 => app.get_tools_servers(),
         2 => app.get_tools_skill_resources(),
-        3 => app.get_tools_bases(),
         _ => return None,
     };
     let row = rows.row_data(usize::try_from(app.get_tools_selected()).ok()?)?;
@@ -83,38 +82,7 @@ fn error(app: &MainWindow, error: impl std::fmt::Display) {
     crate::native_pages::show_error(app, format!("工具操作失败：{error}"));
 }
 fn apply(app: &MainWindow, catalog: Vec<ToolRecord>, manager: NativeToolManager) {
-    app.set_tools_builtin(model(
-        catalog
-            .iter()
-            .filter(|t| t.category == "内置工具")
-            .cloned()
-            .map(card)
-            .collect(),
-    ));
-    app.set_tools_mcp(model(
-        catalog
-            .iter()
-            .filter(|t| t.category == "MCP 工具")
-            .cloned()
-            .map(card)
-            .collect(),
-    ));
-    app.set_tools_skills(model(
-        catalog
-            .iter()
-            .filter(|t| t.category == "技能")
-            .cloned()
-            .map(card)
-            .collect(),
-    ));
-    app.set_tools_knowledge(model(
-        catalog
-            .iter()
-            .filter(|t| t.category == "知识库")
-            .cloned()
-            .map(card)
-            .collect(),
-    ));
+    // 分类卡片只喂给智能体的工具选择器；MCP 与技能页直接读资源列表。
     app.set_tools(model(catalog.into_iter().map(card).collect()));
     crate::entity_state::sync_tool_selection(app);
     // The agent form's card picker renders the catalog itself, so a rebuilt list
@@ -122,7 +90,6 @@ fn apply(app: &MainWindow, catalog: Vec<ToolRecord>, manager: NativeToolManager)
     crate::expert_ui::project_tools(app);
     app.set_tools_servers(model(manager.servers.into_iter().map(resource).collect()));
     app.set_tools_skill_resources(model(manager.skills.into_iter().map(resource).collect()));
-    app.set_tools_bases(model(manager.bases.into_iter().map(resource).collect()));
     let dialog = app.global::<ToolsDialog>();
     dialog.set_server_configs(model(
         manager.server_configs.iter().map(mcp_config).collect(),
@@ -158,10 +125,10 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 match result {
                     Ok((catalog, manager)) => {
                         apply(&app, catalog, manager);
-                        let rows = match app.get_tools_tab() {
-                            1 => app.get_tools_servers(),
-                            2 => app.get_tools_skill_resources(),
-                            _ => app.get_tools_bases(),
+                        let rows = if app.get_tools_tab() == 2 {
+                            app.get_tools_skill_resources()
+                        } else {
+                            app.get_tools_servers()
                         };
                         let index = previous
                             .and_then(|name| rows.iter().position(|r| r.name == name))
@@ -423,6 +390,7 @@ fn install_dialog_actions(app: &MainWindow, api: &Arc<NativeDesktop>) {
     });
 
     let weak = app.as_weak();
+    // 知识库表单已隐藏，处理器保留以维持底层配置读写能力。
     let kb_api = api.clone();
     app.global::<ToolsDialog>().on_save_kb(move || {
         let Some(app) = weak.upgrade() else { return };

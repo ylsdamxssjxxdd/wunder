@@ -280,9 +280,11 @@ impl NativeDesktop {
         if !(12..=20).contains(&font_size) {
             bail!("字体大小必须在 12 到 20 之间");
         }
+        // 未指定（空串）按默认的 GitHub 源保存；只有明确选择云端账号才存
+        // `cloud`，这样新装用户的更新开箱可用，不需要先登录。
         let update_source = match update_source.trim() {
-            "github" => "github",
-            _ => "cloud",
+            "cloud" => "cloud",
+            _ => "github",
         };
         let _guard = self
             .settings_lock
@@ -1394,8 +1396,9 @@ fn project(
         send_key: preferences.1.to_string(),
         font_size: persisted.font_size.clamp(12, 20),
         update_source: match persisted.update_source.trim() {
-            "github" => "github".to_string(),
-            _ => "cloud".to_string(),
+            "cloud" => "cloud".to_string(),
+            // 空值（老设置文件、首次启动）走默认的 GitHub 源。
+            _ => "github".to_string(),
         },
         python_path: persisted.python_path.clone(),
         git_path: persisted.git_path.clone(),

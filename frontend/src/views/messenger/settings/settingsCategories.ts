@@ -1,6 +1,6 @@
 // AI生成
 /**
- * 设置页 10 分类注册表（方案 §九.2 + 账号分类拆分 + 互通「我的设备」§5.3；
+ * 设置页 11 分类注册表（方案 §九.2 + 账号分类拆分 + 互通「我的设备」§5.3；
  * 帮助入口已并入常规分类，点击在独立窗口打开文档站；运行记录页已移除，
  * 日运行趋势并入账号分类）。
  *
@@ -14,7 +14,8 @@
 export type SettingsCategoryId =
   | 'general'
   | 'account'
-  | 'tools'
+  | 'mcp'
+  | 'skill'
   | 'agent'
   | 'companion'
   | 'cron'
@@ -41,7 +42,8 @@ export type SettingsCategoryMeta = {
 export const SETTINGS_CATEGORY_IDS: SettingsCategoryId[] = [
   'general',
   'account',
-  'tools',
+  'mcp',
+  'skill',
   'agent',
   'companion',
   'cron',
@@ -109,10 +111,15 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
       'trend'
     ]
   },
-  tools: {
-    icon: 'svg:tools',
-    titleKey: 'messenger.settingsPage.cat.tools.title',
-    keywords: ['工具', '技能', '知识库', '脚本', 'tool', 'skill', 'knowledge', 'mcp']
+  mcp: {
+    icon: 'fa-solid fa-plug',
+    titleKey: 'messenger.settingsPage.cat.mcp.title',
+    keywords: ['mcp', '服务', '连接', '外部工具', '工具', 'server']
+  },
+  skill: {
+    icon: 'fa-solid fa-book',
+    titleKey: 'messenger.settingsPage.cat.skill.title',
+    keywords: ['技能', '脚本', '导入', '导出', 'skill']
   },
   agent: {
     icon: 'svg:bot',

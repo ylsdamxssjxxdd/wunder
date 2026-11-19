@@ -17,7 +17,8 @@ import { test, expect } from '@playwright/test';
 const CATEGORY_IDS = [
   'general',
   'account',
-  'tools',
+  'mcp',
+  'skill',
   'agent',
   'companion',
   'cron',

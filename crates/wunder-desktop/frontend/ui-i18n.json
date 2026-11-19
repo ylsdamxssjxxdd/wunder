@@ -4849,6 +4849,16 @@
   "en": "Tools"
  },
  {
+  "key": "stc_mcp",
+  "zh": "MCP 服务",
+  "en": "MCP servers"
+ },
+ {
+  "key": "stc_skills",
+  "zh": "技能",
+  "en": "Skills"
+ },
+ {
   "key": "stc_tools_note",
   "zh": "内置工具、MCP、知识库与资源",
   "en": "Built-in tools, MCP, knowledge bases and resources"
@@ -5112,11 +5122,6 @@
   "key": "stc_runs_tab",
   "zh": "用量统计",
   "en": "Usage"
- },
- {
-  "key": "stc_archives_open",
-  "zh": "查看",
-  "en": "Open"
  },
  {
   "key": "stc_agent_name",

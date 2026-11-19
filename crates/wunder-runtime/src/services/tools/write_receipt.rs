@@ -169,10 +169,8 @@ fn scan_symbols(path: &str, content: &str) -> String {
         .to_ascii_lowercase();
     let symbols = match ext.as_str() {
         "py" | "pyi" => python_symbols(content),
-        "rs" | "js" | "mjs" | "cjs" | "jsx" | "ts" | "tsx" | "go" | "java" | "c" | "h"
-        | "cc" | "cpp" | "hpp" | "cs" | "kt" | "swift" | "scss" | "less" => {
-            brace_symbols(content, &ext)
-        }
+        "rs" | "js" | "mjs" | "cjs" | "jsx" | "ts" | "tsx" | "go" | "java" | "c" | "h" | "cc"
+        | "cpp" | "hpp" | "cs" | "kt" | "swift" | "scss" | "less" => brace_symbols(content, &ext),
         "sh" | "bash" => shell_symbols(content),
         "css" => css_symbols(content),
         _ => Vec::new(),
@@ -276,7 +274,8 @@ fn python_symbols_from(lines: &[&str]) -> Vec<Symbol> {
             while let Some(last) = open.last() {
                 if indent <= last.indent {
                     let mut item = open.pop().expect("checked above");
-                    item.symbol.end = last_code[line_number.saturating_sub(1)].max(item.symbol.start);
+                    item.symbol.end =
+                        last_code[line_number.saturating_sub(1)].max(item.symbol.start);
                     symbols.push(item.symbol);
                 } else {
                     break;
@@ -430,15 +429,13 @@ fn css_brace_events(content: &str) -> Vec<CssBrace> {
                 index += 1;
                 line_start = index;
             }
-            b'/' if bytes.get(index + 1) == Some(&b'*') => {
-                match content[index + 2..].find("*/") {
-                    Some(offset) => {
-                        line += content[index + 2..index + 2 + offset].matches('\n').count();
-                        index += offset + 4;
-                    }
-                    None => break,
+            b'/' if bytes.get(index + 1) == Some(&b'*') => match content[index + 2..].find("*/") {
+                Some(offset) => {
+                    line += content[index + 2..index + 2 + offset].matches('\n').count();
+                    index += offset + 4;
                 }
-            }
+                None => break,
+            },
             b'\'' | b'"' => {
                 let quote = bytes[index];
                 let mut cursor = index + 1;
@@ -661,10 +658,8 @@ fn json_syntax(content: &str) -> Verdict {
     match serde_json::from_str::<serde_json::Value>(content) {
         Ok(_) => Verdict::ok("json"),
         Err(err) => {
-            let detail = truncate_chars(
-                err.to_string().split(" at line").next().unwrap_or(""),
-                120,
-            );
+            let detail =
+                truncate_chars(err.to_string().split(" at line").next().unwrap_or(""), 120);
             let message = "column ".to_string() + &err.column().to_string() + ": " + &detail;
             Verdict::error("json", Some(err.line() as u32), message)
         }
@@ -716,7 +711,10 @@ fn tag_syntax(content: &str, kind: MarkupKind) -> Verdict {
         // 注释 / CDATA / 声明 / 结束标签 / 开始标签
         let rest = &content[index..];
         if rest.starts_with("<!--") {
-            let end = rest.find("-->").map(|offset| offset + 3).unwrap_or(rest.len());
+            let end = rest
+                .find("-->")
+                .map(|offset| offset + 3)
+                .unwrap_or(rest.len());
             line += rest[..end].matches('\n').count();
             index += end;
             continue;
@@ -731,7 +729,10 @@ fn tag_syntax(content: &str, kind: MarkupKind) -> Verdict {
             continue;
         }
         if rest.starts_with("<!") || rest.starts_with("<?") {
-            let end = rest.find('>').map(|offset| offset + 1).unwrap_or(rest.len());
+            let end = rest
+                .find('>')
+                .map(|offset| offset + 1)
+                .unwrap_or(rest.len());
             line += rest[..end].matches('\n').count();
             index += end;
             continue;
@@ -893,8 +894,16 @@ mod tests {
         let receipt = build("temp/pelican.py", content, false);
         assert_eq!(receipt.lines, 9);
         assert_eq!(receipt.sha256.len(), SHA_PREFIX_CHARS);
-        assert!(receipt.symbols.contains("make_bg(4-5)"), "{}", receipt.symbols);
-        assert!(receipt.symbols.contains("draw_bike(8-9)"), "{}", receipt.symbols);
+        assert!(
+            receipt.symbols.contains("make_bg(4-5)"),
+            "{}",
+            receipt.symbols
+        );
+        assert!(
+            receipt.symbols.contains("draw_bike(8-9)"),
+            "{}",
+            receipt.symbols
+        );
         assert_eq!(receipt.head.as_deref(), Some("\"\"\"标题\"\"\""));
         assert!(receipt.text.starts_with("file: temp/pelican.py (9 lines"));
         assert!(receipt.text.contains("syntax: skipped (verify=false)"));
@@ -919,7 +928,8 @@ mod tests {
 
     #[test]
     fn brace_symbols_span_the_whole_body() {
-        let content = "function draw(t) {\n  if (t) {\n    return 1;\n  }\n  return 2;\n}\n\nconst x = 1;\n";
+        let content =
+            "function draw(t) {\n  if (t) {\n    return 1;\n  }\n  return 2;\n}\n\nconst x = 1;\n";
         let symbols = brace_symbols(content, "js");
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0].name, "draw");
@@ -932,7 +942,11 @@ mod tests {
         if write_syntax::env_disabled() {
             return;
         }
-        let receipt = build("temp/a.py", "class A:\n    def f(self):\n        return 1\n", true);
+        let receipt = build(
+            "temp/a.py",
+            "class A:\n    def f(self):\n        return 1\n",
+            true,
+        );
         // 没有 python 时只能是 skipped；有的话必须是真编译结论，绝不能是
         // 「File "<string>", line 4」这种检查器自身的报错。
         if receipt.syntax.starts_with("skipped") {
@@ -942,7 +956,11 @@ mod tests {
         assert_eq!(receipt.syntax, "OK (py_compile)");
         assert!(receipt.text.contains("syntax: OK (py_compile)"));
         let broken = build("temp/b.py", "class A\n    pass\n", true);
-        assert!(broken.syntax.starts_with("ERROR line 1"), "{}", broken.syntax);
+        assert!(
+            broken.syntax.starts_with("ERROR line 1"),
+            "{}",
+            broken.syntax
+        );
         assert!(broken.text.contains("syntax: ERROR line 1"));
     }
 
@@ -957,8 +975,14 @@ mod tests {
         let css = check_syntax("a.css", ".a { color: red; }").render();
         assert_eq!(css, "OK (css braces)");
         // YAML 走纯 Rust 解析，任何时候都能给出结论。
-        assert_eq!(check_syntax("a.yml", "name: ci\njobs: {}\n").render(), "OK (yaml)");
-        assert_eq!(check_syntax("a.yaml", "a: 1\n---\nb: 2\n").render(), "OK (yaml)");
+        assert_eq!(
+            check_syntax("a.yml", "name: ci\njobs: {}\n").render(),
+            "OK (yaml)"
+        );
+        assert_eq!(
+            check_syntax("a.yaml", "a: 1\n---\nb: 2\n").render(),
+            "OK (yaml)"
+        );
         // Shell 交给 bash/sh 解析；一个都没有时只能 skipped。
         let sh = check_syntax("a.sh", "set -e\nf() { echo hi; }\nf\n").render();
         assert!(
@@ -1035,7 +1059,9 @@ mod tests {
         assert_eq!(check_syntax("bom.json", &text).render(), "OK (json)");
         // 剥 BOM 之后仍按真实内容判错的地方要照常报错。
         let broken = bom + "[1,]";
-        assert!(check_syntax("broken.json", &broken).render().starts_with("ERROR"));
+        assert!(check_syntax("broken.json", &broken)
+            .render()
+            .starts_with("ERROR"));
     }
 
     #[test]

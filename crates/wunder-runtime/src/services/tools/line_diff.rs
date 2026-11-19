@@ -35,6 +35,9 @@ pub(super) const DIFF_UNAVAILABLE_UNREADABLE: &str = "unreadable";
 pub(super) const OMITTED_LINE_TOO_LONG: &str = "line_too_long";
 /// `diff_omitted` 的短原因串：行数/块数预算用完。
 pub(super) const OMITTED_BUDGET: &str = "budget";
+/// `diff_omitted` 的短原因串：新建文件的正文就是调用方刚发出去的内容，
+/// 有意不回灌（体积与文件大小无关）。
+pub(super) const OMITTED_NEW_FILE: &str = "new_file";
 
 #[derive(Debug, Clone)]
 struct DiffLine {
@@ -498,16 +501,48 @@ pub(super) fn insert_diff_fields(
 /// 每个变更块前后各带几行上下文。
 const UNIFIED_CONTEXT_LINES: usize = 2;
 
+/// 模型面 unified diff 的硬预算（字节）。
+///
+/// 写类结果不参与观察层压缩（见 `orchestrator::tool_result_payload`），所以这一层
+/// 必须自己兜底：整份文件回灌只会在下一次编辑前就撑爆上下文。
+pub(super) const MAX_UNIFIED_DIFF_BYTES: usize = 64 * 1024;
+
+/// 给末尾的省略说明预留的空间，保证它不会被预算本身挤掉。
+const UNIFIED_DIFF_MARKER_RESERVE: usize = 256;
+
+/// 渲染结果：文本 + 被省略的规模。调用方据此写 `unified_diff_truncated`。
+pub(super) struct UnifiedDiff {
+    pub(super) text: String,
+    pub(super) omitted_hunks: usize,
+    pub(super) omitted_lines: usize,
+}
+
+impl UnifiedDiff {
+    /// 有正文被省略时返回 true。
+    pub(super) fn truncated(&self) -> bool {
+        self.omitted_hunks > 0 || self.omitted_lines > 0
+    }
+}
+
+/// 新建文件的 diff 正文就是调用方刚发出去的内容，回灌没有信息增量：只给一个
+/// 与 unified diff 同形的三行说明，体积与文件大小无关。
+pub(super) fn new_file_notice(path: &str, lines: usize) -> String {
+    format!(
+        "--- a/{path}\n+++ b/{path}\nnew file: {lines} lines written \
+         (diff body omitted: content is what this call sent)"
+    )
+}
+
 /// 把（旧文本，新文本）渲染成 unified diff 文本：`---`/`+++`/`@@` + 上下文 + `-`/`+`。
 ///
 /// 写类工具（写入文件、文本编辑）的回执靠这段文本确认「自己刚写进去的到底是
-/// 什么」，所以这里**不设行数/块数/正文预算**：`LineDiff` 里的块是为前端差异
-/// 卡片有界化准备的，被预算裁过时按同一套区域算法重算完整内容，模型才不必
-/// 为了看自己的改动把文件重读一遍。
+/// 什么」，所以它不受观察层的通用截断；但它自己有 [`MAX_UNIFIED_DIFF_BYTES`]
+/// 的结构预算：整块放得下就完整输出，放不下就把该 hunk 折成「头 + 省略行数」，
+/// 计数始终准确，模型仍能看出改了哪里、改了多少。
 ///
-/// 唯一的例外是源文本超过 `MAX_DIFF_SOURCE_BYTES`：那种情况本就给不出 diff
-/// （调用方带 `diff_unavailable`），硬算只会把一次工具结果撑爆上下文。
-pub(super) fn unified_diff(path: &str, before: &str, after: &str, diff: &LineDiff) -> String {
+/// 源文本超过 `MAX_DIFF_SOURCE_BYTES` 时调用方本就给出 `diff_unavailable`，
+/// 这里不再重算。
+pub(super) fn unified_diff(path: &str, before: &str, after: &str, diff: &LineDiff) -> UnifiedDiff {
     let old_index = build_line_index(before);
     let new_index = build_line_index(after);
     let old = &old_index.texts;
@@ -519,15 +554,27 @@ pub(super) fn unified_diff(path: &str, before: &str, after: &str, diff: &LineDif
         changed_regions(old, new)
     };
 
+    let content_budget = MAX_UNIFIED_DIFF_BYTES.saturating_sub(UNIFIED_DIFF_MARKER_RESERVE);
+    let mut used = 0usize;
     let mut out: Vec<String> = Vec::with_capacity(16);
-    out.push("--- a/".to_string() + path);
-    out.push("+++ b/".to_string() + path);
+    for line in [format!("--- a/{path}"), format!("+++ b/{path}")] {
+        used += line_bytes(&line);
+        out.push(line);
+    }
     // 已输出到的旧文本行（0-based，不含）。上下文统一从旧文本取：旧实现用 new
     // 行号去限制 old 上下文，插入/删除后两侧行号错位，边界行会在两个块里各打印
     // 一次（同一个 `+TOKEN 2` 既出现在后置上下文又出现在下一块前置上下文）。
     let mut emitted_old_end = 0usize;
+    let mut omitted_hunks = 0usize;
+    let mut omitted_lines = 0usize;
+    let mut exhausted = false;
 
     for (index, region) in regions.iter().enumerate() {
+        if exhausted {
+            omitted_hunks += 1;
+            omitted_lines += region.old_len + region.new_len;
+            continue;
+        }
         let old_start = region.old_start;
         let old_len = region.old_len;
         let new_start = region.new_start;
@@ -542,11 +589,15 @@ pub(super) fn unified_diff(path: &str, before: &str, after: &str, diff: &LineDif
         let context_from = old_start
             .saturating_sub(UNIFIED_CONTEXT_LINES)
             .max(emitted_old_end);
-        if context_from < old_start {
-            for text in old.get(context_from..old_start).unwrap_or(&[]) {
-                out.push(" ".to_string() + text);
-            }
-        }
+        let pre = old.get(context_from..old_start).unwrap_or(&[]);
+        // 后置上下文：接在删除区之后，不越过下一块的删除区起点。
+        let post_from = old_start + old_len;
+        let post_to = (post_from + UNIFIED_CONTEXT_LINES)
+            .min(next_old_start)
+            .min(old.len());
+        let post = old.get(post_from..post_to).unwrap_or(&[]);
+        let removed = old.get(old_start..old_start + old_len).unwrap_or(&[]);
+        let added = new.get(new_start..new_start + new_len).unwrap_or(&[]);
 
         let mut header = String::from("@@ -");
         header.push_str(&(old_start + 1).to_string());
@@ -557,29 +608,79 @@ pub(super) fn unified_diff(path: &str, before: &str, after: &str, diff: &LineDif
         header.push(',');
         header.push_str(&new_len.to_string());
         header.push_str(" @@");
-        out.push(header);
 
-        for text in old.get(old_start..old_start + old_len).unwrap_or(&[]) {
-            out.push("-".to_string() + text);
-        }
-        for text in new.get(new_start..new_start + new_len).unwrap_or(&[]) {
-            out.push("+".to_string() + text);
+        let needed = line_bytes(&header)
+            + lines_bytes(pre)
+            + lines_bytes(removed)
+            + lines_bytes(added)
+            + lines_bytes(post);
+        if used + needed <= content_budget {
+            used += needed;
+            out.push(header);
+            push_lines(&mut out, " ", pre);
+            push_lines(&mut out, "-", removed);
+            push_lines(&mut out, "+", added);
+            push_lines(&mut out, " ", post);
+            emitted_old_end = post_to.max(post_from);
+            continue;
         }
 
-        // 后置上下文：接在删除区之后，不越过下一块的删除区起点。
-        let post_from = old_start + old_len;
-        let post_to = (post_from + UNIFIED_CONTEXT_LINES)
-            .min(next_old_start)
-            .min(old.len());
-        if post_from < post_to {
-            for text in old.get(post_from..post_to).unwrap_or(&[]) {
-                out.push(" ".to_string() + text);
-            }
+        // 整块放不下：留一行「头 + 省略行数」，模型仍能定位改动区间与规模。
+        let folded = format!(
+            "{header} ... {old_len} removed / {new_len} added line(s) omitted (diff budget)"
+        );
+        if used + line_bytes(&folded) <= content_budget {
+            used += line_bytes(&folded);
+            out.push(folded);
+            omitted_lines += old_len + new_len;
+            emitted_old_end = post_to.max(post_from);
+            continue;
         }
-        emitted_old_end = post_to.max(post_from);
+        // 连折叠后的一行都放不下：后面的块只记账，不再输出。
+        exhausted = true;
+        omitted_hunks += 1;
+        omitted_lines += old_len + new_len;
     }
 
-    out.join("\n")
+    if omitted_hunks > 0 || omitted_lines > 0 {
+        let mut parts: Vec<String> = Vec::new();
+        if omitted_hunks > 0 {
+            parts.push(format!("{omitted_hunks} hunk(s)"));
+        }
+        if omitted_lines > 0 {
+            parts.push(format!("{omitted_lines} line(s)"));
+        }
+        out.push(format!("... {} omitted (diff budget)", parts.join(" / ")));
+    }
+
+    UnifiedDiff {
+        text: out.join("\n"),
+        omitted_hunks,
+        omitted_lines,
+    }
+}
+
+/// 模型面文本被省掉时，`diff_omitted` 也要给出原因：留着 null 会和
+/// `unified_diff_truncated: true` 自相矛盾，读者只能猜。
+pub(super) fn mark_text_omission(map: &mut Map<String, Value>, reason: &'static str) {
+    if map.get("diff_omitted").is_none_or(Value::is_null) {
+        map.insert("diff_omitted".to_string(), json!(reason));
+    }
+}
+
+/// 一行 diff 的字节数：前缀 1 字节 + 正文 + 换行。
+fn line_bytes(line: &str) -> usize {
+    line.len() + 2
+}
+
+fn lines_bytes(lines: &[&str]) -> usize {
+    lines.iter().map(|text| text.len() + 2).sum()
+}
+
+fn push_lines(out: &mut Vec<String>, prefix: &str, lines: &[&str]) {
+    for text in lines {
+        out.push(prefix.to_string() + text);
+    }
 }
 
 /// 从有界块推回 0-based 区域，语义与 `changed_regions` 一致。
@@ -606,8 +707,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_single_huge_line_is_reported_as_omitted_instead_of_no_change() {
-        // 200 KB 单行：结构化块放不进正文预算，但模型回执仍要看到真实改动。
+    fn a_single_huge_line_is_folded_to_a_marker_instead_of_blowing_the_budget() {
+        // 200 KB 单行：结构化块放不进正文预算，模型面文本也只能折叠；
+        // 但计数必须准确，且总字节不许越过硬预算。
         let before = "x".repeat(200 * 1024);
         let after = "y".repeat(200 * 1024);
         let diff = diff_replaced(&before, &after);
@@ -618,10 +720,25 @@ mod tests {
         assert_eq!(diff.omission(), Some(OMITTED_LINE_TOO_LONG));
         assert_eq!(diff.omitted_lines, 2);
 
-        let text = unified_diff("longline.txt", &before, &after, &diff);
-        assert!(text.contains("@@ -1,1 +1,1 @@"), "{}", &text[..64]);
-        // 模型靠这段文本确认自己写进去的是什么：单行再长也不在这里截断。
-        assert!(text.lines().any(|line| line.len() == 1 + 200 * 1024));
+        let rendered = unified_diff("longline.txt", &before, &after, &diff);
+        assert!(rendered.truncated());
+        assert!(
+            rendered.text.len() <= MAX_UNIFIED_DIFF_BYTES,
+            "{}",
+            rendered.text.len()
+        );
+        assert!(
+            rendered.text.contains("@@ -1,1 +1,1 @@"),
+            "{}",
+            &rendered.text[..64]
+        );
+        assert!(rendered
+            .text
+            .contains("1 removed / 1 added line(s) omitted"));
+        assert!(
+            !rendered.text.contains(&"x".repeat(1024)),
+            "超长行不进上下文之外"
+        );
     }
 
     #[test]
@@ -629,7 +746,7 @@ mod tests {
         let before = "a\nb\nc\nd\ne\n";
         let after = "a\nb\nC\nd\ne\n";
         let diff = diff_replaced(before, after);
-        let text = unified_diff("x.txt", before, after, &diff);
+        let text = unified_diff("x.txt", before, after, &diff).text;
         assert!(text.starts_with("--- a/x.txt\n+++ b/x.txt\n"), "{}", text);
         assert!(text.contains("@@ -3,1 +3,1 @@"), "{}", text);
         assert!(text.contains("\n a\n b\n"), "{}", text);
@@ -649,7 +766,7 @@ mod tests {
         assert!(diff.omission().is_some(), "结构化块应当命中预算");
         assert_eq!(diff.added_lines, 200);
         assert_eq!(diff.deleted_lines, 200);
-        let text = unified_diff("x.txt", &before, &after, &diff);
+        let text = unified_diff("x.txt", &before, &after, &diff).text;
         assert!(text.contains("@@ -1,200 +1,200 @@"), "{}", &text[..64]);
         for index in 0..200 {
             let removed = format!("-line {index}");
@@ -660,13 +777,69 @@ mod tests {
     }
 
     #[test]
+    fn unified_diff_folds_past_the_byte_budget_and_keeps_counts_exact() {
+        // 5000 行里隔行改：2500 个 hunk，完整渲染约 200 KB，必须折叠到预算内，
+        // 但「省了多少」要准确，模型据此才知道文件到底改动了多大。
+        let mut before = String::new();
+        let mut after = String::new();
+        for index in 0..5000 {
+            let line = format!("key-{:04}-value\n", index);
+            before.push_str(&line);
+            if index % 2 == 0 {
+                after.push_str(&format!("key-{:04}-VALUE\n", index));
+            } else {
+                after.push_str(&line);
+            }
+        }
+        let diff = diff_replaced(&before, &after);
+        assert_eq!(diff.hunks, 2500);
+        let rendered = unified_diff("big.txt", &before, &after, &diff);
+        assert!(rendered.truncated());
+        assert!(
+            rendered.text.len() <= MAX_UNIFIED_DIFF_BYTES,
+            "{}",
+            rendered.text.len()
+        );
+        assert_eq!(rendered.omitted_lines, rendered.omitted_hunks * 2);
+        assert!(rendered.text.contains("hunk(s) / "));
+        // 折叠后仍要看得出改在哪：至少保留了一部分真实 hunk 头。
+        assert!(rendered.text.contains("@@ -1,1 +1,1 @@"));
+    }
+
+    #[test]
+    fn a_whole_file_rewrite_folds_into_one_hunk_header() {
+        let before = "old line\n".repeat(4000);
+        let after = "new line\n".repeat(4000);
+        let diff = diff_replaced(&before, &after);
+        let rendered = unified_diff("rewrite.txt", &before, &after, &diff);
+        assert!(rendered.truncated());
+        assert_eq!(rendered.omitted_hunks, 0);
+        assert_eq!(rendered.omitted_lines, 8000);
+        assert!(rendered.text.len() <= MAX_UNIFIED_DIFF_BYTES);
+        assert!(
+            rendered
+                .text
+                .contains("@@ -1,4000 +1,4000 @@ ... 4000 removed / 4000 added line(s) omitted"),
+            "{}",
+            &rendered.text[..96]
+        );
+        assert!(
+            rendered
+                .text
+                .contains("... 8000 line(s) omitted (diff budget)"),
+            "{}",
+            &rendered.text[rendered.text.len().saturating_sub(64)..]
+        );
+    }
+
+    #[test]
     fn adjacent_blocks_do_not_repeat_context_lines() {
         // 交替替换：每块前后都有边界行，同一行只能在 diff 里出现一次。
         let before = "x0\nk1\nx2\nk3\nx4\nk5\n";
         let after = "y0\nk1\ny2\nk3\ny4\nk5\n";
         let diff = diff_replaced(before, after);
         assert_eq!(diff.hunks, 3);
-        let text = unified_diff("x.txt", before, after, &diff);
+        let text = unified_diff("x.txt", before, after, &diff).text;
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(text.matches("@@ -").count(), 3, "{text}");
         for context in [" k1", " k3", " k5"] {

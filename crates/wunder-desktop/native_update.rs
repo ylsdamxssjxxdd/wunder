@@ -138,11 +138,15 @@ fn normalize_target(target: &str) -> &'static str {
     }
 }
 
-/// GitHub 更新源仓库（owner/name）。构建时通过 `WUNDER_UPDATE_GITHUB_REPO`
-/// 注入；留空表示未配置，GitHub 源在检查时给出明确提示而不是静默失败。
+/// 官方公开发布仓库（owner/name）。默认值让 GitHub 源开箱可用：用户不需要
+/// 登录云端账号，也不需要手工配置更新源。
+const DEFAULT_UPDATE_GITHUB_REPO: &str = "ylsdamxssjxxdd/wunder";
+
+/// GitHub 更新源仓库（owner/name）。构建时可用 `WUNDER_UPDATE_GITHUB_REPO`
+/// 覆盖（分支版、私有部署）；没有注入时回落到官方仓库，不再出现「未配置」。
 pub const UPDATE_GITHUB_REPO: &str = match option_env!("WUNDER_UPDATE_GITHUB_REPO") {
     Some(repo) if !repo.is_empty() => repo,
-    _ => "",
+    _ => DEFAULT_UPDATE_GITHUB_REPO,
 };
 
 /// Public-source HTTP client, created on first use and shared thereafter.
@@ -336,8 +340,9 @@ impl NativeDesktop {
 
     /// Ask the selected source for the newest release of one target. Blocks;
     /// run on a worker thread. The cloud source requires a live session; the
-    /// GitHub source is public but only exists when the binary was built with
-    /// a repository configured. The target's local version is detected here:
+    /// GitHub source is public and defaults to the official release repo, so a
+    /// fresh install can check without logging in. The target's local version
+    /// is detected here:
     /// compiled-in for the desktop itself, `--version` probe for the CLI,
     /// version marker for the supplement pack.
     pub fn update_check(&self, source: &str, target: &str) -> Result<()> {
@@ -368,10 +373,12 @@ impl NativeDesktop {
         };
         let outcome = match source.trim() {
             "github" => {
+                // 默认仓库非空；保留这道判断，防止后续改动把常量清空后
+                // 变成一次没有解释的静默失败。
                 if UPDATE_GITHUB_REPO.is_empty() {
                     let mut state = self.lock_update();
                     state.phase = "failed".into();
-                    state.error = "GitHub 更新源未配置，请使用云端账号检查更新".into();
+                    state.error = "GitHub 更新源不可用（仓库未配置），请使用云端账号检查更新".into();
                     bail!(state.error.clone());
                 }
                 self.runtime.block_on(source_client().fetch_github_latest(

@@ -11,9 +11,9 @@
 use super::capabilities::{local_fs, FsCapability};
 use super::context::collect_allow_roots;
 use super::line_diff::{
-    diff_literal_replaces, diff_replaced, insert_diff_fields, unified_diff, LineDiff,
+    diff_literal_replaces, diff_replaced, insert_diff_fields, mark_text_omission, unified_diff,
+    LineDiff, OMITTED_BUDGET,
 };
-use super::{edit_recovery, file_history, write_receipt};
 use super::{
     build_model_tool_success,
     command_options::parse_dry_run,
@@ -21,6 +21,7 @@ use super::{
     tool_error::{build_failed_tool_result, ToolErrorMeta},
     touch_lsp_file, ToolContext,
 };
+use super::{edit_recovery, file_history, write_receipt};
 use crate::core::blocking;
 use crate::path_utils::{is_within_root, normalize_path_for_compare, normalize_target_path};
 use anyhow::{anyhow, Result};
@@ -50,7 +51,10 @@ enum EditFailure {
     NoMatch {
         nearest: Vec<edit_recovery::Nearest>,
     },
-    NotUnique { count: usize, lines: Vec<usize> },
+    NotUnique {
+        count: usize,
+        lines: Vec<usize>,
+    },
 }
 
 impl std::fmt::Display for EditFailure {
@@ -145,8 +149,10 @@ pub(crate) fn validate_edit_args(args: &Value) -> Option<Value> {
                 json!({"file_path": file_path, "range_invalid": true}),
                 ToolErrorMeta::new(
                     "TOOL_EDIT_RANGE_INVALID",
-                    Some("行号从 1 开始；要插到文件开头请用 command=insert 且 insert_line=0。"
-                        .to_string()),
+                    Some(
+                        "行号从 1 开始；要插到文件开头请用 command=insert 且 insert_line=0。"
+                            .to_string(),
+                    ),
                     false,
                     None,
                 ),
@@ -173,8 +179,9 @@ pub(crate) fn validate_edit_args(args: &Value) -> Option<Value> {
                 json!({"file_path": file_path, "new_string_required": true}),
                 ToolErrorMeta::new(
                     "TOOL_EDIT_NEW_STRING_REQUIRED",
-                    Some("行区间替换必须给出字符串 new_string；空字符串表示删除这些行。"
-                        .to_string()),
+                    Some(
+                        "行区间替换必须给出字符串 new_string；空字符串表示删除这些行。".to_string(),
+                    ),
                     false,
                     None,
                 ),
@@ -183,7 +190,6 @@ pub(crate) fn validate_edit_args(args: &Value) -> Option<Value> {
         }
         return None;
     }
-
 
     let old_string = args
         .get("old_string")
@@ -388,10 +394,11 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         touch_lsp_file(context, &outcome.target, true).await
     };
 
-    // 编辑回执同样给完整 diff：模型靠它确认自己改过的地方，行数预算只会
-    // 让它为了看一眼改动把文件重读一遍。
-    let unified = unified_diff(&file_path, &outcome.before, &outcome.after, &outcome.diff);
-    let unified_truncated = false;
+    // 编辑回执给 diff：模型靠它确认自己改过的地方。但它受 `line_diff` 的
+    // 64KB 结构预算约束，超预算时按 hunk 折叠并明确写出省略了多少行。
+    let rendered = unified_diff(&file_path, &outcome.before, &outcome.after, &outcome.diff);
+    let unified_truncated = rendered.truncated();
+    let unified = rendered.text;
     let mut data = build_edit_data(
         &file_path,
         outcome.occurrences,
@@ -427,7 +434,10 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     } else {
         format!(
             "Edited {file_path} ({} replacement(s)); {} lines, sha256 {}, syntax {}.",
-            outcome.occurrences, outcome.receipt.lines, outcome.receipt.sha256, outcome.receipt.syntax
+            outcome.occurrences,
+            outcome.receipt.lines,
+            outcome.receipt.sha256,
+            outcome.receipt.syntax
         )
     };
     Ok(build_model_tool_success("edit", state, summary, data))
@@ -507,8 +517,8 @@ fn prepare_range_edit(
     end_line: usize,
     new_text: &str,
 ) -> Result<PreparedEdit, anyhow::Error> {
-    let updated = apply_range_replace(content, start_line, end_line, new_text)
-        .map_err(anyhow::Error::new)?;
+    let updated =
+        apply_range_replace(content, start_line, end_line, new_text).map_err(anyhow::Error::new)?;
     let changed = content != updated;
     let diff = if changed {
         diff_replaced(content, &updated)
@@ -590,7 +600,11 @@ fn apply_range_replace(
             lines: total,
         });
     }
-    let newline = if content.contains("\r\n") { "\r\n" } else { "\n" };
+    let newline = if content.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
     let mut segment = new_text.replace("\r\n", "\n");
     if newline == "\r\n" {
         segment = segment.replace('\n', "\r\n");
@@ -654,7 +668,6 @@ fn edit_failure_result(path: &str, dry_run: bool, failure: &EditFailure) -> Valu
     )
 }
 
-
 pub(super) fn sandbox_edit_mutated(result: &Value, args: &Value) -> bool {
     let inner = super::tool_result_data(result);
     result.get("ok").and_then(Value::as_bool) == Some(true)
@@ -702,7 +715,6 @@ fn match_line_numbers(content: &str, offsets: &[usize]) -> Vec<usize> {
         .collect()
 }
 
-
 /// 组装编辑结果 `data`：既有键保持不变，回执、历史快照与 unified diff 一并给出。
 fn build_edit_data(
     path: &str,
@@ -745,6 +757,9 @@ fn build_edit_data(
         "unified_diff_truncated".to_string(),
         json!(unified_truncated),
     );
+    if unified_truncated {
+        mark_text_omission(&mut data, OMITTED_BUDGET);
+    }
     Value::Object(data)
 }
 
@@ -819,7 +834,8 @@ mod tests {
         let (diff, unavailable) =
             build_replace_diff(before, after, offsets, occurrences, needle.len(), new);
         let receipt = write_receipt::build("a.txt", after, false);
-        let unified = unified_diff("a.txt", before, after, &diff);
+        let rendered = unified_diff("a.txt", before, after, &diff);
+        let unified = rendered.text;
         build_edit_data(
             "a.txt",
             occurrences,
@@ -1074,7 +1090,10 @@ mod tests {
             "new_string": "x"
         }))
         .expect("conflict rejected");
-        assert_eq!(conflict["error_meta"]["code"], json!("TOOL_EDIT_RANGE_CONFLICT"));
+        assert_eq!(
+            conflict["error_meta"]["code"],
+            json!("TOOL_EDIT_RANGE_CONFLICT")
+        );
         assert!(validate_edit_args(&json!({
             "file_path": "a.py",
             "start_line": 2,
@@ -1094,9 +1113,7 @@ mod tests {
         .expect_err("no match");
         let failure = failure.downcast_ref::<EditFailure>().expect("edit failure");
         let value = edit_failure_result("a.py", false, failure);
-        let nearest = value["data"]["nearest"]
-            .as_array()
-            .expect("nearest array");
+        let nearest = value["data"]["nearest"].as_array().expect("nearest array");
         assert!(!nearest.is_empty());
         assert_eq!(nearest[0]["line"], json!(1));
         assert!(nearest[0]["differences"].as_array().is_some());
@@ -1106,5 +1123,4 @@ mod tests {
             value["error"]
         );
     }
-
 }

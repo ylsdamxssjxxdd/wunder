@@ -424,6 +424,9 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .min(50)
                     .max(30000)
                     .optional(),
+                super::schema::boolean("run_in_background")
+                    .desc(t("tool.spec.exec.args.run_in_background"))
+                    .optional(),
             ]),
         },
         ToolSpec {
@@ -3315,7 +3318,7 @@ mod tests {
         assert!(spec.input_schema["properties"]["workdir"].is_object());
         assert!(spec.input_schema["properties"]["yield_time_ms"].is_object());
         assert!(spec.input_schema["properties"]["timeout_s"].is_null());
-        assert!(spec.input_schema["properties"]["run_in_background"].is_null());
+        assert!(spec.input_schema["properties"]["run_in_background"].is_object());
         assert!(spec.input_schema["properties"]["dry_run"].is_null());
         assert!(spec.input_schema["properties"]["time_budget_ms"].is_null());
         assert!(spec.input_schema["properties"]["output_budget_bytes"].is_null());

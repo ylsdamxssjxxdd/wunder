@@ -2945,26 +2945,12 @@ fn start_tick(
         }
 
         if state.tools_rev != last_tools {
-            ui.set_settings_tools_builtin(ModelRc::from(Rc::new(VecModel::from(
-                state.tools.builtin.clone(),
-            ))));
-            ui.set_settings_tools_mcp(ModelRc::from(Rc::new(VecModel::from(
-                state.tools.mcp_tools.clone(),
-            ))));
-            ui.set_settings_tools_skills(ModelRc::from(Rc::new(VecModel::from(
-                state.tools.skill_tools.clone(),
-            ))));
-            ui.set_settings_tools_knowledge(ModelRc::from(Rc::new(VecModel::from(
-                state.tools.knowledge_tools.clone(),
-            ))));
+            // MCP 与技能各自成页，只投影资源列表；分类卡片只服务智能体工具选择。
             ui.set_settings_tools_servers(ModelRc::from(Rc::new(VecModel::from(
                 state.tools.servers.clone(),
             ))));
             ui.set_settings_tools_skill_resources(ModelRc::from(Rc::new(VecModel::from(
                 state.tools.skills.clone(),
-            ))));
-            ui.set_settings_tools_bases(ModelRc::from(Rc::new(VecModel::from(
-                state.tools.bases.clone(),
             ))));
             ui.set_settings_tool_server_tools(ModelRc::from(Rc::new(VecModel::from(
                 state.tools.server_tools.clone(),
@@ -3933,12 +3919,6 @@ pub fn install_preview_data(
         "knowledge",
         false,
     )];
-    ui.set_settings_tools_builtin(ModelRc::from(Rc::new(VecModel::from(builtin.clone()))));
-    ui.set_settings_tools_mcp(ModelRc::from(Rc::new(VecModel::from(mcp_tools.clone()))));
-    ui.set_settings_tools_skills(ModelRc::from(Rc::new(VecModel::from(skill_tools.clone()))));
-    ui.set_settings_tools_knowledge(ModelRc::from(Rc::new(VecModel::from(
-        knowledge_tools.clone(),
-    ))));
     ui.set_settings_tools_servers(ModelRc::from(Rc::new(VecModel::from(vec![
         crate::MobileToolResource {
             name: "weather".into(),
@@ -3959,14 +3939,6 @@ pub fn install_preview_data(
             description: "内置发布说明模板".into(),
             detail: String::new().into(),
             readonly: true,
-        },
-    ]))));
-    ui.set_settings_tools_bases(ModelRc::from(Rc::new(VecModel::from(vec![
-        crate::MobileToolResource {
-            name: "project-notes".into(),
-            description: "项目背景与决策记录".into(),
-            detail: "项目背景与决策记录".into(),
-            readonly: false,
         },
     ]))));
     ui.set_settings_tool_active_resource("summarize-page".into());

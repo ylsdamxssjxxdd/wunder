@@ -74,13 +74,8 @@ fn truncation_appends_marker() {
 fn str_replace_data_carries_the_diff_contract() {
     let before = "alpha\nbeta\ngamma\n";
     let after = "alpha\nBETA\ngamma\n";
-    let (diff, unavailable) = super::super::line_diff::diff_literal_replaces(
-        before,
-        after,
-        &[6],
-        "beta".len(),
-        "BETA",
-    );
+    let (diff, unavailable) =
+        super::super::line_diff::diff_literal_replaces(before, after, &[6], "beta".len(), "BETA");
     assert!(unavailable.is_none());
     let data = build_edit_data("f.txt", "update", &diff, unavailable);
     let mut keys: Vec<&str> = data
@@ -536,7 +531,10 @@ fn undo_reports_a_tampered_snapshot_instead_of_restoring_it() {
         &json!({ "command": "undo_edit", "file_path": "tampered.txt" }),
     );
     assert_eq!(result["ok"], json!(false));
-    assert_eq!(result["error_meta"]["code"], json!("TOOL_SRE_HISTORY_CORRUPT"));
+    assert_eq!(
+        result["error_meta"]["code"],
+        json!("TOOL_SRE_HISTORY_CORRUPT")
+    );
     // 被污染的内容绝不写回用户文件。
     assert_eq!(std::fs::read_to_string(&target).expect("read"), "A\nB\n");
     assert!(!entry.exists(), "损坏的快照要被删掉，不能留着下次再恢复");
@@ -584,7 +582,10 @@ fn corrupt_snapshot_in_the_middle_keeps_earlier_undo_reachable() {
     std::fs::write(&middle, "fake-40\n").expect("tamper");
 
     let corrupt = step("undo_edit");
-    assert_eq!(corrupt["error_meta"]["code"], json!("TOOL_SRE_HISTORY_CORRUPT"));
+    assert_eq!(
+        corrupt["error_meta"]["code"],
+        json!("TOOL_SRE_HISTORY_CORRUPT")
+    );
     assert_eq!(read(), "A\nB\nC\n", "损坏时不动文件");
 
     // 关键点：@1 仍然可达，不能被「已到最早」挡住。

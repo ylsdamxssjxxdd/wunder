@@ -49,7 +49,7 @@ Components follow the supplement, not the app version. Moving machines means cop
 
 ## Checking it after install
 
-1. Settings opens the tool manager, which means the component directory was found.
+1. Settings opens MCP servers or Skills, which means the component directory was found.
 2. Ask for `python -V` or `git --version` in a chat; matching the table above means the path is wired.
 3. If it will not run, check which install root the process used — a non-empty `WUNDER_HOME` wins over the install-root marker.
 
