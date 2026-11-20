@@ -476,6 +476,11 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     // 直接定位，不必整篇回读。只有超过病态体积安全阀时才折叠。
     let (unified, unified_truncated) =
         render_write_diff(&file_path, &outcome.before, &outcome.after, &outcome.diff);
+    // 行区间替换后回显「实际被替换的首尾行」，让模型一眼确认行号有没有错位；
+    // 相邻行同时给出，边界多删/少删一行时不需要再整段回读。
+    let range_echo = outcome
+        .range
+        .map(|(start, end)| build_range_echo(&outcome.before, start, end));
     let mut data = match build_edit_data(
         &file_path,
         outcome.occurrences,
@@ -489,6 +494,7 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         &outcome.receipt,
         outcome.snapshot.as_ref(),
         outcome.range,
+        range_echo.as_ref(),
         &unified,
         unified_truncated,
     ) {
@@ -951,6 +957,31 @@ fn match_line_numbers(content: &str, offsets: &[usize]) -> Vec<usize> {
         .collect()
 }
 
+/// 行区间替换的「原文回显」：实际替换到的首行、尾行，以及前后各一行。
+/// 模型据此确认 start_line/end_line 是否对齐；相邻行能把「少删一行」这种
+/// 边界错误直接暴露出来，不必再整篇回读。
+fn build_range_echo(content: &str, start: usize, end: usize) -> Value {
+    const MAX_LINE_CHARS: usize = 200;
+    let lines: Vec<&str> = content.lines().collect();
+    let preview = |number: usize| -> Option<String> {
+        let raw = lines.get(number.checked_sub(1)?)?;
+        let mut text: String = raw.chars().take(MAX_LINE_CHARS).collect();
+        if raw.chars().count() > MAX_LINE_CHARS {
+            text.push('…');
+        }
+        Some(text)
+    };
+    json!({
+        "start_line": start,
+        "end_line": end,
+        "line_count": end.saturating_sub(start).saturating_add(1),
+        "first_line": preview(start),
+        "last_line": preview(end),
+        "previous_line": start.checked_sub(1).and_then(preview),
+        "next_line": preview(end.saturating_add(1)),
+    })
+}
+
 /// 组装编辑结果 `data`：既有键保持不变，回执、历史快照与 unified diff 一并给出。
 fn build_edit_data(
     path: &str,
@@ -965,6 +996,7 @@ fn build_edit_data(
     receipt: &write_receipt::Receipt,
     snapshot: Option<&file_history::Snapshot>,
     range: Option<(usize, usize)>,
+    range_echo: Option<&Value>,
     unified: &str,
     unified_truncated: bool,
 ) -> Value {
@@ -982,6 +1014,9 @@ fn build_edit_data(
     }
     if let Some((start_line, end_line)) = range {
         data.insert("range".to_string(), json!([start_line, end_line]));
+    }
+    if let Some(echo) = range_echo {
+        data.insert("range_echo".to_string(), echo.clone());
     }
     if let Some(snapshot) = snapshot {
         data.insert("history".to_string(), json!(snapshot.display));
@@ -1081,9 +1116,27 @@ mod tests {
             &receipt,
             None,
             None,
+            None,
             &unified,
             truncated,
         )
+    }
+
+    #[test]
+    fn range_echo_reports_the_actual_first_last_and_neighbour_lines() {
+        let before = "alpha\nbeta\ngamma\ndelta\nepsilon\n";
+        let echo = build_range_echo(before, 2, 4);
+        assert_eq!(echo["start_line"], json!(2));
+        assert_eq!(echo["end_line"], json!(4));
+        assert_eq!(echo["line_count"], json!(3));
+        assert_eq!(echo["first_line"], json!("beta"));
+        assert_eq!(echo["last_line"], json!("delta"));
+        assert_eq!(echo["previous_line"], json!("alpha"));
+        assert_eq!(echo["next_line"], json!("epsilon"));
+        // 首行/末行越界只回 null，不制造伪行。
+        let edge = build_range_echo(before, 1, 5);
+        assert!(edge["previous_line"].is_null());
+        assert!(edge["next_line"].is_null());
     }
 
     #[test]
@@ -1150,6 +1203,7 @@ mod tests {
             &receipt,
             None,
             None,
+            None,
             "",
             false,
         );
@@ -1186,6 +1240,7 @@ mod tests {
             &diff,
             unavailable,
             &receipt,
+            None,
             None,
             None,
             "",

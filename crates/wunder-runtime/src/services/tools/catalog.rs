@@ -728,6 +728,9 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 super::schema::integer("frame_step")
                     .desc(t("tool.spec.read_image.args.frame_step"))
                     .optional(),
+                super::schema::boolean("sheet")
+                    .desc(t("tool.spec.read_image.args.sheet"))
+                    .optional(),
             ]),
         },
         ToolSpec {

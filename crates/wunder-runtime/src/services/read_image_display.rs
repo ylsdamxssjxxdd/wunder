@@ -374,6 +374,15 @@ fn frames_line(kind: &str, data: &Value, is_zh: bool) -> Option<String> {
             format!("{} fps", trim_float(rate))
         });
     }
+    if let Some(sheet) = result.get("sheet").filter(|value| value.is_object()) {
+        let columns = number(sheet, &["columns"]).unwrap_or(0.0);
+        let rows = number(sheet, &["rows"]).unwrap_or(0.0);
+        parts.push(if is_zh {
+            format!("联系表 {}×{}", trim_float(columns), trim_float(rows))
+        } else {
+            format!("sheet {}×{}", trim_float(columns), trim_float(rows))
+        });
+    }
     Some(parts.join(" · "))
 }
 

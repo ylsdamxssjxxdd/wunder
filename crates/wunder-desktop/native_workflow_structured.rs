@@ -52,9 +52,26 @@ pub(super) fn project(tool: &str, data: &Value, args: &Value) -> Vec<Section> {
                 .as_str()
                 .or_else(|| data["text"].as_str())
                 .unwrap_or_default();
-            if !body.starts_with(">>> ") {
-                return Vec::new();
-            }
+            // 单文件读取的正文不再带 `>>> path` 头（避免模型把分隔头当成第 1 行），
+            // 展示层用 data.path 补回分节标题；多文件读取仍按头行分节。
+            let body = if body.starts_with(">>> ") {
+                body.to_string()
+            } else {
+                let Some(path) = data["path"]
+                    .as_str()
+                    .or_else(|| {
+                        data["files"]
+                            .as_array()
+                            .and_then(|files| files.first())
+                            .and_then(|file| file["path"].as_str())
+                    })
+                    .filter(|path| !path.trim().is_empty())
+                else {
+                    return Vec::new();
+                };
+                format!(">>> {path}\n{}", body)
+            };
+            let body = body.as_str();
             let mut groups = Vec::new();
             for row in body.lines() {
                 if let Some(path) = row.strip_prefix(">>> ") {
@@ -570,6 +587,16 @@ mod tests {
         assert_eq!(files.len(), 2);
         assert_eq!(files[1].title, "other.txt");
         assert_eq!(files[1].lines[0].text, "second");
+        // 单文件读取正文不带 >>> 头，展示层用 data.path 补标题。
+        let single = project(
+            "read_file",
+            &json!({"path":"solo.txt", "content":"alpha\nbeta"}),
+            &Value::Null,
+        );
+        assert_eq!(single.len(), 1);
+        assert_eq!(single[0].title, "solo.txt");
+        assert_eq!(single[0].lines[0].text, "alpha");
+        assert_eq!(single[0].lines[1].text, "beta");
         let jobs = project(
             "schedule_task",
             &json!({"jobs":[{"name":"Fixture task","enabled":true,"schedule":{"kind":"every","every_ms":60000}}]}),

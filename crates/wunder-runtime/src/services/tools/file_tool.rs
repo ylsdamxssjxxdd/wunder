@@ -33,6 +33,10 @@ use std::time::{Duration, Instant};
 
 mod file_tool_large;
 
+/// 新文件写入后回显全文的上限：超过这个体积只给 diff/回执，避免一次写入
+/// 把上下文塞满；16 KB 足以覆盖绝大多数手写脚本与单页 SVG。
+const MAX_ECHO_CONTENT_BYTES: usize = 16 * 1024;
+
 pub(crate) async fn list_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     if let Some(result) = execute_in_sandbox(context, "列出文件", args).await {
         return Ok(result);
@@ -1320,6 +1324,7 @@ fn compact_read_file_summary_for_model(summary: &Value) -> Value {
         "mode": summary.get("mode").cloned().unwrap_or(Value::Null),
         "requested_ranges": summary.get("requested_ranges").cloned().unwrap_or(Value::Null),
         "effective_ranges": summary.get("effective_ranges").cloned().unwrap_or(Value::Null),
+        "content_start_line": summary.get("content_start_line").cloned().unwrap_or(Value::Null),
         "used_default_range": summary.get("used_default_range").cloned().unwrap_or(Value::Null),
         "pattern": summary.get("pattern").cloned().unwrap_or(Value::Null),
         "match_count": summary.get("match_count").cloned().unwrap_or(Value::Null),
@@ -1774,6 +1779,16 @@ pub(crate) async fn read_files(context: &ToolContext<'_>, args: &Value) -> Resul
     result
 }
 
+/// 单文件读取不插分隔头，避免模型把 `>>> path` 当成正文第 1 行；
+/// 多文件读取才用分隔头区分来源。
+fn render_read_output(raw_path: &str, body: &str, include_header: bool) -> String {
+    if include_header {
+        format!(">>> {raw_path}\n{}", body)
+    } else {
+        body.to_string()
+    }
+}
+
 pub(crate) fn read_files_inner(
     workspace: &WorkspaceManager,
     user_id: &str,
@@ -1794,6 +1809,10 @@ pub(crate) fn read_files_inner(
     let mut output_budget_hit = false;
     let mut output_budget_omitted_bytes = 0usize;
     let mut remaining_output_budget = budget.output_budget_bytes;
+    // 单文件读取不再在正文前插 `>>> path` 头：模型按显示行计数时，这一行会
+    // 被误当成第 1 行，导致 start_line/end_line 整体偏移一行。多文件仍保留
+    // 分隔头，行号以 files[].content_start_line 为准。
+    let include_file_headers = specs.len() > 1;
     for spec in specs {
         if let Some(limit_ms) = budget.time_budget_ms {
             if started_at.elapsed() >= Duration::from_millis(limit_ms) {
@@ -1822,7 +1841,7 @@ pub(crate) fn read_files_inner(
             Ok(path) => Some(path),
             Err(err) => {
                 let message = err.to_string();
-                outputs.push(format!(">>> {}\n{}", raw_path, message));
+                outputs.push(render_read_output(raw_path, &message, include_file_headers));
                 failures.push(ReadFailure {
                     kind: ReadFailureKind::PathInvalid,
                 });
@@ -1844,7 +1863,7 @@ pub(crate) fn read_files_inner(
         }
         if !target.exists() {
             let message = i18n::prompt_t("tool.read.not_found");
-            outputs.push(format!(">>> {}\n{}", raw_path, message));
+            outputs.push(render_read_output(raw_path, &message, include_file_headers));
             failures.push(ReadFailure {
                 kind: ReadFailureKind::NotFound,
             });
@@ -1869,22 +1888,26 @@ pub(crate) fn read_files_inner(
                     }),
                 );
             }
-            outputs.push(format!(
-                ">>> {}\n[dry_run] exists=true size={} bytes mode={}",
+            outputs.push(render_read_output(
                 raw_path,
-                size,
-                match spec.mode {
-                    ReadFileMode::Slice => "slice",
-                    ReadFileMode::Indentation => "indentation",
-                    ReadFileMode::Outline => "outline",
-                }
+                &format!(
+                    "[dry_run] exists=true size={} bytes mode={}",
+                    size,
+                    match spec.mode {
+                        ReadFileMode::Slice => "slice",
+                        ReadFileMode::Indentation => "indentation",
+                        ReadFileMode::Outline => "outline",
+                    }
+                ),
+                include_file_headers,
             ));
             successful_reads += 1;
             summaries.push(summary);
             continue;
         }
         if size > MAX_READ_BYTES as u64 && spec.mode == ReadFileMode::Slice {
-            let large = file_tool_large::read_large_slice(&target, raw_path, &spec)?;
+            let large =
+                file_tool_large::read_large_slice(&target, raw_path, &spec, include_file_headers)?;
             successful_reads += 1;
             if let Some(remaining) = remaining_output_budget.as_mut() {
                 *remaining = remaining.saturating_sub(large.rendered.len());
@@ -1916,7 +1939,7 @@ pub(crate) fn read_files_inner(
                     }
                     map.insert("size_bytes".to_string(), Value::from(size));
                 }
-                outputs.push(format!(">>> {}\n{}", raw_path, message));
+                outputs.push(render_read_output(raw_path, &message, include_file_headers));
                 failures.push(ReadFailure {
                     kind: ReadFailureKind::Binary,
                 });
@@ -1974,9 +1997,11 @@ pub(crate) fn read_files_inner(
                 } else {
                     summarize_slice_eof(&effective_ranges, loaded_lines)
                 };
+                let content_start_line = effective_ranges.first().map(|(start, _)| *start);
                 if let Value::Object(ref mut map) = summary {
                     map.insert("mode".to_string(), Value::String("slice".to_string()));
                     map.insert("effective_ranges".to_string(), json!(effective_ranges));
+                    map.insert("content_start_line".to_string(), json!(content_start_line));
                     map.insert("read_lines".to_string(), Value::from(read_lines as u64));
                     map.insert("total_lines".to_string(), Value::from(loaded_lines as u64));
                     map.insert(
@@ -2088,7 +2113,7 @@ pub(crate) fn read_files_inner(
                     file_output.push(excerpt);
                 }
                 let joined = file_output.join("\n---\n");
-                format!(">>> {}\n{}", raw_path, joined)
+                render_read_output(raw_path, &joined, include_file_headers)
             }
             ReadFileMode::Indentation => {
                 let selected = read_indentation::read_block(&content, &spec.indentation);
@@ -2100,12 +2125,14 @@ pub(crate) fn read_files_inner(
                         output_budget_omitted_bytes.saturating_add(omitted_bytes);
                 }
                 let read_lines = selected.len();
+                let content_start_line = selected.first().map(|(line, _)| *line);
                 let complete =
                     omitted_bytes == 0 && !source_truncated_by_size && loaded_lines == read_lines;
                 if let Value::Object(ref mut map) = summary {
                     map.insert("mode".to_string(), Value::String("indentation".to_string()));
                     map.insert("read_lines".to_string(), Value::from(read_lines as u64));
                     map.insert("total_lines".to_string(), Value::from(loaded_lines as u64));
+                    map.insert("content_start_line".to_string(), json!(content_start_line));
                     map.insert("complete".to_string(), Value::Bool(complete));
                 }
                 let mut parts = Vec::new();
@@ -2122,7 +2149,7 @@ pub(crate) fn read_files_inner(
                         .join("\n");
                     parts.push(formatted);
                 }
-                format!(">>> {}\n{}", raw_path, parts.join("\n"))
+                render_read_output(raw_path, &parts.join("\n"), include_file_headers)
             }
             ReadFileMode::Outline => {
                 let (selected, outline_entries) =
@@ -2135,12 +2162,14 @@ pub(crate) fn read_files_inner(
                         output_budget_omitted_bytes.saturating_add(omitted_bytes);
                 }
                 let read_lines = selected.len();
+                let content_start_line = selected.first().map(|(line, _)| *line);
                 let outline_truncated =
                     omitted_bytes > 0 || outline_entries > read_lines || source_truncated_by_size;
                 if let Value::Object(ref mut map) = summary {
                     map.insert("mode".to_string(), Value::String("outline".to_string()));
                     map.insert("read_lines".to_string(), Value::from(read_lines as u64));
                     map.insert("total_lines".to_string(), Value::from(loaded_lines as u64));
+                    map.insert("content_start_line".to_string(), json!(content_start_line));
                     map.insert("outline_entries".to_string(), json!(outline_entries));
                     map.insert("outline_truncated".to_string(), json!(outline_truncated));
                     map.insert("complete".to_string(), Value::Bool(!outline_truncated));
@@ -2160,7 +2189,7 @@ pub(crate) fn read_files_inner(
                             .join("\n"),
                     );
                 }
-                format!(">>> {}\n{}", raw_path, parts.join("\n"))
+                render_read_output(raw_path, &parts.join("\n"), include_file_headers)
             }
         };
         if let Some(remaining) = remaining_output_budget.as_mut() {
@@ -2233,6 +2262,15 @@ pub(crate) fn read_files_inner(
             .iter()
             .map(compact_read_file_summary_for_model)
             .collect::<Vec<_>>(),
+        // 单文件读取的正文从第几行开始；多文件时为 null，按 files[].content_start_line 取。
+        "content_start_line": if include_file_headers {
+            Value::Null
+        } else {
+            summaries
+                .first()
+                .and_then(|summary| summary.get("content_start_line").cloned())
+                .unwrap_or(Value::Null)
+        },
         "patch_usage_hint": i18n::prompt_t("tool.read.patch_usage_hint"),
         "dry_run": dry_run,
         "requested_files": requested_files,
@@ -2720,7 +2758,7 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
         &write_outcome.written,
         &write_outcome.diff.diff,
     );
-    let data = build_write_data(
+    let mut data = build_write_data(
         &path,
         write_outcome.written.len(),
         dry_run,
@@ -2733,6 +2771,25 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
         &unified,
         unified_truncated,
     );
+    // 新文件写入没有旧内容可 diff；只有 diff 本身被行预算截断时，才把实际
+    // 落盘文本整份回显，模型才能核对参数里是否有字符被丢掉（例如 format 串
+    // 少了左花括号），而不是靠猜。短文件 diff 已完整，不重复占上下文。
+    let diff_was_truncated = data
+        .get("diff_lines_omitted")
+        .and_then(Value::as_u64)
+        .is_some_and(|omitted| omitted > 0);
+    if !dry_run
+        && !write_outcome.existed
+        && diff_was_truncated
+        && write_outcome.written.len() <= MAX_ECHO_CONTENT_BYTES
+    {
+        if let Some(map) = data.as_object_mut() {
+            map.insert(
+                "echo_content".to_string(),
+                json!(write_outcome.written.as_str()),
+            );
+        }
+    }
     let receipt = &write_outcome.receipt;
     let summary = if dry_run {
         format!(

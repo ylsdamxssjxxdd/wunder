@@ -200,7 +200,7 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "读图工具",
-        brief_en: "Read a local image/GIF/video. Default view auto-fits (long side <=2048px); >2x reduction makes small text unreliable. crop=x,y,w,h is left/top/WIDTH/HEIGHT, not corners; crop_xyxy=x1,y1,x2,y2 for corners (never both). scale for detail; stats adds region numbers, stats_only omits the image; frame_rate extracts frames. Re-read only if pixels are needed.",
+        brief_en: "Read local image/GIF/video. Default view auto-fits (long side <=2048px); >2x downscale blurs small text. crop=x,y,w,h is left/top/width/height; crop_xyxy=x1,y1,x2,y2 for corners (never both). scale for detail; stats adds region numbers, stats_only omits the image; frame_rate extracts frames. GIF: sheet=true returns a loop contact sheet (sheet.frame_indices maps cells). Re-read only if pixels are needed.",
         drop_actions: &[],
         drop_fields: &[],
     },

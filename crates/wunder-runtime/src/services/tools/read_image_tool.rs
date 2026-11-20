@@ -183,6 +183,9 @@ struct ReadImageArgs {
     frame_rate: Option<f64>,
     #[serde(default)]
     frame_step: Option<usize>,
+    /// 动图专用：把整段动画均匀抽帧拼成一张联系表，而不是只回首帧。
+    #[serde(default)]
+    sheet: bool,
     #[serde(default)]
     crop: Option<String>,
     #[serde(default)]
@@ -415,6 +418,7 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         None,
         payload.frame_rate,
         payload.frame_step,
+        payload.sheet,
     )
     .await?;
     let view_data = result.view.as_ref().map(image_view_data);

@@ -1240,8 +1240,8 @@
     "zh-CN": "无可读取文件"
   },
   "tool.read.patch_usage_hint": {
-    "en-US": "Slice and indentation content is raw file text. Only \">>> path\" separators and outline source line numbers are display metadata; do not copy them into apply_patch.",
-    "zh-CN": "slice 与 indentation 返回文件原始行。仅 \">>> 路径\" 分隔头和大纲源行号属于展示元数据，生成 apply_patch 时不要复制。"
+    "en-US": "Slice and indentation content is raw file text; its first line number is files[].content_start_line (also top-level content_start_line for a single-file read). Only the \">>> path\" header used by multi-file reads and outline source line numbers are display metadata; do not copy them into apply_patch.",
+    "zh-CN": "slice 与 indentation 返回文件原始行，正文第一行的真实行号见 files[].content_start_line（单文件读取另有顶层 content_start_line）。仅多文件读取的 \">>> 路径\" 分隔头和大纲源行号属于展示元数据，生成 apply_patch 时不要复制。"
   },
   "tool.read.no_path": {
     "en-US": "No file path provided.",
@@ -2944,12 +2944,16 @@
     "zh-CN": "可选，第二张静态图片的路径。返回一张并排对比图（左=path，右=compare_with），两半仍保持入模细节级别，适合前后对比或 A/B 对照。不能与 crop/scale/stats 同时使用。"
   },
   "tool.spec.read_image.args.frame_rate": {
-    "en-US": "Optional frame extraction rate for video files (FPS).",
-    "zh-CN": "可选，视频文件的抽帧频率（FPS）。"
+    "en-US": "Optional frame extraction rate (FPS) for video files, and for animated GIFs (converted to a frame step). Pair with sheet=true for a compact overview.",
+    "zh-CN": "可选，视频文件的抽帧频率（FPS），也适用于动图 GIF（会换算成抽帧间隔）。与 sheet=true 搭配可一次看完整段动画。"
   },
   "tool.spec.read_image.args.frame_step": {
-    "en-US": "Optional frame step for GIF files. 0 means first frame only; 2 means frames 1,3,5...",
-    "zh-CN": "可选，GIF 文件的间隔取帧参数。0 表示仅首帧；2 表示取第 1、3、5... 帧。"
+    "en-US": "Optional frame step for GIF files. 0 means first frame only; 2 means frames 1,3,5... Ignored when sheet=true (sheet picks an even sampling automatically unless this is set).",
+    "zh-CN": "可选，GIF 文件的间隔取帧参数。0 表示仅首帧；2 表示取第 1、3、5... 帧。sheet=true 时若不填则自动均匀抽样。"
+  },
+  "tool.spec.read_image.args.sheet": {
+    "en-US": "Optional, animated GIF only: return one contact sheet sampling up to 16 frames (max 4 columns) instead of a single first frame. The result's sheet.frame_indices maps each cell to its source frame; use it to inspect motion, pacing, and loop seams.",
+    "zh-CN": "可选，仅动图 GIF：返回一张联系表，均匀抽取最多 16 帧（最多 4 列），而不是只回首帧。结果的 sheet.frame_indices 给出每格对应的源帧序号，用于检查运动、节奏和循环接缝。"
   },
   "tool.spec.generate_speech.description": {
     "en-US": "Generate speech with the configured TTS model and save the audio into the workspace.",

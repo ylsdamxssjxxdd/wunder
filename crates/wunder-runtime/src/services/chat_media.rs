@@ -68,6 +68,14 @@ pub struct MediaViewDims {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct SheetLayout {
+    pub columns: usize,
+    pub rows: usize,
+    /// 联系表里每一格对应的源帧序号（0-based）。
+    pub frame_indices: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ChatMediaProcessResult {
     pub kind: String,
     pub name: String,
@@ -92,6 +100,9 @@ pub struct ChatMediaProcessResult {
     pub has_audio: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view: Option<MediaViewDims>,
+    /// 动图联系表的排布信息；仅 `sheet=true` 且成功合成时出现。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet: Option<SheetLayout>,
     #[serde(default)]
     pub attachments: Vec<AttachmentPayload>,
     #[serde(default)]
@@ -139,6 +150,7 @@ pub async fn process_chat_media_upload(
         upload.content_type.as_deref(),
         requested_frame_rate,
         requested_frame_step,
+        false,
     )
     .await
 }
@@ -163,6 +175,7 @@ pub async fn reprocess_chat_media_source(
         None,
         requested_frame_rate,
         requested_frame_step,
+        false,
     )
     .await
 }
@@ -175,6 +188,7 @@ pub async fn process_visual_media_path(
     content_type_hint: Option<&str>,
     requested_frame_rate: Option<f64>,
     requested_frame_step: Option<usize>,
+    sheet: bool,
 ) -> Result<ChatMediaProcessResult> {
     let filename = source_path
         .file_name()
@@ -193,6 +207,7 @@ pub async fn process_visual_media_path(
                 source_path,
                 requested_frame_rate,
                 requested_frame_step,
+                sheet,
             )
             .await
         }
@@ -252,6 +267,7 @@ async fn process_audio_source(
         frame_count: 0,
         has_audio: true,
         view: None,
+        sheet: None,
         attachments: vec![AttachmentPayload {
             name: Some(filename.to_string()),
             content: Some(content),
@@ -313,6 +329,7 @@ async fn process_image_source(
     source_path: &Path,
     requested_frame_rate: Option<f64>,
     requested_frame_step: Option<usize>,
+    sheet: bool,
 ) -> Result<ChatMediaProcessResult> {
     let filename = source_path
         .file_name()
@@ -338,6 +355,7 @@ async fn process_image_source(
             frame_count: 1,
             has_audio: false,
             view: None,
+            sheet: None,
             attachments: vec![preview],
             warnings: Vec::new(),
         });
@@ -357,6 +375,7 @@ async fn process_image_source(
             bytes.as_slice(),
             requested_frame_rate,
             requested_frame_step,
+            sheet,
         )
         .await;
     }
@@ -406,6 +425,7 @@ async fn process_image_source(
         frame_count: 1,
         has_audio: false,
         view,
+        sheet: None,
         attachments: vec![attachment],
         warnings: Vec::new(),
     })
@@ -474,6 +494,7 @@ async fn process_gif_source(
     bytes: &[u8],
     requested_frame_rate: Option<f64>,
     requested_frame_step: Option<usize>,
+    sheet: bool,
 ) -> Result<ChatMediaProcessResult> {
     let mut requested_step = normalize_requested_frame_step(requested_frame_step)?;
     let decoder = GifDecoder::new(Cursor::new(bytes)).context("failed to decode gif frames")?;
@@ -506,6 +527,51 @@ async fn process_gif_source(
         }
     }
 
+    // 联系表：把整段动画均匀抽成一张网格图，一眼看得到节奏、飘动和循环
+    // 接缝；比返回 N 张全尺寸帧更省上下文，也免去模型自己写 PIL 拼图。
+    if sheet {
+        let step = if requested_step == 0 {
+            (total_frame_count / 8).max(1)
+        } else {
+            requested_step
+        };
+        let mut sampled = Vec::new();
+        for (index, frame) in frames.into_iter().enumerate() {
+            if index % step != 0 {
+                continue;
+            }
+            sampled.push((index, frame.into_buffer()));
+            if sampled.len() >= MAX_GIF_SAMPLED_FRAMES {
+                break;
+            }
+        }
+        let (attachment, layout) =
+            render_gif_sheet_attachment(workspace, workspace_id, filename, sampled).await?;
+        warnings.push(format!(
+            "contact sheet samples every {step} frame(s): {} cells, source {} frames.",
+            layout.frame_indices.len(),
+            total_frame_count
+        ));
+        return Ok(ChatMediaProcessResult {
+            kind: "gif".to_string(),
+            name: filename.to_string(),
+            source_public_path: workspace.display_path(workspace_id, source_path),
+            transcript: None,
+            duration_ms: None,
+            requested_frame_rate,
+            applied_frame_rate: None,
+            requested_frame_step: Some(step),
+            applied_frame_step: Some(step),
+            total_frame_count: Some(total_frame_count),
+            frame_count: layout.frame_indices.len(),
+            has_audio: false,
+            view: None,
+            sheet: Some(layout),
+            attachments: vec![attachment],
+            warnings,
+        });
+    }
+
     // 抽样帧也是入模图，一帧一张。超过上限就把间隔调大，而不是把上下文
     // 一次性塞满几十张位图。
     if requested_step > 0 {
@@ -526,7 +592,7 @@ async fn process_gif_source(
             // 转而自己去写抽帧脚本（本次会话就是这么绕远的）。
             let suggested = total_frame_count.div_ceil(8).max(1);
             warnings.push(format!(
-                "gif has {total_frame_count} frames but only frame 1 was returned. Pass frame_step=N to sample every Nth frame (e.g. frame_step={suggested}), or frame_rate=F for a target frame rate."
+                "gif has {total_frame_count} frames but only frame 1 was returned. Pass sheet=true for a contact sheet of the whole loop, or frame_step=N to sample every Nth frame (e.g. frame_step={suggested})."
             ));
         }
         let preview = render_gif_frame_attachment(
@@ -555,6 +621,7 @@ async fn process_gif_source(
             frame_count: 1,
             has_audio: false,
             view: None,
+            sheet: None,
             attachments: vec![preview],
             warnings,
         });
@@ -593,6 +660,7 @@ async fn process_gif_source(
         frame_count: attachments.len(),
         has_audio: false,
         view: None,
+        sheet: None,
         attachments,
         warnings,
     })
@@ -742,6 +810,7 @@ async fn process_video_source(
         frame_count,
         has_audio,
         view: None,
+        sheet: None,
         attachments,
         warnings,
     })
@@ -1394,6 +1463,79 @@ async fn render_gif_frame_attachment(
         content_type: Some("image/png".to_string()),
         public_path: Some(public_path),
     })
+}
+
+/// 纯布局/绘制：把帧缩略图排成固定网格，返回画布与每格源帧序号。
+/// 抽出来是为了不依赖工作区就能单测排布与尺寸。
+fn compose_gif_sheet(
+    frames: Vec<(usize, image::RgbaImage)>,
+) -> Result<(image::RgbaImage, SheetLayout)> {
+    if frames.is_empty() {
+        return Err(anyhow!("gif frame extraction produced no images"));
+    }
+    const CELL_WIDTH: u32 = 320;
+    const CELL_HEIGHT: u32 = 200;
+    const GAP: u32 = 4;
+    let columns = frames.len().min(4).max(1);
+    let rows = frames.len().div_ceil(columns).max(1);
+    let width = columns as u32 * CELL_WIDTH + (columns as u32 + 1) * GAP;
+    let height = rows as u32 * CELL_HEIGHT + (rows as u32 + 1) * GAP;
+    let mut canvas = image::RgbaImage::from_pixel(width, height, image::Rgba([244, 244, 244, 255]));
+    let mut frame_indices = Vec::with_capacity(frames.len());
+    for (slot, (index, frame)) in frames.into_iter().enumerate() {
+        frame_indices.push(index);
+        let thumb = image::imageops::resize(
+            &frame,
+            CELL_WIDTH,
+            CELL_HEIGHT,
+            image::imageops::FilterType::Triangle,
+        );
+        let column = (slot % columns) as u32;
+        let row = (slot / columns) as u32;
+        let x = GAP + column * (CELL_WIDTH + GAP);
+        let y = GAP + row * (CELL_HEIGHT + GAP);
+        image::imageops::overlay(&mut canvas, &thumb, i64::from(x), i64::from(y));
+    }
+    Ok((
+        canvas,
+        SheetLayout {
+            columns,
+            rows,
+            frame_indices,
+        },
+    ))
+}
+
+/// 把抽出的 GIF 帧拼成一张联系表：最多 4 列，固定 320×200 单元格。
+/// 返回附件与每格对应的源帧序号，模型可以直接按行列读节奏和接缝。
+async fn render_gif_sheet_attachment(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    source_name: &str,
+    frames: Vec<(usize, image::RgbaImage)>,
+) -> Result<(AttachmentPayload, SheetLayout)> {
+    let (canvas, layout) = compose_gif_sheet(frames)?;
+    let derived_root = persist_derived_root(workspace, workspace_id, source_name).await?;
+    let output_path = derived_root.join("contact_sheet.png");
+    let output_path_for_write = output_path.clone();
+    blocking::run_fs(
+        "services.chat_media.save_gif_sheet",
+        move || -> Result<()> {
+            DynamicImage::ImageRgba8(canvas)
+                .save_with_format(&output_path_for_write, ImageFormat::Png)
+                .map_err(|err| anyhow!("failed to save gif contact sheet: {err}"))?;
+            Ok(())
+        },
+    )
+    .await
+    .map_err(|err| anyhow!("gif contact sheet save task failed: {err}"))?;
+    let attachment = AttachmentPayload {
+        name: Some("contact_sheet.png".to_string()),
+        content: None,
+        content_type: Some("image/png".to_string()),
+        public_path: Some(workspace.display_path(workspace_id, &output_path)),
+    };
+    Ok((attachment, layout))
 }
 
 fn effective_frame_rate(requested: f64, duration_ms: Option<u64>, max_frames: usize) -> f64 {
@@ -2508,11 +2650,11 @@ fn compute_image_view_stats(image: &DynamicImage) -> ImageViewStats {
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_media_kind_from_path, effective_frame_rate, extract_workspace_id_from_public_path,
-        gif_step_for_frame_rate, load_image_data_url_for_path, normalize_filename,
-        normalize_requested_frame_rate, normalize_requested_frame_step, ImageViewCache,
-        ImageViewKey, DEFAULT_VIDEO_FRAME_RATE, IMAGE_VIEW_CACHE_BYTES, IMAGE_VIEW_CACHE_VERSION,
-        MAX_GIF_FRAME_STEP, MAX_VIDEO_FRAMES,
+        compose_gif_sheet, detect_media_kind_from_path, effective_frame_rate,
+        extract_workspace_id_from_public_path, gif_step_for_frame_rate,
+        load_image_data_url_for_path, normalize_filename, normalize_requested_frame_rate,
+        normalize_requested_frame_step, ImageViewCache, ImageViewKey, DEFAULT_VIDEO_FRAME_RATE,
+        IMAGE_VIEW_CACHE_BYTES, IMAGE_VIEW_CACHE_VERSION, MAX_GIF_FRAME_STEP, MAX_VIDEO_FRAMES,
     };
     use std::path::Path;
     use std::sync::Arc;
@@ -2524,6 +2666,28 @@ mod tests {
             modified_nanos: 0,
             version: IMAGE_VIEW_CACHE_VERSION,
         }
+    }
+
+    #[test]
+    fn gif_contact_sheet_layout_is_row_major_and_bounded_to_four_columns() {
+        let frames = (0..8)
+            .map(|index| {
+                (
+                    index * 3,
+                    image::RgbaImage::from_pixel(
+                        32,
+                        20,
+                        image::Rgba([(index * 10) as u8, 0, 0, 255]),
+                    ),
+                )
+            })
+            .collect();
+        let (canvas, layout) = compose_gif_sheet(frames).expect("sheet");
+        assert_eq!(layout.columns, 4);
+        assert_eq!(layout.rows, 2);
+        assert_eq!(layout.frame_indices, vec![0, 3, 6, 9, 12, 15, 18, 21]);
+        // 4 列 × 320 + 5 个 4px 间隔；2 行 × 200 + 3 个 4px 间隔。
+        assert_eq!(canvas.dimensions(), (1300, 412));
     }
 
     #[test]

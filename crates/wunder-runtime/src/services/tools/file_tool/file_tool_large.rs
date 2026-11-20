@@ -16,6 +16,7 @@ pub(super) fn read_large_slice(
     path: &Path,
     raw_path: &str,
     spec: &ReadFileSpec,
+    include_header: bool,
 ) -> Result<LargeReadOutput> {
     let mut reader = BufReader::new(File::open(path)?);
     let mut line = String::new();
@@ -114,6 +115,7 @@ pub(super) fn read_large_slice(
     let read_lines = selected.len();
     let complete =
         omitted_bytes == 0 && !matches_truncated && (matcher.is_some() || cursor >= total_lines);
+    let content_start_line = ranges.first().map(|(start, _)| *start);
     let summary = json!({
         "path": raw_path,
         "mode": "slice",
@@ -125,6 +127,7 @@ pub(super) fn read_large_slice(
         "read_lines": read_lines,
         "total_lines": total_lines,
         "effective_ranges": ranges,
+        "content_start_line": content_start_line,
         "requested_ranges": spec.requested_ranges,
         "used_default_range": spec.used_default_range,
         "match_count": match_count,
@@ -136,7 +139,11 @@ pub(super) fn read_large_slice(
         "range_reaches_eof": cursor >= total_lines,
     });
     Ok(LargeReadOutput {
-        rendered: format!(">>> {raw_path}\n{content}"),
+        rendered: if include_header {
+            format!(">>> {raw_path}\n{}", content)
+        } else {
+            content
+        },
         summary,
         omitted_bytes,
     })
@@ -191,7 +198,7 @@ mod tests {
             parse_read_file_specs(&json!({"path": "large.log", "query": "ERROR", "context": 0}))
                 .unwrap()
                 .remove(0);
-        let result = read_large_slice(&path, "large.log", &spec).unwrap();
+        let result = read_large_slice(&path, "large.log", &spec, true).unwrap();
         assert_eq!(result.summary["total_lines"], 120_000);
         assert_eq!(result.summary["match_count"], 30_000);
         assert_eq!(result.summary["matches_truncated"], true);
@@ -226,7 +233,7 @@ mod plain_read_tests {
         let spec = parse_read_file_specs(&json!({"path": "large.log"}))
             .unwrap()
             .remove(0);
-        let result = read_large_slice(&path, "large.log", &spec).unwrap();
+        let result = read_large_slice(&path, "large.log", &spec, true).unwrap();
         assert_eq!(result.summary["total_lines"], 120_000);
         assert_eq!(result.summary["read_lines"], 500);
         assert_eq!(result.summary["truncated_by_size"], false);

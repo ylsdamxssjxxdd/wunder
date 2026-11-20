@@ -521,16 +521,55 @@ pub(crate) fn css(content: &str) -> Verdict {
 /// 早先那种写法把 `compile(...)` 顶了格，导致每次都变成检查脚本自身的
 /// IndentationError（回执里就是一句 `File "<string>", line 4`）。
 const PY_CHECK_SCRIPT: &str = concat!(
-    "import sys\n",
+    "import ast, sys\n",
     "src = sys.stdin.buffer.read()\n",
+    "def _brace_problem(text):\n",
+    "    depth = 0\n",
+    "    i = 0\n",
+    "    while i < len(text):\n",
+    "        ch = text[i]\n",
+    "        if ch == '{':\n",
+    "            if i + 1 < len(text) and text[i + 1] == '{':\n",
+    "                i += 2\n",
+    "                continue\n",
+    "            depth += 1\n",
+    "        elif ch == '}':\n",
+    "            if i + 1 < len(text) and text[i + 1] == '}':\n",
+    "                i += 2\n",
+    "                continue\n",
+    "            if depth == 0:\n",
+    "                return \"stray '}' in .format() string; a '{' may be missing before a format spec\"\n",
+    "            depth -= 1\n",
+    "        i += 1\n",
+    "    if depth:\n",
+    "        return \"unclosed '{' in .format() string\"\n",
+    "    return None\n",
     "try:\n",
-    "    compile(src, sys.argv[1], 'exec')\n",
+    "    tree = compile(src, sys.argv[1], 'exec', ast.PyCF_ONLY_AST)\n",
     "except SyntaxError as exc:\n",
     "    print('line %d: %s' % (exc.lineno, exc.msg))\n",
     "    sys.exit(1)\n",
     "except ValueError as exc:\n",
     "    print('invalid: %s' % exc)\n",
     "    sys.exit(1)\n",
+    "for node in ast.walk(tree):\n",
+    "    if not isinstance(node, ast.Call):\n",
+    "        continue\n",
+    "    func = node.func\n",
+    "    if not isinstance(func, ast.Attribute) or func.attr not in ('format', 'format_map'):\n",
+    "        continue\n",
+    "    receiver = func.value\n",
+    "    text = None\n",
+    "    if isinstance(receiver, ast.Constant) and isinstance(receiver.value, str):\n",
+    "        text = receiver.value\n",
+    "    elif hasattr(ast, 'Str') and isinstance(receiver, ast.Str):\n",
+    "        text = receiver.s\n",
+    "    if text is None:\n",
+    "        continue\n",
+    "    problem = _brace_problem(text)\n",
+    "    if problem:\n",
+    "        print('line %d: %s' % (receiver.lineno, problem))\n",
+    "        sys.exit(1)\n",
 );
 
 /// TypeScript 检查脚本：能解析到项目里的 typescript 就用 tsc 自己的诊断（语法 +
@@ -1565,6 +1604,30 @@ mod tests {
         }
         let missing_colon = python("class A\n    pass\n").render();
         assert!(has(&missing_colon, "line 1"), "{missing_colon}");
+    }
+
+    #[test]
+    fn python_checker_flags_stray_closing_braces_in_format_strings() {
+        if env_disabled() || python_interpreter().is_none() {
+            return;
+        }
+        // 合法占位符、命名占位符与转义花括号都不能被误报。
+        for source in [
+            r#"s = '<path d="{:.1f},{:.1f}"/>'.format(1.0, 2.0)"#,
+            r#"s = '<path d="{x:.1f}"/>'.format(x=1.0)"#,
+            r#"s = '{{literal}}'.format()"#,
+            // 不是 .format() 接收者的字符串里出现孤立花括号是合法的。
+            r#"s = '}'.replace('}', '')"#,
+        ] {
+            assert_eq!(python(source).render(), "OK (py_compile)", "{source}");
+        }
+        // 会话里真实出现过的损坏形态：`M:.1f}` 开头的左花括号丢失。py_compile
+        // 只查语法，这种字符串照样通过，必须在写入回执里被点出来。
+        let broken = r#"s = '<path d="M:.1f},{:.1f}"/>'.format(1.0, 2.0)"#;
+        let verdict = python(broken).render();
+        assert!(verdict.starts_with("ERROR line 1:"), "{verdict}");
+        assert!(has(&verdict, "stray '}'"), "{verdict}");
+        assert!(has(&verdict, "(py_compile)"), "{verdict}");
     }
 
     #[test]

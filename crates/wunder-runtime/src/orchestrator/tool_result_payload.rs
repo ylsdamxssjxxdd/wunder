@@ -2406,6 +2406,7 @@ fn project_read_image_success(data: &Value) -> Option<Value> {
             "applied_frame_rate",
             "requested_frame_step",
             "applied_frame_step",
+            "sheet",
             "warnings",
         ] {
             if let Some(value) = result.get(key).filter(|value| {
@@ -2824,8 +2825,12 @@ fn project_file_write_success(data: &Value) -> Option<Value> {
             "cursor",
             "unified_diff",
             "unified_diff_truncated",
+            // 新文件写入的实际落盘文本（小文件）；用于核对参数是否被静默改写。
+            "echo_content",
             "replacements",
             "range",
+            // 行区间替换实际命中的首尾行与相邻行：用于确认行号没有错位。
+            "range_echo",
             // 行号被 anchor 纠正过时的偏移量：模型据此更新自己的行号记忆。
             "range_shift",
             // 定位档位：`exact` 之外的命中是靠空白容错拿到的，模型据此决定要不要回读。
@@ -3486,6 +3491,7 @@ fn compact_read_file_observation_data(map: &Map<String, Value>) -> Option<Value>
         "continuation_hint",
         "read_lines",
         "total_lines",
+        "content_start_line",
         "returned_bytes",
         "output_budget_omitted_bytes",
         "truncation_reason",
@@ -3526,6 +3532,7 @@ fn compact_read_file_observation_data(map: &Map<String, Value>) -> Option<Value>
                 "path",
                 "mode",
                 "effective_ranges",
+                "content_start_line",
                 "pattern",
                 "match_count",
                 "matches_truncated",
