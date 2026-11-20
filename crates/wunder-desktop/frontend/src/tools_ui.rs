@@ -455,6 +455,41 @@ fn install_dialog_actions(app: &MainWindow, api: &Arc<NativeDesktop>) {
             dialog.set_mcp_preview(preview.into());
         });
 
+    // 粘贴导入 MCP 配置：解析与落盘都在 worker 里。成功才关窗并清空输入，
+    // 失败把错误写回对话框，用户粘贴的内容不丢。
+    let weak = app.as_weak();
+    let paste_api = api.clone();
+    app.global::<ToolsDialog>().on_import_mcp_paste(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_tools_working() || app.get_tools_loading() {
+            return;
+        }
+        let dialog = app.global::<ToolsDialog>();
+        let raw = dialog.get_mcp_paste().to_string();
+        dialog.set_mcp_paste_error("".into());
+        app.set_tools_working(true);
+        let weak = weak.clone();
+        let api = paste_api.clone();
+        std::thread::spawn(move || {
+            let result = api.import_mcp_servers(&raw);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_tools_working(false);
+                let dialog = app.global::<ToolsDialog>();
+                match result {
+                    Ok(count) => {
+                        dialog.set_mcp_open(false);
+                        dialog.set_mcp_paste_mode(false);
+                        dialog.set_mcp_paste("".into());
+                        let done = "已导入 ".to_string() + &count.to_string() + " 个 MCP 服务器";
+                        app.set_status(done.into());
+                        app.invoke_refresh_tools();
+                    }
+                    Err(error) => dialog.set_mcp_paste_error(error.to_string().into()),
+                }
+            });
+        });
+    });
+
     let weak = app.as_weak();
     let import_api = api.clone();
     app.global::<ToolsDialog>().on_import_skill(move || {

@@ -30,7 +30,7 @@ export global RuntimeStatus {
         if value == "done" || value == "finished" || value == "completed" || value == "success" || value.starts-with("任务完成") || value.starts-with("输出已结束") { return "done"; }
         // `请求中` is the admission phrase the reducer writes before the first
         // token; without it the title fell back to idle while a request ran.
-        if value == "running" || value == "streaming" || value == "executing" || value == "请求中" || value.starts-with("正在") || value.starts-with("模型响应中") || value.starts-with("目标") { return "running"; }
+        if value == "running" || value == "streaming" || value == "executing" || value == "请求中" || value.starts-with("正在") || value.starts-with("模型响应中") || value.starts-with("后台运行") || value.starts-with("目标") { return "running"; }
         return "idle";
     }
 }

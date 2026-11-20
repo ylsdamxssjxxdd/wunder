@@ -490,6 +490,15 @@ fn build_snapshot(
             .resolve()
         })
         .unwrap_or(status);
+    // 轮次已结束但后台命令/子智能体仍在跑：这一行仍在工作。等待用户与
+    // 运行中优先级更高，保持原判。
+    let status = if activity.background
+        && !matches!(status, ThreadStatus::Working | ThreadStatus::NeedsYou)
+    {
+        ThreadStatus::Working
+    } else {
+        status
+    };
     let last_activity = if activity.running {
         usage.map(|summary| summary.activity.clone())
     } else {
@@ -1077,6 +1086,7 @@ mod tests {
         let activity = ChatSessionActivity {
             runtime: None,
             running: false,
+            background: false,
         };
         let row = build_snapshot(&record, Some(&tail), Some(&usage), &activity, None);
         assert_eq!(row.status, ThreadStatus::Finished);
@@ -1110,10 +1120,32 @@ mod tests {
         let activity = ChatSessionActivity {
             runtime: Some(json!({"thread_status": "running"})),
             running: true,
+            background: false,
         };
         let row = build_snapshot(&record, Some(&tail), Some(&usage), &activity, None);
         assert_eq!(row.status, ThreadStatus::Working);
         assert_eq!(row.last_activity.as_deref(), Some("tool: read_file"));
+    }
+
+    #[test]
+    fn background_work_keeps_a_finished_thread_working() {
+        let record = sample_record("active");
+        let tail = ThreadTurnTail {
+            session_id: "s-1".to_string(),
+            user_round: 4,
+            turn_status: "completed".to_string(),
+            runtime_head: None,
+            last_activity: "done".to_string(),
+            change_seq: 97,
+        };
+        let activity = ChatSessionActivity {
+            runtime: None,
+            running: false,
+            background: true,
+        };
+        let row = build_snapshot(&record, Some(&tail), None, &activity, None);
+        // 最后一轮已经完成，但后台命令/子智能体还在跑：目录不能报完成。
+        assert_eq!(row.status, ThreadStatus::Working);
     }
 
     #[test]
@@ -1130,6 +1162,7 @@ mod tests {
         let activity = ChatSessionActivity {
             runtime: None,
             running: false,
+            background: false,
         };
         let row = build_snapshot(&record, Some(&tail), None, &activity, None);
         assert_eq!(row.status, ThreadStatus::NeedsYou);

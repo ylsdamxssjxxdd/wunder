@@ -37,6 +37,7 @@ mod model_editor_smoke;
 mod model_setup_smoke;
 mod native_chat;
 
+mod command_probe;
 mod native_interlink;
 mod native_markdown;
 mod native_pages;
@@ -56,10 +57,10 @@ mod screenshot;
 mod settings_search;
 mod shutdown;
 mod single_instance;
-mod command_probe;
 mod smoke;
 mod subagent_detail;
 mod subagent_dock;
+mod thread_background;
 mod thread_trajectory;
 mod timeline;
 mod timeline_text;
@@ -610,17 +611,16 @@ fn startup_stage_note(stage: &str) -> Option<&'static str> {
         "thread_runtime_done" => Some("正在接入消息渠道…"),
         "channel_hub_done" => Some("正在恢复定时任务…"),
         "new_done" => Some("正在清理上次运行…"),
-        "desktop:purge_thread_leases" | "desktop:settle_restarted_threads"
+        "desktop:purge_thread_leases"
+        | "desktop:settle_restarted_threads"
         | "desktop:settle_orphaned_tasks" => Some("正在收尾上次运行…"),
         _ => None,
     }
 }
 
 /// 当前启动阶段：(版本号, 提示文案)。引擎在后台线程改，UI 线程按帧读取。
-static STARTUP_STAGE: std::sync::Mutex<(u64, &'static str)> =
-    std::sync::Mutex::new((0, ""));
-static STARTUP_STAGE_VERSION: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+static STARTUP_STAGE: std::sync::Mutex<(u64, &'static str)> = std::sync::Mutex::new((0, ""));
+static STARTUP_STAGE_VERSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn publish_startup_stage(note: &'static str) {
     if let Ok(mut stage) = STARTUP_STAGE.lock() {

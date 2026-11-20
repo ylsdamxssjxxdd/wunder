@@ -816,7 +816,19 @@ pub(crate) fn update_thread_status(
     } else {
         0.0
     };
-    patch_thread_status(&app.get_sidebar_rows(), session, status, phase, ended_at);
+    let locked = app
+        .get_conversations()
+        .iter()
+        .find(|conv| conv.id == session)
+        .is_some_and(|conv| conv.locked);
+    patch_thread_status(
+        &app.get_sidebar_rows(),
+        session,
+        status,
+        phase,
+        ended_at,
+        locked,
+    );
 }
 
 fn patch_thread_status(
@@ -825,6 +837,7 @@ fn patch_thread_status(
     status: &str,
     phase: crate::runtime_phase::Phase,
     ended_at: f32,
+    locked: bool,
 ) -> bool {
     let Some(index) = rows
         .iter()
@@ -836,10 +849,15 @@ fn patch_thread_status(
         return false;
     };
     let visited = seen_settle(session, ended_at);
+    // The archive gate rides the same patch: a thread that just became live
+    // (including a finished turn with background work) must disable the action
+    // now, not at the next full tree projection.
+    let archivable = thread_archivable(status, locked);
     if row.status.as_str() == status
         && row.phase == phase.code()
         && row.ended_at == ended_at
         && row.visited == visited
+        && row.archivable == archivable
     {
         return false;
     }
@@ -847,6 +865,7 @@ fn patch_thread_status(
     row.phase = phase.code();
     row.ended_at = ended_at;
     row.visited = visited;
+    row.archivable = archivable;
     rows.set_row_data(index, row);
     true
 }
@@ -1672,11 +1691,12 @@ mod tests {
             id,
             "任务完成",
             done,
-            1_800_000_500.0
+            1_800_000_500.0,
+            false
         ));
         let row = rows.row_data(0).unwrap();
         assert!(!row.visited, "a newer settle is unseen");
-        assert!(patch_thread_status(&rows, id, "任务完成", done, 1_800_000_500.0) == false);
+        assert!(patch_thread_status(&rows, id, "任务完成", done, 1_800_000_500.0, false) == false);
         SEEN_SETTLES.with(|slot| slot.borrow_mut().remove(id));
     }
 
@@ -1715,20 +1735,35 @@ mod tests {
             },
         ]));
         let running = crate::runtime_phase::Phase::Running;
-        assert!(patch_thread_status(&rows, "a", "正在生成…", running, 0.0));
+        assert!(patch_thread_status(
+            &rows,
+            "a",
+            "正在生成…",
+            running,
+            0.0,
+            false
+        ));
         assert_eq!(rows.row_data(0).unwrap().status, "正在生成…");
         assert_eq!(rows.row_data(0).unwrap().phase, running.code());
         assert_eq!(rows.row_data(1).unwrap().status, "任务完成");
         // Cloud rows carry their own status pipeline and stay untouched.
         assert_eq!(rows.row_data(2).unwrap().status, "idle");
         // A repeated or unknown update changes nothing and reports so.
-        assert!(!patch_thread_status(&rows, "a", "正在生成…", running, 0.0));
+        assert!(!patch_thread_status(
+            &rows,
+            "a",
+            "正在生成…",
+            running,
+            0.0,
+            false
+        ));
         assert!(!patch_thread_status(
             &rows,
             "gone",
             "正在生成…",
             running,
-            0.0
+            0.0,
+            false
         ));
         // A settle stamps the row with when it happened, so the view can keep
         // the mark until the user has seen it.
@@ -1738,7 +1773,8 @@ mod tests {
             "a",
             "任务完成",
             done,
-            1_800_000_000.0
+            1_800_000_000.0,
+            false
         ));
         assert_eq!(rows.row_data(0).unwrap().phase, done.code());
         assert_eq!(rows.row_data(0).unwrap().ended_at, 1_800_000_000.0);
@@ -1747,8 +1783,50 @@ mod tests {
             "a",
             "任务完成",
             done,
-            1_800_000_000.0
+            1_800_000_000.0,
+            false
         ));
+    }
+
+    /// The archive affordance follows the patched status, not the last full
+    /// tree projection: a finished turn that still owns background work reads
+    /// as running and must disable archiving until that work ends.
+    #[test]
+    fn a_background_running_thread_disables_archiving_until_it_settles() {
+        let id = "fixture-background-patch";
+        let rows = ModelRc::new(VecModel::from(vec![thread_row(id, "任务完成")]));
+        assert!(rows.row_data(0).unwrap().archivable);
+        let running = crate::runtime_phase::Phase::Running;
+        assert!(patch_thread_status(
+            &rows,
+            id,
+            "后台运行中",
+            running,
+            0.0,
+            false
+        ));
+        assert!(!rows.row_data(0).unwrap().archivable);
+        let done = crate::runtime_phase::Phase::Done;
+        assert!(patch_thread_status(
+            &rows,
+            id,
+            "任务完成",
+            done,
+            1_800_000_600.0,
+            false
+        ));
+        assert!(rows.row_data(0).unwrap().archivable);
+        // Another instance's lease still wins over a settled row.
+        assert!(patch_thread_status(
+            &rows,
+            id,
+            "任务完成",
+            done,
+            1_800_000_700.0,
+            true
+        ));
+        assert!(!rows.row_data(0).unwrap().archivable);
+        SEEN_SETTLES.with(|slot| slot.borrow_mut().remove(id));
     }
 
     /// The diff commit lands the rebuilt tree in the model instance itself:

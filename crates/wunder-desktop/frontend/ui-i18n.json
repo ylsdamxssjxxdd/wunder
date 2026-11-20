@@ -301,8 +301,8 @@
  },
  {
   "key": "tl_cat_mcp",
-  "zh": "MCP 工具",
-  "en": "MCP tools"
+  "zh": "MCP",
+  "en": "MCP"
  },
  {
   "key": "tl_cat_user",
@@ -1980,6 +1980,11 @@
   "key": "rs_running",
   "zh": "正在",
   "en": "Running"
+ },
+ {
+  "key": "rs_bg_running",
+  "zh": "后台运行",
+  "en": "Running in the background"
  },
  {
   "key": "rs_queueing",
@@ -4835,8 +4840,8 @@
  },
  {
   "key": "stc_mcp",
-  "zh": "MCP 服务",
-  "en": "MCP servers"
+  "zh": "MCP",
+  "en": "MCP"
  },
  {
   "key": "stc_skills",
@@ -6780,8 +6785,8 @@
  },
  {
   "key": "tm_add",
-  "zh": "新建",
-  "en": "Create"
+  "zh": "新增",
+  "en": "Add"
  },
  {
   "key": "tm_import",
@@ -6897,6 +6902,36 @@
   "key": "tm_struct_ph",
   "zh": "填写名称与地址后生成结构预览",
   "en": "Enter a name and endpoint to preview the structure"
+ },
+ {
+  "key": "tm_mcp_mode_fields",
+  "zh": "逐项填写",
+  "en": "Fill in fields"
+ },
+ {
+  "key": "tm_mcp_mode_paste",
+  "zh": "粘贴配置",
+  "en": "Paste config"
+ },
+ {
+  "key": "tm_mcp_paste",
+  "zh": "粘贴 MCP 配置",
+  "en": "Paste MCP config"
+ },
+ {
+  "key": "tm_mcp_paste_ph",
+  "zh": "粘贴 mcpServers 配置、单个服务器对象或服务器数组",
+  "en": "Paste an mcpServers config, one server object or an array"
+ },
+ {
+  "key": "tm_mcp_paste_hint",
+  "zh": "同名服务器会就地更新；只接受 HTTP / HTTPS 地址，支持 url、transport、headers 等字段。",
+  "en": "Same-name servers are updated in place. HTTP/HTTPS endpoints only; url, transport and headers are mapped."
+ },
+ {
+  "key": "tm_mcp_import",
+  "zh": "解析并添加",
+  "en": "Parse and add"
  },
  {
   "key": "tm_kb_add_title",

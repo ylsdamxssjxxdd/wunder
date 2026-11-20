@@ -31,7 +31,7 @@ ENTRIES = [
     ("stc_models", "模型设置", "Models"),
     ("stc_models_note", "模型清单、默认模型与参数", "Model list, default model and parameters"),
     ("stc_tools", "工具管理", "Tools"),
-    ("stc_mcp", "MCP 服务", "MCP servers"),
+    ("stc_mcp", "MCP", "MCP"),
     ("stc_skills", "技能", "Skills"),
     ("stc_tools_note", "内置工具、MCP、知识库与资源", "Built-in tools, MCP, knowledge bases and resources"),
     ("stc_agent", "智能体设置", "Agent"),

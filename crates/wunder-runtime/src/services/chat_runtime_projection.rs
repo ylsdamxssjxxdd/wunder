@@ -34,7 +34,11 @@ impl MonitorStateView for SessionUsageSummary {
 
 pub struct ChatSessionActivity {
     pub runtime: Option<Value>,
+    /// 是否有前台轮次正在执行。转录投影只能根据它决定补不补流式占位。
     pub running: bool,
+    /// 轮次之外是否还有后台命令/子智能体在跑。线程状态据此继续显示运行中，
+    /// 但不能据此给转录补流式占位（那些轮次已经结束了）。
+    pub background: bool,
 }
 
 pub async fn load_chat_session_activity<M: MonitorStateView>(
@@ -42,6 +46,10 @@ pub async fn load_chat_session_activity<M: MonitorStateView>(
     session_id: &str,
     monitor: Option<&M>,
 ) -> ChatSessionActivity {
+    // 轮次已结束但后台命令或子智能体仍在跑：线程不算完成，目录与侧栏要
+    // 继续显示运行中。两处都是内存结构，按行查询的代价可以忽略。
+    let background = state.control.command_sessions.has_running_tasks(session_id)
+        || state.monitor.has_running_child_runs(session_id);
     let snapshot = || {
         state
             .kernel
@@ -49,7 +57,12 @@ pub async fn load_chat_session_activity<M: MonitorStateView>(
             .get_tool_session_runtime_snapshot(session_id)
     };
     if let Some(runtime) = snapshot() {
-        return from_runtime(runtime);
+        let running = from_runtime(runtime.clone()).running;
+        return ChatSessionActivity {
+            runtime: Some(runtime),
+            running,
+            background,
+        };
     }
     let monitor_active = monitor
         .and_then(|value| value.monitor_status())
@@ -58,6 +71,7 @@ pub async fn load_chat_session_activity<M: MonitorStateView>(
         return ChatSessionActivity {
             runtime: None,
             running: false,
+            background,
         };
     }
 
@@ -81,7 +95,12 @@ pub async fn load_chat_session_activity<M: MonitorStateView>(
     .unwrap_or_default();
     // A new turn may have started while the storage read was in flight.
     if let Some(runtime) = snapshot() {
-        return from_runtime(runtime);
+        let running = from_runtime(runtime.clone()).running;
+        return ChatSessionActivity {
+            runtime: Some(runtime),
+            running,
+            background,
+        };
     }
     let status = hydrated
         .as_ref()
@@ -96,6 +115,7 @@ pub async fn load_chat_session_activity<M: MonitorStateView>(
     ChatSessionActivity {
         runtime: None,
         running: monitor_fallback_is_active(Some(status), user_rounds, &turns),
+        background,
     }
 }
 
@@ -107,6 +127,7 @@ fn from_runtime(runtime: Value) -> ChatSessionActivity {
     ChatSessionActivity {
         runtime: Some(runtime),
         running,
+        background: false,
     }
 }
 

@@ -5,7 +5,7 @@ use super::types::{
 use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
 use parking_lot::Mutex;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
@@ -893,6 +893,29 @@ impl CommandSessionBroker {
         tasks
     }
 
+    /// 仍有命令在跑的线程集合。线程状态用它判断「轮次已结束、工作还在继续」，
+    /// 只有运行中的会话计数，已结束的 5 分钟留存不会把线程重新标成忙。
+    pub fn running_task_sessions(&self, user_id: &str) -> HashSet<String> {
+        self.prune_expired();
+        self.sessions
+            .iter()
+            .filter_map(|entry| {
+                let record = entry.value().lock();
+                (record.user_id == user_id && record.status == CommandSessionStatus::Running)
+                    .then(|| record.session_id.clone())
+            })
+            .collect()
+    }
+
+    /// 该线程当前是否有运行中的命令任务；状态投影按线程逐行查询时使用。
+    pub fn has_running_tasks(&self, session_id: &str) -> bool {
+        self.prune_expired();
+        self.sessions.iter().any(|entry| {
+            let record = entry.value().lock();
+            record.session_id == session_id && record.status == CommandSessionStatus::Running
+        })
+    }
+
     /// 展开一条任务时读取输出尾部。作用域校验和 `snapshot_for_scope` 一致，
     /// 不能靠 id 猜别的会话。
     pub fn task_detail(
@@ -1102,6 +1125,20 @@ mod tests {
         assert!(broker
             .snapshot_for_scope("user_a", "sess_1", "cmd_other")
             .is_none());
+    }
+
+    #[test]
+    fn running_sessions_follow_the_broker_lifecycle() {
+        let broker = CommandSessionBroker::new();
+        broker.start_session(build_start_spec());
+        assert!(broker.has_running_tasks("sess_1"));
+        assert!(broker.running_task_sessions("user_a").contains("sess_1"));
+        assert!(!broker.running_task_sessions("user_b").contains("sess_1"));
+
+        broker.finish_session("cmd_test", Some(0), false, None);
+        // 终态会话在留存期内仍可读快照，但不再把线程标成在跑。
+        assert!(!broker.has_running_tasks("sess_1"));
+        assert!(broker.running_task_sessions("user_a").is_empty());
     }
 
     #[tokio::test]

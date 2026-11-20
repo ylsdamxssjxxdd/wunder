@@ -155,6 +155,7 @@ impl Phase {
             || value.starts_with("正在")
             || value.starts_with("目标")
             || value.starts_with("模型响应")
+            || value.starts_with("后台运行")
             || value.contains("压缩中")
         {
             return Phase::Running;
@@ -179,6 +180,7 @@ mod tests {
             "模型响应中",
             "目标继续执行…",
             "上下文压缩中…",
+            "后台运行中",
             "正在排队",
             "任务已排队…",
             "模型请求正在排队",
@@ -199,6 +201,12 @@ mod tests {
             Phase::of("模型请求正在排队 · 前方 3 个任务"),
             Phase::Pending
         );
+    }
+
+    #[test]
+    fn background_work_reads_as_running() {
+        assert_eq!(Phase::of("后台运行中"), Phase::Running);
+        assert!(Phase::of("后台运行中").live());
     }
 
     #[test]

@@ -34,6 +34,7 @@ ENTRIES = [
     ("rs_queued", "任务已排队", "Task queued"),
     ("rs_failed", "执行失败", "Execution failed"),
     ("rs_running", "正在", "Running"),
+    ("rs_bg_running", "后台运行", "Running in the background"),
     ("rs_queueing", "正在排队", "Queuing"),
     ("rs_waiting", "等待", "Waiting"),
     ("rs_output_ended", "输出已结束", "Output finished"),

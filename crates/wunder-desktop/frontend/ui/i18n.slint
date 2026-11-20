@@ -62,7 +62,7 @@ export global I18n {
     out property <string> tl_category: zh ? "工具分类" : "Category";
     out property <string> tl_cat_all: zh ? "全部工具" : "All tools";
     out property <string> tl_cat_builtin: zh ? "内置工具" : "Built-in tools";
-    out property <string> tl_cat_mcp: zh ? "MCP 工具" : "MCP tools";
+    out property <string> tl_cat_mcp: zh ? "MCP" : "MCP";
     out property <string> tl_cat_user: zh ? "用户工具" : "User tools";
     out property <string> tl_cat_shared: zh ? "共享工具" : "Shared tools";
     out property <string> tl_cat_a2a: zh ? "A2A 工具" : "A2A tools";
@@ -393,6 +393,7 @@ export global I18n {
     out property <string> rs_queued: zh ? "任务已排队" : "Task queued";
     out property <string> rs_failed: zh ? "执行失败" : "Execution failed";
     out property <string> rs_running: zh ? "正在" : "Running";
+    out property <string> rs_bg_running: zh ? "后台运行" : "Running in the background";
     out property <string> rs_queueing: zh ? "正在排队" : "Queuing";
     out property <string> rs_waiting: zh ? "等待" : "Waiting";
     out property <string> rs_output_ended: zh ? "输出已结束" : "Output finished";
@@ -961,7 +962,7 @@ export global I18n {
     out property <string> stc_models: zh ? "模型设置" : "Models";
     out property <string> stc_models_note: zh ? "模型清单、默认模型与参数" : "Model list, default model and parameters";
     out property <string> stc_tools: zh ? "工具管理" : "Tools";
-    out property <string> stc_mcp: zh ? "MCP 服务" : "MCP servers";
+    out property <string> stc_mcp: zh ? "MCP" : "MCP";
     out property <string> stc_skills: zh ? "技能" : "Skills";
     out property <string> stc_tools_note: zh ? "内置工具、MCP、知识库与资源" : "Built-in tools, MCP, knowledge bases and resources";
     out property <string> stc_agent: zh ? "智能体设置" : "Agent";
@@ -1342,7 +1343,7 @@ export global I18n {
     out property <string> tm_files: zh ? "文件列表" : "Files";
     out property <string> tm_save: zh ? "保存" : "Save";
     out property <string> tm_edit: zh ? "编辑" : "Edit";
-    out property <string> tm_add: zh ? "新建" : "Create";
+    out property <string> tm_add: zh ? "新增" : "Add";
     out property <string> tm_import: zh ? "导入" : "Import";
     out property <string> tm_export: zh ? "导出" : "Export";
     out property <string> tm_upload: zh ? "上传文件" : "Upload file";
@@ -1366,6 +1367,12 @@ export global I18n {
     out property <string> tm_headers_error: zh ? "请求头必须是 JSON 对象" : "Headers must be a JSON object";
     out property <string> tm_struct_preview: zh ? "结构预览" : "Structure preview";
     out property <string> tm_struct_ph: zh ? "填写名称与地址后生成结构预览" : "Enter a name and endpoint to preview the structure";
+    out property <string> tm_mcp_mode_fields: zh ? "逐项填写" : "Fill in fields";
+    out property <string> tm_mcp_mode_paste: zh ? "粘贴配置" : "Paste config";
+    out property <string> tm_mcp_paste: zh ? "粘贴 MCP 配置" : "Paste MCP config";
+    out property <string> tm_mcp_paste_ph: zh ? "粘贴 mcpServers 配置、单个服务器对象或服务器数组" : "Paste an mcpServers config, one server object or an array";
+    out property <string> tm_mcp_paste_hint: zh ? "同名服务器会就地更新；只接受 HTTP / HTTPS 地址，支持 url、transport、headers 等字段。" : "Same-name servers are updated in place. HTTP/HTTPS endpoints only; url, transport and headers are mapped.";
+    out property <string> tm_mcp_import: zh ? "解析并添加" : "Parse and add";
     out property <string> tm_kb_add_title: zh ? "新增知识库" : "Add knowledge base";
     out property <string> tm_kb_edit_title: zh ? "编辑知识库" : "Edit knowledge base";
     out property <string> tm_kb_name_ph: zh ? "请输入名称" : "Enter a name";

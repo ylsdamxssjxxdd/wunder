@@ -30,6 +30,12 @@ export global ToolsDialog {
     in-out property <string> mcp-preview;
     in-out property <string> mcp-headers-error;
     in property <[string]> transport-model: ["auto", "sse", "http", "streamable-http"];
+    // 新增服务器有两种入口：逐项填写，或直接粘贴 JSON 配置（与云端版导入同源）。
+    // 粘贴内容由原生侧解析，界面只负责收集文本与回显错误。
+    in-out property <bool> mcp-paste-mode: false;
+    in-out property <string> mcp-paste;
+    in-out property <string> mcp-paste-error;
+    callback import-mcp-paste();
     callback refresh-mcp-feedback();
     callback save-mcp();
     // 知识库表单入口已从客户端隐藏（知识库工具页不再展示）；
@@ -51,6 +57,9 @@ export global ToolsDialog {
     callback import-skill();
     public function reset-mcp() {
         mcp-new = true;
+        mcp-paste-mode = false;
+        mcp-paste = "";
+        mcp-paste-error = "";
         mcp-previous = "";
         mcp-name = "";
         mcp-display-name = "";
@@ -62,6 +71,9 @@ export global ToolsDialog {
     }
     public function open-mcp-edit(config: McpServerDraft) {
         mcp-new = false;
+        mcp-paste-mode = false;
+        mcp-paste = "";
+        mcp-paste-error = "";
         mcp-previous = config.name;
         mcp-name = config.name;
         mcp-display-name = config.display-name;
@@ -150,6 +162,7 @@ component FormDialog inherits Rectangle {
     in property <length> card-height: 640px;
     in property <bool> dismissable: true;
     in property <bool> save-enabled: true;
+    in property <string> save-label: I18n.tm_save;
     callback dismissed();
     callback saved();
     width: 100%; height: 100%;
@@ -184,7 +197,7 @@ component FormDialog inherits Rectangle {
                 padding-left: 24px; padding-right: 24px; padding-top: 12px; padding-bottom: 16px; spacing: 10px;
                 Rectangle { horizontal-stretch: 1; }
                 ToolButton { width: 76px; label: I18n.common_cancel; show-label: true; clicked => { root.dismissed(); } }
-                ToolButton { width: 76px; label: I18n.tm_save; show-label: true; primary: true; enabled: root.save-enabled; clicked => { root.saved(); } }
+                ToolButton { width: 76px; label: root.save-label; show-label: true; primary: true; enabled: root.save-enabled; clicked => { root.saved(); } }
             }
         }
     }
@@ -259,7 +272,7 @@ export component ToolsPage inherits Rectangle {
                         ToolText { height: 15px; text: root.tab == 1 ? I18n.tm_mcp_tip : I18n.tm_skill_tip; color: Theme.muted; font-size: Theme.font-xs; }
                     }
                     ToolButton { icon: @image-url("../assets/icons/rotate-right.svg"); label: I18n.common_refresh; enabled: !root.loading && !root.working; clicked => { root.refresh(); } }
-                    if root.tab == 1 : ToolButton { icon: @image-url("../assets/icons/plus.svg"); primary: true; label: I18n.tm_add; enabled: !root.working; clicked => { root.open-mcp-dialog(true); } }
+                    if root.tab == 1 : ToolButton { icon: @image-url("../assets/icons/plus.svg"); primary: true; label: I18n.tm_add; show-label: true; enabled: !root.working; clicked => { root.open-mcp-dialog(true); } }
                     if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/lc-upload.svg"); label: I18n.tm_import; enabled: !root.working; clicked => { ToolsDialog.import-skill(); } }
                     if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/lc-download.svg"); label: I18n.tm_export; enabled: root.active && !root.working; clicked => { root.edit("export"); } }
                     if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/trash.svg"); danger: true; label: I18n.common_delete; enabled: root.active && !root.readonly && !root.working; clicked => { root.deleting = true; } }
@@ -429,30 +442,53 @@ export component ToolsPage inherits Rectangle {
         card-width: 640px;
         card-height: 680px;
         dismissable: !root.working;
-        save-enabled: !root.working && ToolsDialog.mcp-name != "" && ToolsDialog.mcp-endpoint != "" && ToolsDialog.mcp-headers-error == "";
+        // 新增时两种入口：逐项填写，或直接粘贴 JSON 配置；编辑只走字段。
+        save-label: ToolsDialog.mcp-paste-mode ? I18n.tm_mcp_import : I18n.tm_save;
+        save-enabled: !root.working && (ToolsDialog.mcp-paste-mode ? ToolsDialog.mcp-paste != "" : ToolsDialog.mcp-name != "" && ToolsDialog.mcp-endpoint != "" && ToolsDialog.mcp-headers-error == "");
         dismissed => { ToolsDialog.mcp-open = false; }
-        saved => { ToolsDialog.save-mcp(); ToolsDialog.mcp-open = false; }
+        saved => {
+            if ToolsDialog.mcp-paste-mode {
+                // 粘贴模式不在这里关窗：解析成功由原生侧关闭并清空输入，
+                // 失败则把错误写回对话框，用户粘贴的内容不丢。
+                ToolsDialog.import-mcp-paste();
+            } else {
+                ToolsDialog.save-mcp();
+                ToolsDialog.mcp-open = false;
+            }
+        }
         ScrollView {
             vertical-stretch: 1;
             horizontal-scrollbar-policy: always-off;
             VerticalLayout { spacing: 14px; alignment: start;
-                FormField { label: I18n.tm_name; placeholder: I18n.tm_unique_name_ph; enabled: !root.working; text <=> ToolsDialog.mcp-name; edited => { ToolsDialog.refresh-mcp-feedback(); } }
-                FormField { label: I18n.tm_display_name; placeholder: I18n.tm_display_name_ph; enabled: !root.working; text <=> ToolsDialog.mcp-display-name; edited => { ToolsDialog.refresh-mcp-feedback(); } }
-                FormField { label: I18n.tm_endpoint; placeholder: "http://127.0.0.1:9000/mcp"; enabled: !root.working; text <=> ToolsDialog.mcp-endpoint; edited => { ToolsDialog.refresh-mcp-feedback(); } }
-                VerticalLayout { spacing: 6px;
-                    FormFieldLabel { text: I18n.tm_transport; }
-                    ComboBox {
-                        height: 34px;
-                        model: ToolsDialog.transport-model;
-                        current-value <=> ToolsDialog.mcp-transport;
-                        enabled: !root.working;
-                        selected => { ToolsDialog.refresh-mcp-feedback(); }
-                    }
+                if ToolsDialog.mcp-new : HorizontalLayout { height: 30px; spacing: 8px;
+                    ToolButton { width: 84px; label: I18n.tm_mcp_mode_fields; show-label: true; primary: !ToolsDialog.mcp-paste-mode; enabled: !root.working; clicked => { ToolsDialog.mcp-paste-mode = false; } }
+                    ToolButton { width: 84px; label: I18n.tm_mcp_mode_paste; show-label: true; primary: ToolsDialog.mcp-paste-mode; enabled: !root.working; clicked => { ToolsDialog.mcp-paste-mode = true; ToolsDialog.mcp-paste-error = ""; } }
+                    Rectangle { horizontal-stretch: 1; }
                 }
-                FormArea { label: I18n.tm_desc; placeholder: I18n.tm_desc_ph; text <=> ToolsDialog.mcp-description; edited => { ToolsDialog.refresh-mcp-feedback(); } }
-                FormArea { label: I18n.tm_headers; placeholder: "{\"Authorization\":\"Bearer ...\"}"; text <=> ToolsDialog.mcp-headers; edited => { ToolsDialog.refresh-mcp-feedback(); } }
-                if ToolsDialog.mcp-headers-error != "" : ToolText { height: 16px; text: ToolsDialog.mcp-headers-error; color: Theme.danger; }
-                FormArea { label: I18n.tm_struct_preview; placeholder: I18n.tm_struct_ph; text <=> ToolsDialog.mcp-preview; read-only: true; height: 150px; }
+                if ToolsDialog.mcp-paste-mode : VerticalLayout { spacing: 8px;
+                    FormArea { label: I18n.tm_mcp_paste; placeholder: I18n.tm_mcp_paste_ph; height: 320px; text <=> ToolsDialog.mcp-paste; }
+                    ToolText { height: 16px; text: I18n.tm_mcp_paste_hint; color: Theme.muted; font-size: Theme.font-xs; }
+                    if ToolsDialog.mcp-paste-error != "" : ToolText { height: 16px; text: ToolsDialog.mcp-paste-error; color: Theme.danger; font-size: Theme.font-xs; }
+                }
+                if !ToolsDialog.mcp-paste-mode : VerticalLayout { spacing: 14px;
+                    FormField { label: I18n.tm_name; placeholder: I18n.tm_unique_name_ph; enabled: !root.working; text <=> ToolsDialog.mcp-name; edited => { ToolsDialog.refresh-mcp-feedback(); } }
+                    FormField { label: I18n.tm_display_name; placeholder: I18n.tm_display_name_ph; enabled: !root.working; text <=> ToolsDialog.mcp-display-name; edited => { ToolsDialog.refresh-mcp-feedback(); } }
+                    FormField { label: I18n.tm_endpoint; placeholder: "http://127.0.0.1:9000/mcp"; enabled: !root.working; text <=> ToolsDialog.mcp-endpoint; edited => { ToolsDialog.refresh-mcp-feedback(); } }
+                    VerticalLayout { spacing: 6px;
+                        FormFieldLabel { text: I18n.tm_transport; }
+                        ComboBox {
+                            height: 34px;
+                            model: ToolsDialog.transport-model;
+                            current-value <=> ToolsDialog.mcp-transport;
+                            enabled: !root.working;
+                            selected => { ToolsDialog.refresh-mcp-feedback(); }
+                        }
+                    }
+                    FormArea { label: I18n.tm_desc; placeholder: I18n.tm_desc_ph; text <=> ToolsDialog.mcp-description; edited => { ToolsDialog.refresh-mcp-feedback(); } }
+                    FormArea { label: I18n.tm_headers; placeholder: "{\"Authorization\":\"Bearer ...\"}"; text <=> ToolsDialog.mcp-headers; edited => { ToolsDialog.refresh-mcp-feedback(); } }
+                    if ToolsDialog.mcp-headers-error != "" : ToolText { height: 16px; text: ToolsDialog.mcp-headers-error; color: Theme.danger; }
+                    FormArea { label: I18n.tm_struct_preview; placeholder: I18n.tm_struct_ph; text <=> ToolsDialog.mcp-preview; read-only: true; height: 150px; }
+                }
             }
         }
     }

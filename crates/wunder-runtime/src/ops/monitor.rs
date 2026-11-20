@@ -1688,6 +1688,16 @@ impl MonitorState {
             .register_with_ancestors(session_id, parent, &durable_ancestors)
     }
 
+    /// 仍有子运行在执行的线程集合（线程状态与目录投影使用）。
+    pub fn running_child_run_parents(&self) -> std::collections::HashSet<String> {
+        self.child_runs.running_parents()
+    }
+
+    /// 该线程是否还有执行中的子运行（含更深层后代）。
+    pub fn has_running_child_runs(&self, session_id: &str) -> bool {
+        self.child_runs.has_running_descendant(session_id)
+    }
+
     pub fn cancel(&self, session_id: &str) -> bool {
         self.cancel_with_source(session_id, "monitor_cancel")
     }

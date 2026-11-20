@@ -4364,10 +4364,13 @@ fn bind_queue(app: &MainWindow, state: Rc<RefCell<State>>) {
 
 // Mutate just the matching thread row. Runtime state must not wait for catalogue polling.
 fn set_session_status(app: &MainWindow, session: &str, status: &str, phase: Phase) {
-    SESSION_STATUSES.with(|slot| slot.borrow_mut().record_local(session, status));
+    // 轮次结束后后台命令/子智能体仍在跑：线程不算完成，改写成运行中并记住
+    // 原终态，后台工作结束后由 thread_background 的定时器恢复。
+    let (status, phase) = crate::thread_background::project_status(session, status, phase);
+    SESSION_STATUSES.with(|slot| slot.borrow_mut().record_local(session, &status));
     // A terminal is a durable outcome, not news that expires. Always write it:
     // an aged-out notice must never swallow the row's own result.
-    write_session_row(app, session, status, phase);
+    write_session_row(app, session, &status, phase);
     // The hot→done completion gate must see every report, including repeated
     // ones, so it sits outside the row-change branch.
     crate::completion_notice::observe_status(app, session, phase);
@@ -4375,6 +4378,30 @@ fn set_session_status(app: &MainWindow, session: &str, status: &str, phase: Phas
         crate::completion_notice::mark_recent_settle(session);
         schedule_settle_decay(app);
     }
+}
+
+/// 后台工作仍在跑时写入运行中状态。不触发完成通知：这不是终态。
+pub(crate) fn publish_background_status(
+    app: &MainWindow,
+    session: &str,
+    status: &str,
+    phase: Phase,
+) {
+    SESSION_STATUSES.with(|slot| slot.borrow_mut().record_local(session, status));
+    write_session_row(app, session, status, phase);
+    crate::completion_notice::observe_status(app, session, phase);
+}
+
+/// 后台工作结束：恢复覆盖前的终态。该终态早已是该线程的结果，不再报一次完成。
+pub(crate) fn restore_thread_status(
+    app: &MainWindow,
+    session: &str,
+    status: &str,
+    phase: Phase,
+    settled_at: f32,
+) {
+    SESSION_STATUSES.with(|slot| slot.borrow_mut().record_local(session, status));
+    write_session_row_settled(app, session, status, phase, Some(settled_at));
 }
 
 /// Report a thread's status as read back from storage. This is an observation,

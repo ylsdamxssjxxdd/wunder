@@ -499,11 +499,18 @@ struct ActiveThreadLease {
 #[derive(Default)]
 struct LiveWork {
     sessions: HashSet<String>,
+    /// 轮次已结束但仍有后台命令或子智能体在跑的线程。它们不算前台在途，
+    /// 但线程状态必须继续显示运行中。
+    background: HashSet<String>,
 }
 
 impl LiveWork {
     fn contains(&self, session_id: &str) -> bool {
         self.sessions.contains(session_id.trim())
+    }
+
+    fn has_background(&self, session_id: &str) -> bool {
+        self.background.contains(session_id.trim())
     }
 }
 
@@ -1442,14 +1449,40 @@ impl NativeDesktop {
     /// 一个用户当前仍在途的线程集合，一次读取覆盖一页目录。规则来自运行时，
     /// 与归档门禁完全一致（存活会话锁、在途任务、本进程执行）。
     fn live_work(&self) -> LiveWork {
+        let state = &self.desktop.state;
+        let user_id = self.desktop.user_id.as_str();
+        let mut background = state
+            .control
+            .command_sessions
+            .running_task_sessions(user_id);
+        background.extend(state.monitor.running_child_run_parents());
         LiveWork {
-            sessions: self
-                .desktop
-                .state
-                .kernel
-                .thread_runtime
-                .live_work_sessions_now(&self.desktop.user_id),
+            sessions: state.kernel.thread_runtime.live_work_sessions_now(user_id),
+            background,
         }
+    }
+
+    /// 仍有后台命令或子智能体在跑的线程集合，供前端状态投影每秒采样。
+    /// 只读内存中的命令会话与子运行，不触碰会话锁/任务台账。
+    pub fn background_work_sessions(&self) -> HashSet<String> {
+        let state = self.state();
+        let mut background = state
+            .control
+            .command_sessions
+            .running_task_sessions(self.user_id());
+        background.extend(state.monitor.running_child_run_parents());
+        background
+    }
+
+    /// 该线程当前是否有后台工作在跑；终态写入时用它决定显示「后台运行中」。
+    pub fn session_has_background_work(&self, session_id: &str) -> bool {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return false;
+        }
+        let state = self.state();
+        state.control.command_sessions.has_running_tasks(session_id)
+            || state.monitor.has_running_child_runs(session_id)
     }
 
     fn session_with_stats(
@@ -1473,7 +1506,7 @@ impl NativeDesktop {
         // 进程的残留。按空闲呈现而不是「已中断」：没有哪一轮是刚刚结束的，
         // 落成终态会在这行上闪一个「刚停止」的记号，等于用另一种假状态替换
         // 原来的假状态。中断本身已经记在线程轮次里，打开线程就能看到。
-        let (runtime_status, runtime_ended_at) = match overview.as_ref() {
+        let (mut runtime_status, mut runtime_ended_at) = match overview.as_ref() {
             Some(stats)
                 if wunder_server::monitor::status_is_live_text(&stats.status)
                     && !live.contains(&record.session_id) =>
@@ -1483,6 +1516,14 @@ impl NativeDesktop {
             Some(stats) => (stats.status.clone(), stats.ended_at.unwrap_or(0.0)),
             None => ("idle".to_string(), 0.0),
         };
+        // 轮次已结束但后台命令/子智能体还在跑：线程没有闲着，继续显示运行中。
+        // 后台工作全部结束后，下一次目录读取会自然回到原来的终态。
+        if live.has_background(&record.session_id)
+            && !wunder_server::monitor::status_is_live_text(&runtime_status)
+        {
+            runtime_status = "后台运行中".to_string();
+            runtime_ended_at = 0.0;
+        }
         let reasoning_effort = self
             .desktop
             .state
@@ -1899,6 +1940,12 @@ impl NativeDesktop {
                 .session_has_live_work(&self.desktop.user_id, session_id),
         ) {
             return Err(anyhow!("线程正在运行，请先停止再归档"));
+        }
+        // Background commands and subagents outlive the turn: the last turn is
+        // done, but the thread still owes work and archiving would cancel it.
+        // The sidebar reads the same rule through the background status.
+        if self.session_has_background_work(session_id) {
+            return Err(anyhow!("线程仍在后台运行，请等待后台任务完成再归档"));
         }
         // Another instance may own the thread; archiving underneath it would
         // leave that process writing into an archived row.

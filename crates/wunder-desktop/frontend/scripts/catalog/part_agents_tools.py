@@ -69,7 +69,7 @@ ENTRIES = [
     ("tl_category", "工具分类", "Category"),
     ("tl_cat_all", "全部工具", "All tools"),
     ("tl_cat_builtin", "内置工具", "Built-in tools"),
-    ("tl_cat_mcp", "MCP 工具", "MCP tools"),
+    ("tl_cat_mcp", "MCP", "MCP"),
     ("tl_cat_user", "用户工具", "User tools"),
     ("tl_cat_shared", "共享工具", "Shared tools"),
     ("tl_cat_a2a", "A2A 工具", "A2A tools"),

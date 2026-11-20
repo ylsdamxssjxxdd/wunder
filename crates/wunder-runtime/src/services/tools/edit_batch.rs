@@ -82,6 +82,19 @@ fn text_field(item: &Value, keys: &[&str]) -> Option<String> {
     })
 }
 
+/// 参数是否真的被使用。
+///
+/// 工具调用侧常把 schema 里的可选项补齐成空串（`old_string: ""`、`new_string: ""`、
+/// 空 `command`），这些默认值不等于「用了另一种编辑形态」；只有真正带内容的键
+/// 才算冲突，否则批量调用永远会被自己的空默认值拦下来。
+fn meaningful(args: &Value, key: &str) -> bool {
+    match args.get(key) {
+        Some(Value::String(text)) => !text.trim().is_empty(),
+        Some(Value::Null) | None => false,
+        Some(_) => true,
+    }
+}
+
 /// 参数校验：`edits` 存在时与其它编辑形态互斥，且每条都必须能定位。
 pub(super) fn validate_batch_args(args: &Value) -> Option<Value> {
     if !batch_requested(args) {
@@ -98,7 +111,18 @@ pub(super) fn validate_batch_args(args: &Value) -> Option<Value> {
         "patch",
     ]
     .into_iter()
-    .filter(|key| args.get(*key).is_some())
+    .filter(|key| {
+        // `command=str_replace` 与「不给 command」是同一个替换形态，批量调用
+        // 常顺手带上它；其余子命令（view/create/insert/undo_edit/redo）仍算冲突。
+        if *key == "command" {
+            return args
+                .get("command")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .is_some_and(|value| !value.eq_ignore_ascii_case("str_replace"));
+        }
+        meaningful(args, key)
+    })
     .collect::<Vec<_>>();
     if !conflicts.is_empty() {
         return Some(invalid(
@@ -421,6 +445,27 @@ mod tests {
 
     fn steps(raw: Value) -> Vec<BatchStep> {
         parse_batch(&json!({ "edits": raw })).expect("valid steps")
+    }
+
+    #[test]
+    fn empty_defaults_do_not_count_as_a_conflicting_form() {
+        // 工具调用侧会把可选项补成空串；批量调用不能被自己的空默认值拦下。
+        let tolerated = json!({
+            "file_path": "a.txt",
+            "old_string": "",
+            "new_string": "",
+            "command": "str_replace",
+            "edits": [{ "old_string": "a", "new_string": "b" }]
+        });
+        assert!(validate_batch_args(&tolerated).is_none());
+        // 真带了另一种形态的内容才拒绝。
+        let conflicting = json!({
+            "file_path": "a.txt",
+            "old_string": "a",
+            "edits": [{ "old_string": "a", "new_string": "b" }]
+        });
+        let failure = validate_batch_args(&conflicting).expect("conflict");
+        assert_eq!(failure["error_meta"]["code"], "TOOL_EDIT_INVALID_ARGS");
     }
 
     #[test]

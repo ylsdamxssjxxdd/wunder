@@ -1,7 +1,7 @@
 //! Active child executions, including runs which have not registered with the monitor yet.
 use anyhow::{bail, Result};
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -120,6 +120,29 @@ impl ChildRuns {
             .is_some_and(|entry| entry.token.is_cancelled())
     }
 
+    /// 仍有子运行在执行的祖先线程。线程状态用它表达「主轮次已结束，但后台
+    /// 子智能体还在跑」；已 settle 的条目（executing=false）不算。
+    pub(crate) fn running_parents(&self) -> HashSet<String> {
+        let entries = self.entries.lock();
+        entries
+            .values()
+            .filter(|entry| entry.executing)
+            .flat_map(|entry| entry.ancestors.iter().cloned())
+            .collect()
+    }
+
+    /// 该线程自己或其下任意一层是否还有执行中的子运行。
+    pub(crate) fn has_running_descendant(&self, session_id: &str) -> bool {
+        let entries = self.entries.lock();
+        entries.values().any(|entry| {
+            entry.executing
+                && entry
+                    .ancestors
+                    .iter()
+                    .any(|ancestor| ancestor == session_id)
+        })
+    }
+
     pub(crate) fn token(&self, session_id: &str) -> Option<CancellationToken> {
         self.entries
             .lock()
@@ -201,6 +224,30 @@ mod tests {
         assert_eq!(registry.cancel_tree("parent"), 1);
         assert!(worker.token.is_cancelled());
         assert!(registry.register("nested", "sibling").is_err());
+    }
+
+    #[test]
+    fn running_parents_track_only_executing_descendants() {
+        let registry = Arc::new(ChildRuns::default());
+        let child = registry.register("child", "parent").unwrap();
+        let nested = registry.register("nested", "child").unwrap();
+        assert!(registry.has_running_descendant("parent"));
+        assert!(registry.has_running_descendant("child"));
+        let parents = registry.running_parents();
+        assert!(parents.contains("parent"));
+        assert!(parents.contains("child"));
+
+        // 更深一层先结束：父线程仍因直接子运行在跑而保持运行中。
+        nested.settle();
+        assert!(!registry.has_running_descendant("child"));
+        assert!(registry.has_running_descendant("parent"));
+        let parents = registry.running_parents();
+        assert_eq!(parents.len(), 1);
+        assert!(parents.contains("parent"));
+
+        drop(child);
+        assert!(!registry.has_running_descendant("parent"));
+        assert!(registry.running_parents().is_empty());
     }
 
     #[test]
