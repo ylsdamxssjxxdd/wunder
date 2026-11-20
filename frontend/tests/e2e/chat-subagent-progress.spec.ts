@@ -11,7 +11,8 @@ test('subagent dock updates from the composer and survives reload', async ({ pag
     status: 'completed', visibility: 'user', revision: 1,
     runtime: { session_id: 'fixture-child', run_id: 'run-a', title: 'Fixture worker',
       status: 'running', terminal: false, can_terminate: true, latest_message: 'Working on fixture',
-      metrics: { child_turn_id: 'fixture-child-turn', tool_calls: 2, account_credits_consumed: 0,
+      started_time: Date.now() / 1000 - 65,
+      metrics: { child_turn_id: 'fixture-child-turn', tool_calls: 2, account_credits_consumed: 7,
         model_request_count: 3, context_tokens: 2048, max_context: 8192 } } };
   service.items.set(item.item_id, item);
   await service.install(page);
@@ -33,15 +34,22 @@ test('subagent dock updates from the composer and survives reload', async ({ pag
     await page.goto(`/app/chat?session_id=${MOCK_SESSION}`);
     const trigger = page.getByTestId('composer-subagents');
     await expect(trigger).toHaveText('1');
+    // 有子智能体在跑时图标点亮。
+    await expect(trigger).toHaveClass(/is-active/);
     await trigger.hover();
     const card = page.locator('.subagent-panel__item');
     await expect(card).toHaveCount(1);
     await expect(card).toContainText('Working on fixture');
-    await expect(card).toContainText('工具 2 次');
-    await expect(card).toContainText('额度 3');
-    await expect(card).not.toContainText('模型请求');
+    // 统计行只留图标与数字：时长 / 额度消耗 / 上下文占比，细节在 title 里。
+    await expect(card.locator('.subagent-panel__stat')).toHaveCount(3);
+    await expect(card).not.toContainText('工具');
+    await expect(card).not.toContainText('额度 ');
+    await expect(card.locator('.subagent-panel__stat').first()).toContainText(/1m \d+s/);
+    await expect(card.locator('.subagent-panel__stat').nth(1)).toContainText('7');
     await expect(card).toContainText('25%');
     await expect(card).toContainText('运行中');
+    const statsHint = await card.locator('.subagent-panel__stat').nth(1).getAttribute('title');
+    expect(statsHint).toContain('模型请求 3');
     await expect.poll(() => service.subscriptions.length).toBeGreaterThan(0);
     item.revision = 2;
     item.runtime.latest_message = 'More fixture progress';
@@ -56,8 +64,6 @@ test('subagent dock updates from the composer and survives reload', async ({ pag
       request.method === 'GET' && String(request.path).endsWith('/subagents')
     ).length).toBeGreaterThan(1);
     await expect(card).toContainText('More fixture progress');
-    await expect(card).toContainText('工具 3 次');
-    await expect(card).toContainText('额度 4');
     await expect(card).toContainText('运行中');
     item.revision = 3;
     item.runtime.latest_message = 'Fixture completed';
@@ -73,21 +79,20 @@ test('subagent dock updates from the composer and survives reload', async ({ pag
       request_id: sub.request, payload: { event: 'thread_change', data: { session_id: MOCK_SESSION, ...change } } }));
     for (let attempt = 0; attempt < 2; attempt++) {
       if (attempt) await page.reload();
+      // 完成后数字仍在（可回看结果），但图标不再点亮。
       await expect(trigger).toHaveText('1');
+      await expect(trigger).not.toHaveClass(/is-active/);
       await trigger.hover();
       await expect(card).toHaveCount(1);
       await expect(card).toContainText('Fixture completed');
-      await expect(card).toContainText('工具 4 次');
-      await expect(card).toContainText('额度 5');
-      await expect(card).not.toContainText('模型请求');
       await expect(card).toContainText('已完成');
+      await expect(card.locator('.subagent-panel__stat')).toHaveCount(3);
       await expect(card.locator('.subagent-panel__stop')).toHaveCount(0);
     }
     await card.click();
     const dialog = page.locator('.subagent-panel__dialog');
     await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText('额度 5');
-    await expect(dialog).not.toContainText('模型请求');
+    await expect(dialog.locator('.subagent-panel__stat')).toHaveCount(3);
     // 子线程运行过程与主时间线同一套块渲染：工具批次折叠条 + 条目行。
     const title = dialog.locator('.timeline-group-title').first();
     await expect(title).toBeVisible();

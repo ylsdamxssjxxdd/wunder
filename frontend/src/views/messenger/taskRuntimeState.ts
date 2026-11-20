@@ -36,6 +36,16 @@ const resolveExplicitTerminalTaskState = (value: unknown): AgentRuntimeState | n
   return status === 'completed' ? 'done' : terminal === 'error' ? 'error' : 'idle';
 };
 
+/**
+ * 最后一轮已经结束但仍拥有后台命令/子智能体的线程没有结算：完成、空闲或
+ * 失败都读作运行中。排队与等待用户本身已说明线程没有结算，保持原判。
+ */
+export const resolveBackgroundTaskState = (
+  state: AgentRuntimeState,
+  backgroundWork: boolean
+): AgentRuntimeState =>
+  backgroundWork && (state === 'done' || state === 'idle' || state === 'error') ? 'running' : state;
+
 export const hasCompletedTaskTurn = (messages: unknown): boolean => {
   if (!Array.isArray(messages) || messages.length === 0) return false;
   let latestUserIndex = -1;

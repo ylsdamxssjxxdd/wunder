@@ -447,6 +447,21 @@ button.tl-entry-head:focus-visible {
   flex-direction: column;
   gap: 8px;
   min-width: 0;
+  /* 展开区复用的结构化/补丁/压缩分区原本长在 MessageToolWorkflow 的深色外壳
+     里，边框与底色全靠那层外壳上的 `--workflow-term-*`。时间线没有那层外壳，
+     `var()` 解析失败会让整条 `border` 声明失效（看图、搜索等条目展开后像一段
+     裸文本）。这里按时间线的浅色令牌补齐基线；外层仍是深色工作流时由它自己的
+     变量覆盖，不受影响。 */
+  --workflow-term-bg: var(--mz-panel, #fbfaf8);
+  --workflow-term-bg-soft: var(--mz-panel, #fbfaf8);
+  --workflow-term-bg-hover: var(--mz-timeline-hover, #f6f5f3);
+  --workflow-term-border: var(--mz-border, #e8e6e3);
+  --workflow-term-border-strong: var(--mz-border-strong, #d8d5d0);
+  --workflow-term-text: var(--mz-text-secondary, #3d3d3d);
+  --workflow-term-muted: var(--mz-text-muted, #8a8f99);
+  --workflow-term-code: var(--mz-text-secondary, #3d3d3d);
+  --workflow-term-scroll-track: transparent;
+  --workflow-term-scroll-thumb: var(--mz-border-strong, #d8d5d0);
 }
 
 .tl-entry-error {

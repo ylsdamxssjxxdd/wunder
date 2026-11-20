@@ -503,6 +503,14 @@ async fn list_sessions(
             }
         }
         let monitor = state.monitor.get_record(&record.session_id);
+        // Background commands and subagents outlive their turn: a settled row
+        // that still owns this work reads as running, exactly as in the
+        // desktop directory.
+        let background = state
+            .control
+            .command_sessions
+            .has_running_tasks(&record.session_id)
+            || state.monitor.has_running_child_runs(&record.session_id);
         // One precedence table for every client: the chat list resolves its wire
         // status from the same signals the local directory uses.
         let runtime_status = StatusSignals {
@@ -517,13 +525,15 @@ async fn list_sessions(
                 .unwrap_or_default(),
             runtime: "",
             running: false,
+            background,
         }
         .runtime_status();
         // The runtime head is the live execution projection. Its transport
         // placeholders ("idle"/"ready"/...) mean "nothing in flight", not
         // "the last turn vanished": keep the durable outcome the signals
         // derived above. Only a head carrying real work or an explicit
-        // outcome may override it.
+        // outcome may override it. Background work outranks a settled head:
+        // the thread still owes work even though its last turn finished.
         let head_status = durable_turn_tails
             .get(&record.session_id)
             .and_then(|tail| tail.runtime_head.as_ref())
@@ -533,7 +543,7 @@ async fn list_sessions(
             head_status.as_str(),
             "" | "idle" | "ready" | "not_loaded" | "paused" | "none"
         );
-        let runtime_status = if head_is_transport {
+        let runtime_status = if head_is_transport || background {
             runtime_status
         } else {
             head_status.as_str()
@@ -548,6 +558,7 @@ async fn list_sessions(
             map.insert("runtime_status".to_string(), json!(runtime_status));
             map.insert("runtimeStatus".to_string(), json!(runtime_status));
             map.insert("thread_status".to_string(), json!(runtime_status));
+            map.insert("background_work".to_string(), json!(background));
         }
         if let Some(usage) = usage_by_session.get(&record.session_id) {
             if let Value::Object(map) = &mut payload {

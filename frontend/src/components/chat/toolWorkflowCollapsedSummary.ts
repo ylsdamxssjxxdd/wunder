@@ -113,6 +113,21 @@ const isWebFetchTool = (toolName: unknown): boolean => {
   return normalized === 'web_fetch' || normalized === 'webfetch' || normalized.includes('web_fetch');
 };
 
+const isBrowserTool = (toolName: unknown): boolean => {
+  const normalized = normalizeToolName(toolName);
+  return normalized === 'browser' ||
+    normalized === 'playwright' ||
+    normalized === '\u6d4f\u89c8\u5668' ||
+    normalized === '\u5185\u7f6e\u6d4f\u89c8\u5668';
+};
+
+// 浏览器只有一个 `action` 参数面：动作词本身说不出「在哪个页面」。
+const BROWSER_ACTION_KEYS = ['action'] as const;
+// 非导航动作的目标：点了哪个元素、输入了什么、按了哪个键、截了哪张图。
+const BROWSER_TARGET_KEYS = ['ref', 'selector', 'text', 'key', 'path', 'cursor', 'value'] as const;
+// 网址是压缩行里最该读全的一部分，给它的上限比其它摘要字段宽一倍。
+const BROWSER_BRIEF_LIMIT = 160;
+
 const compactText = (value: unknown, maxLength = VALUE_LIMIT): string => {
   const normalized = String(value || '').replace(/\s+/g, ' ').trim();
   if (!normalized) return '';
@@ -229,6 +244,42 @@ const basenameOfPath = (value: string): string => {
   return segments.at(-1) || normalized;
 };
 
+/** 结果记录只取有界前缀里的当前页面地址（浏览器每次动作回执都带 `url`）。 */
+const readResultPageUrl = (item: WorkflowItem | null): string => {
+  if (!item) return '';
+  const raw = typeof item.toolResultRawDetail === 'string'
+    ? item.toolResultRawDetail
+    : typeof item.tool_result_raw_detail === 'string'
+      ? item.tool_result_raw_detail
+      : '';
+  return readLightweightField(raw || (typeof item.detail === 'string' ? item.detail : ''), URL_KEYS);
+};
+
+/**
+ * 浏览器工具的折叠摘要：`动作 [目标] · 当前页面`。
+ *
+ * 引擎里浏览器只有一条 `browser` 工具、一个 `action` 参数，行首标签固定是
+ * 「浏览」；摘要如果只写动作词（navigate / click / observe_refs），读者既不知道
+ * 打开了哪个网址，也不知道这一下点在哪一页。navigate、tabs_new 的地址在调用
+ * 参数里；点击、观察、截图等动作的参数里没有网址，用结果回执里的当前页面补上。
+ */
+const buildBrowserBrief = (entry: RawToolRun): string => {
+  // 调用参数可能落在调用记录的原始详情里，也可能随结果记录一起持久化；
+  // 两者都只按关键字取有界前缀，不解析整份结果。
+  const callDetail = typeof entry.callItem?.detail === 'string' ? entry.callItem.detail : '';
+  const callParam = (keys: readonly string[]): string =>
+    readCallSideParam(entry.callItem, keys) ||
+    readCallSideParam(entry.resultItem, keys) ||
+    readLightweightField(callDetail, keys);
+  const action = callParam(BROWSER_ACTION_KEYS);
+  const callUrl = callParam(URL_KEYS);
+  const target = callUrl || callParam(BROWSER_TARGET_KEYS);
+  const pageUrl = callUrl || readResultPageUrl(entry.resultItem);
+  const lead = [action, target].filter(Boolean).join(' ');
+  if (!lead) return pageUrl;
+  return pageUrl && pageUrl !== target ? `${lead} · ${pageUrl}` : lead;
+};
+
 // Collapsed rows intentionally inspect only a bounded prefix of raw payloads.
 // Full JSON parsing and result formatting remain an explicit expand-time cost.
 export const buildCollapsedToolWorkflowSummary = (
@@ -253,6 +304,8 @@ export const buildCollapsedToolWorkflowSummary = (
       readEntryField([entry.callItem], QUERY_KEYS) ||
       readCallSideParam(entry.resultItem, URL_KEYS) ||
       readCallSideParam(entry.resultItem, QUERY_KEYS);
+  } else if (isBrowserTool(entry.toolName)) {
+    brief = buildBrowserBrief(entry);
   } else if (isSkillCallTool(entry.toolName)) {
     // `name` 同时是 WorkflowItem 的工具名字段，只能从调用参数 JSON 里读；
     // 兜底只认 skill_name/skillName，绝不回落到 path（那永远是 SKILL.md）。
@@ -295,7 +348,8 @@ export const buildCollapsedToolWorkflowSummary = (
       compactPath(readCallSideParam(entry.resultItem, PATH_KEYS)) ||
       readCallSideParam(entry.resultItem, QUERY_KEYS);
   }
-  brief = compactText(brief);
+  // 网址被拦腰截断就失去意义：浏览器摘要给更宽的上限，其余工具保持原样。
+  brief = compactText(brief, isBrowserTool(entry.toolName) ? BROWSER_BRIEF_LIMIT : VALUE_LIMIT);
   return {
     title: brief ? `${toolLabel} ${brief}` : toolLabel,
     brief

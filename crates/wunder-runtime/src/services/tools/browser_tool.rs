@@ -21,6 +21,8 @@ use std::sync::OnceLock;
 
 /// 截图落点：工作区里唯一的 `temp/` 目录下的 `browser/screenshots/`，
 /// 与 `temp/chat_media/` 同属运行时中间产物，不散落到工作区根上。
+/// 默认文件名是 `browser_shot_<序号>.<ext>`（按目录里的下一个序号），
+/// 调用方传 `path` 则完全由自己命名。
 const BROWSER_SCREENSHOT_DIR: &str = "temp/browser/screenshots";
 const MAX_MODEL_SCREENSHOT_BYTES: usize = 8 * 1024 * 1024;
 const MODEL_SCREENSHOT_MAX_WIDTH: u32 = 1280;
@@ -312,22 +314,26 @@ fn persist_image_blocks(context: &ToolContext<'_>, args: &Value, value: &mut Val
         } else {
             None
         };
-        let relative = requested.unwrap_or_else(|| {
-            format!(
-                "{BROWSER_SCREENSHOT_DIR}/browser_shot_{}.{extension}",
-                uuid::Uuid::new_v4().simple()
-            )
-        });
-        let relative = ensure_extension(relative, extension);
-        let target = context
-            .workspace
-            .resolve_path(context.workspace_id, &relative)?;
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|err| anyhow!("Create browser screenshot directory failed: {err}"))?;
-        }
-        std::fs::write(&target, &bytes)
-            .map_err(|err| anyhow!("Write browser screenshot to workspace failed: {err}"))?;
+        // 调用方给了 path 就照它写；没给就按目录里的下一个序号落盘，
+        // 名字是人能读、能排序、能直接引用的（见 `write_numbered_screenshot`）。
+        let (relative, target) = match requested {
+            Some(path) => {
+                let relative = ensure_extension(path, extension);
+                let target = context
+                    .workspace
+                    .resolve_path(context.workspace_id, &relative)?;
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent).map_err(|err| {
+                        anyhow!("Create browser screenshot directory failed: {err}")
+                    })?;
+                }
+                std::fs::write(&target, &bytes).map_err(|err| {
+                    anyhow!("Write browser screenshot to workspace failed: {err}")
+                })?;
+                (relative, target)
+            }
+            None => write_numbered_screenshot(context, &bytes, extension)?,
+        };
         context.workspace.mark_tree_dirty(context.workspace_id);
 
         let normalized = relative.replace('\\', "/");
@@ -459,13 +465,101 @@ fn ensure_png_extension(path: String) -> String {
     ensure_extension(path, "png")
 }
 
+/// 默认截图名的序号：目录里 `browser_shot_<n>.<ext>` 的最大 n + 1。
+/// 老会话留下的 UUID 名不参与编号，也不影响排序。
+fn next_screenshot_index(directory: &std::path::Path) -> u32 {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return 1;
+    };
+    let mut max = 0u32;
+    for entry in entries.flatten().take(4096) {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(rest) = name.strip_prefix("browser_shot_") else {
+            continue;
+        };
+        let stem = rest.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(rest);
+        if let Ok(index) = stem.parse::<u32>() {
+            max = max.max(index);
+        }
+    }
+    max.saturating_add(1)
+}
+
+/// 未指定 `path` 时落盘为 `browser_shot_1.png`、`browser_shot_2.png`……
+/// 随机 UUID 名读不出是第几张，也没法口头引用；序号名排序即拍摄顺序，
+/// 一句「第 3 张」就能说清。并发写同一编号时 `create_new` 只让一个成功，
+/// 另一个继续往后取号，所以永不覆盖既有截图。
+fn write_numbered_screenshot(
+    context: &ToolContext<'_>,
+    bytes: &[u8],
+    extension: &str,
+) -> Result<(String, std::path::PathBuf)> {
+    let directory = context
+        .workspace
+        .resolve_path(context.workspace_id, BROWSER_SCREENSHOT_DIR)?;
+    std::fs::create_dir_all(&directory)
+        .map_err(|err| anyhow!("Create browser screenshot directory failed: {}", err))?;
+    let mut index = next_screenshot_index(&directory);
+    for _ in 0..32u32 {
+        let name = format!("browser_shot_{}.{}", index, extension);
+        let target = directory.join(&name);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&target)
+        {
+            Ok(mut file) => {
+                std::io::Write::write_all(&mut file, bytes).map_err(|err| {
+                    anyhow!("Write browser screenshot to workspace failed: {}", err)
+                })?;
+                return Ok((format!("{}/{}", BROWSER_SCREENSHOT_DIR, name), target));
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                index = index.saturating_add(1);
+            }
+            Err(err) => {
+                return Err(anyhow!(
+                    "Write browser screenshot to workspace failed: {}",
+                    err
+                ))
+            }
+        }
+    }
+    Err(anyhow!(
+        "Write browser screenshot to workspace failed: no free file name"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         browser_tool_names, ensure_png_extension, is_browser_group_name, is_browser_tool_name,
-        BROWSER_GROUP_NAME,
+        next_screenshot_index, BROWSER_GROUP_NAME,
     };
     use serde_json::json;
+
+    #[test]
+    fn screenshot_names_continue_the_directory_numbering() {
+        let directory = std::env::temp_dir().join(format!(
+            "wunder-browser-shot-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&directory).expect("create fixture dir");
+        // 空目录从 1 开始。
+        assert_eq!(next_screenshot_index(&directory), 1);
+        for name in [
+            "browser_shot_1.png",
+            "browser_shot_7.jpg",
+            // 老会话的 UUID 名不参与编号，也不能把序号判成 32 位数字。
+            "browser_shot_9c5f6f0d5f1e4a0f8d3f0e7c9b2a5d10.png",
+            "screenshot.png",
+        ] {
+            std::fs::write(directory.join(name), b"fixture").expect("write fixture");
+        }
+        assert_eq!(next_screenshot_index(&directory), 8);
+        let _ = std::fs::remove_dir_all(&directory);
+    }
     #[test]
     fn ensure_png_extension_adds_default_only_when_missing() {
         assert_eq!(

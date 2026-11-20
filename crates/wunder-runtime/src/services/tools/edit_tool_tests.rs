@@ -589,3 +589,54 @@ async fn tolerant_match_names_the_tier_it_used() {
     assert!(result["data"]["match_note"].is_string());
     assert_eq!(fixture.read("sample.txt"), "fn main() {\n    stop();\n}\n");
 }
+
+#[tokio::test]
+async fn range_edit_follows_its_anchor_when_line_numbers_drifted() {
+    let fixture = Fixture::new();
+    fixture.write("sample.txt", "alpha\nbeta\ngamma\ndelta\n");
+    // 模型记的是「delta 在第 3 行」，实际已在第 4 行：靠 anchor 纠正而不是报错。
+    let result = fixture
+        .call(json!({
+            "file_path": "sample.txt",
+            "start_line": 3,
+            "end_line": 3,
+            "anchor": "delta",
+            "new_string": "DELTA"
+        }))
+        .await;
+    assert_ok(&result);
+    assert_eq!(result["data"]["range"], json!([4, 4]));
+    assert_eq!(result["data"]["range_shift"], json!(1));
+    assert_eq!(fixture.read("sample.txt"), "alpha\nbeta\ngamma\nDELTA\n");
+}
+
+#[tokio::test]
+async fn range_edit_rejects_unknown_or_ambiguous_anchor() {
+    let fixture = Fixture::new();
+    fixture.write("sample.txt", "alpha\nbeta\nalpha\n");
+    let before = fixture.read("sample.txt");
+    let missing = fixture
+        .call(json!({
+            "file_path": "sample.txt",
+            "start_line": 1,
+            "end_line": 1,
+            "anchor": "nowhere",
+            "new_string": "x"
+        }))
+        .await;
+    assert_eq!(missing["error_meta"]["code"], "TOOL_EDIT_ANCHOR_MISSING");
+    let ambiguous = fixture
+        .call(json!({
+            "file_path": "sample.txt",
+            "start_line": 1,
+            "end_line": 1,
+            "anchor": "alpha",
+            "new_string": "x"
+        }))
+        .await;
+    assert_eq!(
+        ambiguous["error_meta"]["code"],
+        "TOOL_EDIT_ANCHOR_NOT_UNIQUE"
+    );
+    assert_eq!(fixture.read("sample.txt"), before);
+}

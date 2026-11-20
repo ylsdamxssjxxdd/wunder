@@ -2674,6 +2674,8 @@ fn match_tier_and_batch_report_survive_the_projection() {
             "edits_applied": 2,
             "edits_missed": 1,
             "partial": true,
+            "range": [12, 14],
+            "range_shift": 2,
             "receipt": "file: temp/sketch.rs (2 lines, 24 B, sha256: 9f3a1c2d4e5f)"
         }
     }))
@@ -2683,6 +2685,8 @@ fn match_tier_and_batch_report_survive_the_projection() {
     assert_eq!(projected["edits_applied"], json!(2));
     assert_eq!(projected["edits_missed"], json!(1));
     assert_eq!(projected["partial"], json!(true));
+    assert_eq!(projected["range_shift"], json!(2));
+    assert_eq!(projected["range"], json!([12, 14]));
     assert_eq!(
         projected["edits"].as_array().expect("step reports").len(),
         2

@@ -3360,12 +3360,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lz4_flex"
-version = "0.11.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "373f5eceeeab7925e0c1098212f2fbc4d416adec9d35051a6ab251e824c1854a"
-
-[[package]]
 name = "mac"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7644,7 +7638,6 @@ dependencies = [
  "jni 0.21.1",
  "jni 0.22.4",
  "log",
- "lz4_flex",
  "ndk-context",
  "pulldown-cmark 0.10.3",
  "rustls-platform-verifier",

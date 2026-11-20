@@ -61,6 +61,48 @@ fn short_hash_suffix(value: &str) -> String {
     hash.chars().take(6).collect()
 }
 
+/// 冻结快照必须存运行时名：MCP 工具对模型暴露 display name（如 `lookup`），
+/// 但允许集、执行与存储都用 `server@lookup`。若快照把 display name 当 id，
+/// 下一轮与允许集求交时整个 MCP 工具面都会被滤掉。
+pub fn tool_specs_with_runtime_names(config: &Config, specs: Vec<ToolSpec>) -> Vec<ToolSpec> {
+    let lookup: HashMap<String, String> = build_mcp_tool_alias_entries(config)
+        .into_iter()
+        .map(|entry| (entry.display_name, entry.runtime_name))
+        .collect();
+    if lookup.is_empty() {
+        return specs;
+    }
+    specs
+        .into_iter()
+        .map(|mut spec| {
+            if let Some(runtime) = lookup.get(&spec.name) {
+                if runtime != &spec.name {
+                    spec.name = runtime.clone();
+                }
+            }
+            spec
+        })
+        .collect()
+}
+
+/// 旧线程快照可能把 MCP display name 当成 id；加载时映射回运行时名，
+/// 只改标识、不改变工具集合，不会把已经收回的权限重新放出来。
+pub fn normalize_frozen_tool_ids(config: &Config, ids: &[String]) -> Vec<String> {
+    let lookup: HashMap<String, String> = build_mcp_tool_alias_entries(config)
+        .into_iter()
+        .map(|entry| (entry.display_name, entry.runtime_name))
+        .collect();
+    if lookup.is_empty() {
+        return ids.to_vec();
+    }
+    let mut seen = HashSet::new();
+    ids.iter()
+        .filter(|id| !id.trim().is_empty())
+        .map(|id| lookup.get(id).cloned().unwrap_or_else(|| id.clone()))
+        .filter(|id| seen.insert(id.clone()))
+        .collect()
+}
+
 fn build_mcp_tool_alias_entries_from_raw(
     raw_entries: Vec<(String, String, String, Option<String>)>,
 ) -> Vec<McpToolAliasEntry> {
@@ -1000,6 +1042,9 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .optional(),
                 super::schema::integer("end_line")
                     .desc(t("tool.spec.text_edit.args.end_line"))
+                    .optional(),
+                super::schema::string("anchor")
+                    .desc(t("tool.spec.text_edit.args.anchor"))
                     .optional(),
                 super::schema::string("command")
                     .desc(t("tool.spec.text_edit.args.command"))
@@ -2403,6 +2448,50 @@ mod tests {
     use crate::user_tools::{UserToolAlias, UserToolBindings, UserToolKind};
     use serde_json::json;
     use std::path::PathBuf;
+
+    /// 线程冻结快照必须存运行时名（`server@tool`），不能存给模型看的
+    /// display name；否则第二轮按冻结集求交时 MCP 工具会全部消失。
+    #[test]
+    fn frozen_snapshot_keeps_mcp_runtime_names() {
+        let mut config = Config::default();
+        config.mcp.servers.push(McpServerConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            tool_specs: vec![McpToolSpec {
+                name: "lookup".to_string(),
+                description: "demo lookup".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        let allowed: std::collections::HashSet<String> =
+            ["demo@lookup".to_string()].into_iter().collect();
+        let specs = collect_prompt_tool_specs_with_language(
+            &config,
+            &crate::skills::SkillRegistry::default(),
+            &allowed,
+            None,
+            "en-US",
+        );
+        assert_eq!(specs.len(), 1);
+        let specs = crate::tools::tool_specs_with_runtime_names(&config, specs);
+        let snapshot = crate::tools::tool_profile_snapshot_for_profile(
+            &specs,
+            crate::tools::ToolProfile::Authorized,
+        );
+        let filtered =
+            crate::tools::filter_tool_names_by_frozen_ids(allowed.clone(), &snapshot.tool_ids);
+        assert!(
+            filtered.contains("demo@lookup"),
+            "snapshot ids: {:?}",
+            snapshot.tool_ids
+        );
+        // 旧线程存的是 display name，加载时应就地修回运行时名。
+        assert_eq!(
+            crate::tools::normalize_frozen_tool_ids(&config, &["lookup".to_string()]),
+            vec!["demo@lookup".to_string()]
+        );
+    }
 
     /// Baseline for the fixed cost of the tool catalogue on every first turn.
     /// Each tool contributes its full name + description + arguments JSON to

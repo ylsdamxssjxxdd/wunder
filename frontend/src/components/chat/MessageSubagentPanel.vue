@@ -29,10 +29,17 @@
             </span>
           </div>
           <div class="subagent-panel__summary">{{ latestPreview(item) || '等待消息…' }}</div>
-          <div class="subagent-panel__detail-line">
-            <span>工具 {{ metric(item, 'tool_calls') }} 次</span>
-            <span>额度 {{ metric(item, 'model_request_count') }}</span>
-            <span>上下文 {{ contextUsage(item) }}</span>
+          <!-- 与气泡底部同一套统计图标：时长 / 额度 / 上下文，只留图标与数字，细节放 title。 -->
+          <div class="subagent-panel__stats">
+            <span class="subagent-panel__stat" :title="'运行时长 ' + durationText(item)">
+              <i class="fa-solid fa-stopwatch" aria-hidden="true"></i><span>{{ durationText(item) }}</span>
+            </span>
+            <span class="subagent-panel__stat" :title="creditsHint(item)">
+              <i class="fa-solid fa-coins" aria-hidden="true"></i><span>{{ creditsText(item) }}</span>
+            </span>
+            <span class="subagent-panel__stat" :title="contextHint(item)">
+              <i class="fa-solid fa-layer-group" aria-hidden="true"></i><span>{{ contextText(item) }}</span>
+            </span>
           </div>
         </div>
         <div class="subagent-panel__item-actions" @click.stop>
@@ -65,10 +72,16 @@
             {{ statusText(activeItem.status, activeItem) }}
           </span>
         </div>
-        <div class="subagent-panel__detail-line">
-          <span>工具 {{ metric(activeItem, 'tool_calls') }} 次</span>
-          <span>额度 {{ metric(activeItem, 'model_request_count') }}</span>
-          <span>上下文 {{ contextUsage(activeItem) }}</span>
+        <div class="subagent-panel__stats">
+          <span class="subagent-panel__stat" :title="'运行时长 ' + durationText(activeItem)">
+            <i class="fa-solid fa-stopwatch" aria-hidden="true"></i><span>{{ durationText(activeItem) }}</span>
+          </span>
+          <span class="subagent-panel__stat" :title="creditsHint(activeItem)">
+            <i class="fa-solid fa-coins" aria-hidden="true"></i><span>{{ creditsText(activeItem) }}</span>
+          </span>
+          <span class="subagent-panel__stat" :title="contextHint(activeItem)">
+            <i class="fa-solid fa-layer-group" aria-hidden="true"></i><span>{{ contextText(activeItem) }}</span>
+          </span>
         </div>
         <div class="subagent-detail__timeline">
           <SubagentRunDetail v-if="detailVisible && activeItem.session_id"
@@ -81,7 +94,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { formatCompactCount } from '@/utils/compactNumber';
+import { normalizeChatTimestampMs } from '@/utils/chatTiming';
+import { formatDurationSeconds } from '@/utils/messageStats';
 import { useChatStore } from '@/stores/chat';
 import SubagentRunDetail from './SubagentRunDetail.vue';
 import {
@@ -130,6 +146,23 @@ const items = computed<SubagentPanelItem[]>(() =>
 );
 
 const visible = computed(() => items.value.length > 0);
+
+/* 运行中的条目要按秒刷新时长；没有在跑的条目就不再挂定时器。 */
+const nowMs = ref(Date.now());
+let clockTimer: number | null = null;
+const syncClock = () => {
+  const live = items.value.some((item) => isSubagentItemActive(item));
+  if (live && clockTimer === null) {
+    clockTimer = window.setInterval(() => { nowMs.value = Date.now(); }, 1000);
+  } else if (!live && clockTimer !== null) {
+    window.clearInterval(clockTimer);
+    clockTimer = null;
+  }
+};
+watch(items, syncClock, { immediate: true });
+onBeforeUnmount(() => {
+  if (clockTimer !== null) window.clearInterval(clockTimer);
+});
 
 const runningTotal = computed(() => items.value.filter((item) => isSubagentItemActive(item)).length);
 
@@ -187,13 +220,73 @@ const metric = (item: SubagentPanelItem, key: string): string => {
     ? value.toLocaleString() : '--';
 };
 
-const contextUsage = (item: SubagentPanelItem): string => {
-  const metrics = item.metrics as Record<string, unknown> | undefined;
-  const current = metric(item, 'context_tokens');
-  const limit = metrics?.max_context;
-  return typeof limit === 'number' && limit > 0 && typeof metrics?.context_tokens === 'number'
-    ? `${current} / ${limit.toLocaleString()} Token (${Math.round(metrics.context_tokens / limit * 100)}%)`
-    : `${current} Token`;
+const numericMetric = (item: SubagentPanelItem, key: string): number | null => {
+  const metrics = (item.metrics ?? resolveItemDetail(item).metrics) as Record<string, unknown> | undefined;
+  const value = Number(metrics?.[key]);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+};
+
+/**
+ * 时间戳在子智能体条目里有多种落点（detail 里的 started_at/started_time，
+ * 或 runtime 展开后的顶层字段），这里统一挑第一个能解析的墙钟时间。
+ */
+const subagentTimestampMs = (item: SubagentPanelItem, ...keys: string[]): number | null => {
+  const detail = resolveItemDetail(item);
+  for (const key of keys) {
+    for (const source of [detail, item as Record<string, unknown>]) {
+      const raw = source?.[key];
+      if (raw === undefined || raw === null || raw === '') continue;
+      const parsed = normalizeChatTimestampMs(raw);
+      if (parsed !== null) return parsed;
+    }
+  }
+  return null;
+};
+
+/** 运行时长：在跑的按开始时间实时推算，已结束用 elapsed_s 或结束-开始。 */
+const durationSeconds = (item: SubagentPanelItem): number | null => {
+  const detail = resolveItemDetail(item);
+  const elapsed = Number(detail.elapsed_s);
+  const started = subagentTimestampMs(item, 'started_at', 'started_time', 'queued_at', 'queued_time')
+    ?? subagentTimestampMs(item, 'updated_at');
+  if (isSubagentItemActive(item)) {
+    if (started !== null) return Math.max(0, (nowMs.value - started) / 1000);
+    return Number.isFinite(elapsed) && elapsed >= 0 ? elapsed : null;
+  }
+  const finished = subagentTimestampMs(item, 'finished_at', 'finished_time');
+  if (started !== null && finished !== null && finished >= started) {
+    return (finished - started) / 1000;
+  }
+  return Number.isFinite(elapsed) && elapsed >= 0 ? elapsed : null;
+};
+
+const durationText = (item: SubagentPanelItem): string => {
+  const seconds = durationSeconds(item);
+  return seconds === null ? '--' : formatDurationSeconds(seconds);
+};
+
+const creditsText = (item: SubagentPanelItem): string =>
+  formatCompactCount(numericMetric(item, 'account_credits_consumed'));
+
+const creditsHint = (item: SubagentPanelItem): string =>
+  '额度消耗 ' + creditsText(item) + ' · 模型请求 ' + metric(item, 'model_request_count')
+  + ' 次 · 工具 ' + metric(item, 'tool_calls') + ' 次';
+
+const contextText = (item: SubagentPanelItem): string => {
+  const tokens = numericMetric(item, 'context_tokens');
+  const limit = numericMetric(item, 'max_context');
+  if (tokens === null) return '--';
+  if (limit !== null && limit > 0) return Math.round((tokens / limit) * 100) + '%';
+  return formatCompactCount(tokens);
+};
+
+const contextHint = (item: SubagentPanelItem): string => {
+  const tokens = numericMetric(item, 'context_tokens');
+  const limit = numericMetric(item, 'max_context');
+  if (tokens === null) return '上下文占用 --';
+  const left = formatCompactCount(tokens);
+  const right = limit !== null && limit > 0 ? formatCompactCount(limit) : null;
+  return '上下文占用 ' + (right ? left + ' / ' + right + ' Token' : left + ' Token');
 };
 
 const childTurnId = (item: SubagentPanelItem): string =>
@@ -316,13 +409,35 @@ const terminate = async (item: SubagentPanelItem) => {
   color: var(--chat-text-muted, #8a92a2);
 }
 
-.subagent-panel__detail-line {
+/* 统计行：与气泡底部同一套图标（耗时 / 额度 / 上下文），只留图标与数字。 */
+.subagent-panel__stats {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 3px;
-  font-size: 10px;
+  gap: 4px 10px;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.5;
   color: var(--chat-text-muted, #8a92a2);
+}
+
+.subagent-panel__stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.subagent-panel__stat i {
+  flex: 0 0 12px;
+  width: 12px;
+  font-size: 10px;
+  line-height: 1;
+  text-align: center;
+  opacity: 0.9;
+}
+
+.subagent-panel__stat span {
+  color: var(--chat-text, #2f2f2f);
 }
 
 .subagent-panel__item-actions {
@@ -439,7 +554,8 @@ const terminate = async (item: SubagentPanelItem) => {
   word-break: break-word;
 }
 
-.subagent-panel__dialog .subagent-panel__detail-line {
+.subagent-panel__dialog .subagent-panel__stats {
+  gap: 14px;
   margin-top: 8px;
   font-size: 12px;
   color: var(--chat-muted);

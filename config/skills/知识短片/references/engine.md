@@ -37,6 +37,7 @@ python engine/render.py <工程> --det [样本数]            # 确定性自检�
 python engine/render.py <工程> --lint                   # END/FPS/字体/音效/meta/分镜表/Math.random 检查
 python engine/render.py <工程> --storyboard             # 分镜表时间列 vs film.js 的 SHOTS 逐镜核对
 python engine/render.py <工程> --check-safe             # 包围盒 + 像素：非字幕内容越过 y=840 的时段
+python engine/render.py <工程> --check-safe --fast      # 检查类命令通用：间隔翻倍、帧数减半（先粗查再精查）
 python engine/render.py <工程> --check-band             # 只做像素检查（手写 ctx / 柔边渐变也查）
 python engine/render.py <工程> --check-band --band-strict # 连 bloom/辉光一起查（更严，容易误报贴地光晕）
 python engine/render.py <工程> --overlap                # 命名元素实际相交面积（可用 allow 放行）
@@ -44,7 +45,7 @@ python engine/render.py <工程>                          # 全片 → renders/r
 python engine/render.py <工程> --jobs 4                 # 按镜头切段，最多 4 路并行渲再无损拼接
 python engine/render.py <工程> --only 3                 # 只重渲第 3 镜，再拼全部已完成分段
 python engine/render.py <工程> --parts 0:12 12:30       # 没有 SHOTS 时手动指定分段边界
-python engine/render.py <工程> --concat                 # 拼接 renders/_part*.mp4（默认保留分段）
+python engine/render.py <工程> --concat                 # 拼接 renders/_parts/_part*.mp4（默认保留分段）
 python engine/render.py <工程> --clean-parts            # 拼接成功后删分段（默认保留）
 python engine/render.py <工程> --web                    # 发布转码 → renders/web.mp4（打印体积/码率）
 python engine/render.py --diff A.mp4 B.mp4              # 两版逐帧差分 → A_diff.jpg + 时刻表
@@ -58,12 +59,12 @@ python engine/audio.py  <工程> --bgm 曲子.mp3 -8        # 垫现成配乐（
 `--help`（或 `-h`）任何时候都只打印用法就退出，不读工程、不渲染；写错的开关、少了下文的开关（如只给 `--mark` 不给 `--stills`）会打印「参数有误」并退 2，不会落到「渲整片」的默认分支。
 
 `--jobs` 每段由子进程自己写 `.done` 标记（工程源码指纹 + 分段区间），父进程被杀时已渲完的段仍然有效；
-默认续渲只跳过指纹一致且非空的分段，`--fresh` 强制全部重渲。分段默认保留，方便改一镜只重渲一镜；
-`--clean-parts` 才删。旧版遗留的分段没有 `.done` 标记，确认完整后可以用 `--concat --force` 强行拼接。
+默认续渲只跳过指纹一致且非空的分段，`--fresh` 强制全部重渲。分段、日志和 `.done` 都在 `renders/_parts/`（旧工程重跑时自动搬进去），
+`renders/` 根下只留成片；分段默认保留，方便改一镜只重渲一镜，合片成功后脚本会提示可加 `--clean-parts` 清理。
 `--only 3` / `--only 开场` / `--only 26.4:29.1` 只重渲选中段，其余分段保留并自动重拼；第一次用 `--only` 前先跑一次 `--jobs` 把全部分段铺出来。
 `--jobs` 接受 `--jobs 4` 和 `--jobs=4`，不写时按 CPU 核数（最多 4）决定并发；日志里的「渲染 1/N 段」表示其余分段命中 `.done` 被复用，不是并行失效。
 film.js 的 SHOTS 时间窗允许重叠（交叉淡入淡出）；分段时按下一镜起点切分，每镜只保留自己的主区间，不会把重叠镜头合并成一个超长段，`--only 镜号/名字` 因此始终按镜生效。
-日志与临时文件放工程目录（`renders/_part*.log`），不要放 `/tmp`：容器重启会清空 `/tmp` 并终止后台进程，只有工程里的 `.done` 分段能续渲。
+日志与临时文件放工程目录（`renders/_parts/_part*.log`），不要放 `/tmp`：容器重启会清空 `/tmp` 并终止后台进程，只有工程里的 `.done` 分段能续渲。
 `--check-safe` 的像素检查会隐藏字幕，把「实心内容帧」和「底 + look.under + 后期」的纯背景帧相减：
 背景（包括 B 的整幅插画、`look.under` 里的天空/地面）两边都有，不算越界。实心内容帧会跳过 bloom、
 `fr.glow/spark/comet/flash` 和柔边，只留实心几何与文字——**辉光漫进字幕带不算装置越界**，
@@ -71,11 +72,15 @@ film.js 的 SHOTS 时间窗允许重叠（交叉淡入淡出）；分段时按�
 flat（B）整幅场景都在前景层，默认跳过像素检查；包围盒也只检查 `fr.mark` 命名的装置，未命名图元视为插画背景，
 不会因为插画/字幕底压到 y>840 就误报。
 越界时报告会写出差异 bbox 和附近的命名元素（没有名字就提示可能是手写 ctx/未 `fr.mark`）。
-阈值可用 `--band-diff`（像素差，默认 10）和 `--band-ratio`（面积占比，默认 0.2%）调；默认每 0.5 秒采样一次。
+阈值可用 `--band-diff`（像素差，默认 10）和 `--band-ratio`（面积占比，默认 0.2%）调；默认每 0.5 秒采样一次，
+`--fast` 改为 1 秒（`--overlap` 为 2 秒）。三个检查命令都和渲染共用 `renders/.render.lock`，开跑先打印采样计划与预计耗时，
+每完成约 1/5 打印已用/剩余，看到 ETA 不要重复启动或杀进程。
 
 渲染速度单路约每秒 3–6 帧（1080p，截 PNG），`--jobs 4` 四路真并行（按 CPU 核数和内存调，每路约 0.5–1 GB）。3 分钟的片子仍然要十几分钟——所以先看拼图，再渲片段，最后才渲全片。
-**看图不要靠猜，也别绕浏览器。** `review/` 下的 `s_*.png`、`sheet.jpg`、`m_*.png`、`motion_*.jpg`、`band_*.png`
-直接用读图工具按路径看，不需要 `--serve`，也不需要 `file://`。局部放大用读图工具的 `crop` + `scale`，不要用 PIL 裁切存图绕圈。
+**看图不要靠猜，也别绕浏览器。** 截图/检查命令收尾会自动写 `review/index.html`：缩略图网格、按时间倒序、每 5 秒刷新；
+`--serve` 把它挂在 `http://127.0.0.1:8765/review/index.html`，浏览器开一次就能持续看新图，不要每轮手写 HTML。单张
+`review/*.png` / `*.jpg` 直接用读图工具 `read_image` 按路径看，不需要 `--serve`，也不需要 `file://`（工具名就是 `read_image`，
+不要写成 view_image / open_image）。局部放大用读图工具的 `crop` + `scale`，不要用 PIL 裁切存图绕圈。
 `--serve` 只在需要交互播放时用：`?play` 实时播，`?t=41` 冻结在 41 秒；`?t=` 优先于 `?play`。
 页面有加载层和错误层：字体加载慢会显示提示，JS 报错/脚本 404 会把错误和堆栈画在页面上，不再只是一片黑；
 自动化也可以等 `window.READY`、读 `window.__vkState`，或调 `await window.__vkSeek(41)` 等两帧合成完成。
@@ -84,8 +89,8 @@ ARM 服务器上单路截帧受单核性能限制，长片优先用 `--jobs`；�
 命令工具的前台等待到 `timeout_s` 时不会杀渲染，而是把它转入后台命令会话继续跑并返回 `command_session_id`；
 看到 `reason: timeout_escalated` 就先轮询会话（带回 `after_seq` 只取新输出），不要重跑。分段渲染中断后，已完成段带 `.done` 标记，
 重跑 `--jobs 4` 默认续渲，或 `--concat` 直接拼接。
-同一工程用 `renders/.render.lock` 做单实例互斥，并行渲染只由父进程派生子进程；产物先写 `.*.tmp-<pid>` 再 `os.replace`，
-所以 `renders/raw.mp4`、`_part*.mp4`、`final.mp4`、`web.mp4` 只要存在就是完整文件。渲染中探测 mp4 会报
+同一工程用 `renders/.render.lock` 做单实例互斥（渲染和检查都算），并行渲染只由父进程派生子进程；产物先写 `.*.tmp-<pid>` 再 `os.replace`，
+所以 `renders/raw.mp4`、`_parts/_part*.mp4`、`final.mp4`、`web.mp4` 只要存在就是完整文件。渲染中探测 mp4 会报
 `moov atom not found`，这是文件尚未收尾，不是损坏；判断完成只认同名 `.done`。
 依赖：Python 的 `playwright`（优先用补充包里的 Chrome，其次用 Playwright 自带 Chromium，最后退回系统 Chrome）、`numpy`、`Pillow`，以及 `ffmpeg`（补充包不带 `ffprobe`；读视频信息会自动退回 `ffmpeg -i` 解析，脚本不要再新增 ffprobe 硬依赖）。`audio.py` 只用 numpy，不需要 scipy。
 补充包不再带视频字体：中文优先用系统字体（Windows 宋体/雅黑，Linux/安卓文泉驿/Noto），云端字体放在 `config/fonts/{video,common}`（挂到 `/usr/share/fonts/wunder`）。渲染器按 `engine/fonts` → `opt/fonts`（手工放入时）→ 系统字体逐个降级，缺字体只告警不阻塞；要固定字形就把字体放进 `engine/fonts`，开发环境缺字体跑 `python engine/get_fonts.py`。

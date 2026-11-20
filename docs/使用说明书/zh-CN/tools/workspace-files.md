@@ -34,6 +34,7 @@ updated_at: 2026-10-17
 - 原文最好照抄（不带读文件展示的行号）。定位会按「逐字 → 忽略行尾空白 → 忽略整块缩进 → 忽略行内空白 → 去掉全部空白」逐级放宽，回执里的 `match` 说明这次用了哪一档；只有空白差异会被容错，数值、标识符、引号、大小写不同仍按最近片段报错，不会猜。LF/CRLF 差异按目标文件换行风格归一化。
 - 批量替换：`file_path` + `edits` 数组，每条形如 `{old_string, new_string, replace_all?}`，按顺序套用在同一份内容上，整批只落盘一次。`on_miss=stop`（默认）任一条未命中就整批不写，但会逐条报出未命中的条目与最近片段；`on_miss=continue` 先落已命中的部分，未命中的逐条返回。
 - 插入：`command=insert`，传 `file_path`、`insert_line`、`new_string`。在现有行后插入，行号从 1 开始，0 表示开头；末尾换行不多算一行。插入保留文件换行风格，输入自带末尾换行时不再额外添加空行。
+- 行区间替换：`file_path` + `start_line` + `end_line` + `new_string`（1-based 含两端），与 `old_string` 互斥。行号会随文件改动漂移，可加可选的 `anchor`（该区间第一行的当前原文）：命中就按实际行号整体平移区间，回执用 `range` 报实际落点、`range_shift` 报挪了几行；锚点找不到或命中多处直接报错，不会猜位置。
 - 新建：`command=create`，传 `file_path`、`file_text`，目标已存在则失败。查看：`command=view`，传 `file_path`，文件可用 `view_range=[start,end]`，`end=-1` 表示末尾。
 - 多文件、多 hunk 修改使用 `input`，内容以 `*** Begin Patch` 开始、`*** End Patch` 结束，路径写在补丁内，无需另传 `file_path`；不要混用 `command` 或替换字段。
 - 所有写入方式均支持 `dry_run=true`：返回校验结果及有界差异预览，不写文件、不创建目录、不更新工作区版本。

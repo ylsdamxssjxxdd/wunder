@@ -294,6 +294,17 @@ fn tool_call_arguments_preview(arguments: &Value) -> String {
     trim_text_to_chars(&text, INVALID_TOOL_CALL_ARGUMENT_PREVIEW_CHARS, "...")
 }
 
+/// 判断一个名字是否是目录里真实存在的内置工具（含中英文别名）。
+/// 只用于拒绝后的提示：已知但本轮不可用，与彻头彻尾的幻觉名字，
+/// 给模型的纠错方向完全不同。
+fn is_known_builtin_tool(name: &str) -> bool {
+    let canonical = resolve_tool_name(name.trim());
+    !canonical.is_empty()
+        && crate::tools::builtin_tool_specs()
+            .iter()
+            .any(|spec| resolve_tool_name(&spec.name) == canonical)
+}
+
 pub(super) fn build_invalid_tool_call_model_notice(
     rejected: &[RejectedToolCall],
     allowed_tool_names: &HashSet<String>,
@@ -301,13 +312,51 @@ pub(super) fn build_invalid_tool_call_model_notice(
     let mut allowed = allowed_tool_names.iter().cloned().collect::<Vec<_>>();
     allowed.sort();
     allowed.truncate(64);
+    let mut known_but_not_allowed = Vec::new();
+    let mut unknown_tool_names = Vec::new();
+    for entry in rejected {
+        if entry.reason != "tool_not_allowed_or_unknown" {
+            continue;
+        }
+        let known = is_known_builtin_tool(&entry.resolved_name) || is_known_builtin_tool(&entry.name);
+        let bucket = if known {
+            &mut known_but_not_allowed
+        } else {
+            &mut unknown_tool_names
+        };
+        let value = if known {
+            entry.resolved_name.clone()
+        } else {
+            entry.name.clone()
+        };
+        if !value.is_empty() && !bucket.contains(&value) {
+            bucket.push(value);
+        }
+    }
+    let mut instruction = String::from(
+        "The previous assistant message contained tool calls that this runtime cannot execute. Do not repeat the same invalid tool name or malformed argument wrapper. Emit one valid allowed tool call with valid JSON arguments, or call final_response with a concise final answer if no tool is needed.",
+    );
+    if !known_but_not_allowed.is_empty() {
+        instruction.push_str(&format!(
+            " These tools exist but are not enabled for this thread or turn: {}. Do not retry them; use an allowed tool instead.",
+            known_but_not_allowed.join(", ")
+        ));
+    }
+    if !unknown_tool_names.is_empty() {
+        instruction.push_str(&format!(
+            " These names do not exist: {}. Replace them with a name from allowed_tool_names_sample.",
+            unknown_tool_names.join(", ")
+        ));
+    }
     json!({
         "type": "invalid_tool_call_notice",
         "ok": false,
         "reason": "model_emitted_unexecutable_tool_calls",
         "rejected_tool_calls": rejected_tool_calls_event_payload(rejected),
+        "known_but_not_allowed": known_but_not_allowed,
+        "unknown_tool_names": unknown_tool_names,
         "allowed_tool_names_sample": allowed,
-        "instruction": "The previous assistant message contained tool calls that this runtime cannot execute. Do not repeat the same invalid tool name or malformed argument wrapper. Emit one valid allowed tool call with valid JSON arguments, or call final_response with a concise final answer if no tool is needed.",
+        "instruction": instruction,
     })
 }
 

@@ -201,3 +201,56 @@ test('memory rows summarize the concrete action instead of the raw action enum',
   }, '记忆管理');
   assert.equal(clear.brief, '清空全部');
 });
+
+test('browser rows carry the concrete URL next to the action', () => {
+  const navigate = buildCollapsedToolWorkflowSummary({
+    key: 'browser-1',
+    toolName: 'browser',
+    toolDisplayName: 'browser',
+    toolRuntimeName: 'browser',
+    toolFunctionName: 'playwright',
+    callItem: {
+      detail: JSON.stringify({ args: { action: 'navigate', url: 'https://example.test/manual/' } })
+    },
+    outputItem: null,
+    resultItem: {
+      detail: JSON.stringify({ ok: true, data: { kind: 'navigate', url: 'https://example.test/manual/' } })
+    }
+  }, '浏览');
+  // 导航的网址在调用参数里：动作提示必须带上它，而不是只留一个 navigate。
+  assert.equal(navigate.brief, 'navigate https://example.test/manual/');
+
+  const click = buildCollapsedToolWorkflowSummary({
+    key: 'browser-2',
+    toolName: 'browser',
+    toolDisplayName: 'browser',
+    toolRuntimeName: 'browser',
+    toolFunctionName: 'playwright',
+    callItem: {
+      detail: JSON.stringify({ args: { action: 'click', ref: 'e12' } })
+    },
+    outputItem: null,
+    resultItem: {
+      detail: JSON.stringify({ ok: true, data: { kind: 'click', url: 'https://example.test/manual/' } })
+    }
+  }, '浏览');
+  // 点击类动作的参数里没有网址：用结果回执里的当前页面补上。
+  assert.equal(click.brief, 'click e12 \u00b7 https://example.test/manual/');
+});
+
+test('browser rows keep the URL when only the result record carries the invocation', () => {
+  const summary = buildCollapsedToolWorkflowSummary({
+    key: 'browser-3',
+    toolName: 'browser',
+    toolDisplayName: 'browser',
+    toolRuntimeName: 'browser',
+    toolFunctionName: 'playwright',
+    callItem: null,
+    outputItem: null,
+    resultItem: {
+      toolCallRawDetail: JSON.stringify({ args: { action: 'navigate', url: 'https://example.test/start' } }),
+      detail: JSON.stringify({ ok: true, data: { url: 'https://example.test/start' } })
+    }
+  }, '浏览');
+  assert.equal(summary.brief, 'navigate https://example.test/start');
+});

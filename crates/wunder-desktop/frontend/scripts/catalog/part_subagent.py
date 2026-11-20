@@ -6,6 +6,10 @@ ENTRIES = [
     ("sub_status_running", "运行中", "Running"),
     ("sub_status_done", "已完成", "Completed"),
     ("sub_status_failed", "失败", "Failed"),
+    # 行内统计（耗时 / 额度 / 上下文）只显示图标与数字，这三条只用作 tooltip。
+    ("sub_stat_duration", "耗时", "Duration"),
+    ("sub_stat_credits", "额度消耗", "Credits used"),
+    ("sub_stat_context", "上下文占用", "Context used"),
     ("sub_interrupt", "中断", "Interrupt"),
     ("sub_detail_title", "子智能体线程", "Subagent thread"),
     ("sub_detail_task_line", "任务：{}", "Task: {}", ["task"]),

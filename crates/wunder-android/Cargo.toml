@@ -21,7 +21,6 @@ path = "src/preview.rs"
 
 [dependencies]
 anyhow = "1"
-lz4_flex = { version = "=0.11.6", default-features = false, features = ["std", "safe-decode"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 pulldown-cmark = "0.10"
 # Markdown images arrive as bounded bytes from the workspace; decode them into
@@ -45,8 +44,8 @@ slint = { version = "=1.18.0", default-features = false, features = [
 # The shared i-slint-core fork's text-selection module needs the parley text
 # stack on every target; the Android backend alone does not pull it in.
 i-slint-core = { version = "=1.18.0", default-features = false, features = ["std", "shared-parley"] }
-# 安卓版 bundles Microsoft YaHei exactly like 桌面版 and registers it into Slint's
-# shared collection at startup, so fontique never enumerates host fonts.
+# src/fonts.rs registers the phone's own CJK, Latin and emoji faces into Slint's
+# shared collection; the APK carries no font files.
 fontique = { version = "=0.11.1", features = ["system"] }
 android_logger = "0.14"
 # The phone-control host installs itself into the shared runtime; the JNI
@@ -86,7 +85,6 @@ codegen-units = 1
 
 [build-dependencies]
 slint-build = "=1.18.0"
-lz4_flex = { version = "=0.11.6", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
 # 桌面版 and 安卓版 share one workspace file-icon table; the build helper reads
 # the same `vscode-icons` assets the desktop build does.
 wunder-icon-builder = { path = "../wunder-icon-builder" }

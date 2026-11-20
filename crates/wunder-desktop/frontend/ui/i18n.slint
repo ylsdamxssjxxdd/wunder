@@ -287,7 +287,6 @@ export global I18n {
     out property <string> cp_preset_questions: zh ? "预设问题" : "Preset questions";
     out property <string> cp_preset_q1: zh ? "你好，请介绍一下你的能力。" : "Hi, please introduce your capabilities.";
     out property <string> cp_preset_q2: zh ? "请帮我整理当前内容。" : "Please organize the current content.";
-    out property <string> cp_commands: zh ? "命令" : "Commands";
     out property <string> cp_cmd_help: zh ? "/help  查看可用命令" : "/help  list available commands";
     out property <string> cp_cmd_new: zh ? "/new  新建线程" : "/new  new thread";
     out property <string> cp_cmd_stop: zh ? "/stop  停止并退出目标态" : "/stop  stop and leave goal mode";
@@ -1268,6 +1267,9 @@ export global I18n {
     out property <string> sub_status_running: zh ? "运行中" : "Running";
     out property <string> sub_status_done: zh ? "已完成" : "Completed";
     out property <string> sub_status_failed: zh ? "失败" : "Failed";
+    out property <string> sub_stat_duration: zh ? "耗时" : "Duration";
+    out property <string> sub_stat_credits: zh ? "额度消耗" : "Credits used";
+    out property <string> sub_stat_context: zh ? "上下文占用" : "Context used";
     out property <string> sub_interrupt: zh ? "中断" : "Interrupt";
     out property <string> sub_detail_title: zh ? "子智能体线程" : "Subagent thread";
     public pure function sub_detail_task_line(task: string) -> string { return zh ? "任务：" + task + "" : "Task: " + task + ""; }

@@ -9,6 +9,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use wunder_server::admin_skills;
 use wunder_server::config::{Config, LlmModelConfig};
 use wunder_server::config_store::ConfigStore;
+use wunder_server::instance_liveness::InstanceGuard;
 use wunder_server::repo_assets;
 use wunder_server::state::{AppState, AppStateInitOptions};
 
@@ -39,6 +40,12 @@ pub struct CliRuntime {
     pub workspace: CliWorkspace,
     /// Merged user configuration (`config.toml` layers) plus provenance.
     pub user_config: crate::user_config::UserConfigReport,
+    /// 本进程的实例 id：线程打开租约的 owner，也是实例存活文件的名字。
+    pub instance_id: String,
+    /// 实例存活文件；进程退出后锁自动释放，别的实例能立即回收残留租约。
+    /// 只承担生命周期，不直接读取。
+    #[allow(dead_code)]
+    pub instance_guard: Option<Arc<InstanceGuard>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -252,6 +259,19 @@ impl CliRuntime {
         .context("adopt legacy threads failed")?;
         cli_startup_segment("legacy_thread_adoption", step_start, startup_boot);
 
+        // 线程租约的 owner 身份 + 存活文件：CLI 崩溃/被强杀时，桌面版打开
+        // 同一线程能立刻判定“持有者已死”并回收租约，而不是等 15 秒 TTL。
+        let instance_id = uuid::Uuid::new_v4().simple().to_string();
+        let instance_guard = match InstanceGuard::claim(
+            &wunder_home.join("data").join("instances"),
+            &instance_id,
+        ) {
+            Ok(guard) => Some(Arc::new(guard)),
+            Err(error) => {
+                eprintln!("[warn] claim instance liveness file failed: {}", error);
+                None
+            }
+        };
         let runtime = Self {
             state,
             launch_dir,
@@ -261,6 +281,8 @@ impl CliRuntime {
             user_id,
             workspace,
             user_config,
+            instance_id,
+            instance_guard,
         };
         // `notify`/`notify_when` in config.toml are the single source for turn
         // notifications, so they are projected onto the runtime file every start.
@@ -290,6 +312,11 @@ impl CliRuntime {
 
     pub fn workspace_root(&self) -> &Path {
         self.workspace.root_path.as_path()
+    }
+
+    /// 实例存活文件目录，与桌面版共用同一个 `data/instances`。
+    pub fn instance_dir(&self) -> PathBuf {
+        self.wunder_home.join("data").join("instances")
     }
 
     pub fn turn_notification_file(&self) -> PathBuf {

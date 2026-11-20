@@ -861,6 +861,7 @@ impl TuiApp {
         session_override: Option<String>,
         frame_requester: FrameRequester,
     ) -> Result<Self> {
+        let instance_id = runtime.instance_id.clone();
         let session_id =
             session_override.unwrap_or_else(|| runtime.resolve_session(global.session.as_deref()));
         let display_language = crate::locale::resolve_cli_language(&global);
@@ -1012,7 +1013,7 @@ impl TuiApp {
             tail_line_baseline: None,
             copy_feedback: None,
             transcript_search: TranscriptSearch::default(),
-            open_instance_id: uuid::Uuid::new_v4().simple().to_string(),
+            open_instance_id: instance_id,
             open_lease_token: 0,
             last_open_lease_touch: Instant::now(),
             lease_validation_rx: None,
@@ -1121,11 +1122,38 @@ impl TuiApp {
     async fn acquire_thread_lease(&mut self, session_id: &str) -> Result<()> {
         let session_id = session_id.trim().to_string();
         anyhow::ensure!(!session_id.is_empty(), "线程不存在");
+        for attempt in 0..2 {
+            let status = self.try_acquire_thread_lease(session_id.as_str()).await?;
+            match status {
+                ThreadOpenLeaseStatus::Acquired { fencing_token } => {
+                    self.open_lease_token = fencing_token;
+                    self.last_open_lease_touch = Instant::now();
+                    return Ok(());
+                }
+                ThreadOpenLeaseStatus::Busy if attempt == 0 => {
+                    // 持有者可能已经崩溃：实例存活文件能立刻给出结论，
+                    // 不必等 15 秒 TTL；无法判断时保持等待。
+                    if !self.reclaim_dead_thread_lease(session_id.as_str()).await {
+                        break;
+                    }
+                }
+                ThreadOpenLeaseStatus::Busy => break,
+            }
+        }
+        Err(anyhow!(
+            "THREAD_IN_USE: 线程正在由其他桌面版或命令行实例打开，关闭占用实例后重试"
+        ))
+    }
+
+    async fn try_acquire_thread_lease(
+        &self,
+        session_id: &str,
+    ) -> Result<ThreadOpenLeaseStatus> {
         let storage = self.runtime.state.storage.clone();
         let user_id = self.runtime.user_id.clone();
         let instance_id = self.open_instance_id.clone();
-        let lease_session = session_id.clone();
-        let status = wunder_server::blocking::run_db("cli.lease.acquire", move || {
+        let lease_session = session_id.to_string();
+        wunder_server::blocking::run_db("cli.lease.acquire", move || {
             storage.try_acquire_thread_open_lease(
                 &lease_session,
                 &user_id,
@@ -1134,17 +1162,26 @@ impl TuiApp {
                 LOCAL_THREAD_LEASE_TTL_S,
             )
         })
-        .await?;
-        match status {
-            ThreadOpenLeaseStatus::Acquired { fencing_token } => {
-                self.open_lease_token = fencing_token;
-                self.last_open_lease_touch = Instant::now();
-                Ok(())
-            }
-            ThreadOpenLeaseStatus::Busy => Err(anyhow!(
-                "THREAD_IN_USE: 线程正在由其他桌面版或命令行实例打开，关闭占用实例后重试"
-            )),
-        }
+        .await
+    }
+
+    async fn reclaim_dead_thread_lease(&self, session_id: &str) -> bool {
+        let storage = self.runtime.state.storage.clone();
+        let user_id = self.runtime.user_id.clone();
+        let instance_id = self.open_instance_id.clone();
+        let instance_dir = self.runtime.instance_dir();
+        let session = session_id.to_string();
+        wunder_server::blocking::run_db("cli.lease.reclaim", move || {
+            Ok(wunder_server::instance_liveness::reclaim_dead_thread_lease(
+                storage.as_ref(),
+                &user_id,
+                &session,
+                &instance_dir,
+                &instance_id,
+            ))
+        })
+        .await
+        .unwrap_or(false)
     }
 
     /// The requested thread belongs to another instance, so this process opens

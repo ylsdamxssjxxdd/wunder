@@ -6,6 +6,8 @@ export type TaskListItem = {
   title: string;
   locked: boolean;
   runtimeStatus: string;
+  /** 最后一轮结束后仍有后台命令/子智能体在跑：行状态应读作运行中。 */
+  backgroundWork: boolean;
   createdAt: number;
   /** 最后一轮落库的时间（毫秒）；侧栏悬停提示用它回答「这条线程什么时候完成过」。 */
   lastActiveAt: number;
@@ -80,6 +82,7 @@ const taskListInputSignature = (sessions: Record<string, any>[]): string => sess
     String(item?.created_at ?? item?.createdAt ?? ''),
     String(item?.updated_at ?? item?.updatedAt ?? item?.last_message_at ?? item?.lastMessageAt ?? ''),
     String(item?.runtime_status ?? item?.runtimeStatus ?? item?.thread_status ?? item?.threadStatus ?? item?.status ?? ''),
+    item?.background_work === true || item?.backgroundWork === true ? '1' : '0',
     String(item?.consumed_tokens ?? item?.consumedTokens ?? ''),
     String(item?.tool_calls ?? item?.toolCalls ?? ''),
     String(item?.model_request_count ?? item?.modelRequestCount ?? item?.quota_used ?? item?.quotaUsed ?? readSessionQuotaUsed(item) ?? ''),
@@ -126,6 +129,7 @@ function computeTaskList(sessions: Record<string, any>[], agentId: string, fallb
     runtimeStatus: String(
       item.runtime_status ?? item.runtimeStatus ?? item.thread_status ?? item.threadStatus ?? item.status ?? ''
     ).trim().toLowerCase(),
+    backgroundWork: item.background_work === true || item.backgroundWork === true,
     createdAt: resolveTaskCreationTimestamp(item),
     lastActiveAt: resolveTaskActivityTimestamp(item),
     consumedTokens: normalizeCount(item.consumed_tokens ?? item.consumedTokens),

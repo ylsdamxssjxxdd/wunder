@@ -156,7 +156,7 @@ import { useAuthStore } from '@/stores/auth';
 import { selectSessionRuntimeStatus } from '@/realtime/chat/chatRuntimeSelectors';
 import { getChatThreadStatus } from '@/realtime/chat/chatThreadRuntime';
 import { resolveVisibleTaskRows, taskWindow, type TaskListItem } from '@/views/messenger/taskList';
-import { hasCompletedTaskTurn, resolveTaskIndicatorState, resolveTaskRuntimeState, type TaskIndicatorState } from '@/views/messenger/taskRuntimeState';
+import { hasCompletedTaskTurn, resolveBackgroundTaskState, resolveTaskIndicatorState, resolveTaskRuntimeState, type TaskIndicatorState } from '@/views/messenger/taskRuntimeState';
 import { rememberTaskSettledState } from '@/views/messenger/taskSettledMemory';
 import { getRuntime, getSessionMessages, hasRuntimeControllers } from '@/stores/chatRuntimeState';
 import { useTaskListPages } from '@/views/messenger/useTaskListPages';
@@ -214,13 +214,15 @@ const resolveItemState = (item: TaskListItem): AgentRuntimeState => {
   void store.runtimeProjectionVersionBySession[item.id];
   const runtime = getRuntime(item.id);
   const durableStatus = getChatThreadStatus(item.id);
-  const state = resolveTaskRuntimeState(
+  const resolved = resolveTaskRuntimeState(
     selectSessionRuntimeStatus(store.runtimeProjection, item.id),
     item.runtimeStatus,
     Boolean(store.loadingBySession[item.id]),
     durableStatus || runtime?.threadStatus,
     hasRuntimeControllers(runtime)
   );
+  // 最后一轮已经结束但后台命令/子智能体仍在跑：结算前线程不算完成。
+  const state = resolveBackgroundTaskState(resolved, item.backgroundWork);
   // The outcome outlives the catalog row and the message cache: both are
   // rebuilt on a refresh, an agent switch or a cache eviction, and none of
   // those events mean the task stopped being finished. Transport `idle`

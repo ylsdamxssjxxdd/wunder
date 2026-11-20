@@ -563,18 +563,11 @@ impl Orchestrator {
                 Some(&user_tool_bindings),
                 &extra_tool_roots,
             );
-            let allowed_tool_names = self.filter_tools_for_model_capability(
-                self.resolve_allowed_tool_names(
-                    &config,
-                    prepared.tool_names.as_deref().unwrap_or(&[]),
-                    &skills_snapshot,
-                    Some(&user_tool_bindings),
-                ),
-                llm_config.support_vision,
-            );
-            let allowed_tool_names = self.apply_preview_skill_tool_policy(
-                allowed_tool_names,
-                prepared.preview_skill,
+            let allowed_tool_names = self.resolve_allowed_tool_names(
+                &config,
+                prepared.tool_names.as_deref().unwrap_or(&[]),
+                &skills_snapshot,
+                Some(&user_tool_bindings),
             );
             // Freeze only the named tool-profile binding in thread metadata.
             // The system prompt itself was already designed to be immutable
@@ -616,6 +609,7 @@ impl Orchestrator {
                     Some(&user_tool_bindings),
                     "en-US",
                 );
+                let specs = crate::tools::tool_specs_with_runtime_names(&config, specs);
                 let snapshot =
                     crate::tools::tool_profile_snapshot_for_profile(&specs, tool_profile);
                 self.workspace.save_session_frozen_tool_profile(
@@ -624,6 +618,18 @@ impl Orchestrator {
                     &crate::tools::tool_profile_binding(&snapshot),
                 );
             }
+            // Per-turn projections come after the freeze: model capability and
+            // preview policy only shape this request. Freezing their output
+            // would let one vision-less turn permanently drop the image reader
+            // from an otherwise authorized thread.
+            let allowed_tool_names = self.apply_preview_skill_tool_policy(
+                allowed_tool_names,
+                prepared.preview_skill,
+            );
+            let allowed_tool_names = self.filter_tools_for_model_capability(
+                allowed_tool_names,
+                llm_config.support_vision,
+            );
             let tool_call_mode = self
                 .resolve_frozen_session_tool_call_mode(&user_id, &session_id, &llm_config)
                 .await

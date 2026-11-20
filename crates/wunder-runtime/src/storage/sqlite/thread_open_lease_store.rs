@@ -385,4 +385,66 @@ mod tests {
             .expect("read cli lease")
             .is_some());
     }
+
+    #[test]
+    fn dead_instance_lease_is_reclaimed_immediately() {
+        let dir = tempdir().expect("tempdir");
+        let database = dir.path().join("shared.db");
+        let storage = SqliteStorage::new(database.to_string_lossy().to_string());
+        match storage
+            .try_acquire_thread_open_lease("thread", "user", "dead-instance", "cli", 30.0)
+            .expect("lease")
+        {
+            ThreadOpenLeaseStatus::Acquired { .. } => {}
+            ThreadOpenLeaseStatus::Busy => panic!("lease should be free"),
+        }
+        let instances = dir.path().join("instances");
+        std::fs::create_dir_all(&instances).unwrap();
+        // 崩溃残留：文件还在，但进程已消失，锁可以拿到。
+        std::fs::write(instances.join("dead-instance.lock"), b"pid=0\n").unwrap();
+        assert!(crate::instance_liveness::reclaim_dead_thread_lease(
+            &storage,
+            "user",
+            "thread",
+            &instances,
+            "survivor",
+        ));
+        assert!(matches!(
+            storage
+                .try_acquire_thread_open_lease("thread", "user", "survivor", "desktop", 30.0)
+                .expect("reacquire"),
+            ThreadOpenLeaseStatus::Acquired { .. }
+        ));
+    }
+
+    #[test]
+    fn live_instance_lease_is_kept() {
+        let dir = tempdir().expect("tempdir");
+        let database = dir.path().join("shared.db");
+        let storage = SqliteStorage::new(database.to_string_lossy().to_string());
+        let instances = dir.path().join("instances");
+        let guard =
+            crate::instance_liveness::InstanceGuard::claim(&instances, "live-instance").unwrap();
+        match storage
+            .try_acquire_thread_open_lease("thread", "user", "live-instance", "cli", 30.0)
+            .expect("lease")
+        {
+            ThreadOpenLeaseStatus::Acquired { .. } => {}
+            ThreadOpenLeaseStatus::Busy => panic!("lease should be free"),
+        }
+        assert!(!crate::instance_liveness::reclaim_dead_thread_lease(
+            &storage,
+            "user",
+            "thread",
+            &instances,
+            "survivor",
+        ));
+        assert_eq!(
+            storage
+                .try_acquire_thread_open_lease("thread", "user", "survivor", "desktop", 30.0)
+                .expect("second attempt"),
+            ThreadOpenLeaseStatus::Busy
+        );
+        drop(guard);
+    }
 }

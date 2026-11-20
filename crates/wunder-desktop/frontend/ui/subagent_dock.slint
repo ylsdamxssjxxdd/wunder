@@ -1,12 +1,48 @@
 import { Theme, SubagentItem } from "theme.slint";
 import { I18n } from "i18n.slint";
 
+// 统计行沿用气泡底部同一套做法：12px 图标位 + 数字；说明只进无障碍标签，
+// 不再叠 Tooltip，整行才能继续点击打开详情。
+component SubagentStat inherits Rectangle {
+    in property <image> icon;
+    in property <string> value;
+    in property <string> hint;
+
+    width: stat-row.preferred-width;
+    height: 16px;
+    accessible-role: text;
+    accessible-label: root.hint;
+    stat-row := HorizontalLayout {
+        spacing: 4px;
+        alignment: start;
+        Rectangle {
+            width: 12px;
+            height: 16px;
+            Image {
+                width: 12px;
+                height: 12px;
+                y: (parent.height - self.height) / 2;
+                source: root.icon;
+                colorize: Theme.muted;
+                image-fit: contain;
+            }
+        }
+        Text {
+            height: 16px;
+            text: root.value;
+            color: Theme.text;
+            font-size: Theme.font-2xs;
+            vertical-alignment: center;
+        }
+    }
+}
+
 component SubagentRow inherits Rectangle {
     in property <SubagentItem> item;
     callback open(string);
     callback stop(string);
 
-    height: 44px;
+    height: 62px;
     background: transparent;
 
     open-touch := TouchArea {
@@ -48,15 +84,39 @@ component SubagentRow inherits Rectangle {
     Text {
         x: 12px; y: 22px;
         width: parent.width - 12px - (root.item.stoppable ? 22px : 0px);
-        height: 20px;
+        height: 18px;
         text: root.item.summary;
         color: Theme.muted;
         font-size: Theme.font-2xs;
         vertical-alignment: center;
         overflow: elide;
     }
+    // 条目下面只留图标与数字：耗时 / 额度 / 上下文。
+    stats-row := HorizontalLayout {
+        x: 12px; y: 42px;
+        width: parent.width - 12px - (root.item.stoppable ? 22px : 0px);
+        height: 16px;
+        spacing: 10px;
+        alignment: start;
+        SubagentStat {
+            icon: @image-url("../assets/icons/stopwatch.svg");
+            value: root.item.duration;
+            hint: I18n.sub_stat_duration + " " + root.item.duration;
+        }
+        SubagentStat {
+            icon: @image-url("../assets/icons/coins.svg");
+            value: root.item.credits;
+            hint: I18n.sub_stat_credits + " " + root.item.credits;
+        }
+        SubagentStat {
+            icon: @image-url("../assets/icons/layer-group.svg");
+            value: root.item.context;
+            hint: I18n.sub_stat_context + " " + root.item.context;
+        }
+    }
     if root.item.stoppable : Rectangle {
-        x: parent.width - 20px; y: 12px; width: 20px; height: 20px;
+        // 行高 62 后竖直居中，和标题行不再叠在一起。
+        x: parent.width - 20px; y: (parent.height - self.height) / 2; width: 20px; height: 20px;
         border-radius: Theme.radius-tag;
         background: stop-touch.has-hover ? Theme.danger-bg : transparent;
         Image {

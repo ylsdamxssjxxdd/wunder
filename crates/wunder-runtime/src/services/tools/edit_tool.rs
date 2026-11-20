@@ -84,6 +84,8 @@ struct EditOutcome {
     snapshot: Option<file_history::Snapshot>,
     receipt: write_receipt::Receipt,
     range: Option<(usize, usize)>,
+    /// `anchor` 把行区间整体挪了几行（仅行区间模式、且锚点纠正过位置时有值）。
+    range_shift: Option<i64>,
     /// 定位档位：`exact` 之外说明这次替换是靠空白容错命中的。
     tier: edit_match::MatchTier,
     /// 批量替换（`edits`）的逐条报告；单条替换为 `None`。
@@ -289,6 +291,7 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let dry_run = parse_dry_run(&args);
     let verify = args.get("verify").and_then(Value::as_bool).unwrap_or(true);
     let range = parse_range(args);
+    let anchor = parse_anchor(args);
     let batch = if edit_batch::batch_requested(&args) {
         edit_batch::parse_batch(&args)
     } else {
@@ -312,18 +315,26 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         }
         let fs_cap = local_fs();
         let content = fs_cap.read_text(&target)?;
-        let (prepared, batch_report) = match (&batch, range) {
+        let (prepared, batch_report, resolved_range) = match (&batch, range) {
             (Some(steps), _) => {
                 let (prepared, report) =
                     edit_batch::prepare(&content, steps, batch_continue).map_err(anyhow::Error::new)?;
-                (prepared, Some(report))
+                (prepared, Some(report), None)
             }
-            (None, Some((start_line, end_line))) => (
-                prepare_range_edit(&content, start_line, end_line, &new_for_edit)?,
-                None,
-            ),
+            (None, Some((start_line, end_line))) => {
+                // 行号 + 可选 anchor：文件漂移时按锚点实际行号整体平移区间。
+                let (prepared, resolved) = prepare_range_edit(
+                    &content,
+                    start_line,
+                    end_line,
+                    &new_for_edit,
+                    anchor.as_deref(),
+                )?;
+                (prepared, None, Some(resolved))
+            }
             (None, None) => (
                 prepare_literal_edit(&content, &old_for_edit, &new_for_edit, replace_all)?,
+                None,
                 None,
             ),
         };
@@ -361,7 +372,10 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
             after: prepared.updated,
             snapshot,
             receipt,
-            range,
+            range: resolved_range.map(|resolved| (resolved.start, resolved.end)).or(range),
+            range_shift: resolved_range
+                .map(|resolved| resolved.shift)
+                .filter(|shift| *shift != 0),
             tier: prepared.tier,
             batch: batch_report,
         })
@@ -382,18 +396,52 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
                 data.insert("path".to_string(), json!(file_path));
                 data.insert("dry_run".to_string(), json!(dry_run));
                 data.insert("file_lines".to_string(), json!(failure.total_lines()));
-                return Ok(build_failed_tool_result(
-                    format!("文本编辑失败：{}", failure),
-                    Value::Object(data),
-                    ToolErrorMeta::new(
+                // 锚点失败与行号越界是两类问题：给不同的 code 和不同的改法，
+                // 否则模型会把「anchor 找不到」当成「行号填错了」继续试。
+                let (code, hint) = match failure {
+                    RangeFailure::AnchorMissing { nearest } => {
+                        data.insert("nearest".to_string(), edit_recovery::to_json(nearest));
+                        (
+                            "TOOL_EDIT_ANCHOR_MISSING",
+                            "anchor 要填区间第一行的当前原文；按返回的 nearest 校正，或去掉 anchor 直接用行号。锚点与内容都对不上时请先读该区域。",
+                        )
+                    }
+                    RangeFailure::AnchorAmbiguous { count, lines } => {
+                        data.insert("matches".to_string(), json!(count));
+                        data.insert("lines".to_string(), json!(lines));
+                        (
+                            "TOOL_EDIT_ANCHOR_NOT_UNIQUE",
+                            "anchor 要能唯一定位：带上整行上下文（例如连同行首缩进与函数名），或改用 old_string 做字面替换。",
+                        )
+                    }
+                    _ => (
                         "TOOL_EDIT_RANGE_INVALID",
-                        Some(
-                            "按返回的 file_lines 修正 start_line/end_line；行区间为 1-based 且含两端。"
-                                .to_string(),
-                        ),
-                        false,
-                        None,
+                        "按返回的 file_lines 修正 start_line/end_line；行区间为 1-based 且含两端。",
                     ),
+                };
+                // 失败结果在观察层会被压成「只剩 error 文本」，定位要点必须进正文。
+                let message = match failure {
+                    RangeFailure::AnchorMissing { nearest } => {
+                        let located = nearest
+                            .first()
+                            .map(|nearest| {
+                                format!(
+                                    "最近片段在第 {} 行（相似度 {}%）",
+                                    nearest.line, nearest.similarity
+                                )
+                            })
+                            .unwrap_or_else(|| "全文没有相近行".to_string());
+                        format!("文本编辑失败：anchor 在当前文件里找不到，{located}")
+                    }
+                    RangeFailure::AnchorAmbiguous { count, lines } => format!(
+                        "文本编辑失败：anchor 匹配到 {count} 处（行号 {lines:?}），未修改文件"
+                    ),
+                    other => format!("文本编辑失败：{other}"),
+                };
+                return Ok(build_failed_tool_result(
+                    message,
+                    Value::Object(data),
+                    ToolErrorMeta::new(code, Some(hint.to_string()), false, None),
                     false,
                 ));
             }
@@ -468,6 +516,10 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     data.insert("match".to_string(), json!(outcome.tier.as_str()));
     if !outcome.tier.is_exact() {
         data.insert("match_note".to_string(), json!(outcome.tier.note()));
+    }
+    if let Some(shift) = outcome.range_shift {
+        // 行号被锚点纠正过：明确告诉模型「你的行号变了多少」，避免它按旧行号再改一次。
+        data.insert("range_shift".to_string(), json!(shift));
     }
     if let Some(report) = &outcome.batch {
         data.insert("edits".to_string(), report.steps.clone());
@@ -620,23 +672,97 @@ fn prepare_range_edit(
     start_line: usize,
     end_line: usize,
     new_text: &str,
-) -> Result<PreparedEdit, anyhow::Error> {
-    let updated =
-        apply_range_replace(content, start_line, end_line, new_text).map_err(anyhow::Error::new)?;
+    anchor: Option<&str>,
+) -> Result<(PreparedEdit, ResolvedRange), anyhow::Error> {
+    let resolved = resolve_range(content, start_line, end_line, anchor)?;
+    let updated = apply_range_replace(content, resolved.start, resolved.end, new_text)
+        .map_err(anyhow::Error::new)?;
     let changed = content != updated;
     let diff = if changed {
         diff_replaced(content, &updated)
     } else {
         LineDiff::default()
     };
-    Ok(PreparedEdit {
-        updated,
-        occurrences: 1,
-        diff,
-        unavailable: None,
-        changed,
-        tier: edit_match::MatchTier::Exact,
+    Ok((
+        PreparedEdit {
+            updated,
+            occurrences: 1,
+            diff,
+            unavailable: None,
+            changed,
+            tier: edit_match::MatchTier::Exact,
+        },
+        resolved,
+    ))
+}
+
+/// 行区间编辑实际落在哪里：请求行号 + 锚点校正后的偏移。
+#[derive(Debug, Clone, Copy)]
+struct ResolvedRange {
+    start: usize,
+    end: usize,
+    /// 锚点把区间整体挪了几行（正数向下，负数向上，0 表示没挪）。
+    shift: i64,
+}
+
+/// 把「行号」加上「内容锚点」再核一次位置。
+///
+/// 源问题：`start_line/end_line` 是读文件那一刻的快照，文件一被改动就整体漂移，
+/// 模型只能重新 grep 行号。这里允许额外给 `anchor`（区间第一行的当前原文）：
+/// 命中就按实际行号整体平移区间，并把偏移量回报出来；锚点找不到或命中多处则拒绝，
+/// 绝不猜位置。
+fn resolve_range(
+    content: &str,
+    start_line: usize,
+    end_line: usize,
+    anchor: Option<&str>,
+) -> Result<ResolvedRange, RangeFailure> {
+    let Some(anchor) = anchor.filter(|text| !text.trim().is_empty()) else {
+        return Ok(ResolvedRange {
+            start: start_line,
+            end: end_line,
+            shift: 0,
+        });
+    };
+    let Some(found) = edit_match::find(content, anchor) else {
+        return Err(RangeFailure::AnchorMissing {
+            nearest: edit_recovery::nearest_matches(content, anchor, 1),
+        });
+    };
+    if found.occurrences() > 1 {
+        return Err(RangeFailure::AnchorAmbiguous {
+            count: found.occurrences(),
+            lines: match_line_numbers(content, &found.starts()),
+        });
+    }
+    let anchor_line = line_number_at(content, found.spans[0].0);
+    let shift = anchor_line as i64 - start_line as i64;
+    // 区间起点就是锚点所在行（锚点 = 区间第一行的当前原文），终点按同一偏移平移。
+    let shifted_end = end_line as i64 + shift;
+    if shifted_end < anchor_line as i64 {
+        return Err(RangeFailure::EndBeforeStart);
+    }
+    Ok(ResolvedRange {
+        start: anchor_line,
+        end: shifted_end as usize,
+        shift,
     })
+}
+
+/// 字节偏移落在第几行（1-based）。
+fn line_number_at(content: &str, offset: usize) -> usize {
+    1 + content.as_bytes()[..offset.min(content.len())]
+        .iter()
+        .filter(|byte| **byte == b'\n')
+        .count()
+}
+
+fn parse_anchor(args: &Value) -> Option<String> {
+    args.get("anchor")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn parse_range(args: &Value) -> Option<(usize, usize)> {
@@ -646,11 +772,23 @@ fn parse_range(args: &Value) -> Option<(usize, usize)> {
 }
 
 /// 行区间替换的失败原因：带上真实行数，模型一次就能改对。
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum RangeFailure {
     StartBelowOne,
     EndBeforeStart,
-    BeyondFile { requested_end: usize, lines: usize },
+    BeyondFile {
+        requested_end: usize,
+        lines: usize,
+    },
+    /// 给了 `anchor` 但当前文件里找不到它：这段内容可能被改名或删掉了。
+    AnchorMissing {
+        nearest: Vec<edit_recovery::Nearest>,
+    },
+    /// `anchor` 命中多处：定位有歧义，宁可报错也不猜。
+    AnchorAmbiguous {
+        count: usize,
+        lines: Vec<usize>,
+    },
 }
 
 impl RangeFailure {
@@ -675,6 +813,10 @@ impl std::fmt::Display for RangeFailure {
                 "end_line={} 超出文件行数（文件共 {} 行）",
                 requested_end, lines
             ),
+            RangeFailure::AnchorMissing { .. } => write!(f, "anchor 在当前文件里找不到"),
+            RangeFailure::AnchorAmbiguous { count, .. } => {
+                write!(f, "anchor 匹配到 {count} 处，无法唯一定位")
+            }
         }
     }
 }
@@ -744,7 +886,7 @@ fn edit_failure_result(path: &str, dry_run: bool, failure: &EditFailure) -> Valu
         ),
         EditFailure::NoMatch { nearest } => {
             let mut message = format!("文本编辑失败：old_string 未匹配 {}", path);
-            let mut hint = "已按行尾空白、块内缩进、行内空白、去掉全部空白逐级放宽仍不匹配，差异在内容本身（数值、标识符、引号、大小写）；按 nearest 的逐行差异校正，或直接用 start_line/end_line 做行区间替换（不必再 grep -n）。".to_string();
+            let mut hint = "已按行尾空白、块内缩进、行内空白、去掉全部空白逐级放宽仍不匹配，差异在内容本身（数值、标识符、引号、大小写）；按 nearest 的逐行差异校正，或改用 start_line/end_line + anchor（该行当前原文）做行区间替换，行号漂移会被自动纠正。".to_string();
             if let Some(summary) = edit_recovery::summary_line(nearest) {
                 message.push_str("；");
                 message.push_str(&summary);
@@ -761,7 +903,7 @@ fn edit_failure_result(path: &str, dry_run: bool, failure: &EditFailure) -> Valu
         EditFailure::NotUnique { count, lines } => (
             format!("old_string 匹配到 {count} 处（行号 {lines:?}），未修改文件"),
             "TOOL_EDIT_NOT_UNIQUE",
-            "补充上下文使匹配唯一，或设置 replace_all=true，或改用 start_line/end_line 精确替换。"
+            "补充上下文使匹配唯一，或设置 replace_all=true，或改用 start_line/end_line + anchor（首行当前原文）精确替换。"
                 .to_string(),
         ),
     };
@@ -1147,6 +1289,40 @@ mod tests {
                 "to_path"
             ]
         );
+    }
+
+    #[test]
+    fn anchor_relocates_the_range_when_the_file_shifted() {
+        let content = "a\nb\nc\nd\ne\n";
+        // 请求 2..=3（b、c），但区间首行现在实际在第 4 行（d）→ 整体下移 2 行。
+        let resolved = resolve_range(content, 2, 3, Some("d")).expect("resolved");
+        assert_eq!(resolved.start, 4);
+        assert_eq!(resolved.end, 5);
+        assert_eq!(resolved.shift, 2);
+    }
+
+    #[test]
+    fn anchor_missing_is_rejected_instead_of_guessed() {
+        let failure = resolve_range("a\nb\n", 1, 1, Some("zzz")).expect_err("missing");
+        assert!(matches!(failure, RangeFailure::AnchorMissing { .. }));
+    }
+
+    #[test]
+    fn anchor_must_be_unique_to_relocate() {
+        let failure = resolve_range("a\nb\na\n", 1, 1, Some("a")).expect_err("ambiguous");
+        match failure {
+            RangeFailure::AnchorAmbiguous { count, .. } => assert_eq!(count, 2),
+            other => panic!("unexpected failure: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn without_anchor_the_requested_range_is_kept() {
+        let resolved = resolve_range("a\nb\n", 1, 2, None).expect("fixed");
+        assert_eq!((resolved.start, resolved.end, resolved.shift), (1, 2, 0));
+        // 空锚点等同没给。
+        let blank = resolve_range("a\nb\n", 2, 2, Some("  ")).expect("fixed");
+        assert_eq!((blank.start, blank.end, blank.shift), (2, 2, 0));
     }
 
     #[test]

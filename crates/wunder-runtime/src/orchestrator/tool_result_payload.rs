@@ -2823,6 +2823,8 @@ fn project_file_write_success(data: &Value) -> Option<Value> {
             "changed_lines",
             "replacements",
             "range",
+            // 行号被 anchor 纠正过时的偏移量：模型据此更新自己的行号记忆。
+            "range_shift",
             // 定位档位：`exact` 之外的命中是靠空白容错拿到的，模型据此决定要不要回读。
             "match",
             "match_note",

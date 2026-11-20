@@ -14,7 +14,6 @@ ENTRIES = [
     ("cp_preset_questions", "预设问题", "Preset questions"),
     ("cp_preset_q1", "你好，请介绍一下你的能力。", "Hi, please introduce your capabilities."),
     ("cp_preset_q2", "请帮我整理当前内容。", "Please organize the current content."),
-    ("cp_commands", "命令", "Commands"),
     ("cp_cmd_help", "/help  查看可用命令", "/help  list available commands"),
     ("cp_cmd_new", "/new  新建线程", "/new  new thread"),
     ("cp_cmd_stop", "/stop  停止并退出目标态", "/stop  stop and leave goal mode"),

@@ -781,20 +781,29 @@ export const sanitizeSubagentDetailPayload = (
   const elapsedSeconds = normalizeDurationValue(
     detail.elapsed_s ?? detail.elapsedSeconds ?? source.elapsed_s ?? source.elapsedSeconds
   );
+  // 归一化要幂等：投影层可能对同一份子智能体载荷处理两次，第二次读到的是
+  // 已经压过的 started_at/finished_at，只认 *_time 会把时间整块丢掉。
   const queuedAt = resolveTimestampIso(
-    detail.queued_time ?? detail.queuedTime ?? source.queued_time ?? source.queuedTime
+    detail.queued_time ?? detail.queuedTime ?? detail.queued_at ?? detail.queuedAt ??
+      source.queued_time ?? source.queuedTime ?? source.queued_at ?? source.queuedAt
   );
   const startedAt = resolveTimestampIso(
-    detail.started_time ?? detail.startedTime ?? source.started_time ?? source.startedTime
+    detail.started_time ?? detail.startedTime ?? detail.started_at ?? detail.startedAt ??
+      source.started_time ?? source.startedTime ?? source.started_at ?? source.startedAt
   );
   const finishedAt = resolveTimestampIso(
-    detail.finished_time ?? detail.finishedTime ?? source.finished_time ?? source.finishedTime
+    detail.finished_time ?? detail.finishedTime ?? detail.finished_at ?? detail.finishedAt ??
+      source.finished_time ?? source.finishedTime ?? source.finished_at ?? source.finishedAt
   );
   const updatedAt = resolveTimestampIso(
     detail.updated_time ??
       detail.updatedTime ??
+      detail.updated_at ??
+      detail.updatedAt ??
       source.updated_time ??
       source.updatedTime ??
+      source.updated_at ??
+      source.finished_at ??
       source.finished_time ??
       source.finishedTime
   );

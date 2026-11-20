@@ -498,11 +498,6 @@ fn install_composer_popover_dismissal(app: &MainWindow) {
             app.get_composer_plus_menu_height(),
         );
         let in_active_flyout = inside(
-            app.get_composer_command_menu_x(),
-            app.get_composer_command_menu_y(),
-            app.get_composer_command_menu_width(),
-            app.get_composer_command_menu_height(),
-        ) || inside(
             app.get_composer_preset_menu_x(),
             app.get_composer_preset_menu_y(),
             app.get_composer_preset_menu_width(),

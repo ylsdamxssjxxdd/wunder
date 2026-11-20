@@ -6,7 +6,7 @@ import { buildTaskList, isArchivedTaskRecord, isRootWorkThread, taskWindow } fro
 import { formatDateTime, toEpochMs } from '../../src/utils/formatDateTime';
 import { useTaskListActivity } from '../../src/views/messenger/useTaskListActivity';
 import { moveKeyWithinOrder, prependFreshKeys } from '../../src/views/messenger/stableListOrder';
-import { resolveTaskRuntimeState } from '../../src/views/messenger/taskRuntimeState';
+import { resolveBackgroundTaskState, resolveTaskRuntimeState } from '../../src/views/messenger/taskRuntimeState';
 import { applySessionQuotaUsage } from '../../src/stores/chatSessionQuota';
 import { mergeSessionRuntimeFields } from '../../src/stores/chatSessionMerge';
 import { clearTaskSettledStates, forgetTaskSettledState, rememberTaskSettledState } from '../../src/views/messenger/taskSettledMemory';
@@ -38,8 +38,25 @@ test('work thread list excludes archived and subagent sessions', () => {
       { id: 'archived', agent_id: 'agent', status: 'archived', created_at: 3 },
       { id: 'child', agent_id: 'agent', parent_session_id: 'root', spawned_by: 'model', created_at: 4 }
     ], 'agent', 'New'),
-    [{ id: 'active', title: 'New', locked: false, runtimeStatus: 'active', createdAt: 2, lastActiveAt: 2, consumedTokens: 0, toolCalls: 0, modelRequestCount: null, quotaUsed: null }]
+    [{ id: 'active', title: 'New', locked: false, runtimeStatus: 'active', backgroundWork: false, createdAt: 2, lastActiveAt: 2, consumedTokens: 0, toolCalls: 0, modelRequestCount: null, quotaUsed: null }]
   );
+});
+
+test('background work keeps a settled thread reading as running', () => {
+  const rows = buildTaskList([
+    { id: 'working', agent_id: 'agent', created_at: 2, runtime_status: 'running', background_work: true },
+    { id: 'settled', agent_id: 'agent', created_at: 1, runtime_status: 'completed' }
+  ], 'agent', 'New');
+  assert.equal(rows.find((row) => row.id === 'working')?.backgroundWork, true);
+  assert.equal(rows.find((row) => row.id === 'settled')?.backgroundWork, false);
+  // 最后一轮已完成，后台命令/子智能体仍在跑：这一行是运行中，不是已完成。
+  assert.equal(resolveBackgroundTaskState('done', true), 'running');
+  assert.equal(resolveBackgroundTaskState('idle', true), 'running');
+  assert.equal(resolveBackgroundTaskState('error', true), 'running');
+  // 等待/排队已经说明线程未结算，后台信号不改变它们。
+  assert.equal(resolveBackgroundTaskState('pending', true), 'pending');
+  assert.equal(resolveBackgroundTaskState('running', true), 'running');
+  assert.equal(resolveBackgroundTaskState('done', false), 'done');
 });
 
 test('work thread rows carry the newest activity time for the row tooltip', () => {

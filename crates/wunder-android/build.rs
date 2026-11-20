@@ -30,15 +30,10 @@ fn main() {
     )
     .expect("failed to compile the mobile Slint UI");
 
-    // 桌面版 registers Microsoft YaHei at startup because Win7 has no CJK face.
-    // 安卓版 must show the same typography, so the same face is compressed into
-    // the binary and registered before the first frame.
-    let raw = std::fs::read("../../crates/wunder-desktop/frontend/assets/fonts/msyh.ttc")
-        .expect("read the bundled Microsoft YaHei");
-    let compressed = lz4_flex::compress_prepend_size(&raw);
+    // 安卓版 no longer embeds a CJK face: src/fonts.rs registers the fonts that
+    // the phone already ships with, so the APK stays small and the typography
+    // matches the rest of the system.
     let out_dir = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
-    std::fs::write(out_dir.join("msyh.ttc.lz4"), compressed)
-        .expect("write compressed Microsoft YaHei");
     // The transcript's document cards carry the file type icon, exactly like
     // 桌面版; both shells build that table from the same asset set.
     wunder_icon_builder::write_workspace_icons(

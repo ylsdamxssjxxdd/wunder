@@ -5,7 +5,7 @@
   python render.py <工程> --jobs 4              全片，按镜头切段、最多 4 路并行渲再无损拼起来（长片用这个）
   python render.py <工程> --only 3              只重渲第 3 镜（也接受镜名 / 时间区间），再拼全部已完成分段
   python render.py <工程> --parts 0:12 12:30    不用 SHOTS 时手动指定分段边界
-  python render.py <工程> --concat              把 renders/_part*.mp4 拼成 raw.mp4（默认保留分段）
+  python render.py <工程> --concat              把 renders/_parts/_part*.mp4 拼成 raw.mp4（默认保留分段）
   python render.py <工程> --clean-parts         拼接成功后删掉分段（默认保留，方便下次只重渲脏镜头）
   python render.py <工程> --web                 发布转码 → renders/web.mp4（1080p30、+faststart；打印体积/码率）
   python render.py <工程> --stills 2.5 8.5 21   只截几帧 → <工程>/review/s_0002.50.png
@@ -25,6 +25,7 @@
   python render.py <工程> --check-safe [间隔]   安全区检查：包围盒 + 像素（隐藏字幕后看 y>840；忽略辉光/柔边）
   python render.py <工程> --check-band [间隔]   只做像素检查；手写 ctx 也查，--band-strict 连辉光一起查
   python render.py <工程> --overlap [间隔]      遮挡检查：按实际相交面积报告，可用 fr.mark(..., {allow:'名字'}) 放行
+                                               检查类命令都支持 --fast：间隔翻倍、帧数减半，先粗查再精查
   python render.py --diff A.mp4 B.mp4           两版逐帧差分 → A_diff.jpg + 时刻表
   python render.py --help                       打印这份用法就退出（不读工程、不渲染）
   python render.py <工程> --resume              兼容旧命令：续渲本来就是默认行为，加不加一样
@@ -63,8 +64,9 @@ SUB_RE = re.compile(r"字幕|sub(?:title)?|caption", re.I)
 _RENDER_LOCK_HANDLE = None
 
 def ensure_render_lock(proj):
-    """同一工程同时只允许一个进程写 renders/。锁随进程退出由系统释放；
-    并行渲染的子进程通过环境变量识别父进程已持锁，不再重复加锁。"""
+    """同一工程同时只允许一个进程使用浏览器/写 renders/（渲染和检查都算）。
+    锁随进程退出由系统释放，所以异常中断不会留下“假占用”；并行渲染的子进程
+    通过环境变量识别父进程已持锁，不再重复加锁。"""
     global _RENDER_LOCK_HANDLE
     if _RENDER_LOCK_HANDLE is not None or os.environ.get("WUNDER_RENDER_LOCK") == "held":
         return
@@ -81,7 +83,7 @@ def ensure_render_lock(proj):
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         handle.close()
-        sys.exit("另一个渲染进程正在写这个工程（renders/.render.lock 被占用）。"
+        sys.exit("另一个渲染/检查进程正在使用这个工程（renders/.render.lock 被占用）。"
                  "等它结束，或确认没有渲染进程后再试；不要和它同时写同一段。")
     _RENDER_LOCK_HANDLE = handle
     os.environ["WUNDER_RENDER_LOCK"] = "held"
@@ -305,14 +307,39 @@ def shot(pg, t):
 
 def with_page(proj, fn):
     from playwright.sync_api import sync_playwright
+    ensure_render_lock(proj)   # 检查类命令也占锁，避免两个进程抢 CPU 互相拖慢
     srv, url = serve(proj)
+    p = sync_playwright().start()
+    b = pg = None
     try:
-        with sync_playwright() as p:
-            b, pg = open_page(p, url)
-            try: return fn(pg)
-            finally: b.close()
+        b, pg = open_page(p, url)
+        return fn(pg)
     finally:
-        srv.shutdown()
+        # Playwright 的 sync 对象绑定创建它的线程，收尾必须留在主线程做；
+        # 丢到子线程会 greenlet 报错，浏览器反而关不掉。
+        # 收尾本身万一卡住，看门狗直接结束进程——这时输出已经完整。
+        pending = sys.exc_info()[1]
+        code = 0
+        if isinstance(pending, SystemExit):
+            code = 1 if isinstance(pending.code, str) else (pending.code or 0)
+        elif pending is not None:
+            code = 1
+        done = threading.Event()
+        def watchdog():
+            if done.wait(8.0): return
+            if isinstance(pending, SystemExit) and isinstance(pending.code, str):
+                print(pending.code, file=sys.stderr, flush=True)
+            _hard_exit(code)
+        threading.Thread(target=watchdog, daemon=True).start()
+        for step in (lambda: pg is not None and pg.close(),
+                     lambda: b is not None and b.close(), p.stop):
+            try: step()
+            except Exception: pass
+        done.set()
+        try: srv.shutdown()
+        except Exception: pass
+        try: srv.server_close()
+        except Exception: pass
 
 # ---------- 命令行 ----------
 def flag_args(a, name):
@@ -406,6 +433,7 @@ USAGE_REQUIRES = {
     "--band-diff": {"--check-safe", "--check-band"},
     "--band-ratio": {"--check-safe", "--check-band"},
     "--band-strict": {"--check-safe", "--check-band"},
+    "--fast": {"--check-safe", "--check-band", "--overlap"},
     "--kb": {"--web"},
     "--force": {"--concat"},
 }
@@ -432,6 +460,44 @@ class Progress:
     def close(self):
         if self.tty:
             sys.stdout.write("\n"); sys.stdout.flush()
+
+def _print_eta(label, done, total, started):
+    """检查类命令每完成约 1/5 打一行，让调用方知道还要多久，不必靠猜。"""
+    elapsed = time.monotonic() - started
+    rate = done / elapsed if elapsed > 0 else 0
+    eta = (total - done) / rate if rate > 0 else 0
+    print(f"  {label}: {done}/{total}  已用 {elapsed:.0f}s  预计还需 {eta:.0f}s", flush=True)
+
+def write_review_index(proj):
+    """把 review/ 里的图排成可自动刷新的缩略图页：审片时打开一次即可，
+    不用每轮手写 HTML，也不必给浏览器开 file:// 权限。"""
+    review = Path(proj) / "review"
+    if not review.is_dir():
+        return None
+    files = sorted((p for p in review.iterdir()
+                    if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg"}),
+                   key=lambda p: p.stat().st_mtime, reverse=True)
+    cards = "\n".join(
+        f'<a href="{p.name}" target="_blank"><figure><img src="{p.name}" loading="lazy">'
+        f'<figcaption>{p.name}</figcaption></figure></a>' for p in files)
+    html = f"""<!doctype html>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="5">
+<title>review · {Path(proj).name}</title>
+<style>
+body{{margin:0;padding:16px;background:#111;color:#ddd;font:13px/1.4 system-ui,sans-serif}}
+h1{{font-size:15px;font-weight:600;margin:0 0 12px}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}}
+figure{{margin:0;background:#1b1b1b;border-radius:6px;overflow:hidden}}
+img{{display:block;width:100%;height:auto}}
+figcaption{{padding:6px 8px;color:#9a9a9a;font-size:12px;word-break:break-all}}
+</style>
+<h1>{Path(proj).name} · review（每 5 秒自动刷新，共 {len(files)} 张）</h1>
+<div class="grid">{cards}</div>
+"""
+    out = review / "index.html"
+    out.write_text(html, encoding="utf-8")
+    return out
 
 def probe_video(path):
     path = Path(path)
@@ -596,10 +662,25 @@ def equal_ranges(end, fps, jobs):
 
 def part_entries(proj, ranges):
     entries = []
+    parts_dir = proj / "renders" / "_parts"
     for i, item in enumerate(ranges):
         name = f"_part{i:02d}.mp4"
-        entries.append(dict(item, index=i, file=name, path=proj / "renders" / name))
+        entries.append(dict(item, index=i, file=f"_parts/{name}", path=parts_dir / name))
     return entries
+
+def migrate_legacy_parts(proj, entries):
+    """旧版把 _partNN.mp4 直接放在 renders/ 根下；收进 renders/_parts/，
+    已有分段连同完成标记和日志一起搬家，不重渲。"""
+    legacy_dir = Path(proj) / "renders"
+    for entry in entries:
+        new = entry["path"]
+        if new.exists(): continue
+        old = legacy_dir / new.name
+        if not old.exists(): continue
+        new.parent.mkdir(parents=True, exist_ok=True)
+        for src, dst in ((old, new), (done_marker(old), done_marker(new)),
+                         (old.with_suffix(".log"), new.with_suffix(".log"))):
+            if src.exists(): os.replace(src, dst)
 
 def select_entries(entries, tokens):
     picked = set()
@@ -664,28 +745,53 @@ def stills(proj, ts, marks=None):
             out = proj / f"review/m_{t:07.2f}.png"; im.save(out)
             print(f"  {out}  " + "、".join(f"{b['name']}{b['box']}" for b in picked))
     with_page(proj, go)
+    write_review_index(proj)
     print("stills:", len(ts))
 
-def sheet(proj, args, name="sheet"):
+def _grid_sheet(frames, cols, cell_w=1920, out=None, quality=90):
     from PIL import Image, ImageDraw, ImageFont
+    tw = cell_w // cols; th = tw * 9 // 16
+    grid = Image.new("RGB", (cols * tw, -(-len(frames) // cols) * th), (20, 20, 20))
+    d = ImageDraw.Draw(grid)
+    try: font = ImageFont.truetype(str(font_file("JetBrainsMono.ttf") or (ENGINE / "fonts/JetBrainsMono.ttf")), 18)
+    except Exception: font = ImageFont.load_default()
+    for i, (raw, label) in enumerate(frames):
+        im = (Image.open(io.BytesIO(raw)) if isinstance(raw, (bytes, bytearray)) else raw).convert("RGB")
+        im = im.resize((tw, th), Image.LANCZOS)
+        x, y = (i % cols) * tw, (i // cols) * th
+        grid.paste(im, (x, y))
+        d.rectangle([x, y + th - 24, x + 92, y + th], fill=(0, 0, 0))
+        d.text((x + 5, y + th - 22), label, font=font, fill=(255, 230, 0))
+    if out is not None: grid.save(out, quality=quality)
+    return grid
+
+def save_sheets(frames, path, proj):
+    """总览按 4×4 排；帧数 > 4 时再每 4 帧出一张 2×2 大图。
+    16 帧压到 1920 宽时小字会糊，存疑时刻直接看 2×2 或 stills 单帧，别在总览上硬猜。"""
+    path = Path(path)
+    cols = 4 if len(frames) > 6 else 2 if len(frames) > 1 else 1
+    _grid_sheet(frames, cols, out=path)
+    print(f"  拼图总览：{path}（{len(frames)} 帧，{cols} 列）")
+    if len(frames) > 4:
+        groups = []
+        for gi in range(0, len(frames), 4):
+            gp = path.with_name(f"{path.stem}_g{gi // 4 + 1}.jpg")
+            _grid_sheet(frames[gi:gi + 4], 2, out=gp)
+            groups.append(gp)
+        print(f"  2×2 大图：{groups[0].parent}/{path.stem}_g1.jpg … 共 {len(groups)} 张")
+    write_review_index(proj)
+
+def sheet(proj, args, name="sheet"):
     (proj / "review").mkdir(exist_ok=True)
     def go(pg):
         end = pg.evaluate("END")
         ts = [float(x) for x in args] if len(args) > 1 else [round((i + .5) * end / int(args[0] if args else 16), 2) for i in range(int(args[0] if args else 16))]
-        cols = 4 if len(ts) > 6 else 2 if len(ts) > 1 else 1; tw = 1920 // cols; th = tw * 9 // 16
-        out = Image.new("RGB", (cols * tw, -(-len(ts) // cols) * th), (20, 20, 20)); d = ImageDraw.Draw(out)
-        try: font = ImageFont.truetype(str(font_file("JetBrainsMono.ttf") or (ENGINE / "fonts/JetBrainsMono.ttf")), 18)
-        except Exception: font = ImageFont.load_default()
-        for i, t in enumerate(ts):
-            im = Image.open(io.BytesIO(shot(pg, t))).convert("RGB").resize((tw, th), Image.LANCZOS)
-            x, y = (i % cols) * tw, (i // cols) * th; out.paste(im, (x, y))
-            d.rectangle([x, y + th - 24, x + 78, y + th], fill=(0, 0, 0)); d.text((x + 5, y + th - 22), f"{t:.2f}", font=font, fill=(255, 230, 0))   # 时间标在左下角，不挡左上的年份 / 章节标
-        out.save(proj / f"review/{name}.jpg", quality=90); print("sheet:", proj / f"review/{name}.jpg", len(ts))
+        save_sheets([(shot(pg, t), f"{t:.2f}") for t in ts],
+                    proj / f"review/{name}.jpg", proj)
     with_page(proj, go)
 
 def sheet_video(proj, video, args, name=None):
     """从成片抽帧拼图：看编码后的暗部 banding、音画是否对齐。--sheet 16 --from renders/final.mp4"""
-    from PIL import Image, ImageDraw, ImageFont
     video = Path(video)
     if not video.is_file(): sys.exit(f"找不到成片：{video}")
     dur = probe_video(video).get("duration")
@@ -697,19 +803,8 @@ def sheet_video(proj, video, args, name=None):
         ts = [round((i + .5) * dur / max(1, n), 2) for i in range(max(1, n))]
     ts = [t for t in ts if 0 <= t <= dur]
     (proj / "review").mkdir(exist_ok=True)
-    cols = 4 if len(ts) > 6 else 2 if len(ts) > 1 else 1
-    tw = 1920 // cols; th = tw * 9 // 16
-    out_img = Image.new("RGB", (cols * tw, -(-len(ts) // cols) * th), (20, 20, 20))
-    draw = ImageDraw.Draw(out_img)
-    try: font = ImageFont.truetype(str(font_file("JetBrainsMono.ttf") or (ENGINE / "fonts/JetBrainsMono.ttf")), 18)
-    except Exception: font = ImageFont.load_default()
-    for i, t in enumerate(ts):
-        im = Image.open(io.BytesIO(extract_frame(video, t))).convert("RGB").resize((tw, th), Image.LANCZOS)
-        x, y = (i % cols) * tw, (i // cols) * th; out_img.paste(im, (x, y))
-        draw.rectangle([x, y + th - 24, x + 92, y + th], fill=(0, 0, 0))
-        draw.text((x + 5, y + th - 22), f"{t:.2f}", font=font, fill=(255, 230, 0))
     out_path = proj / "review" / f"{name or ('sheet_' + video.stem)}.jpg"
-    out_img.save(out_path, quality=90)
+    save_sheets([(extract_frame(video, t), f"{t:.2f}") for t in ts], out_path, proj)
     print(f"sheet(video): {out_path}  {video.name}  {dur:.1f}s  {len(ts)} 帧")
 
 def strip(proj, t0, t1, n=12):
@@ -728,6 +823,7 @@ def strip(proj, t0, t1, n=12):
 def frames(proj, out, a=0.0, b=None, crf=14.0, preset="medium", preview=False, label=None):
     ensure_render_lock(proj)
     out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
     tmp = temp_output(out)
     def go(pg):
         end, fps = pg.evaluate("END"), pg.evaluate("FPS")
@@ -790,13 +886,18 @@ def concat_parts(proj, parts, out, keep=True):
         tmp.unlink(missing_ok=True)
         raise
     os.replace(tmp, out)
+    lst.unlink(missing_ok=True)
+    parts_dir = proj / "renders/_parts"
     if not keep:
         for p in parts:
             p.unlink(missing_ok=True)
             done_marker(p).unlink(missing_ok=True)
             p.with_suffix(".log").unlink(missing_ok=True)
-        lst.unlink(missing_ok=True)
+        if parts_dir.exists() and not any(parts_dir.iterdir()):
+            parts_dir.rmdir()
         clear_manifest(proj)
+    elif parts_dir.exists() and any(parts_dir.iterdir()):
+        print(f"  分段保留在 {parts_dir}（改一镜只重渲对应段）；定稿后加 --clean-parts 清理")
     print("done", out)
     print_video(out)
 
@@ -822,6 +923,7 @@ def frames_parallel(proj, out, jobs, crf=14.0, preset="medium", keep=True, fresh
     if gaps:
         print("  空档已单独成段（保持总时长）：" + "、".join(f"{r['from']:.2f}–{r['to']:.2f}s" for r in gaps))
     entries = part_entries(proj, ranges)
+    migrate_legacy_parts(proj, entries)
     digest = project_hash(proj)
     write_manifest(proj, entries, digest)
     selected = select_entries(entries, only) if only else None
@@ -846,9 +948,10 @@ def frames_parallel(proj, out, jobs, crf=14.0, preset="medium", keep=True, fresh
         print("--only 选中的分段已全部完成，直接拼接")
 
     def render_one(entry):
-        log = proj / f"renders/_part{entry['index']:02d}.log"
+        log = entry["path"].with_suffix(".log")
+        entry["path"].parent.mkdir(parents=True, exist_ok=True)
         cmd = [sys.executable, str(Path(__file__).resolve()), str(proj), "--clip",
-               repr(entry["from"]), repr(entry["to"]), entry["path"].stem,
+               repr(entry["from"]), repr(entry["to"]), f"_parts/{entry['path'].stem}",
                "--crf", f"{crf:g}", "--preset", preset]
         env = dict(os.environ, PYTHONIOENCODING="utf-8")
         try:
@@ -880,7 +983,7 @@ def frames_parallel(proj, out, jobs, crf=14.0, preset="medium", keep=True, fresh
             try: tail = log.read_text(encoding="utf-8", errors="replace").splitlines()[-12:]
             except OSError: tail = []
             print(f"--- {log.name} ---\n" + "\n".join(tail or ([error] if error else [])))
-        sys.exit(f"{len(failures)} 段未完成。已完成的分段保留在 {proj / 'renders'}；"
+        sys.exit(f"{len(failures)} 段未完成。已完成的分段保留在 {proj / 'renders/_parts'}；"
                  f"修好后重跑 --jobs {jobs}（默认续渲），或直接 --concat。")
 
     if selected is not None:
@@ -906,7 +1009,7 @@ def concat_existing(proj, name=None, keep=True, force=False):
         expected = {proj / "renders" / str(entry.get("file")): entry
                     for entry in manifest["parts"] if entry.get("file")}
     else:
-        parts = sorted((proj / "renders").glob("_part*.mp4"))
+        parts = sorted((proj / "renders" / "_parts").glob("_part*.mp4")) or sorted((proj / "renders").glob("_part*.mp4"))
     if not parts:
         sys.exit(f"{proj / 'renders'} 下没有 _part*.mp4")
     complete, skipped = [], []
@@ -1406,6 +1509,7 @@ def det(proj, n=12):
             print(f"    对照图：{outline}（另有 *_frame.png 原尺寸标注帧）")
         if not static_hint:
             print("  没有发现明显的模块级可变变量；再查闭包变量、window.* 写入，或把可疑函数体二分替换定位。")
+        write_review_index(proj)
         sys.exit(1)
     with_page(proj, go)
 
@@ -1526,7 +1630,7 @@ def band_suspects(boxes, diff_bbox, safe_y, limit=4):
     return hits[:limit]
 
 def band_scan(pg, times, safe_y=SAFE_Y, diff_max=BAND_DIFF, ratio_max=BAND_RATIO,
-              mean_max=BAND_MEAN, out_dir=None, strict=False):
+              mean_max=BAND_MEAN, out_dir=None, strict=False, hint=""):
     """隐藏字幕后逐帧比较整帧与纯背景帧；手写 ctx、柔边渐变也会被像素抓到。
 
     默认用 __vkSolid 出“实心内容帧”：跳过 bloom、fr.glow/spark/comet/flash 和柔边。
@@ -1545,7 +1649,10 @@ def band_scan(pg, times, safe_y=SAFE_Y, diff_max=BAND_DIFF, ratio_max=BAND_RATIO
         print("band: 引擎没有 __vkSolid（旧版 vk.js）；本次连辉光一起查，贴地光晕可能误报", file=sys.stderr)
     pg.evaluate("() => { if (window.VKit) window.VKit.subs = function () {}; }")
     flagged = []
-    for t in times:
+    print(f"band: 采样 {len(times)} 个时刻，每个时刻 2 张截图；耗时随帧数线性增长{hint}", flush=True)
+    started = time.monotonic()
+    step = max(1, len(times) // 5)
+    for index, t in enumerate(times, 1):
         if strict or not has_solid:
             pg.evaluate("(t) => seek(t)", t)
         else:
@@ -1557,6 +1664,8 @@ def band_scan(pg, times, safe_y=SAFE_Y, diff_max=BAND_DIFF, ratio_max=BAND_RATIO
         bg = pg.screenshot(type="png")
         ratio, mean, bbox = analyze_band_diff(full, bg, safe_y, diff_max)
         if ratio <= ratio_max and mean <= mean_max:
+            if index % step == 0 or index == len(times):
+                _print_eta("band", index, len(times), started)
             continue
         boxes = pg.evaluate("(t) => recordFrame(t)", t)
         suspects = band_suspects(boxes, bbox, safe_y)
@@ -1572,6 +1681,10 @@ def band_scan(pg, times, safe_y=SAFE_Y, diff_max=BAND_DIFF, ratio_max=BAND_RATIO
             path = out_dir / f"band_{t:07.2f}.png"; im.save(path)
             item["path"] = path
         flagged.append(item)
+        if index % step == 0 or index == len(times):
+            _print_eta("band", index, len(times), started)
+    if out_dir is not None and flagged:
+        write_review_index(out_dir.parent)
     if not flagged:
         mode = "辉光一起查" if strict or not has_solid else "忽略辉光/柔边"
         print(f"band: ok（{len(times)} 个采样时刻，字幕已隐藏，{mode}，y≤{safe_y} 与背景一致）")
@@ -1594,15 +1707,20 @@ def band_scan(pg, times, safe_y=SAFE_Y, diff_max=BAND_DIFF, ratio_max=BAND_RATIO
           "后者画在内容层，背景差分会把整幅背景当成越界。")
     return flagged
 
-def check_safe(proj, interval=0.5, safe_y=SAFE_Y, diff_max=BAND_DIFF, ratio_max=BAND_RATIO, strict=False):
+def check_safe(proj, interval=0.5, safe_y=SAFE_Y, diff_max=BAND_DIFF, ratio_max=BAND_RATIO,
+               strict=False, fast=False):
     def go(pg):
         end = pg.evaluate("END")
         if not isinstance(end, (int, float)) or end <= 0:
             sys.exit("END 未定义或不是正数")
         times = sample_times(end, interval)
         flat = pg.evaluate("window.__vkTheme || 'night'") == "flat"
+        print(f"check-safe: 全片 {end:g}s，采样 {len(times)} 个时刻（间隔 {interval:g}s），"
+              f"含包围盒 + 像素两遍" + ("（已启用 --fast）" if fast else "；要更少帧加 --fast"), flush=True)
         groups = {}
-        for t in times:
+        started = time.monotonic()
+        step = max(1, len(times) // 5)
+        for index, t in enumerate(times, 1):
             boxes = pg.evaluate("(t) => recordFrame(t)", t)
             raise_if_error(pg, f"t={t:g}s")
             frame_counts = {}
@@ -1621,6 +1739,8 @@ def check_safe(proj, interval=0.5, safe_y=SAFE_Y, diff_max=BAND_DIFF, ratio_max=
                     if box[3] > run["worst"][3]: run["worst"] = box
                 else:
                     runs.append({"t0": t, "t1": t, "frames": 1, "max_per_frame": frame_counts[key], "worst": box})
+            if index % step == 0 or index == len(times):
+                _print_eta("bbox", index, len(times), started)
         if not groups:
             print(f"bbox: ok（y≤{safe_y}，{len(times)} 个采样时刻）")
         else:
@@ -1632,7 +1752,8 @@ def check_safe(proj, interval=0.5, safe_y=SAFE_Y, diff_max=BAND_DIFF, ratio_max=
                     print(f"  {key}: {run['t0']:.2f}–{run['t1']:.2f}s（{run['frames']} 帧{extra}），"
                           f"最低 y={run['worst'][3]}，示例 bbox={run['worst']}")
             print("  提示：字幕由 K.subs 自动标成「字幕」；装置用 fr.mark('名字', …) 包住，报告里就能看到名字。")
-        flagged = band_scan(pg, times, safe_y, diff_max, ratio_max, out_dir=proj / "review", strict=strict)
+        flagged = band_scan(pg, times, safe_y, diff_max, ratio_max, out_dir=proj / "review",
+                            strict=strict, hint="（--fast）" if fast else "")
         if not groups and not flagged:
             print(f"safe: ok（{len(times)} 个采样时刻，包围盒与像素都在安全区内）")
         else:
@@ -1640,17 +1761,19 @@ def check_safe(proj, interval=0.5, safe_y=SAFE_Y, diff_max=BAND_DIFF, ratio_max=
             sys.exit(1)
     with_page(proj, go)
 
-def check_band(proj, interval=0.5, safe_y=SAFE_Y, diff_max=BAND_DIFF, ratio_max=BAND_RATIO, strict=False):
+def check_band(proj, interval=0.5, safe_y=SAFE_Y, diff_max=BAND_DIFF, ratio_max=BAND_RATIO,
+               strict=False, fast=False):
     def go(pg):
         end = pg.evaluate("END")
         if not isinstance(end, (int, float)) or end <= 0:
             sys.exit("END 未定义或不是正数")
         if band_scan(pg, sample_times(end, interval), safe_y, diff_max, ratio_max,
-                     out_dir=proj / "review", strict=strict):
+                     out_dir=proj / "review", strict=strict,
+                     hint="（--fast）" if fast else ""):
             sys.exit(1)
     with_page(proj, go)
 
-def check_overlap(proj, interval=1.0, min_ratio=0.02):
+def check_overlap(proj, interval=1.0, min_ratio=0.02, fast=False):
     def inter(a, b):
         x0, y0 = max(a[0], b[0]), max(a[1], b[1]); x1, y1 = min(a[2], b[2]), min(a[3], b[3])
         return max(0, x1 - x0) * max(0, y1 - y0)
@@ -1668,7 +1791,12 @@ def check_overlap(proj, interval=1.0, min_ratio=0.02):
         runs = {}
         named_seen = False
         allowed = 0
-        for t in sample_times(end, interval):
+        times = sample_times(end, interval)
+        print(f"overlap: 全片 {end:g}s，采样 {len(times)} 个时刻（间隔 {interval:g}s）"
+              + ("（已启用 --fast）" if fast else "；要更少帧加 --fast"), flush=True)
+        started = time.monotonic()
+        step = max(1, len(times) // 5)
+        for index, t in enumerate(times, 1):
             boxes = [b for b in pg.evaluate("(t) => recordFrame(t)", t) if b.get("name")]
             raise_if_error(pg, f"t={t:g}s")
             if boxes: named_seen = True
@@ -1695,12 +1823,14 @@ def check_overlap(proj, interval=1.0, min_ratio=0.02):
                         else:
                             items.append({"t0": t, "t1": t, "frames": 1,
                                           "ratio": best_hit / best_small, "area": best_hit, "box": best_box})
+            if index % step == 0 or index == len(times):
+                _print_eta("overlap", index, len(times), started)
         tail = f"（另有 {allowed} 对按 allow 跳过）" if allowed else ""
         if not named_seen:
             print("overlap: 没有命名的元素；先用 fr.mark('名字', …) 包住装置再查遮挡")
             return
         if not runs:
-            print(f"overlap: ok（{len(sample_times(end, interval))} 个采样时刻）{tail}")
+            print(f"overlap: ok（{len(times)} 个采样时刻）{tail}")
             return
         print(f"overlap: {sum(len(v) for v in runs.values())} 段相交{tail}")
         for key, items in runs.items():
@@ -1765,8 +1895,15 @@ def diff_videos(a, b, samples=8, out=None):
     print("diff:", out_path)
 
 # ---------- 主入口 ----------
-if __name__ == "__main__":
-    a = sys.argv[1:]
+def _hard_exit(code=0):
+    """命令收尾后立即退出。Playwright 驱动偶尔在解释器退出阶段互相等待，
+    表现为“输出已经打印完整，进程却还要挂一两分钟”；这里绕开退出清理。"""
+    for stream in (sys.stdout, sys.stderr):
+        try: stream.flush()
+        except Exception: pass
+    os._exit(code if isinstance(code, int) else 1)
+
+def main(a):
     if any(tok in HELP_TOKENS for tok in a): print_help(0)
     reject_flags(a, USAGE_REQUIRES, COMPAT_FLAGS)
     if not a: print_help(0)
@@ -1775,6 +1912,12 @@ if __name__ == "__main__":
     clean = "--clean-parts" in a
     keep = not clean
     fresh = "--fresh" in a
+    fast = "--fast" in a   # 检查类命令的采样间隔翻倍，帧数减半
+
+    def interval_of(name, default, fast_default=None):
+        given = flag_value(a, name)
+        if given is not None: return as_float(given, name)
+        return fast_default if (fast and fast_default is not None) else default
     if "--diff" in a:
         vals = flag_args(a, "--diff")
         if len(vals) < 2: sys.exit("用法：python render.py --diff A.mp4 B.mp4 [--samples 8] [--out 结果.jpg]")
@@ -1793,19 +1936,19 @@ if __name__ == "__main__":
         meta = project_meta(proj)
         print_storyboard(proj, meta["end"], meta.get("shots"), meta.get("subs"))
     elif "--check-safe" in a:
-        check_safe(proj, as_float(flag_value(a, "--check-safe", "0.5"), "--check-safe"),
+        check_safe(proj, interval_of("--check-safe", 0.5, 1.0),
                    as_float(flag_value(a, "--safe-y", str(SAFE_Y)), "--safe-y"),
                    as_float(flag_value(a, "--band-diff", str(BAND_DIFF)), "--band-diff"),
                    as_float(flag_value(a, "--band-ratio", str(BAND_RATIO)), "--band-ratio"),
-                   "--band-strict" in a)
+                   "--band-strict" in a, fast)
     elif "--check-band" in a:
-        check_band(proj, as_float(flag_value(a, "--check-band", "0.5"), "--check-band"),
+        check_band(proj, interval_of("--check-band", 0.5, 1.0),
                    as_float(flag_value(a, "--safe-y", str(SAFE_Y)), "--safe-y"),
                    as_float(flag_value(a, "--band-diff", str(BAND_DIFF)), "--band-diff"),
                    as_float(flag_value(a, "--band-ratio", str(BAND_RATIO)), "--band-ratio"),
-                   "--band-strict" in a)
+                   "--band-strict" in a, fast)
     elif "--overlap" in a:
-        check_overlap(proj, as_float(flag_value(a, "--overlap", "1.0"), "--overlap"))
+        check_overlap(proj, interval_of("--overlap", 1.0, 2.0), fast=fast)
     elif "--web" in a:
         web(proj, flag_value(a, "--web"), kb=as_int(flag_value(a, "--kb"), "--kb", None))
     elif "--concat" in a:
@@ -1818,7 +1961,12 @@ if __name__ == "__main__":
             print("8765 被占用，改用", url)
         print("预览:", url + "?play", "（实时播放）")
         print("  冻结帧:", url + "?t=41", "（把 41 换成任意时刻；页面出错会显示在画面上）")
-        print("  看图还是直接用读图工具打开 review/*.png / review/*.jpg；Ctrl+C 结束")
+        review_page = write_review_index(proj)
+        if review_page:
+            print("  审片:", url + "review/index.html", "（缩略图网格，每 5 秒自动刷新）")
+        else:
+            print("  审片：还没有 review/ 图；先跑 --sheet / --stills / --check-safe")
+        print("  Ctrl+C 结束")
         try: threading.Event().wait()
         except KeyboardInterrupt: pass
     elif "--stills" in a:
@@ -1871,3 +2019,15 @@ if __name__ == "__main__":
         frames_parallel(proj, proj / "renders/raw.mp4", jobs, crf, preset, keep, fresh, only, segments)
     else:
         frames(proj, proj / "renders/raw.mp4", crf=crf, preset=preset)
+
+if __name__ == "__main__":
+    try:
+        main(sys.argv[1:])
+    except SystemExit as exc:
+        if isinstance(exc.code, str):
+            print(exc.code, file=sys.stderr)
+            _hard_exit(1)
+        _hard_exit(exc.code or 0)
+    except KeyboardInterrupt:
+        _hard_exit(130)
+    _hard_exit(0)

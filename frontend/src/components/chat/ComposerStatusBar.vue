@@ -22,7 +22,8 @@
       </button>
       <div
         v-if="taskPanelVisible"
-        class="composer-status-panel"
+        ref="taskPanelRef"
+        class="composer-status-panel composer-task-popover"
         data-testid="composer-background-task-panel"
         @click.stop
       >
@@ -30,38 +31,57 @@
           <strong>{{ t('chat.composer.backgroundTasks') }}</strong>
           <span>{{ t('chat.composer.backgroundTasksCount', { count: taskCount }) }}</span>
         </div>
-        <div v-for="task in visibleTasks" :key="task.commandSessionId" class="composer-task-row">
-          <div class="composer-task-row__main">
-            <button
-              class="composer-task-row__open"
-              type="button"
-              :title="task.command"
-              :aria-expanded="expandedTaskIds.has(task.commandSessionId)"
-              @click="toggleTask(task.commandSessionId)"
-            >
-              <span class="composer-task-dot" aria-hidden="true"></span>
-              <span class="composer-task-command">{{ task.command }}</span>
-              <span class="composer-task-elapsed">{{ elapsed(task) }}</span>
-            </button>
-            <button
-              v-if="!task.synthetic"
-              class="composer-task-stop"
-              type="button"
-              :disabled="terminatingTaskIds.has(task.commandSessionId)"
-              :title="t('chat.composer.backgroundTasksTerminate')"
-              :aria-label="t('chat.composer.backgroundTasksTerminate')"
-              @click="terminateTask(task)"
-            >
-              <i class="fa-solid fa-xmark" aria-hidden="true"></i>
-            </button>
+        <!-- 任务行放独立滚动区：条目多或展开多条输出时，浮层自己不越过视口。 -->
+        <div class="composer-task-body" data-scroll-shell>
+          <div class="composer-task-list" data-scroll-body @scroll="handleScrollSync">
+            <div v-for="task in visibleTasks" :key="task.commandSessionId" class="composer-task-row">
+              <div class="composer-task-row__main">
+                <button
+                  class="composer-task-row__open"
+                  type="button"
+                  :title="task.command"
+                  :aria-expanded="expandedTaskIds.has(task.commandSessionId)"
+                  @click="toggleTask(task.commandSessionId)"
+                >
+                  <span class="composer-task-dot" aria-hidden="true"></span>
+                  <span class="composer-task-command">{{ task.command }}</span>
+                  <span class="composer-task-elapsed">{{ elapsed(task) }}</span>
+                </button>
+                <button
+                  v-if="!task.synthetic"
+                  class="composer-task-stop"
+                  type="button"
+                  :disabled="terminatingTaskIds.has(task.commandSessionId)"
+                  :title="t('chat.composer.backgroundTasksTerminate')"
+                  :aria-label="t('chat.composer.backgroundTasksTerminate')"
+                  @click="terminateTask(task)"
+                >
+                  <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                </button>
+              </div>
+              <div v-if="expandedTaskIds.has(task.commandSessionId)" class="composer-task-detail">
+                <div class="composer-task-cwd" :title="task.cwd">{{ task.cwd }}</div>
+                <!-- 输出框高度封顶：超出部分在框内滚动，默认跟随最新输出；滚动条自绘，任何平台都看得见。 -->
+                <div class="composer-task-output" data-scroll-shell>
+                  <pre
+                    data-task-output
+                    data-scroll-body
+                    tabindex="0"
+                    @scroll="handleOutputScroll"
+                  >{{ taskOutput(task) || t('chat.composer.backgroundTasksNoOutput') }}</pre>
+                  <div class="composer-scroll-track" aria-hidden="true">
+                    <div class="composer-scroll-thumb" data-scroll-thumb @pointerdown="startThumbDrag"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-if="taskCount > visibleTasks.length" class="composer-status-panel__more">
+              {{ t('chat.composer.backgroundTasksMore', { count: taskCount - visibleTasks.length }) }}
+            </div>
           </div>
-          <div v-if="expandedTaskIds.has(task.commandSessionId)" class="composer-task-detail">
-            <div class="composer-task-cwd" :title="task.cwd">{{ task.cwd }}</div>
-            <pre>{{ taskOutput(task) || t('chat.composer.backgroundTasksNoOutput') }}</pre>
+          <div class="composer-scroll-track" aria-hidden="true">
+            <div class="composer-scroll-thumb" data-scroll-thumb @pointerdown="startThumbDrag"></div>
           </div>
-        </div>
-        <div v-if="taskCount > visibleTasks.length" class="composer-status-panel__more">
-          {{ t('chat.composer.backgroundTasksMore', { count: taskCount - visibleTasks.length }) }}
         </div>
       </div>
     </div>
@@ -75,7 +95,7 @@
     >
       <button
         class="composer-status-trigger"
-        :class="{ 'is-active': subagents.length > 0 }"
+        :class="{ 'is-active': activeSubagentCount > 0 }"
         type="button"
         data-testid="composer-subagents"
         :title="subagentHint"
@@ -102,7 +122,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import MessageSubagentPanel from '@/components/chat/MessageSubagentPanel.vue';
@@ -121,8 +141,10 @@ import { onSubagentPoolChanged } from '@/utils/subagentPoolEvents';
 import { isSubagentItemActive } from '@/utils/subagentRuntime';
 
 const MAX_ROWS = 6;
-const OUTPUT_LINES = 10;
-const OUTPUT_CHARS = 1200;
+/* 面板是「看一眼最新输出」的入口：截取尾部若干行即可，超出部分交给滚动条。 */
+const OUTPUT_LINES = 200;
+const OUTPUT_CHARS = 6000;
+const OUTPUT_FOLLOW_THRESHOLD = 8;
 
 type DockKind = 'tasks' | 'subagents';
 
@@ -228,7 +250,12 @@ const subagents = computed<Record<string, unknown>[]>(() =>
   normalizeMessageSubagents([...projectedSubagents.value, ...loadedSubagents.value])
 );
 const visibleSubagents = computed(() => subagents.value.slice(0, MAX_ROWS));
+/** 只有仍在工作的子智能体才点亮图标；已完成的仍计入数字，供回看结果。 */
+const activeSubagentCount = computed(() =>
+  subagents.value.reduce((count, item) => (isSubagentItemActive(item) ? count + 1 : count), 0)
+);
 const expandedTaskIds = ref<Set<string>>(new Set());
+const taskPanelRef = ref<HTMLElement | null>(null);
 const terminatingTaskIds = ref<Set<string>>(new Set());
 const taskDockOpen = ref(false);
 const subagentDockOpen = ref(false);
@@ -257,6 +284,8 @@ const openDock = (kind: DockKind) => {
   if (kind === 'tasks') {
     taskDockOpen.value = true;
     subagentDockOpen.value = false;
+    // 浮层出现后再量一次尺寸：首次挂载时 clientHeight/scrollHeight 才有值。
+    void nextTick(syncAllScrollThumbs);
   } else {
     subagentDockOpen.value = true;
     taskDockOpen.value = false;
@@ -285,6 +314,8 @@ const toggleTask = (id: string) => {
   if (next.has(id)) next.delete(id);
   else next.add(id);
   expandedTaskIds.value = next;
+  // 展开时定位到最新输出；之后由 watch 跟随，用户上滚即停止跟随。
+  void nextTick(pinTaskOutput);
 };
 const elapsed = (task: CommandSessionRuntimeEntry): string => {
   const started = Date.parse(task.startedAt);
@@ -295,8 +326,99 @@ const elapsed = (task: CommandSessionRuntimeEntry): string => {
 };
 const taskOutput = (task: CommandSessionRuntimeEntry): string => {
   const text = task.ptyTail || [task.stdoutTail, task.stderrTail].filter(Boolean).join('\n') || task.error;
-  const lines = text.replace(/\r/g, '').split('\n').slice(-OUTPUT_LINES).join('\n');
-  return lines.length > OUTPUT_CHARS ? `…${lines.slice(-OUTPUT_CHARS)}` : lines;
+  const allLines = text.replace(/\r/g, '').split('\n');
+  let truncated = allLines.length > OUTPUT_LINES;
+  let tail = allLines.slice(-OUTPUT_LINES).join('\n');
+  if (tail.length > OUTPUT_CHARS) {
+    tail = tail.slice(-OUTPUT_CHARS);
+    const cut = tail.indexOf('\n');
+    if (cut >= 0 && cut < 200) tail = tail.slice(cut + 1);
+    truncated = true;
+  }
+  return truncated ? `…\n${tail}` : tail;
+};
+/**
+ * 应用全局隐藏了原生滚动条（styles/base.css），命令输出与任务列表改用自绘细滚动条：
+ * 有溢出才显示、位置随滚动实时更新、按住可拖动，任何平台都能看出「还有内容」。
+ */
+/** 只找直接子级：任务行里的输出框也带滚动区，避免把内层滚条当成外层。 */
+const directChild = (root: HTMLElement, selector: string): HTMLElement | null => {
+  for (const child of Array.from(root.children)) {
+    if (child.matches(selector)) return child as HTMLElement;
+  }
+  return null;
+};
+const scrollBodyOf = (shell: HTMLElement | null): HTMLElement | null =>
+  shell ? directChild(shell, '[data-scroll-body]') : null;
+const scrollThumbOf = (shell: HTMLElement | null): HTMLElement | null => {
+  const track = shell ? directChild(shell, '.composer-scroll-track') : null;
+  return track?.firstElementChild instanceof HTMLElement ? track.firstElementChild : null;
+};
+const syncScrollThumb = (shell: HTMLElement | null) => {
+  const body = scrollBodyOf(shell);
+  const thumb = scrollThumbOf(shell);
+  if (!body || !thumb) return;
+  const viewport = body.clientHeight;
+  const total = body.scrollHeight;
+  if (viewport <= 0 || total <= viewport + 1) {
+    thumb.style.opacity = '0';
+    thumb.style.height = '0px';
+    return;
+  }
+  const height = Math.max(20, Math.round((viewport * viewport) / total));
+  const maxTop = Math.max(0, viewport - height);
+  const scrollable = Math.max(1, total - viewport);
+  const progress = Math.min(1, Math.max(0, body.scrollTop / scrollable));
+  thumb.style.opacity = '1';
+  thumb.style.height = `${height}px`;
+  thumb.style.transform = 'translateY(' + Math.round(progress * maxTop) + 'px)';
+};
+const syncAllScrollThumbs = () => {
+  taskPanelRef.value?.querySelectorAll<HTMLElement>('[data-scroll-shell]')
+    .forEach(shell => syncScrollThumb(shell));
+};
+const handleScrollSync = (event: Event) => {
+  const el = event.currentTarget as HTMLElement | null;
+  if (!el) return;
+  syncScrollThumb(el.closest<HTMLElement>('[data-scroll-shell]'));
+};
+/** 用户手动上滚查看历史时停止跟随，回到底部后重新跟随最新输出。 */
+const handleOutputScroll = (event: Event) => {
+  const el = event.currentTarget as HTMLElement | null;
+  if (!el) return;
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= OUTPUT_FOLLOW_THRESHOLD;
+  el.dataset.follow = atBottom ? '1' : '0';
+  syncScrollThumb(el.closest<HTMLElement>('[data-scroll-shell]'));
+};
+const pinTaskOutput = () => {
+  const panel = taskPanelRef.value;
+  if (!panel) return;
+  panel.querySelectorAll<HTMLElement>('[data-task-output]').forEach(el => {
+    if (el.dataset.follow !== '0') el.scrollTop = el.scrollHeight;
+  });
+  syncAllScrollThumbs();
+};
+const startThumbDrag = (event: PointerEvent) => {
+  const thumb = event.currentTarget as HTMLElement | null;
+  const body = scrollBodyOf(thumb?.closest<HTMLElement>('[data-scroll-shell]') ?? null);
+  if (!thumb || !body) return;
+  event.preventDefault();
+  const thumbHeight = thumb.offsetHeight || 20;
+  const span = Math.max(1, body.clientHeight - thumbHeight);
+  const top = body.getBoundingClientRect().top;
+  const move = (pointer: PointerEvent) => {
+    const ratio = Math.min(1, Math.max(0, (pointer.clientY - top - thumbHeight / 2) / span));
+    body.scrollTop = ratio * (body.scrollHeight - body.clientHeight);
+  };
+  const stop = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', stop);
+    window.removeEventListener('pointercancel', stop);
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', stop);
+  window.addEventListener('pointercancel', stop);
+  move(event);
 };
 const loadTasks = async (target: string) => {
   if (!target) {
@@ -368,7 +490,14 @@ watch(sessionId, target => {
   void loadTasks(target);
   void loadSubagents(target);
 }, { immediate: true });
+/* 命令输出会持续追加：展开着输出框时把视图钉在最新一行。 */
+watch(tasks, () => {
+  if (!taskPanelVisible.value || expandedTaskIds.value.size === 0) return;
+  void nextTick(pinTaskOutput);
+});
+window.addEventListener('resize', syncAllScrollThumbs);
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', syncAllScrollThumbs);
   unregisterCommandEvents();
   clearInterval(clock);
   clearInterval(subagentReconcile);
@@ -441,6 +570,7 @@ onBeforeUnmount(() => {
 }
 .composer-status-panel__head {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   height: 20px;
@@ -486,7 +616,51 @@ onBeforeUnmount(() => {
 .composer-task-stop:disabled { opacity: 0.5; cursor: default; }
 .composer-task-detail { margin: 0 0 6px 12px; padding: 6px 8px; border-radius: 6px; background: var(--mz-panel, #f8fafc); }
 .composer-task-cwd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--mz-text-muted, #8a8f99); font-size: 9px; }
-.composer-task-detail pre { max-height: 108px; margin: 4px 0 0; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; font: 9px/1.4 var(--mz-font-mono, monospace); }
+/* 任务浮层：头部固定，任务行单独滚动，浮层高度不越过视口。 */
+.composer-task-popover {
+  display: flex;
+  flex-direction: column;
+  max-height: min(58vh, 420px);
+  overflow: hidden;
+}
+/* 任务行滚动区：外层承担 flex 高度，内层只负责滚动，滚条贴浮层内边距。 */
+.composer-task-body { position: relative; flex: 1 1 auto; min-height: 0; display: flex; }
+.composer-task-list { flex: 1 1 auto; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+/* 输出框：高度封顶，超出在框内滚动；文字不压在滚条下面。 */
+.composer-task-output { position: relative; margin-top: 4px; }
+.composer-task-output pre {
+  max-height: min(240px, 34vh);
+  margin: 0;
+  padding-right: 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 10px/1.45 var(--mz-font-mono, monospace);
+}
+/* 自绘滚条（全局隐藏了原生滚动条）：只在有溢出时显示，可按住拖动。 */
+.composer-scroll-track {
+  position: absolute;
+  top: 0;
+  right: -6px;
+  bottom: 0;
+  width: 6px;
+  pointer-events: none;
+}
+.composer-scroll-thumb {
+  width: 4px;
+  height: 0;
+  margin: 0 auto;
+  border-radius: 2px;
+  background: rgba(15, 23, 42, 0.2);
+  opacity: 0;
+  pointer-events: auto;
+  cursor: grab;
+  transition: background 0.12s ease;
+}
+.composer-scroll-thumb:hover { background: rgba(15, 23, 42, 0.38); }
+.composer-scroll-thumb:active { cursor: grabbing; background: rgba(15, 23, 42, 0.5); }
 .composer-subagent-popover { padding: 0; overflow: hidden; }
 .composer-subagent-popover :deep(.subagent-panel) { margin: 0; border: 0; border-radius: 0; background: transparent; }
 .composer-subagent-popover :deep(.subagent-panel__list) { max-height: 280px; }

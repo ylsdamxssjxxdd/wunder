@@ -189,6 +189,10 @@ export struct SubagentItem {
     summary: string,
     status-kind: int,
     stoppable: bool,
+    // 统计行与气泡底部同一套图标：耗时 / 额度 / 上下文，只留图标与数字。
+    duration: string,
+    credits: string,
+    context: string,
 }
 
 // One tick of the chat's right-edge turn ruler. `fraction` is the turn row's

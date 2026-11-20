@@ -346,8 +346,72 @@ fn memory_call_preview(args: &Value) -> String {
     format!("{verb}{subject}")
 }
 
+/// 浏览器工具是单一 `action` 工具（`browser` / 中文聚合名「浏览器」）。
+fn is_browser_tool(tool: &str) -> bool {
+    matches!(
+        tool.trim(),
+        "browser" | "playwright" | "浏览器" | "内置浏览器"
+    )
+}
+
+/// 折叠行里的浏览器摘要：`动作 [目标] · 当前页面`。
+///
+/// 行首标签固定是「浏览」，动作词（navigate / click / observe_refs）本身说不出
+/// 「在哪个页面」。navigate、tabs_new 的地址在调用参数里；点击、观察、截图等动作
+/// 的参数没有网址，只有结果回执里的当前页面地址。原先按通用字段表取摘要，导航
+/// 拿到的是裸网址、其它动作只有动作词，两种都看不出这一步发生在哪一页。
+fn browser_call_preview(args: &Value, data: &Value) -> String {
+    let field = |source: &Value, key: &str| -> String {
+        source
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    };
+    let action = field(args, "action");
+    let call_url = field(args, "url");
+    let target = if call_url.is_empty() {
+        ["ref", "selector", "text", "key", "path", "cursor"]
+            .iter()
+            .map(|key| field(args, key))
+            .find(|value| !value.is_empty())
+            .unwrap_or_default()
+    } else {
+        call_url.clone()
+    };
+    let page = if call_url.is_empty() {
+        let result = result_data(data);
+        let url = field(result, "url");
+        if url.is_empty() {
+            field(result, "page_url")
+        } else {
+            url
+        }
+    } else {
+        call_url
+    };
+    let lead = [action.as_str(), target.as_str()]
+        .iter()
+        .filter(|value| !value.is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if lead.is_empty() {
+        return page;
+    }
+    if page.is_empty() || page == target {
+        lead
+    } else {
+        format!("{lead} · {page}")
+    }
+}
+
 /// A collapsed row describes invocation arguments only. Results can contain
 /// arbitrary `path`, `query` or `content` fields that are not the call target.
+/// The browser is the one exception: its action arguments rarely carry the page
+/// address, so [`browser_call_preview`] reads the page URL from the result
+/// receipt (a deterministic field of that action, not business content).
 fn call_preview(tool: &str, data: &Value) -> String {
     let args = data.get("args").or_else(|| data.get("arguments"));
     let parsed = args
@@ -356,6 +420,12 @@ fn call_preview(tool: &str, data: &Value) -> String {
         .and_then(|value| serde_json::from_str::<Value>(value).ok());
     let args = parsed.as_ref().or(args).unwrap_or(&Value::Null);
     let command = is_command_tool(tool);
+    if is_browser_tool(tool) {
+        let preview = browser_call_preview(args, data);
+        if !preview.is_empty() {
+            return preview;
+        }
+    }
     if matches!(tool, "记忆管理" | "memory_manager" | "memory_manage") {
         let parsed_args = args
             .as_str()
@@ -678,6 +748,44 @@ mod tests {
             );
             assert_eq!(entry.preview, expected);
         }
+    }
+    #[test]
+    fn browser_previews_carry_the_page_url_beside_the_action() {
+        // 导航：网址在调用参数里，摘要必须带上动作与网址本身。
+        let navigate = NativeWorkflowEntry::from_payload(
+            "fixture-browser-1",
+            "browser",
+            String::new(),
+            "completed",
+            &json!({
+                "args": {"action": "navigate", "url": "https://example.test/manual/"},
+                "result": {"ok": true, "data": {"kind": "navigate", "url": "https://example.test/manual/"}}
+            }),
+        );
+        assert_eq!(navigate.preview, "navigate https://example.test/manual/");
+
+        // 点击：参数里没有网址，结果回执里的当前页面补上。
+        let click = NativeWorkflowEntry::from_payload(
+            "fixture-browser-2",
+            "browser",
+            String::new(),
+            "completed",
+            &json!({
+                "args": {"action": "click", "ref": "e12"},
+                "result": {"ok": true, "data": {"kind": "click", "url": "https://example.test/manual/"}}
+            }),
+        );
+        assert_eq!(click.preview, "click e12 \u{b7} https://example.test/manual/");
+
+        // 结果还没到：只留动作与目标，不编造网址。
+        let pending = NativeWorkflowEntry::from_payload(
+            "fixture-browser-3",
+            "浏览器",
+            String::new(),
+            "running",
+            &json!({"args": {"action": "observe_text", "max_chars": 2000}}),
+        );
+        assert_eq!(pending.preview, "observe_text");
     }
     #[test]
     fn collapsed_metrics_match_web_and_ignore_business_metrics() {

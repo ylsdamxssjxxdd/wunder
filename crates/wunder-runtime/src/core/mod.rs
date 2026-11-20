@@ -12,6 +12,7 @@ pub mod drawio_config;
 pub mod exec_policy;
 pub mod http_client;
 pub mod i18n;
+pub mod instance_liveness;
 pub mod json_schema;
 pub(crate) mod llm_speed;
 pub mod local_assets;

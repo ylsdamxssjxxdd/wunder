@@ -97,9 +97,10 @@ pub use catalog::{
     filter_tool_names_by_model_capability, is_android_notifications_tool_name,
     is_android_screen_tool_name, is_browser_group_name, is_browser_tool_name,
     is_desktop_control_tool_name, is_phone_control_tool_name, is_read_image_tool_name,
-    phone_tools_available, resolve_builtin_tool_schema, resolve_builtin_tool_schema_reference,
+    normalize_frozen_tool_ids, phone_tools_available, resolve_builtin_tool_schema,
+    resolve_builtin_tool_schema_reference,
     resolve_runtime_tool_display_name, resolve_tool_name, runtime_tool_schema,
-    runtime_tool_schema_reference, with_browser_group_members,
+    runtime_tool_schema_reference, tool_specs_with_runtime_names, with_browser_group_members,
 };
 /// Decode raw command output (UTF-8, then Windows GBK / UTF-16 fallbacks).
 /// Exposed so non-tool callers that render command streams use the same

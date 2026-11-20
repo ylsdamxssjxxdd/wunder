@@ -463,14 +463,16 @@ fn build_snapshot(
         .and_then(|value| value.get("thread_status"))
         .and_then(Value::as_str)
         .unwrap_or("");
-    // A stale monitor row can still claim the thread is live; the in-process
-    // activity probe is the only authority on running.
+    // A finished turn may still own background commands or subagents: the row
+    // keeps working until that work settles, while waiting states keep their
+    // higher priority.
     let status = StatusSignals {
         record: &record.status,
         monitor: monitor_status,
         turn: turn_status,
         runtime: runtime_status,
         running: activity.running,
+        background: activity.background,
     }
     .resolve();
     let status = tail
@@ -486,19 +488,11 @@ fn build_snapshot(
                 turn: head,
                 runtime: "",
                 running: false,
+                background: activity.background,
             }
             .resolve()
         })
         .unwrap_or(status);
-    // 轮次已结束但后台命令/子智能体仍在跑：这一行仍在工作。等待用户与
-    // 运行中优先级更高，保持原判。
-    let status = if activity.background
-        && !matches!(status, ThreadStatus::Working | ThreadStatus::NeedsYou)
-    {
-        ThreadStatus::Working
-    } else {
-        status
-    };
     let last_activity = if activity.running {
         usage.map(|summary| summary.activity.clone())
     } else {
@@ -551,6 +545,8 @@ pub struct StatusSignals<'a> {
     pub runtime: &'a str,
     /// The activity probe's verdict for this thread in this process.
     pub running: bool,
+    /// Background commands or subagents this thread still owns after its turn.
+    pub background: bool,
 }
 
 impl StatusSignals<'_> {
@@ -581,6 +577,7 @@ impl StatusSignals<'_> {
             return ThreadStatus::NeedsYou;
         }
         if self.running
+            || self.background
             || [monitor.as_str(), turn.as_str(), runtime.as_str()]
                 .iter()
                 .any(|signal| is_live(signal))
@@ -773,6 +770,7 @@ mod tests {
             turn,
             runtime,
             running,
+            background: false,
         }
         .resolve()
     }
@@ -945,6 +943,7 @@ mod tests {
                 turn,
                 runtime,
                 running,
+                background: false,
             };
             assert_eq!(
                 signals.resolve(),
@@ -968,6 +967,7 @@ mod tests {
                 turn: "queued",
                 runtime,
                 running: true,
+                background: false,
             };
             assert_eq!(state.runtime_status(), "running");
         }
@@ -977,7 +977,8 @@ mod tests {
                 monitor: "queued",
                 turn: "queued",
                 runtime: "",
-                running: true
+                running: true,
+                background: false,
             }
             .runtime_status(),
             "queued"
@@ -1042,6 +1043,26 @@ mod tests {
             signals("archived", "", "completed", "", false),
             ThreadStatus::Finished
         );
+    }
+
+    #[test]
+    fn background_work_reads_as_working_but_waiting_still_wins() {
+        let background = StatusSignals {
+            record: "active",
+            monitor: "",
+            turn: "completed",
+            runtime: "",
+            running: false,
+            background: true,
+        };
+        assert_eq!(background.resolve(), ThreadStatus::Working);
+        assert_eq!(background.runtime_status(), "running");
+        // A parked turn still needs the user more than it owes background work.
+        let waiting = StatusSignals {
+            turn: "waiting_user_input",
+            ..background
+        };
+        assert_eq!(waiting.resolve(), ThreadStatus::NeedsYou);
     }
 
     #[test]

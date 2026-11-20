@@ -1434,11 +1434,6 @@
   "en": "Please organize the current content."
  },
  {
-  "key": "cp_commands",
-  "zh": "命令",
-  "en": "Commands"
- },
- {
   "key": "cp_cmd_help",
   "zh": "/help  查看可用命令",
   "en": "/help  list available commands"
@@ -6376,6 +6371,21 @@
   "key": "sub_status_failed",
   "zh": "失败",
   "en": "Failed"
+ },
+ {
+  "key": "sub_stat_duration",
+  "zh": "耗时",
+  "en": "Duration"
+ },
+ {
+  "key": "sub_stat_credits",
+  "zh": "额度消耗",
+  "en": "Credits used"
+ },
+ {
+  "key": "sub_stat_context",
+  "zh": "上下文占用",
+  "en": "Context used"
  },
  {
   "key": "sub_interrupt",

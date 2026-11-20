@@ -1352,11 +1352,11 @@ export component QueueStrip inherits Rectangle {
     }
 }
 
-// Cascading submenus of the plus menu, 对齐云端版 ChatComposer: a 268px card
+// 指令清单浮层，对齐云端版 ChatComposer: a 268px card
 // pops out to the right of its menu row, and the height follows the body so
-// every submenu is exactly as tall as its rows.
+// every flyout is exactly as tall as its rows.
 component CommandFlyout inherits Rectangle {
-    // Keyboard-selected row; -1 means the flyout is mouse-only (plus-menu
+    // Keyboard-selected row; -1 means the flyout is mouse-only (preset
     // cascade) and no row reads as pre-highlighted.
     in property <int> active-index: -1;
     callback pick(string);
@@ -1587,11 +1587,9 @@ export component Composer inherits Rectangle {
     private property <bool> plus-open: false;
     private property <bool> model-open: false;
     private property <bool> preset-open: false;
-    private property <bool> command-open: false;
     // Keyboard walk over the slash-command flyout (云端版同款): arrows move the
     // highlight, Enter commits it instead of sending, Escape puts the flyout
-    // away until the next real edit. The pinned cascade inside the plus menu
-    // stays mouse-only, so this gate is the typed-"/" variant only.
+    // away until the next real edit. 指令只在输入框里打 “/” 时出现。
     private property <int> command-index: 0;
     private property <bool> command-dismissed: false;
     private property <bool> command-keys:
@@ -1627,10 +1625,6 @@ export component Composer inherits Rectangle {
     out property <length> model-menu-y: root.model-open ? model-picker.menu-y : -1px;
     out property <length> model-menu-width: root.model-open ? model-picker.menu-width : 0px;
     out property <length> model-menu-height: root.model-open ? model-picker.menu-height : 0px;
-    out property <length> command-menu-x: root.command-open ? command_flyout.absolute-position.x : -1px;
-    out property <length> command-menu-y: root.command-open ? command_flyout.absolute-position.y : -1px;
-    out property <length> command-menu-width: root.command-open ? command_flyout.width : 0px;
-    out property <length> command-menu-height: root.command-open ? command_flyout.height : 0px;
     out property <length> preset-menu-x: root.preset-open ? preset_flyout.absolute-position.x : -1px;
     out property <length> preset-menu-y: root.preset-open ? preset_flyout.absolute-position.y : -1px;
     out property <length> preset-menu-width: root.preset-open ? preset_flyout.width : 0px;
@@ -1654,7 +1648,6 @@ export component Composer inherits Rectangle {
     // exclusive with the model popover, mirroring the web menu's single-open
     // behaviour.
     function close-submenus() {
-        root.command-open = false;
         root.preset-open = false;
     }
     background: transparent;
@@ -2025,38 +2018,8 @@ export component Composer inherits Rectangle {
                     drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
                         menu-body := VerticalLayout {
                             padding: 6px; spacing: 2px;
-                            // 命令: the slash list cascades out of the row.
-                            Rectangle {
-                                height: 34px; border-radius: Theme.radius-sm;
-                                background: root.command-open || cmd-row-touch.has-hover ? Theme.hover : transparent;
-                                accessible-role: list-item; accessible-label: I18n.cp_commands;
-                                Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/terminal.svg"); colorize: Theme.text-secondary; image-fit: contain; }
-                                Text { x: 32px; width: parent.width - 44px; height: parent.height; text: I18n.cp_commands; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
-                                Image { x: parent.width - 17px; y: 12px; width: 9px; height: 9px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; image-fit: contain; }
-                                cmd-row-touch := TouchArea {
-                                    mouse-cursor: pointer;
-                                    clicked => {
-                                        root.command-open = !root.command-open;
-                                        root.preset-open = false;
-                                    }
-                                    // 级联跟随悬停（云端版 hoverPlusSubmenu 同款）：
-                                    // 指到有子面板的行即呼出并收掉其余，移开不
-                                    // 自动收起，指到无子面板的行才清空。
-                                    changed has-hover => {
-                                        if root.plus-open && self.has-hover {
-                                            root.command-open = true;
-                                            root.preset-open = false;
-                                        }
-                                    }
-                                }
-                                command_flyout := CommandFlyout {
-                                    visible: root.command-open;
-                                    x: parent.width + 12px;
-                                    y: parent.height + 7px - self.height;
-                                    z: 2;
-                                    pick(value) => { root.plus-open = false; root.close-submenus(); root.draft = value; editor.focus(); }
-                                }
-                            }
+                            // 命令不再挂在加号里：斜杠指令直接由输入框里的
+                            // “/” 触发（下方的 CommandFlyout），少一层级联。
                             // 预设问题
                             Rectangle {
                                 height: 34px; border-radius: Theme.radius-sm;
@@ -2067,14 +2030,10 @@ export component Composer inherits Rectangle {
                                 Image { x: parent.width - 17px; y: 12px; width: 9px; height: 9px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; image-fit: contain; }
                                 preset-row-touch := TouchArea {
                                     mouse-cursor: pointer;
-                                    clicked => {
-                                        root.preset-open = !root.preset-open;
-                                        root.command-open = false;
-                                    }
+                                    clicked => { root.preset-open = !root.preset-open; }
                                     changed has-hover => {
                                         if root.plus-open && self.has-hover {
                                             root.preset-open = true;
-                                            root.command-open = false;
                                         }
                                     }
                                 }

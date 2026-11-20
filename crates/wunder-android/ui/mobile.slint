@@ -225,9 +225,8 @@ component SelectionKnob inherits Rectangle {
 export component MobileWindow inherits Window {
     title: "wunder 安卓版";
     background: Theme.panel;
-    // Same face and base size as 桌面版's window: the bundled YaHei is registered
-    // before the first frame by src/fonts.rs.
-    default-font-family: "Microsoft YaHei";
+    // 字体由 src/fonts.rs 注册的手机系统字族提供；这里不钉死具体 family 名，
+    // 文字会落到 SansSerif 通用族（系统 Roboto + 系统中文字体）。
     default-font-size: Theme.font-md;
 
     // ---- thread list -------------------------------------------------

@@ -580,6 +580,42 @@ fn invalid_tool_call_notice_instructs_repair_or_final_response() {
 }
 
 #[test]
+fn invalid_tool_call_notice_separates_blocked_known_tool_from_unknown_name() {
+    let allowed = HashSet::from([resolve_tool_name("final_response")]);
+    let rejected = vec![
+        RejectedToolCall {
+            name: "read_image".to_string(),
+            resolved_name: resolve_tool_name("read_image"),
+            reason: "tool_not_allowed_or_unknown",
+            arguments_preview: "{}".to_string(),
+        },
+        RejectedToolCall {
+            name: "read_command".to_string(),
+            resolved_name: "read_command".to_string(),
+            reason: "tool_not_allowed_or_unknown",
+            arguments_preview: "{}".to_string(),
+        },
+    ];
+
+    let notice = build_invalid_tool_call_model_notice(&rejected, &allowed);
+
+    assert_eq!(
+        notice.get("known_but_not_allowed"),
+        Some(&json!([resolve_tool_name("read_image")]))
+    );
+    assert_eq!(
+        notice.get("unknown_tool_names"),
+        Some(&json!(["read_command"]))
+    );
+    let instruction = notice
+        .get("instruction")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    assert!(instruction.contains("not enabled for this thread"));
+    assert!(instruction.contains("do not exist"));
+}
+
+#[test]
 fn assistant_history_snapshot_drops_terminal_tool_calls() {
     let allowed = HashSet::from([
         resolve_tool_name("final_response"),

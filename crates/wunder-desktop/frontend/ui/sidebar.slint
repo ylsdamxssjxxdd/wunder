@@ -85,11 +85,8 @@ component ThreadRow inherits ContextMenuArea {
         MenuItem { title: I18n.sb_thread_multi_select; enabled: root.allow-selection; activated => { root.begin-selection(); } }
     }
 
-    Rectangle {
-        width: parent.width;
-        height: parent.height;
-        background: data.active ? Theme.selected : transparent;
-    }
+    // 选中/悬停的底色由外层行格（线程的 DragRow、云端行的容器）负责画：这里
+    // 再铺一块同色的直角底，会把外层行格的弧角盖成方块。
 
     HorizontalLayout {
         // 只缩进一格：状态点落在 28px（28-12=16 行内坐标），标题接上工作区标题列；
@@ -166,6 +163,9 @@ component ThreadRow inherits ContextMenuArea {
         y: 0px;
         width: 84px;
         height: parent.height;
+        // 与行底色同一个弧角：左半边压在行内同色底上，圆不圆看不出来，右半边
+        // 却必须跟着行角收住，否则悬停时右下角会冒出直角。
+        border-radius: SidebarMetrics.row-fill-radius;
         background: data.active ? Theme.selected : Theme.accent-soft;
         Rectangle {
             x: 8px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: SidebarMetrics.row-radius;
@@ -250,6 +250,9 @@ component GroupHeaderRow inherits DragRow {
     workspace-id: data.kind == 2 ? "cloud" : data.workspace-id;
     selected: data.selected;
     selected-color: Theme.selected;
+    // 工作区标题的底色弧角与线程标题同值（DragRow 默认是更大的 radius-lg），
+    // 两个标题叠在一起时才是一条对齐的树。
+    border-radius: SidebarMetrics.row-fill-radius;
     // 点击这一行是它自己线程树的开关：展开时提示可收起，收起时提示可展开；
     // 本地工作区收起后仍显示目录，方便确认这一组指向哪里。
     tooltip: data.kind == 2
@@ -307,6 +310,8 @@ component GroupHeaderRow inherits DragRow {
         y: 0px;
         width: 84px;
         height: parent.height;
+        // 同 ThreadRow：右半边必须跟着行角收住，悬停时才不冒出直角。
+        border-radius: SidebarMetrics.row-fill-radius;
         background: root.hover ? (data.selected ? Theme.selected : Theme.accent-soft) : transparent;
         Rectangle {
             x: 56px; y: (parent.height - 20px) / 2; width: 20px; height: 20px;
@@ -604,7 +609,7 @@ export component Sidebar inherits Rectangle {
                         x: SidebarMetrics.gutter;
                         y: SidebarMetrics.group-air;
                         width: parent.width - SidebarMetrics.gutter * 2;
-                        height: parent.height - SidebarMetrics.group-air;
+                        height: SidebarMetrics.group-chip-height;
                         enabled: !root.busy;
                         row-index: ri;
                         data: row;
@@ -616,7 +621,7 @@ export component Sidebar inherits Rectangle {
                         x: SidebarMetrics.gutter;
                         width: parent.width - SidebarMetrics.gutter * 2;
                         height: parent.height;
-                        border-radius: SidebarMetrics.row-radius;
+                        border-radius: SidebarMetrics.row-fill-radius;
                         // Selection mode freezes reordering, as on the web.
                         enabled: !root.busy && !root.selection-mode;
                         selected: row.active;
@@ -656,7 +661,7 @@ export component Sidebar inherits Rectangle {
                         x: SidebarMetrics.gutter;
                         width: parent.width - SidebarMetrics.gutter * 2;
                         height: parent.height;
-                        border-radius: SidebarMetrics.row-radius;
+                        border-radius: SidebarMetrics.row-fill-radius;
                         background: row.active ? Theme.selected : cloud-thread-touch.has-hover ? Theme.hover : transparent;
                         cloud-thread-touch := TouchArea {
                             mouse-cursor: pointer;
@@ -683,7 +688,7 @@ export component Sidebar inherits Rectangle {
                         x: SidebarMetrics.gutter;
                         y: SidebarMetrics.group-air;
                         width: parent.width - SidebarMetrics.gutter * 2;
-                        height: parent.height - SidebarMetrics.group-air;
+                        height: SidebarMetrics.group-chip-height;
                         enabled: !root.busy;
                         row-index: ri;
                         data: row;
@@ -720,7 +725,7 @@ export component Sidebar inherits Rectangle {
                 if (row.kind == 0 || row.kind == 2) && row.expanded : pin-frame := Rectangle {
                     x: 0px;
                     y: min(0px, row.group-end * 1px + tree.content-y
-                        - (SidebarMetrics.group-height - SidebarMetrics.group-air));
+                        - SidebarMetrics.group-chip-height);
                     // The wrapper is a 0×0 positioning cell; the frame sizes
                     // against the tree itself, not against that cell.
                     width: tree-frame.width;
@@ -732,7 +737,7 @@ export component Sidebar inherits Rectangle {
                         x: SidebarMetrics.gutter;
                         y: SidebarMetrics.group-air;
                         width: parent.width - SidebarMetrics.gutter * 2;
-                        height: parent.height - SidebarMetrics.group-air;
+                        height: SidebarMetrics.group-chip-height;
                         enabled: !root.busy;
                         row-index: ri;
                         data: row;

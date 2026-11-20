@@ -273,16 +273,12 @@ impl Orchestrator {
         let bindings = self
             .user_tool_manager
             .build_bindings(&config, &skills_snapshot, user_id);
-        let allowed = self.filter_tools_for_model_capability(
-            self.resolve_allowed_tool_names(
-                &config,
-                &request.tool_names,
-                &skills_snapshot,
-                Some(&bindings),
-            ),
-            llm_config.support_vision,
+        let allowed = self.resolve_allowed_tool_names(
+            &config,
+            &request.tool_names,
+            &skills_snapshot,
+            Some(&bindings),
         );
-        let allowed = self.apply_preview_skill_tool_policy(allowed, request.preview_skill);
         let (profile, binding) = self
             .resolve_frozen_session_tool_profile(
                 user_id,
@@ -310,6 +306,7 @@ impl Orchestrator {
                 Some(&bindings),
                 "en-US",
             );
+            let specs = crate::tools::tool_specs_with_runtime_names(&config, specs);
             let snapshot = crate::tools::tool_profile_snapshot_for_profile(&specs, profile);
             self.workspace.save_session_frozen_tool_profile(
                 user_id,
@@ -317,6 +314,13 @@ impl Orchestrator {
                 &crate::tools::tool_profile_binding(&snapshot),
             );
         }
+        // Freeze before per-turn projections: `model_name` may be absent on
+        // control turns, and capability/preview policy is not a durable
+        // property of the thread. Freezing it here would let one control turn
+        // permanently remove an authorized tool such as the image reader.
+        let allowed = self.apply_preview_skill_tool_policy(allowed, request.preview_skill);
+        let allowed =
+            self.filter_tools_for_model_capability(allowed, llm_config.support_vision);
         let mode = self
             .resolve_frozen_session_tool_call_mode(user_id, session_id, &llm_config)
             .await?;

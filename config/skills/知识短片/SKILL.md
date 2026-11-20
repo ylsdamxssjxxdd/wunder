@@ -25,7 +25,7 @@ description: >
 6. **不硬切。** 相邻镜头时间窗重叠半秒，各自乘 `ss` 淡入淡出；一镜只改一处。
 7. **先查再渲。** `--lint` → `--sheet`/`--stills` → `--check-safe`/`--overlap` → `--det` → 渲片段 → 全片。
 8. **长片可续。** 全片用 `--jobs 4`；中断后重跑同样的 `--jobs 4`（默认续渲）或 `--concat`，不要从头重渲；发布用 `--web` 转码。
-9. **单实例渲染。** 同一工程同一时刻只允许一个渲染进程；脚本用 `renders/.render.lock` 互斥，重复启动会直接报错而不是两个进程写同一段。产物先写隐藏临时文件再原子改名，`renders/*.mp4` 只要出现就是完整的；判断完成只认 `.done`，不要在渲染中拿 `ffprobe` 探测 mp4（会看到 `moov atom not found`，那不是产物损坏）。
+9. **单实例。** 同一工程同一时刻只允许一个进程使用浏览器或写 `renders/`，渲染和检查都算；脚本用 `renders/.render.lock` 互斥，重复启动会直接报错而不是两个进程抢 CPU 写同一段。产物先写隐藏临时文件再原子改名，`renders/*.mp4` 只要出现就是完整的；判断完成只认 `.done`，不要在渲染中拿 `ffprobe` 探测 mp4（会看到 `moov atom not found`，那不是产物损坏）。
 10. **日志留在工程里。** 渲染日志、PID 与临时文件放 `renders/` 或工程目录，不要写 `/tmp`：云端沙盒容器重启会清空 `/tmp` 并终止后台进程，工程目录里的 `.done` 分段才能续渲。
 
 ## 配图不是讲解
@@ -71,7 +71,7 @@ description: >
 
 第一次渲出来的画面几乎都有毛病。这种片子是看着图改出来的，不是写完代码就完了的——`fold_C` 那 33 秒改了三轮才成片。
 
-- **每做完一镜就截图看。** `--sheet` 看全局，`--stills` 看原尺寸，`--motion` 看转场。看的是图，不是代码。
+- **每做完一镜就截图看。** `--sheet` 看全局，`--stills` 看原尺寸，`--motion` 看转场；截图命令会自动更新 `review/index.html`，开一次浏览器（或 `--serve` 下的 `/review/index.html`）就能连着看新图。
 - **看的时候当自己是第一次看的观众。** 遮住字幕和小字过三问：这是什么 / 它在干什么 / 我明白了什么。答得含糊就是没做好。
 - **对着 `references/visualization.md` 第八节的表逐条查**：主体够不够大、认不认得出、发不发白、小字压没压在东西上、字幕区干不干净、转场说不说得清。
 - **至少改两轮再给用户看。** 每一轮：把看到的毛病列出来 → 改 → 重截同样的时刻 → 确认改掉了、没改坏别的。还有毛病就接着改，不要带着自己都看得出的毛病交片。
@@ -213,6 +213,7 @@ python engine/render.py <工程目录> --check-safe       # 包围盒 + 像素�
 python engine/render.py <工程目录> --check-band       # 只做像素检查（手写 ctx 也查；辉光不算越界）
 python engine/render.py <工程目录> --check-band --band-strict  # 连辉光一起查（更严，贴地光晕容易误报）
 python engine/render.py <工程目录> --overlap          # 命名元素实际相交面积；有意相交用 allow 放行
+python engine/render.py <工程目录> --check-safe --fast  # 检查类命令都可加 --fast：间隔翻倍、帧数减半，先粗查再精查
 python engine/render.py <工程目录> --det [样本数]     # 同一帧渲两次必须一样；失败报差异区域、元素名、可疑全局写入
 python engine/render.py <工程目录> --jobs 4           # 按镜头切段，最多 4 路真并行，再无损拼接
 python engine/render.py <工程目录> --only 3           # 只重渲第 3 镜，其余分段保留并自动重拼
@@ -220,7 +221,12 @@ python engine/render.py <工程目录> --concat           # 手动拼接全部�
 python engine/render.py <工程目录> --sheet 16 --from renders/final.mp4  # 从成片抽帧拼图
 ```
 
-分段默认保留，改一镜只重渲一镜；确认不再迭代时加 `--clean-parts` 删掉分段。
+检查类命令和渲染共用 `renders/.render.lock`，两个检查不会同时抢 CPU；开跑会打印采样计划，每完成约 1/5 打印已用时间和预计剩余，看到 ETA 别急着杀进程。
+长片先 `--fast` 粗查，改完再用默认间隔精查一遍。拼图总览是 4×4；帧数超过 4 时另出 `review/sheet_g1.jpg` 等 2×2 大图，存疑时刻看大图或单帧，别在总览的小格上硬猜。
+
+**审片固定走 review 页。** `--sheet` / `--stills` / `--check-safe` / `--det` 收尾都会自动生成 `review/index.html`（缩略图网格，每 5 秒自动刷新）。`--serve` 会把它挂在 `http://127.0.0.1:8765/review/index.html`，浏览器打开一次就能持续看新图；不要再为看图手写 HTML，也不要依赖 file://。读图工具仍可直接打开单张 `review/*.png` / `*.jpg`（工具名就是 `read_image`，别写成 view_image / open_image）。
+
+分段默认放在 `renders/_parts/`（旧工程重跑时会自动搬进去），日志和 `.done` 跟着分段走，`renders/` 根下只留成片。改一镜只重渲一镜；确认不再迭代时加 `--clean-parts` 删掉分段。
 第一次全片用 `--jobs 4` 铺完；之后改哪一镜就 `--only 镜号/名字/时间区间`，不要整片重渲。
 命名装置后，检查报告才会写出"船""量尺"这样的名字，否则只能报 `未命名 ellipse`；有意让两个装置相交时，用 allow 放行：
 
@@ -246,7 +252,7 @@ python engine/render.py <工程目录> --web              # renders/web.mp4，10
 
 ### 9. 终检
 
-整片渲出来以后做三遍（用 read_image 对 `renders/final.mp4` 按 `frame_rate` 抽帧通看，转场处再用 `--motion`/`--strip` 加密抽查）：
+整片渲出来以后做三遍（用 `--sheet 16 --from renders/final.mp4` 抽帧成图，在 `review/index.html` 里通看；转场处再用 `--motion`/`--strip` 加密抽查，单张存疑画面用读图工具 `read_image` 打开）：
 
 1. **静音、遮住字幕看一遍。** 每一段在讲什么，看得出来吗？
 2. **只读字幕一遍。** 通顺吗？有没有哪句里的名词，屏上找不到？

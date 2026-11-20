@@ -2970,6 +2970,8 @@ wunder 是一个**泛用型人工智能操作系统**（wunder = 模型 + 拘束
 
 新的 `model_request_usage` 流式事件是模型请求和账户额度的权威实时投影，字段为 `request_count`、`turn_request_count`、`session_request_count`、`billable`、`account_credits_consumed`，普通用户还会携带 `account { balance, granted_total, used_total, daily_grant, last_grant_date }` 快照。`session_request_count` 与列表的 `model_request_count` 使用相同的绝对累计口径；消费者取累计最大值并同步列表缓存，不能将累计值再次相加。管理员事件明确携带 `billable=false` 与 `account_credits_consumed=0`，不会包含账户快照；虚拟回放和被额度限制拒绝的请求不增加该累计值。旧 `quota_usage` 仅用于历史重放兼容，新的执行链不再生产它。摘要随现有监控 JSON 在 PostgreSQL/SQLite 持久化，不依赖前端历史消息或已裁剪事件数量。
 
+`GET /wunder/chat/sessions` 的 `data.items[]` 还会返回 `runtime_status`/`runtimeStatus`/`thread_status` 与 `background_work`：最后一轮已经结束、但该线程仍有后台命令或子智能体在本进程运行时，`runtime_status` 为 `running` 且 `background_work=true`，线程列表不能把这一行显示为已完成；后台工作全部结束后恢复持久轮次的终态（完成、停止或失败），需要等待用户或排队的线程保持原状态。`background_work` 只描述本进程可见的后台工作，跨实例部署时以实际执行实例为准。
+
 列表可带 `known_session_ids`（逗号分隔，最多 100 个 ID，每个不超过 128 字节），响应 `data.unavailable_session_ids[]` 返回其中不属于当前用户活动会话目录的 ID（已删除、归档或不属于该用户）。核对独立于本次分页和智能体筛选；不能将部分分页未返回的条目直接视为删除。客户端轮换核对已缓存 ID，收到明确失效结果后清理列表、详情和关联缓存，并拒绝迟到响应重新加入该条目。若 `offset=0` 且返回条目数等于 `data.total`，则可按完整目录清理请求开始前已知但缺失的同查询范围条目；不得影响其他查询范围或请求期间新建的线程。详情失效与列表核对共用客户端失效标记。
 
 `DELETE /wunder/admin/monitor/{session_id}` 从持久化会话目录确定归属，监控记录缺失时仍清理用户会话、关联日志及定时任务；目录删除失败返回错误，不再静默报告成功。

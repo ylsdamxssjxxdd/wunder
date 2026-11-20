@@ -15,6 +15,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
+use wunder_server::instance_liveness::{self, InstanceGuard};
 
 /// A local UI owns a thread only while it is open. Keep crash recovery short
 /// enough that a closed 命令行 does not leave 桌面版 blocked for half a minute, while
@@ -298,6 +299,13 @@ pub struct NativeSubagentCard {
     pub model_requests: i64,
     pub context_tokens: i64,
     pub credits: i64,
+    /// Wall-clock epoch seconds; zero when the payload never reported one.
+    pub started_at: f64,
+    pub finished_at: f64,
+    /// The run's own duration, authoritative once the child finished.
+    pub elapsed_s: f64,
+    /// Context window size; zero when the child never reported it.
+    pub max_context: i64,
 }
 
 impl NativeSubagentCard {
@@ -341,6 +349,10 @@ impl NativeSubagentCard {
             model_requests: metrics["model_request_count"].as_i64().unwrap_or(0),
             context_tokens: metrics["context_tokens"].as_i64().unwrap_or(0),
             credits: metrics["account_credits_consumed"].as_i64().unwrap_or(0),
+            started_at: runtime["started_time"].as_f64().unwrap_or(0.0),
+            finished_at: runtime["finished_time"].as_f64().unwrap_or(0.0),
+            elapsed_s: runtime["elapsed_s"].as_f64().unwrap_or(0.0),
+            max_context: metrics["max_context"].as_i64().unwrap_or(0),
         })
     }
 
@@ -410,6 +422,22 @@ impl NativeSubagentCard {
                 .unwrap_or(0),
             context_tokens: metrics["context_tokens"].as_i64().unwrap_or(0),
             credits: metrics["account_credits_consumed"].as_i64().unwrap_or(0),
+            started_at: payload["started_time"]
+                .as_f64()
+                .or_else(|| metrics["started_time"].as_f64())
+                .unwrap_or(0.0),
+            finished_at: payload["finished_time"]
+                .as_f64()
+                .or_else(|| metrics["finished_time"].as_f64())
+                .unwrap_or(0.0),
+            elapsed_s: payload["elapsed_s"]
+                .as_f64()
+                .or_else(|| metrics["elapsed_s"].as_f64())
+                .unwrap_or(0.0),
+            max_context: metrics["max_context"]
+                .as_i64()
+                .or_else(|| payload["max_context"].as_i64())
+                .unwrap_or(0),
         })
     }
 }
@@ -453,6 +481,11 @@ pub struct NativeDesktop {
     desktop: DesktopRuntime,
     settings_lock: std::sync::Mutex<()>,
     instance_id: String,
+    /// 本进程的实例存活文件；别的本地实例据此立即回收崩溃残留的租约，
+    /// 不必等满 15 秒 TTL。认领失败时为 None，行为退回原来的 TTL 兜底。
+    _instance_guard: Option<InstanceGuard>,
+    /// 实例存活文件目录（`<home>/data/instances`）。
+    instance_dir: std::path::PathBuf,
     open_threads: Arc<Mutex<HashMap<String, u64>>>,
     /// Recent thread headers are reused when the user switches away and back.
     /// Keeping this on the façade avoids a second HDD history decode while the
@@ -709,6 +742,16 @@ impl NativeDesktop {
             }
         }
         let instance_id = uuid::Uuid::new_v4().simple().to_string();
+        // 实例存活文件：进程崩溃或被强杀时，内核会释放这把锁，另一个实例
+        // 打开同一线程时就能立即判断“持有者已经死了”，直接回收租约。
+        let instance_dir = desktop.wunder_home.join("data").join("instances");
+        let instance_guard = match InstanceGuard::claim(&instance_dir, &instance_id) {
+            Ok(guard) => Some(guard),
+            Err(error) => {
+                tracing::warn!(%error, "claim instance liveness file failed");
+                None
+            }
+        };
         // 本地进程重启后，上一进程来不及收尾的运行痕迹会残留在监视缓存
         // 与受理表里；启动时收敛一次，避免线程目录和已停止的线程永久
         // 显示“运行中”。A background tick must never settle turns owned by
@@ -764,6 +807,26 @@ impl NativeDesktop {
                 "desktop:settle_orphaned_tasks",
                 stage_start.elapsed().as_secs_f64() * 1000.0,
             );
+            // 崩溃留下的执行锁有 120 秒 TTL：启动瞬间它仍算“存活”，上面的
+            // 孤儿结算会跳过这类任务。锁过期后再补一次结算，避免任务行永远
+            // 停在 running（归档门禁会一直把它当成在途工作）。活着的实例
+            // 仍由 has_live_session_lock 保护，不会被误结算。
+            {
+                let thread_runtime = desktop.state.kernel.thread_runtime.clone();
+                let user_id = desktop.user_id.clone();
+                runtime.spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(150)).await;
+                    match thread_runtime.settle_orphaned_running_tasks(&user_id).await {
+                        Ok(settled) if settled > 0 => {
+                            tracing::info!(settled, "settled orphaned task rows after lock expiry");
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            tracing::warn!(%error, "resettle orphaned task rows failed")
+                        }
+                    }
+                });
+            }
             // 后台命令的会话记录写在 MetaStore：沙盒会话跨重启后重新挂
             // observer，本地会话结算为失联并通知一次。
             {
@@ -887,6 +950,8 @@ impl NativeDesktop {
             desktop,
             settings_lock: std::sync::Mutex::new(()),
             instance_id,
+            _instance_guard: instance_guard,
+            instance_dir,
             open_threads,
             chat_snapshot_cache,
             lease_activity,
@@ -1021,9 +1086,66 @@ impl NativeDesktop {
                 self.settle_orphans_best_effort(session_id);
                 Ok(())
             }
-            ThreadOpenLeaseStatus::Busy => Err(anyhow!(
-                "THREAD_IN_USE: 线程正在由其他桌面版或命令行实例打开，关闭占用实例后重试"
-            )),
+            ThreadOpenLeaseStatus::Busy => {
+                // 持有者可能已经崩溃：实例存活文件能立刻给出结论，不必等
+                // 15 秒 TTL。只回收“确认已死”的本地实例，无法判断时保持等待。
+                if self.reclaim_dead_instance_lease(session_id) {
+                    let retried = self.state().storage.try_acquire_thread_open_lease(
+                        session_id,
+                        self.user_id(),
+                        &self.instance_id,
+                        "desktop",
+                        LOCAL_THREAD_LEASE_TTL.as_secs_f64(),
+                    );
+                    if let Ok(ThreadOpenLeaseStatus::Acquired { fencing_token }) = retried {
+                        leases.insert(session_id.to_string(), fencing_token);
+                        drop(leases);
+                        if let Ok(mut confirmed) = self.lease_confirmed.lock() {
+                            confirmed.insert(session_id.to_string(), Instant::now());
+                        }
+                        self.mark_thread_lease_used(session_id);
+                        self.wake_lease_heartbeat();
+                        self.settle_orphans_best_effort(session_id);
+                        return Ok(());
+                    }
+                }
+                Err(anyhow!(
+                    "THREAD_IN_USE: 线程正在由{}打开或运行，关闭占用实例后重试",
+                    self.describe_thread_owner(session_id)
+                ))
+            }
+        }
+    }
+
+    /// 回收“持有者已死”的本地实例留下的线程租约。
+    ///
+    /// 只认 `desktop` / `cli` 两种本地客户端，并且只在实例存活文件明确报告
+    /// 已死（锁可获取）时动手；文件不存在、无权限或其它错误都视为未知，
+    /// 保持原来的 TTL 兜底，避免抢占可能还活着的实例。
+    fn reclaim_dead_instance_lease(&self, session_id: &str) -> bool {
+        let reclaimed = instance_liveness::reclaim_dead_thread_lease(
+            self.state().storage.as_ref(),
+            self.user_id(),
+            session_id,
+            &self.instance_dir,
+            &self.instance_id,
+        );
+        if reclaimed {
+            tracing::info!(session_id, "released thread lease of a dead local instance");
+        }
+        reclaimed
+    }
+
+    /// 给 THREAD_IN_USE 提示标明是哪种实例占着，方便用户直接去关掉它。
+    fn describe_thread_owner(&self, session_id: &str) -> &'static str {
+        match self
+            .state()
+            .storage
+            .get_thread_open_lease(session_id, self.user_id())
+        {
+            Ok(Some(lease)) if lease.client_kind == "cli" => "命令行实例",
+            Ok(Some(lease)) if lease.client_kind == "desktop" => "另一个桌面版实例",
+            _ => "其他实例",
         }
     }
 

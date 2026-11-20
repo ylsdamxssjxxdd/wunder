@@ -59,6 +59,7 @@ pub(super) fn normalize_edit_args(args: &Value) -> Result<Value, Value> {
         "command",
         "file_text",
         "input",
+        "anchor",
     ] {
         if map.get(key).is_some_and(|value| !value.is_string()) {
             return Err(invalid_args(

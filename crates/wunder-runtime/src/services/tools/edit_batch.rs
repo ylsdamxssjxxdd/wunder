@@ -257,7 +257,7 @@ pub(super) fn prepare(
         // 失败结果在观察层会被压缩到「只剩 error 文本」，所以未命中的定位
         // 要点必须写进 message 本身，`data.edits` 只是给未压缩通路的备份。
         let message = format!(
-            "批量编辑未命中 {missed}/{} 条，文件未改动：{}",
+            "批量编辑未命中 {missed}/{} 条，文件未改动。{}",
             steps.len(),
             miss_summary(&reports)
         );
@@ -374,7 +374,8 @@ fn miss_summary(reports: &[Value]) -> String {
                     (Some(line), None) => {
                         format!("第 {index} 条未匹配（最近片段在第 {line} 行）")
                     }
-                    _ => format!("第 {index} 条未匹配"),
+                    // 连相近行都没有：多半是这段被改名/删掉，或本来就不在这个文件里。
+                    _ => format!("第 {index} 条未匹配（全文没有相近行，疑似该段已改名或不在本文件）"),
                 }
             }
         };
@@ -383,39 +384,38 @@ fn miss_summary(reports: &[Value]) -> String {
     items.join("；")
 }
 
-/// 失败提示：直接指向第一个未命中步骤的最相近片段，省掉一轮 grep。
+/// 失败提示：一句可执行的下一步，不重复 message 里已经列过的条目序号。
 fn miss_hint(reports: &[Value]) -> String {
+    let mut ambiguous = false;
+    let mut nearest_line = None;
     for report in reports {
         if report.get("status").and_then(Value::as_str) != Some("missed") {
             continue;
         }
-        let index = report.get("index").and_then(Value::as_u64).unwrap_or(0);
         match report.get("reason").and_then(Value::as_str) {
-            Some("not_unique") => {
-                let count = report.get("matches").and_then(Value::as_u64).unwrap_or(0);
-                return format!(
-                    "第 {index} 条匹配到 {count} 处：补足上下文使其唯一，或在该条上设 replace_all=true。"
-                );
-            }
+            Some("not_unique") => ambiguous = true,
             _ => {
-                if let Some(line) = report
-                    .get("nearest")
-                    .and_then(Value::as_array)
-                    .and_then(|items| items.first())
-                    .and_then(|first| first.get("line"))
-                    .and_then(Value::as_u64)
-                {
-                    return format!(
-                        "第 {index} 条按 nearest[0] 校正：该片段现在从第 {line} 行开始；空白差异已自动容错，报错说明内容本身不同。改对这一条后整批重发即可（本次未写入任何内容）。"
-                    );
+                if nearest_line.is_none() {
+                    nearest_line = report
+                        .get("nearest")
+                        .and_then(Value::as_array)
+                        .and_then(|items| items.first())
+                        .and_then(|first| first.get("line"))
+                        .and_then(Value::as_u64);
                 }
-                return format!(
-                    "第 {index} 条未命中：按 nearest 的逐行差异校正后整批重发；或设 on_miss=continue 先落已匹配的部分。"
-                );
             }
         }
     }
-    "按 steps 里的未命中项校正后重试；本次未写入任何内容。".to_string()
+    let mut hint =
+        String::from("改法：按上面未命中的条目校正 old_string 后整批重发（本次未写入任何内容）");
+    if let Some(line) = nearest_line {
+        hint.push_str(&format!("；最近的那一处现在从第 {line} 行开始，可直接照着改"));
+    }
+    if ambiguous {
+        hint.push_str("；匹配多处的条目补足上下文，或在该条上设 replace_all=true");
+    }
+    hint.push_str("。只想先落已匹配的部分就设 on_miss=continue。");
+    hint
 }
 
 /// 未命中失败的最终载荷。

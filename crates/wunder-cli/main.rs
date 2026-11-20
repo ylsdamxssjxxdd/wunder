@@ -3920,20 +3920,42 @@ async fn run_agent_once(
     last_message_file: Option<&Path>,
     color: Option<ColorArg>,
 ) -> Result<AgentTurnOutcome> {
-    let owner_instance_id = uuid::Uuid::new_v4().simple().to_string();
-    let fencing_token = match runtime.state.storage.try_acquire_thread_open_lease(
-        session_id,
-        &runtime.user_id,
-        &owner_instance_id,
-        "cli",
-        LOCAL_THREAD_LEASE_TTL_S,
-    )? {
-        ThreadOpenLeaseStatus::Acquired { fencing_token } => fencing_token,
-        ThreadOpenLeaseStatus::Busy => {
-            return Err(anyhow!(
-                "THREAD_IN_USE: 线程正在由其他桌面版或命令行实例打开或运行"
-            ));
+    let owner_instance_id = runtime.instance_id.clone();
+    let mut fencing_token = None;
+    for attempt in 0..2 {
+        match runtime.state.storage.try_acquire_thread_open_lease(
+            session_id,
+            &runtime.user_id,
+            &owner_instance_id,
+            "cli",
+            LOCAL_THREAD_LEASE_TTL_S,
+        )? {
+            ThreadOpenLeaseStatus::Acquired {
+                fencing_token: token,
+            } => {
+                fencing_token = Some(token);
+                break;
+            }
+            ThreadOpenLeaseStatus::Busy if attempt == 0 => {
+                // 持有者可能已经崩溃：实例存活文件能立刻给出结论，不必等
+                // 15 秒 TTL；无法判断时保持原来的等待行为。
+                if !wunder_server::instance_liveness::reclaim_dead_thread_lease(
+                    runtime.state.storage.as_ref(),
+                    &runtime.user_id,
+                    session_id,
+                    &runtime.instance_dir(),
+                    &owner_instance_id,
+                ) {
+                    break;
+                }
+            }
+            ThreadOpenLeaseStatus::Busy => break,
         }
+    }
+    let Some(fencing_token) = fencing_token else {
+        return Err(anyhow!(
+            "THREAD_IN_USE: 线程正在由其他桌面版或命令行实例打开或运行"
+        ));
     };
     let lease_guard = LeaseGuard::new(
         runtime.state.storage.clone(),
