@@ -44,6 +44,9 @@ const MAX_GIF_FRAME_STEP: usize = 120;
 /// 一次 GIF 采样最多回多少帧。每帧都是一张入模图，16 帧已经足以看出
 /// 动作是否成立；再多就会把上下文和请求体一起撑大。
 const MAX_GIF_SAMPLED_FRAMES: usize = 16;
+/// 一张联系表最多回多少格。视频和动图共用同一预算：格子再多就既看不清
+/// 单帧，也失去“一眼看完整段”的意义。
+const MAX_CONTACT_SHEET_FRAMES: usize = 16;
 const REINLINE_IMAGE_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const DEFAULT_ASR_BASE_URL: &str = "https://api.openai.com/v1";
 const FFMPEG_BIN_ENV: &str = "WUNDER_FFMPEG_BIN";
@@ -100,7 +103,7 @@ pub struct ChatMediaProcessResult {
     pub has_audio: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view: Option<MediaViewDims>,
-    /// 动图联系表的排布信息；仅 `sheet=true` 且成功合成时出现。
+    /// 联系表的排布信息（动图与视频共用）；仅 `sheet=true` 且成功合成时出现。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sheet: Option<SheetLayout>,
     #[serde(default)]
@@ -212,7 +215,14 @@ pub async fn process_visual_media_path(
             .await
         }
         MediaKind::Audio => {
-            process_audio_source(config, source_path, filename.as_str(), source_public_path).await
+            process_audio_source(
+                config,
+                source_path,
+                filename.as_str(),
+                source_public_path,
+                sheet,
+            )
+            .await
         }
         MediaKind::Video => {
             process_video_source(
@@ -224,6 +234,7 @@ pub async fn process_visual_media_path(
                 source_public_path,
                 requested_frame_rate,
                 requested_frame_step,
+                sheet,
             )
             .await
         }
@@ -235,6 +246,7 @@ async fn process_audio_source(
     source_path: &Path,
     filename: &str,
     source_public_path: String,
+    sheet: bool,
 ) -> Result<ChatMediaProcessResult> {
     let probe = probe_media(source_path).await.unwrap_or_default();
     let content_type = detect_audio_content_type(filename);
@@ -252,6 +264,12 @@ async fn process_audio_source(
         .unwrap_or_else(|| build_audio_placeholder(filename));
     if transcript.is_none() {
         warnings.push("Audio transcript unavailable, using placeholder text context.".to_string());
+    }
+    if sheet {
+        warnings.push(
+            "sheet only applies to animated GIF and video; audio returned as transcript."
+                .to_string(),
+        );
     }
     Ok(ChatMediaProcessResult {
         kind: "audio".to_string(),
@@ -408,6 +426,13 @@ async fn process_image_source(
             public_path: Some(public_path.clone()),
         },
     };
+    let mut warnings = Vec::new();
+    if sheet {
+        warnings.push(
+            "sheet only applies to animated GIF and video; this still image was returned as-is."
+                .to_string(),
+        );
+    }
     Ok(ChatMediaProcessResult {
         kind: "image".to_string(),
         name: attachment
@@ -427,7 +452,7 @@ async fn process_image_source(
         view,
         sheet: None,
         attachments: vec![attachment],
-        warnings: Vec::new(),
+        warnings,
     })
 }
 
@@ -541,12 +566,12 @@ async fn process_gif_source(
                 continue;
             }
             sampled.push((index, frame.into_buffer()));
-            if sampled.len() >= MAX_GIF_SAMPLED_FRAMES {
+            if sampled.len() >= MAX_CONTACT_SHEET_FRAMES {
                 break;
             }
         }
         let (attachment, layout) =
-            render_gif_sheet_attachment(workspace, workspace_id, filename, sampled).await?;
+            render_contact_sheet_attachment(workspace, workspace_id, filename, sampled).await?;
         warnings.push(format!(
             "contact sheet samples every {step} frame(s): {} cells, source {} frames.",
             layout.frame_indices.len(),
@@ -675,6 +700,7 @@ async fn process_video_source(
     source_public_path: String,
     requested_frame_rate: Option<f64>,
     requested_frame_step: Option<usize>,
+    sheet: bool,
 ) -> Result<ChatMediaProcessResult> {
     if requested_frame_step.is_some() {
         return Err(anyhow!("frame_step is only supported for gif uploads"));
@@ -685,7 +711,18 @@ async fn process_video_source(
     }
 
     let requested = normalize_requested_frame_rate(requested_frame_rate)?;
-    let applied = effective_frame_rate(requested, probe.duration_ms, MAX_VIDEO_FRAMES);
+    // 联系表最终只回一张网格图，帧预算按格子数收敛：16 帧铺满整段时长，
+    // 而不是先抽 120 帧再丢掉 104 张（解码和落盘都是白做的）。
+    let frame_budget = if sheet {
+        MAX_CONTACT_SHEET_FRAMES
+    } else {
+        MAX_VIDEO_FRAMES
+    };
+    let applied = if sheet {
+        contact_sheet_frame_rate(requested, probe.duration_ms)
+    } else {
+        effective_frame_rate(requested, probe.duration_ms, frame_budget)
+    };
     let derived_root = persist_derived_root(workspace, workspace_id, filename).await?;
 
     let frame_output_pattern = derived_root.join("frame_%04d.jpg");
@@ -698,35 +735,58 @@ async fn process_video_source(
 
     let mut warnings = Vec::new();
     if applied + f64::EPSILON < requested {
+        // 联系表会把长视频压到很低的 fps（1 小时约 0.0044），三位小数会显示成 0.004。
+        let fps_text = if sheet {
+            ((applied * 10_000.0).round() / 10_000.0).to_string()
+        } else {
+            ((applied * 1_000.0).round() / 1_000.0).to_string()
+        };
         warnings.push(format!(
-            "Frame rate capped to {:.3} fps to keep at most {} frames.",
-            applied, MAX_VIDEO_FRAMES
+            "Frame rate capped to {fps_text} fps to keep at most {frame_budget} frames."
         ));
     }
 
     frame_paths.sort();
-    if frame_paths.len() > MAX_VIDEO_FRAMES {
-        frame_paths.truncate(MAX_VIDEO_FRAMES);
+    if frame_paths.len() > frame_budget {
+        frame_paths.truncate(frame_budget);
         warnings.push(format!(
             "Frame list truncated to {} items after extraction.",
-            MAX_VIDEO_FRAMES
+            frame_budget
         ));
     }
     let mut video_transcript: Option<String> = None;
     let mut attachments = Vec::with_capacity(frame_paths.len().saturating_add(1));
-    for frame_path in frame_paths {
-        let public_path = workspace.display_path(workspace_id, &frame_path);
-        let name = frame_path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .map(ToString::to_string)
-            .unwrap_or_else(|| "frame.jpg".to_string());
-        attachments.push(AttachmentPayload {
-            name: Some(name),
-            content: None,
-            content_type: Some("image/jpeg".to_string()),
-            public_path: Some(public_path),
-        });
+    let mut sheet_layout: Option<SheetLayout> = None;
+    if sheet {
+        let cells = frame_paths.len();
+        let frames = load_contact_sheet_frames(frame_paths).await?;
+        let (attachment, layout) =
+            render_contact_sheet_attachment(workspace, workspace_id, filename, frames).await?;
+        // 视频帧是“第 k 个采样点”，不是原视频帧号。把换算写成一行，
+        // 模型就不必自己拿 fps 反推时间点。
+        warnings.push(format!(
+            "Contact sheet cells are 0-based row-major: cell k is about {:.2}s × k into the video. Sampled {cells} frame(s) at {:.4} fps; the jpgs stay under {} if a closer look is needed.",
+            if applied > 0.0 { 1.0 / applied } else { 0.0 },
+            applied,
+            workspace.display_path(workspace_id, &derived_root),
+        ));
+        attachments.push(attachment);
+        sheet_layout = Some(layout);
+    } else {
+        for frame_path in frame_paths {
+            let public_path = workspace.display_path(workspace_id, &frame_path);
+            let name = frame_path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "frame.jpg".to_string());
+            attachments.push(AttachmentPayload {
+                name: Some(name),
+                content: None,
+                content_type: Some("image/jpeg".to_string()),
+                public_path: Some(public_path),
+            });
+        }
     }
 
     let mut has_audio = false;
@@ -785,16 +845,20 @@ async fn process_video_source(
         warnings.push("Video has no audio track.".to_string());
     }
 
-    let frame_count = attachments
-        .iter()
-        .filter(|item| {
-            item.content_type
-                .as_deref()
-                .unwrap_or("")
-                .to_ascii_lowercase()
-                .starts_with("image/")
-        })
-        .count();
+    // 联系表模式下模型看到的是格子里的帧，不是附件数（附件只有一张图）。
+    let frame_count = match sheet_layout.as_ref() {
+        Some(layout) => layout.frame_indices.len(),
+        None => attachments
+            .iter()
+            .filter(|item| {
+                item.content_type
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .starts_with("image/")
+            })
+            .count(),
+    };
 
     Ok(ChatMediaProcessResult {
         kind: "video".to_string(),
@@ -810,7 +874,7 @@ async fn process_video_source(
         frame_count,
         has_audio,
         view: None,
-        sheet: None,
+        sheet: sheet_layout,
         attachments,
         warnings,
     })
@@ -1467,11 +1531,12 @@ async fn render_gif_frame_attachment(
 
 /// 纯布局/绘制：把帧缩略图排成固定网格，返回画布与每格源帧序号。
 /// 抽出来是为了不依赖工作区就能单测排布与尺寸。
-fn compose_gif_sheet(
+/// 动图与视频共用：格子尺寸固定，帧按比例缩进格子并居中。
+fn compose_contact_sheet(
     frames: Vec<(usize, image::RgbaImage)>,
 ) -> Result<(image::RgbaImage, SheetLayout)> {
     if frames.is_empty() {
-        return Err(anyhow!("gif frame extraction produced no images"));
+        return Err(anyhow!("contact sheet source produced no frames"));
     }
     const CELL_WIDTH: u32 = 320;
     const CELL_HEIGHT: u32 = 200;
@@ -1484,16 +1549,13 @@ fn compose_gif_sheet(
     let mut frame_indices = Vec::with_capacity(frames.len());
     for (slot, (index, frame)) in frames.into_iter().enumerate() {
         frame_indices.push(index);
-        let thumb = image::imageops::resize(
-            &frame,
-            CELL_WIDTH,
-            CELL_HEIGHT,
-            image::imageops::FilterType::Triangle,
-        );
+        let thumb = fit_thumbnail(&frame, CELL_WIDTH, CELL_HEIGHT);
         let column = (slot % columns) as u32;
         let row = (slot / columns) as u32;
-        let x = GAP + column * (CELL_WIDTH + GAP);
-        let y = GAP + row * (CELL_HEIGHT + GAP);
+        let x = GAP
+            + column * (CELL_WIDTH + GAP)
+            + (CELL_WIDTH - thumb.width()) / 2;
+        let y = GAP + row * (CELL_HEIGHT + GAP) + (CELL_HEIGHT - thumb.height()) / 2;
         image::imageops::overlay(&mut canvas, &thumb, i64::from(x), i64::from(y));
     }
     Ok((
@@ -1506,29 +1568,52 @@ fn compose_gif_sheet(
     ))
 }
 
-/// 把抽出的 GIF 帧拼成一张联系表：最多 4 列，固定 320×200 单元格。
+/// 等比缩放到单元格内。16:9 的视频帧若直接拉成 320×200 会横向压扁，
+/// 节奏和比例都会看错，所以只缩不拉伸，四周留底色。
+fn fit_thumbnail(
+    frame: &image::RgbaImage,
+    cell_width: u32,
+    cell_height: u32,
+) -> image::RgbaImage {
+    let (width, height) = frame.dimensions();
+    if width == 0 || height == 0 {
+        return image::RgbaImage::new(1, 1);
+    }
+    let scale = (f64::from(cell_width) / f64::from(width))
+        .min(f64::from(cell_height) / f64::from(height));
+    let target_width = ((f64::from(width) * scale).round() as u32).clamp(1, cell_width);
+    let target_height = ((f64::from(height) * scale).round() as u32).clamp(1, cell_height);
+    image::imageops::resize(
+        frame,
+        target_width,
+        target_height,
+        image::imageops::FilterType::Lanczos3,
+    )
+}
+
+/// 把抽出的帧拼成一张联系表：最多 4 列，固定 320×200 单元格。
 /// 返回附件与每格对应的源帧序号，模型可以直接按行列读节奏和接缝。
-async fn render_gif_sheet_attachment(
+async fn render_contact_sheet_attachment(
     workspace: &WorkspaceManager,
     workspace_id: &str,
     source_name: &str,
     frames: Vec<(usize, image::RgbaImage)>,
 ) -> Result<(AttachmentPayload, SheetLayout)> {
-    let (canvas, layout) = compose_gif_sheet(frames)?;
+    let (canvas, layout) = compose_contact_sheet(frames)?;
     let derived_root = persist_derived_root(workspace, workspace_id, source_name).await?;
     let output_path = derived_root.join("contact_sheet.png");
     let output_path_for_write = output_path.clone();
     blocking::run_fs(
-        "services.chat_media.save_gif_sheet",
+        "services.chat_media.save_contact_sheet",
         move || -> Result<()> {
             DynamicImage::ImageRgba8(canvas)
                 .save_with_format(&output_path_for_write, ImageFormat::Png)
-                .map_err(|err| anyhow!("failed to save gif contact sheet: {err}"))?;
+                .map_err(|err| anyhow!("failed to save contact sheet: {err}"))?;
             Ok(())
         },
     )
     .await
-    .map_err(|err| anyhow!("gif contact sheet save task failed: {err}"))?;
+    .map_err(|err| anyhow!("contact sheet save task failed: {err}"))?;
     let attachment = AttachmentPayload {
         name: Some("contact_sheet.png".to_string()),
         content: None,
@@ -1536,6 +1621,58 @@ async fn render_gif_sheet_attachment(
         public_path: Some(workspace.display_path(workspace_id, &output_path)),
     };
     Ok((attachment, layout))
+}
+
+/// 视频帧落在磁盘上是 jpg，联系表合成需要像素。只解码已采样出的那几帧，
+/// 解码放在 CPU 池里，避免挡住运行时线程；每帧解完立刻缩到联系表够用的
+/// 尺寸再留着，否则 16 张 4K RGBA 会临时占掉几百 MB。
+async fn load_contact_sheet_frames(
+    frame_paths: Vec<PathBuf>,
+) -> Result<Vec<(usize, image::RgbaImage)>> {
+    /// 单元格 320×200，源帧留到 640 长边已经足够（2 倍余量）。
+    const SOURCE_MAX_SIDE: u32 = 640;
+    blocking::run_cpu(
+        "services.chat_media.load_contact_sheet_frames",
+        move || -> Result<Vec<(usize, image::RgbaImage)>> {
+            let mut frames = Vec::with_capacity(frame_paths.len());
+            for (index, path) in frame_paths.iter().enumerate() {
+                let image = image::open(path)
+                    .map_err(|err| {
+                        anyhow!("failed to decode video frame {}: {err}", path.display())
+                    })?
+                    .into_rgba8();
+                let (width, height) = image.dimensions();
+                let longest = width.max(height);
+                let frame = if longest > SOURCE_MAX_SIDE {
+                    let scale = f64::from(SOURCE_MAX_SIDE) / f64::from(longest);
+                    let target_width = ((f64::from(width) * scale).round() as u32).max(1);
+                    let target_height = ((f64::from(height) * scale).round() as u32).max(1);
+                    image::imageops::resize(
+                        &image,
+                        target_width,
+                        target_height,
+                        image::imageops::FilterType::Triangle,
+                    )
+                } else {
+                    image
+                };
+                frames.push((index, frame));
+            }
+            Ok(frames)
+        },
+    )
+    .await
+}
+
+/// 联系表要覆盖整段时长，所以允许 fps 低于常规下限 0.1：1 小时素材用
+/// 16 帧就是 1/225 fps，按常规下限收敛只会看到开头两分多钟。
+fn contact_sheet_frame_rate(requested: f64, duration_ms: Option<u64>) -> f64 {
+    let Some(duration_ms) = duration_ms.filter(|value| *value > 0) else {
+        return requested;
+    };
+    let duration_s = duration_ms as f64 / 1000.0;
+    let needed = MAX_CONTACT_SHEET_FRAMES as f64 / duration_s;
+    requested.min(needed).max(0.000_001)
 }
 
 fn effective_frame_rate(requested: f64, duration_ms: Option<u64>, max_frames: usize) -> f64 {
@@ -2650,11 +2787,14 @@ fn compute_image_view_stats(image: &DynamicImage) -> ImageViewStats {
 #[cfg(test)]
 mod tests {
     use super::{
-        compose_gif_sheet, detect_media_kind_from_path, effective_frame_rate,
-        extract_workspace_id_from_public_path, gif_step_for_frame_rate,
+        compose_contact_sheet, contact_sheet_frame_rate, detect_media_kind_from_path,
+        effective_frame_rate,
+        extract_video_frames, extract_workspace_id_from_public_path, fit_thumbnail,
+        gif_step_for_frame_rate, list_frame_paths, load_contact_sheet_frames,
         load_image_data_url_for_path, normalize_filename, normalize_requested_frame_rate,
-        normalize_requested_frame_step, ImageViewCache, ImageViewKey, DEFAULT_VIDEO_FRAME_RATE,
-        IMAGE_VIEW_CACHE_BYTES, IMAGE_VIEW_CACHE_VERSION, MAX_GIF_FRAME_STEP, MAX_VIDEO_FRAMES,
+        normalize_requested_frame_step, probe_media, ImageViewCache, ImageViewKey,
+        DEFAULT_VIDEO_FRAME_RATE, IMAGE_VIEW_CACHE_BYTES, IMAGE_VIEW_CACHE_VERSION,
+        MAX_CONTACT_SHEET_FRAMES, MAX_GIF_FRAME_STEP, MAX_VIDEO_FRAMES,
     };
     use std::path::Path;
     use std::sync::Arc;
@@ -2669,7 +2809,7 @@ mod tests {
     }
 
     #[test]
-    fn gif_contact_sheet_layout_is_row_major_and_bounded_to_four_columns() {
+    fn contact_sheet_layout_is_row_major_and_bounded_to_four_columns() {
         let frames = (0..8)
             .map(|index| {
                 (
@@ -2682,12 +2822,123 @@ mod tests {
                 )
             })
             .collect();
-        let (canvas, layout) = compose_gif_sheet(frames).expect("sheet");
+        let (canvas, layout) = compose_contact_sheet(frames).expect("sheet");
         assert_eq!(layout.columns, 4);
         assert_eq!(layout.rows, 2);
         assert_eq!(layout.frame_indices, vec![0, 3, 6, 9, 12, 15, 18, 21]);
         // 4 列 × 320 + 5 个 4px 间隔；2 行 × 200 + 3 个 4px 间隔。
         assert_eq!(canvas.dimensions(), (1300, 412));
+    }
+
+    /// 视频帧通常是 16:9，直接拉成 320×200 会横向压扁；格子内只等比缩放。
+    #[test]
+    fn video_contact_sheet_keeps_aspect_ratio_inside_fixed_cells() {
+        let frames = (0..16)
+            .map(|index| {
+                (
+                    index,
+                    image::RgbaImage::from_pixel(1920, 1080, image::Rgba([20, 40, 60, 255])),
+                )
+            })
+            .collect();
+        let (canvas, layout) = compose_contact_sheet(frames).expect("sheet");
+        assert_eq!((layout.columns, layout.rows), (4, 4));
+        assert_eq!(layout.frame_indices.len(), 16);
+        // 4 列 / 4 行：4×320 + 5×4 = 1300；4×200 + 5×4 = 820。
+        assert_eq!(canvas.dimensions(), (1300, 820));
+
+        let thumb = fit_thumbnail(
+            &image::RgbaImage::from_pixel(1920, 1080, image::Rgba([0, 0, 0, 255])),
+            320,
+            200,
+        );
+        assert_eq!(thumb.dimensions(), (320, 180));
+        let tall = fit_thumbnail(
+            &image::RgbaImage::from_pixel(600, 1200, image::Rgba([0, 0, 0, 255])),
+            320,
+            200,
+        );
+        assert_eq!(tall.dimensions(), (100, 200));
+    }
+
+    /// 真实 ffmpeg 端到端：4 秒 320×240 素材解出 4 格联系表，
+    /// 4:3 画面在 320×200 格子里等比缩放、左右留底色（不横向压扁）。
+    /// 没装 ffmpeg 的环境直接跳过，不把环境缺失算成失败。
+    #[tokio::test]
+    async fn video_contact_sheet_pipeline_reads_real_frames() {
+        let Ok(probe_out) = std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .output()
+        else {
+            return;
+        };
+        if !probe_out.status.success() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let source = dir.path().join("clip.mp4");
+        let status = std::process::Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=320x240:rate=10:duration=4",
+                "-pix_fmt",
+                "yuv420p",
+                "-y",
+            ])
+            .arg(&source)
+            .status();
+        let Ok(status) = status else { return };
+        if !status.success() {
+            return;
+        }
+
+        let probe = probe_media(&source).await.expect("probe video");
+        assert!(probe.has_video, "fixture should carry a video track");
+        let applied = effective_frame_rate(1.0, probe.duration_ms, MAX_CONTACT_SHEET_FRAMES);
+        let derived = dir.path().join("derived");
+        tokio::fs::create_dir_all(&derived).await.expect("mkdir");
+        extract_video_frames(&source, &derived.join("frame_%04d.jpg"), applied)
+            .await
+            .expect("extract frames");
+        let mut paths = list_frame_paths(&derived).await.expect("list frames");
+        paths.sort();
+        assert!(
+            !paths.is_empty() && paths.len() <= MAX_CONTACT_SHEET_FRAMES,
+            "unexpected frame count {}",
+            paths.len()
+        );
+
+        let frames = load_contact_sheet_frames(paths).await.expect("load frames");
+        let (canvas, layout) = compose_contact_sheet(frames).expect("sheet");
+        assert_eq!(layout.frame_indices.len(), layout.columns * layout.rows);
+        // 266×200 居中后左侧留 27px 底色，取 (5,5) 必须是画布底色。
+        assert_eq!(canvas.get_pixel(5, 5).0[0], 244);
+    }
+
+    /// 长视频也要覆盖整段：1 小时素材按 16 格就是 16/3600 fps，
+    /// 不能被 0.1 fps 的常规下限卡住（否则只看到开头两分多钟）。
+    #[test]
+    fn contact_sheet_rate_covers_long_videos() {
+        let rate = contact_sheet_frame_rate(1.0, Some(3_600_000));
+        assert!((rate - 16.0 / 3600.0).abs() < 1e-12, "got {rate}");
+        assert_eq!((rate * 3600.0).round() as usize, 16);
+    }
+
+    /// sheet=true 时视频帧预算收敛到表格格子数，60s 视频应只抽 16 帧。
+    #[test]
+    fn video_contact_sheet_budget_targets_sixteen_frames() {
+        let rate = effective_frame_rate(1.0, Some(60_000), MAX_CONTACT_SHEET_FRAMES);
+        assert!((rate - 16.0 / 60.0).abs() < 1e-9, "got {rate}");
+        let planned = (rate * 60.0).round() as usize;
+        assert_eq!(planned, 16);
+        // 非联系表路径仍是 120 帧预算。
+        let full = effective_frame_rate(1.0, Some(60_000), MAX_VIDEO_FRAMES);
+        assert!((full - 1.0).abs() < 1e-9, "got {full}");
     }
 
     #[test]

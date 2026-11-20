@@ -1,7 +1,7 @@
 ---
 title: Read Image
 summary: The `read_image` path and frame-sampling arguments, how static images, GIFs, and video enter context, and the returned fields.
-updated_at: 2026-10-16
+updated_at: 2026-11-20
 ---
 
 # Read Image
@@ -34,15 +34,27 @@ For a GIF you can add a frame interval; for a video you can set how many frames 
 }
 ```
 
+To see the whole motion first, pass `sheet`: it works for GIFs and video and returns one contact sheet of at most 4 columns and 16 cells.
+
+```json
+{
+  "path": "captures/demo.mp4",
+  "sheet": true
+}
+```
+
 ## Handling by material type
 
 - A static image enters the context as image input unchanged; the model only needs the path, and the intent to look comes from the current conversation.
 - A GIF is not handed to the model whole: by default only the first frame is taken, and if you give a frame interval it samples frames at that interval.
 - A video is organized into a series of image frames; if the video has an audio track, the transcript is attached as well.
+- With `sheet: true` the frames are not returned one by one: the whole clip is sampled into a single contact sheet. For video the sampling is capped at 16 frames, cells are laid out in rows, and each frame is scaled to fit without stretching.
 
 ## Return value
 
 The result states the material's type and size, but that only means the material is ready, not that the model has analyzed it: once it is ready, ask about it.
+
+A contact sheet also reports `sheet.columns`, `sheet.rows`, and `sheet.frame_indices`, the row-major source frame index of each cell; for video the `warnings` also state roughly which second cell k falls on.
 
 ## Errors
 

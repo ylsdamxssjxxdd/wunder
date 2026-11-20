@@ -183,7 +183,8 @@ struct ReadImageArgs {
     frame_rate: Option<f64>,
     #[serde(default)]
     frame_step: Option<usize>,
-    /// 动图专用：把整段动画均匀抽帧拼成一张联系表，而不是只回首帧。
+    /// 动图与视频通用：把整段素材均匀抽帧拼成一张联系表，
+    /// 而不是只回首帧或散落一串帧图。
     #[serde(default)]
     sheet: bool,
     #[serde(default)]

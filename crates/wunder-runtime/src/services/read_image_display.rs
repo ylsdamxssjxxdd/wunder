@@ -595,6 +595,23 @@ mod tests {
     }
 
     #[test]
+    fn video_contact_sheet_read_states_grid_and_frames() {
+        let data = json!({
+            "path": "clip.mp4",
+            "media_kind": "video",
+            "size_bytes": 2 * 1024 * 1024,
+            "result": {"kind": "video", "frame_count": 16, "total_frame_count": 300,
+                "applied_frame_rate": 0.267, "duration_ms": 60_000, "has_audio": false,
+                "sheet": {"columns": 4, "rows": 4, "frame_indices": [0,1,2,3]},
+                "attachments": [{"name": "contact_sheet.png", "content_type": "image/png"}]}
+        });
+        let lines = display_lines(&data, &json!({"path": "clip.mp4", "sheet": true}), true);
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("联系表 4×4") && line.contains("共 300 帧")));
+    }
+
+    #[test]
     fn comparison_and_unchanged_reads_are_named() {
         let data = json!({
             "path": "after.png",
