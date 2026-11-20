@@ -9,6 +9,7 @@ use super::panel_tools;
 use super::schedule_task_tool;
 use super::search_content_tool::search_content;
 use super::skill_call;
+use super::tool_error::{build_failed_tool_result, ToolErrorMeta};
 use super::{
     android_notifications, android_screen, browser_tool, desktop_control, phone_control,
     read_image_tool, web_fetch_tool, web_search_tool,
@@ -70,6 +71,11 @@ pub async fn execute_builtin_tool(
             &HashMap::from([("tool".to_string(), canonical.clone())])
         )));
     }
+    // 历史投影占位符不是正文：模型把上一轮调用原样发回时，必须在写盘/执行前
+    // 拒绝，否则占位文字会被当成文件内容或半截命令落下去。
+    if let Some(failure) = history_placeholder_failure(&canonical, args) {
+        return Ok(failure);
+    }
     match canonical.as_str() {
         canonical if goal::is_goal_tool_name(canonical) => {
             goal::execute_goal_tool(context, &canonical, args).await
@@ -124,4 +130,34 @@ pub async fn execute_builtin_tool(
         "记忆管理" => execute_memory_manager_tool(context, args).await,
         _ => Err(anyhow!("未知内置工具: {canonical}")),
     }
+}
+
+/// 只拦会写盘或执行内容的工具；读取类工具收到占位符只会查不到东西，无需特判。
+fn history_placeholder_failure(canonical: &str, args: &Value) -> Option<Value> {
+    if !matches!(canonical, "写入文件" | "文本编辑" | "执行命令" | "命令会话") {
+        return None;
+    }
+    if !crate::services::history::contains_history_elision(args) {
+        return None;
+    }
+    Some(build_failed_tool_result(
+        format!(
+            "{canonical}: the arguments contain a history placeholder, not real content; nothing was written or executed."
+        ),
+        serde_json::json!({
+            "tool": canonical,
+            "history_placeholder": true,
+            "notice": "The original arguments are already persisted. Do not resend the placeholder; read the file or rebuild the content, then issue a fresh call."
+        }),
+        ToolErrorMeta::new(
+            "TOOL_ARG_HISTORY_PLACEHOLDER",
+            Some(
+                "Placeholders are model-history projection artifacts, never valid tool arguments. Read the file or search it for the exact text before editing."
+                    .to_string(),
+            ),
+            false,
+            None,
+        ),
+        false,
+    ))
 }

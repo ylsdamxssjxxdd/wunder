@@ -31,16 +31,10 @@ pub(super) const DIFF_UNAVAILABLE_OVERSIZE: &str = "oversize";
 pub(super) const DIFF_UNAVAILABLE_BINARY: &str = "binary";
 pub(super) const DIFF_UNAVAILABLE_UNREADABLE: &str = "unreadable";
 
-/// `diff_omitted` 的短原因串：单行太长，正文放不下。
+/// 结构化块省略原因：单行太长，正文放不下。
 pub(super) const OMITTED_LINE_TOO_LONG: &str = "line_too_long";
-/// `diff_omitted` 的短原因串：行数/块数预算用完。
+/// 结构化块省略原因：行数/块数预算用完。
 pub(super) const OMITTED_BUDGET: &str = "budget";
-/// `diff_omitted` 的短原因串：新建文件的正文就是调用方刚发出去的内容，
-/// 有意不回灌（体积与文件大小无关）。
-pub(super) const OMITTED_NEW_FILE: &str = "new_file";
-/// `diff_omitted` 的短原因串：覆盖写/编辑落盘的内容就是这次调用发出去的，
-/// 回灌没有信息增量。
-pub(super) const OMITTED_AUTHORED: &str = "authored";
 
 #[derive(Debug, Clone)]
 struct DiffLine {
@@ -459,7 +453,6 @@ fn file_entry(action: &str, path: &str, diff: &LineDiff, unknown: bool) -> Value
         "added_lines": count(diff.added_lines),
         "deleted_lines": count(diff.deleted_lines),
         "diff_lines_omitted": count(diff.omitted_lines),
-        "diff_omitted": if unknown { Value::Null } else { json!(diff.omission()) },
         "diff_blocks": diff.blocks.iter().map(block_json).collect::<Vec<_>>(),
     })
 }
@@ -493,8 +486,6 @@ pub(super) fn insert_diff_fields(
     map.insert("moved".to_string(), json!(0usize));
     map.insert("hunks_applied".to_string(), count(diff.hunks));
     map.insert("diff_lines_omitted".to_string(), count(diff.omitted_lines));
-    // 省了就要说：只给 `---`/`+++` 头的 diff 会被读成「没有改动」。
-    map.insert("diff_omitted".to_string(), json!(diff.omission()));
     map.insert(
         "files".to_string(),
         json!([file_entry(action, path, diff, unknown)]),
@@ -504,11 +495,13 @@ pub(super) fn insert_diff_fields(
 /// 每个变更块前后各带几行上下文。
 const UNIFIED_CONTEXT_LINES: usize = 2;
 
-/// 模型面 unified diff 的硬预算（字节）。
+/// 模型面 unified diff 的**病态体积安全阀**（字节），不是常规压缩。
 ///
-/// 写类结果不参与观察层压缩（见 `orchestrator::tool_result_payload`），所以这一层
-/// 必须自己兜底：整份文件回灌只会在下一次编辑前就撑爆上下文。
-pub(super) const MAX_UNIFIED_DIFF_BYTES: usize = 32 * 1024;
+/// 写类结果必须完整到达模型，否则模型会忘记自己刚写的内容、下次只能回读文件。
+/// 常规 diff 的源受 [`MAX_DIFF_SOURCE_BYTES`] 限制在 512 KiB 内；源超限或结构化
+/// 块被裁剪时按完整文本重算区域。这里的 2 MiB 只拦截单行超长等病态输出，
+/// 正常文件（含几百 KB）的 diff 会完整返回。
+pub(super) const MAX_UNIFIED_DIFF_BYTES: usize = 2 * 1024 * 1024;
 
 /// 给末尾的省略说明预留的空间，保证它不会被预算本身挤掉。
 const UNIFIED_DIFF_MARKER_RESERVE: usize = 256;
@@ -527,87 +520,39 @@ impl UnifiedDiff {
     }
 }
 
-/// 模型面写回执要不要带 diff 正文。
+/// 写类回执的模型面形态：完整 unified diff + 是否因病态体积被安全阀折叠。
 ///
-/// 默认不带：写/编辑落盘的内容就是这次调用发出去的那份，回灌一遍只是把已经
-/// 付过一次 token 的字节再付一次。三种情况例外，仍给（有界）diff：
-/// 干跑预览（问的就是「会变成什么样」）、恢复快照（内容不是模型写的）、
-/// 落盘字节与提交内容不一致（BOM 回填等模型没说过的事实）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum DiffEcho {
-    Full,
-    Authored,
-    NewFile,
-}
-
-impl DiffEcho {
-    /// 模型面没给正文时的省略原因；`Full` 表示正文已给。
-    pub(super) fn omitted_reason(self) -> Option<&'static str> {
-        match self {
-            DiffEcho::Full => None,
-            DiffEcho::Authored => Some(OMITTED_AUTHORED),
-            DiffEcho::NewFile => Some(OMITTED_NEW_FILE),
-        }
-    }
-}
-
-/// 没有 diff 正文时的替代文本：与 unified diff 同形，体积与文件大小无关。
-pub(super) fn omitted_diff_text(echo: DiffEcho, path: &str, lines: usize) -> String {
-    let body = match echo {
-        DiffEcho::NewFile => format!(
-            "new file: {lines} lines written (diff body omitted: content is what this call sent)"
-        ),
-        DiffEcho::Authored => format!(
-            "diff omitted: applied exactly what this call sent ({lines} lines)"
-        ),
-        DiffEcho::Full => String::new(),
-    };
-    format!("--- a/{path}\n+++ b/{path}\n{body}")
-}
-
-/// 写类回执的模型面形态：`(正文, 是否省略, 省略原因)`。
-///
-/// `Full` 走 [`unified_diff`]，可能因结构预算折叠；其余两种只给一行说明。
+/// 不再按“内容就是调用参数”省略正文：模型必须看到自己刚写/改的内容，下一次
+/// edit 才能直接定位，不必整篇回读。只有超过 [`MAX_UNIFIED_DIFF_BYTES`] 的
+/// 病态输出才折叠，hunk 计数仍然准确。
 pub(super) fn render_write_diff(
-    echo: DiffEcho,
     path: &str,
-    lines: usize,
     before: &str,
     after: &str,
     diff: &LineDiff,
-) -> (String, bool, Option<&'static str>) {
-    if echo == DiffEcho::Full {
-        let rendered = unified_diff(path, before, after, diff);
-        let truncated = rendered.truncated();
-        return (rendered.text, truncated, None);
-    }
-    (omitted_diff_text(echo, path, lines), true, echo.omitted_reason())
-}
-
-/// 变更落点：每个结构化块的起始行（新侧 1-based）。给不了 diff 正文时，它就是
-/// 「改在哪」的答案，体积随 hunk 数增长而与文件大小无关。
-pub(super) fn changed_lines(diff: &LineDiff) -> Vec<usize> {
-    diff.blocks
-        .iter()
-        .map(|block| block.start_line_after.max(1))
-        .collect()
+) -> (String, bool) {
+    let rendered = unified_diff(path, before, after, diff);
+    let truncated = rendered.truncated();
+    (rendered.text, truncated)
 }
 
 /// 把（旧文本，新文本）渲染成 unified diff 文本：`---`/`+++`/`@@` + 上下文 + `-`/`+`。
 ///
 /// 写类工具（写入文件、文本编辑）的回执靠这段文本确认「自己刚写进去的到底是
-/// 什么」，所以它不受观察层的通用截断；但它自己有 [`MAX_UNIFIED_DIFF_BYTES`]
-/// 的结构预算：整块放得下就完整输出，放不下就把该 hunk 折成「头 + 省略行数」，
+/// 什么」，所以它不受观察层的通用截断，默认完整输出。只有超过
+/// [`MAX_UNIFIED_DIFF_BYTES`] 的病态输出才把 hunk 折成「头 + 省略行数」，
 /// 计数始终准确，模型仍能看出改了哪里、改了多少。
 ///
-/// 源文本超过 `MAX_DIFF_SOURCE_BYTES` 时调用方本就给出 `diff_unavailable`，
-/// 这里不再重算。
+/// 源文本超过 `MAX_DIFF_SOURCE_BYTES` 时调用方会给出 `diff_unavailable`，
+/// 但写类回执仍要尽力回显：这里按完整文本重算区域，再受安全阀约束。
 pub(super) fn unified_diff(path: &str, before: &str, after: &str, diff: &LineDiff) -> UnifiedDiff {
     let old_index = build_line_index(before);
     let new_index = build_line_index(after);
     let old = &old_index.texts;
     let new = &new_index.texts;
-    let regions: Vec<Region> = if diff.omission().is_none() || diff_source_too_large(before, after)
+    // 只有「结构化块完整」时才直接复用；块被行数/单行/块数预算裁过时必须按
+    // 完整文本重算区域，否则模型面 diff 会缺掉被裁掉的部分（甚至只剩文件头）。
+    let regions: Vec<Region> = if diff.omission().is_none() && !diff_source_too_large(before, after)
     {
         diff.blocks.iter().map(block_region).collect()
     } else {
@@ -759,9 +704,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_single_huge_line_is_folded_to_a_marker_instead_of_blowing_the_budget() {
-        // 200 KB 单行：结构化块放不进正文预算，模型面文本也只能折叠；
-        // 但计数必须准确，且总字节不许越过硬预算。
+    fn a_single_huge_line_is_echoed_whole_under_the_safety_valve() {
+        // 200 KB 单行：结构化块放不下（省略为 line_too_long），但模型面文本
+        // 在 2 MiB 安全阀内必须完整回显，模型才能确认自己写了什么。
         let before = "x".repeat(200 * 1024);
         let after = "y".repeat(200 * 1024);
         let diff = diff_replaced(&before, &after);
@@ -773,24 +718,15 @@ mod tests {
         assert_eq!(diff.omitted_lines, 2);
 
         let rendered = unified_diff("longline.txt", &before, &after, &diff);
-        assert!(rendered.truncated());
-        assert!(
-            rendered.text.len() <= MAX_UNIFIED_DIFF_BYTES,
-            "{}",
-            rendered.text.len()
-        );
+        assert!(!rendered.truncated());
+        assert!(rendered.text.len() > 200 * 1024, "{}", rendered.text.len());
         assert!(
             rendered.text.contains("@@ -1,1 +1,1 @@"),
             "{}",
             &rendered.text[..64]
         );
-        assert!(rendered
-            .text
-            .contains("1 removed / 1 added line(s) omitted"));
-        assert!(
-            !rendered.text.contains(&"x".repeat(1024)),
-            "超长行不进上下文之外"
-        );
+        assert!(rendered.text.contains(&format!("-{before}")));
+        assert!(rendered.text.contains(&format!("+{after}")));
     }
 
     #[test]
@@ -829,9 +765,9 @@ mod tests {
     }
 
     #[test]
-    fn unified_diff_folds_past_the_byte_budget_and_keeps_counts_exact() {
-        // 5000 行里隔行改：2500 个 hunk，完整渲染约 200 KB，必须折叠到预算内，
-        // 但「省了多少」要准确，模型据此才知道文件到底改动了多大。
+    fn unified_diff_keeps_thousands_of_hunks_below_the_safety_valve() {
+        // 5000 行里隔行改：2500 个 hunk，完整渲染约 200 KB，远低于 2 MiB 安全阀，
+        // 必须整份回显，而不是折叠成「头 + 省略行数」。
         let mut before = String::new();
         let mut after = String::new();
         for index in 0..5000 {
@@ -846,21 +782,38 @@ mod tests {
         let diff = diff_replaced(&before, &after);
         assert_eq!(diff.hunks, 2500);
         let rendered = unified_diff("big.txt", &before, &after, &diff);
+        assert!(!rendered.truncated());
+        assert_eq!(rendered.text.matches("@@ -").count(), 2500);
+        assert!(rendered.text.contains("+key-0000-VALUE"));
+        assert!(rendered.text.contains("+key-4998-VALUE"));
+    }
+
+    #[test]
+    fn unified_diff_folds_past_the_safety_valve_and_keeps_counts_exact() {
+        // 3 MiB 单行属于病态输出：结构化块与模型面文本都放不下，只保留
+        // 「头 + 省略行数」，但省略计数必须准确。
+        let before = "x".repeat(3 * 1024 * 1024);
+        let after = "y".repeat(3 * 1024 * 1024);
+        let diff = diff_replaced(&before, &after);
+        let rendered = unified_diff("huge.txt", &before, &after, &diff);
         assert!(rendered.truncated());
         assert!(
             rendered.text.len() <= MAX_UNIFIED_DIFF_BYTES,
             "{}",
             rendered.text.len()
         );
-        assert_eq!(rendered.omitted_lines, rendered.omitted_hunks * 2);
-        assert!(rendered.text.contains("hunk(s) / "));
-        // 折叠后仍要看得出改在哪：至少保留了一部分真实 hunk 头。
-        assert!(rendered.text.contains("@@ -1,1 +1,1 @@"));
+        assert_eq!(rendered.omitted_lines, 2);
+        assert!(rendered
+            .text
+            .contains("@@ -1,1 +1,1 @@ ... 1 removed / 1 added line(s) omitted (diff budget)"));
+        assert!(rendered
+            .text
+            .contains("... 2 line(s) omitted (diff budget)"));
     }
 
     #[test]
-    fn a_fifty_kilobyte_edit_is_already_folded() {
-        // 3000 行 ≈ 51 KB：旧口径（64 KB）会整份回灌，新口径必须折叠。
+    fn a_fifty_kilobyte_edit_is_echoed_whole() {
+        // 3000 行 ≈ 51 KB：旧口径会折叠，现在必须完整回显（源文件上限 512 KiB）。
         let mut before = String::new();
         for index in 0..3000 {
             before.push_str(&format!("line {:05} value\n", index));
@@ -868,34 +821,37 @@ mod tests {
         let after = "only line\n";
         let diff = diff_replaced(&before, after);
         let rendered = unified_diff("editme.txt", &before, after, &diff);
-        assert!(rendered.truncated());
-        assert!(rendered.text.len() <= MAX_UNIFIED_DIFF_BYTES);
-        assert!(rendered
-            .text
-            .contains("3000 removed / 1 added line(s) omitted (diff budget)"));
+        assert!(!rendered.truncated());
+        assert!(rendered.text.contains("-line 00000 value"));
+        assert!(rendered.text.contains("-line 02999 value"));
+        assert!(rendered.text.contains("+only line"));
     }
 
     #[test]
     fn a_whole_file_rewrite_folds_into_one_hunk_header() {
-        let before = "old line\n".repeat(4000);
-        let after = "new line\n".repeat(4000);
+        // 单行 10 KiB × 300 行 ≈ 3 MiB：一整个 hunk 超过安全阀，头部保留、
+        // 正文折成一行说明，末尾再给总计。
+        let line_before = format!("{}\n", "o".repeat(10 * 1024));
+        let line_after = format!("{}\n", "n".repeat(10 * 1024));
+        let before = line_before.repeat(300);
+        let after = line_after.repeat(300);
         let diff = diff_replaced(&before, &after);
         let rendered = unified_diff("rewrite.txt", &before, &after, &diff);
         assert!(rendered.truncated());
         assert_eq!(rendered.omitted_hunks, 0);
-        assert_eq!(rendered.omitted_lines, 8000);
+        assert_eq!(rendered.omitted_lines, 600);
         assert!(rendered.text.len() <= MAX_UNIFIED_DIFF_BYTES);
         assert!(
             rendered
                 .text
-                .contains("@@ -1,4000 +1,4000 @@ ... 4000 removed / 4000 added line(s) omitted"),
+                .contains("@@ -1,300 +1,300 @@ ... 300 removed / 300 added line(s) omitted"),
             "{}",
             &rendered.text[..96]
         );
         assert!(
             rendered
                 .text
-                .contains("... 8000 line(s) omitted (diff budget)"),
+                .contains("... 600 line(s) omitted (diff budget)"),
             "{}",
             &rendered.text[rendered.text.len().saturating_sub(64)..]
         );
@@ -1096,7 +1052,6 @@ mod tests {
                 "deleted",
                 "deleted_lines",
                 "diff_lines_omitted",
-                "diff_omitted",
                 "files",
                 "hunks_applied",
                 "moved",
@@ -1112,7 +1067,6 @@ mod tests {
                 "deleted_lines",
                 "diff_blocks",
                 "diff_lines_omitted",
-                "diff_omitted",
                 "hunks",
                 "path",
                 "to_path"

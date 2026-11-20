@@ -41,6 +41,9 @@ const MAX_VIDEO_FRAMES: usize = 120;
 const DEFAULT_GIF_FRAME_STEP: usize = 0;
 const MIN_GIF_FRAME_STEP: usize = 0;
 const MAX_GIF_FRAME_STEP: usize = 120;
+/// 一次 GIF 采样最多回多少帧。每帧都是一张入模图，16 帧已经足以看出
+/// 动作是否成立；再多就会把上下文和请求体一起撑大。
+const MAX_GIF_SAMPLED_FRAMES: usize = 16;
 const REINLINE_IMAGE_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const DEFAULT_ASR_BASE_URL: &str = "https://api.openai.com/v1";
 const FFMPEG_BIN_ENV: &str = "WUNDER_FFMPEG_BIN";
@@ -184,7 +187,14 @@ pub async fn process_visual_media_path(
         .ok_or_else(|| anyhow!("unsupported media type, expected image/audio/video"))?;
     match media_kind {
         MediaKind::Image => {
-            process_image_source(workspace, workspace_id, source_path, requested_frame_step).await
+            process_image_source(
+                workspace,
+                workspace_id,
+                source_path,
+                requested_frame_rate,
+                requested_frame_step,
+            )
+            .await
         }
         MediaKind::Audio => {
             process_audio_source(config, source_path, filename.as_str(), source_public_path).await
@@ -301,6 +311,7 @@ async fn process_image_source(
     workspace: &WorkspaceManager,
     workspace_id: &str,
     source_path: &Path,
+    requested_frame_rate: Option<f64>,
     requested_frame_step: Option<usize>,
 ) -> Result<ChatMediaProcessResult> {
     let filename = source_path
@@ -344,6 +355,7 @@ async fn process_image_source(
             source_path,
             filename.as_str(),
             bytes.as_slice(),
+            requested_frame_rate,
             requested_frame_step,
         )
         .await;
@@ -460,9 +472,10 @@ async fn process_gif_source(
     source_path: &Path,
     filename: &str,
     bytes: &[u8],
+    requested_frame_rate: Option<f64>,
     requested_frame_step: Option<usize>,
 ) -> Result<ChatMediaProcessResult> {
-    let requested_step = normalize_requested_frame_step(requested_frame_step)?;
+    let mut requested_step = normalize_requested_frame_step(requested_frame_step)?;
     let decoder = GifDecoder::new(Cursor::new(bytes)).context("failed to decode gif frames")?;
     let frames = decoder
         .into_frames()
@@ -472,9 +485,50 @@ async fn process_gif_source(
         return Err(anyhow!("gif contains no readable frames"));
     }
     let total_frame_count = frames.len();
+    let mut warnings = Vec::new();
+
+    // 模型对动图最自然的表达是 `frame_rate: 8`（视频那套参数）。只认
+    // `frame_step` 会把它悄悄降级成“首帧”，看起来像工具不支持动图。
+    // 这里按 GIF 自身的帧间隔把 fps 换算成抽帧间隔，两种写法都能用。
+    if requested_frame_step.is_none() {
+        if let Some(rate) = requested_frame_rate {
+            if !rate.is_finite() || rate <= 0.0 {
+                return Err(anyhow!("frame_rate must be a positive number"));
+            }
+            // 源动图可能是 25fps，而 12fps 上限只对视频抽帧有意义；这里按上限
+            // 收敛而不是报错，模型不必记住两套参数域。
+            let applied_rate = rate.clamp(MIN_VIDEO_FRAME_RATE, MAX_VIDEO_FRAME_RATE);
+            let gif_fps = gif_average_fps(&frames);
+            requested_step = gif_step_for_frame_rate(gif_fps, applied_rate);
+            warnings.push(format!(
+                "frame_rate {applied_rate} fps was converted to frame_step {requested_step} for this gif (source ~{gif_fps:.1} fps)."
+            ));
+        }
+    }
+
+    // 抽样帧也是入模图，一帧一张。超过上限就把间隔调大，而不是把上下文
+    // 一次性塞满几十张位图。
+    if requested_step > 0 {
+        let planned_frames = total_frame_count.div_ceil(requested_step);
+        if planned_frames > MAX_GIF_SAMPLED_FRAMES {
+            let widened = total_frame_count.div_ceil(MAX_GIF_SAMPLED_FRAMES);
+            warnings.push(format!(
+                "frame_step raised from {requested_step} to {widened} to keep at most {MAX_GIF_SAMPLED_FRAMES} gif frames."
+            ));
+            requested_step = widened.clamp(1, MAX_GIF_FRAME_STEP);
+        }
+    }
 
     let public_path = workspace.display_path(workspace_id, source_path);
     if requested_step == 0 {
+        if total_frame_count > 1 {
+            // 只回首帧时必须说明白，否则模型会以为“这就是整张动图”，
+            // 转而自己去写抽帧脚本（本次会话就是这么绕远的）。
+            let suggested = total_frame_count.div_ceil(8).max(1);
+            warnings.push(format!(
+                "gif has {total_frame_count} frames but only frame 1 was returned. Pass frame_step=N to sample every Nth frame (e.g. frame_step={suggested}), or frame_rate=F for a target frame rate."
+            ));
+        }
         let preview = render_gif_frame_attachment(
             workspace,
             workspace_id,
@@ -493,16 +547,16 @@ async fn process_gif_source(
             source_public_path: public_path,
             transcript: None,
             duration_ms: None,
-            requested_frame_rate: None,
+            requested_frame_rate,
             applied_frame_rate: None,
-            requested_frame_step: Some(requested_step),
+            requested_frame_step: Some(0),
             applied_frame_step: Some(0),
             total_frame_count: Some(total_frame_count),
             frame_count: 1,
             has_audio: false,
             view: None,
             attachments: vec![preview],
-            warnings: Vec::new(),
+            warnings,
         });
     }
 
@@ -531,16 +585,16 @@ async fn process_gif_source(
         source_public_path: public_path,
         transcript: None,
         duration_ms: None,
-        requested_frame_rate: None,
+        requested_frame_rate,
         applied_frame_rate: None,
-        requested_frame_step: Some(requested_step),
+        requested_frame_step,
         applied_frame_step: Some(requested_step),
         total_frame_count: Some(total_frame_count),
         frame_count: attachments.len(),
         has_audio: false,
         view: None,
         attachments,
-        warnings: Vec::new(),
+        warnings,
     })
 }
 
@@ -1271,6 +1325,40 @@ fn normalize_requested_frame_step(value: Option<usize>) -> Result<usize> {
         ));
     }
     Ok(requested)
+}
+
+/// 目标帧率折算成抽帧间隔：25fps 的动图按 8fps 看，就是每 3 帧取 1 帧。
+/// 单独成函数是为了让“参数域收敛”可测，不依赖解码器。
+fn gif_step_for_frame_rate(gif_fps: f64, requested_rate: f64) -> usize {
+    if !gif_fps.is_finite() || gif_fps <= 0.0 || !requested_rate.is_finite() || requested_rate <= 0.0
+    {
+        return 1;
+    }
+    let step = (gif_fps / requested_rate).round().max(1.0) as usize;
+    step.clamp(1, MAX_GIF_FRAME_STEP)
+}
+
+/// GIF 自身帧间隔换算出的平均播放帧率。模型更习惯用 `frame_rate` 表达
+/// “我要看几帧/秒”，这里把它折算成 `frame_step`；取不到延迟时按 10fps 估算。
+fn gif_average_fps(frames: &[image::Frame]) -> f64 {
+    let mut total_ms = 0.0_f64;
+    let mut counted = 0_usize;
+    for frame in frames {
+        let (numer, denom) = frame.delay().numer_denom_ms();
+        if denom == 0 {
+            continue;
+        }
+        let delay_ms = f64::from(numer) / f64::from(denom);
+        if delay_ms > 0.0 {
+            total_ms += delay_ms;
+            counted += 1;
+        }
+    }
+    if counted == 0 || total_ms <= 0.0 {
+        return 10.0;
+    }
+    let average_ms = total_ms / counted as f64;
+    (1000.0 / average_ms).clamp(1.0, 50.0)
 }
 
 async fn render_gif_frame_attachment(
@@ -2421,9 +2509,10 @@ fn compute_image_view_stats(image: &DynamicImage) -> ImageViewStats {
 mod tests {
     use super::{
         detect_media_kind_from_path, effective_frame_rate, extract_workspace_id_from_public_path,
-        load_image_data_url_for_path, normalize_filename, normalize_requested_frame_rate,
-        normalize_requested_frame_step, ImageViewCache, ImageViewKey, DEFAULT_VIDEO_FRAME_RATE,
-        IMAGE_VIEW_CACHE_BYTES, IMAGE_VIEW_CACHE_VERSION, MAX_GIF_FRAME_STEP, MAX_VIDEO_FRAMES,
+        gif_step_for_frame_rate, load_image_data_url_for_path, normalize_filename,
+        normalize_requested_frame_rate, normalize_requested_frame_step, ImageViewCache,
+        ImageViewKey, DEFAULT_VIDEO_FRAME_RATE, IMAGE_VIEW_CACHE_BYTES, IMAGE_VIEW_CACHE_VERSION,
+        MAX_GIF_FRAME_STEP, MAX_VIDEO_FRAMES,
     };
     use std::path::Path;
     use std::sync::Arc;
@@ -3036,6 +3125,21 @@ mod tests {
     fn normalize_requested_frame_step_accepts_interval_sampling() {
         let step = normalize_requested_frame_step(Some(2)).expect("interval frame step");
         assert_eq!(step, 2);
+    }
+
+    #[test]
+    fn gif_frame_rate_maps_to_frame_step() {
+        assert_eq!(gif_step_for_frame_rate(25.0, 8.0), 3);
+        assert_eq!(gif_step_for_frame_rate(10.0, 10.0), 1);
+        assert_eq!(gif_step_for_frame_rate(50.0, 0.5), 100);
+        assert_eq!(gif_step_for_frame_rate(25.0, 12.0), 2);
+    }
+
+    #[test]
+    fn gif_frame_rate_never_returns_zero_step() {
+        assert_eq!(gif_step_for_frame_rate(0.0, 8.0), 1);
+        assert_eq!(gif_step_for_frame_rate(25.0, 0.0), 1);
+        assert_eq!(gif_step_for_frame_rate(f64::NAN, 8.0), 1);
     }
 
     #[test]

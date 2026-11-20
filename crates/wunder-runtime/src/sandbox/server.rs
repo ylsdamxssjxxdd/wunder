@@ -46,6 +46,30 @@ use std::fs;
 use std::io::ErrorKind;
 use tracing::warn;
 
+/// 沙箱命令入口的历史占位符守卫：占位符不是命令，绝不能交给 shell。
+fn history_placeholder_tool_result(args: &Value) -> Option<ToolResult> {
+    if !crate::services::history::contains_history_elision(args) {
+        return None;
+    }
+    Some(ToolResult {
+        ok: false,
+        data: with_error_meta(
+            json!({ "history_placeholder": true }),
+            ToolErrorMeta::new(
+                "TOOL_ARG_HISTORY_PLACEHOLDER",
+                Some(
+                    "Placeholders are model-history projection artifacts, never valid commands. Resend the real command."
+                        .to_string(),
+                ),
+                false,
+                None,
+            ),
+        ),
+        error: "Tool arguments contain a history placeholder, not a real command; nothing was executed."
+            .to_string(),
+    })
+}
+
 #[path = "file_runtime.rs"]
 mod file_runtime;
 use file_runtime::execute_builtin_file_tool;
@@ -1118,6 +1142,9 @@ fn recover_tool_args_value(args: &Value) -> Value {
 
 async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
     let args = recover_tool_args_value(args);
+    if let Some(result) = history_placeholder_tool_result(&args) {
+        return result;
+    }
     let dry_run = parse_dry_run(&args);
     let command_budget = parse_command_budget(&args);
     let content = args
@@ -1435,6 +1462,9 @@ async fn execute_command_streaming(
     tx: mpsc::Sender<Result<Bytes, Infallible>>,
 ) -> ToolResult {
     let args = recover_tool_args_value(args);
+    if let Some(result) = history_placeholder_tool_result(&args) {
+        return result;
+    }
     let dry_run = parse_dry_run(&args);
     let command_budget = parse_command_budget(&args);
     let content = args

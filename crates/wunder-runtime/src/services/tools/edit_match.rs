@@ -58,7 +58,7 @@ impl MatchTier {
                 "old_string 与实际内容只差行内空白数量/位置，已按空白折叠匹配；new_string 原样写入，请确认行内空格符合预期。"
             }
             MatchTier::LooseWhitespace => {
-                "old_string 与实际内容只差空白（含缩进），已按「去掉全部空白后一致」这一最后一档匹配；new_string 原样写入，第一行不再继承文件缩进，请按回执的 changed_lines 确认排版。"
+                "old_string 与实际内容只差空白（含缩进），已按「去掉全部空白后一致」这一最后一档匹配；new_string 原样写入，第一行不再继承文件缩进，请按回执的 unified diff 确认排版。"
             }
         }
     }
@@ -157,7 +157,10 @@ pub(crate) fn find(content: &str, needle: &str) -> Option<Found> {
                 end_byte += 1;
             }
             // 防止 span > 1 时相邻候选互相重叠，replace 会因此切错区间。
-            if spans.last().is_some_and(|(_, previous_end)| start_byte < *previous_end) {
+            if spans
+                .last()
+                .is_some_and(|(_, previous_end)| start_byte < *previous_end)
+            {
                 continue;
             }
             spans.push((start_byte, end_byte));
@@ -173,7 +176,12 @@ pub(crate) fn find(content: &str, needle: &str) -> Option<Found> {
 }
 
 /// 按命中区间把内容换成 `replacement`；`replace_all=false` 只换第一处。
-pub(crate) fn replace(content: &str, found: &Found, replacement: &str, replace_all: bool) -> String {
+pub(crate) fn replace(
+    content: &str,
+    found: &Found,
+    replacement: &str,
+    replace_all: bool,
+) -> String {
     let count = if replace_all {
         found.spans.len()
     } else {
@@ -183,7 +191,9 @@ pub(crate) fn replace(content: &str, found: &Found, replacement: &str, replace_a
         .iter()
         .map(|(start, end)| end - start)
         .sum();
-    let mut out = String::with_capacity(content.len() + replacement.len().saturating_mul(count) - extra.min(content.len()));
+    let mut out = String::with_capacity(
+        content.len() + replacement.len().saturating_mul(count) - extra.min(content.len()),
+    );
     let mut cursor = 0usize;
     for (start, end) in found.spans.iter().take(count) {
         let start = *start;
@@ -258,7 +268,11 @@ fn strip_common_indent(lines: &[&str]) -> Vec<String> {
         .unwrap_or(0);
     lines
         .iter()
-        .map(|line| strip_leading_whitespace(line, indent).trim_end().to_string())
+        .map(|line| {
+            strip_leading_whitespace(line, indent)
+                .trim_end()
+                .to_string()
+        })
         .collect()
 }
 
@@ -345,7 +359,15 @@ mod tests {
         let content = "fn main() {\r\n    run();\r\n}\r\n";
         let found = find(content, "fn main() {\n    run();\n}\n").expect("crlf");
         assert_eq!(found.tier, MatchTier::TrailingWhitespace);
-        assert_eq!(replace(content, &found, "fn main() {\r\n    stop();\r\n}\r\n", false), "fn main() {\r\n    stop();\r\n}\r\n");
+        assert_eq!(
+            replace(
+                content,
+                &found,
+                "fn main() {\r\n    stop();\r\n}\r\n",
+                false
+            ),
+            "fn main() {\r\n    stop();\r\n}\r\n"
+        );
     }
 
     #[test]

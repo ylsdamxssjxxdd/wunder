@@ -1281,9 +1281,9 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/prompts");
         let en = std::fs::read_to_string(prompt_root.join("en/system/skills_protocol.txt"))
             .expect("en skills protocol");
-        assert!(en.contains("the first tool call must be the skill tool"));
-        assert!(en.contains("do not call file listing, search"));
-        assert!(en.contains("the task intent matches a skill's Frontmatter"));
+        assert!(en.contains("the first tool call must be `skill_call`"));
+        assert!(en.contains("do not call `list_files`, `search_content`"));
+        assert!(en.contains("the task intent matches a skill's `frontmatter`"));
     }
 
     /// First-turn fixed cost = system templates + the model-facing tool

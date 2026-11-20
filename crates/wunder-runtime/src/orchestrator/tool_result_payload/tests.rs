@@ -2713,7 +2713,10 @@ fn structured_check_and_undo_source_survive_the_projection() {
     assert_eq!(projected["check"]["status"], json!("ok"));
     assert_eq!(projected["check"]["tool"], json!("py_compile"));
     assert_eq!(projected["syntax"], json!("OK (py_compile)"));
-    assert_eq!(projected["restored_from"], json!("temp/.history/sketch.py@2"));
+    assert_eq!(
+        projected["restored_from"],
+        json!("temp/.history/sketch.py@2")
+    );
     assert_eq!(projected["cursor"], json!(1));
 }
 

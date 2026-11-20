@@ -66,6 +66,13 @@ mod tests {
     }
 
     #[test]
+    fn maps_exec_cmd_alias() {
+        let normalized =
+            normalize_args("exec_command", &json!({"cmd": "ls -la"})).expect("normalized");
+        assert_eq!(normalized["command"], "ls -la");
+    }
+
+    #[test]
     fn unknown_tool_is_unchanged() {
         assert!(normalize_args("不存在的工具", &json!({"a": 1})).is_none());
         assert!(normalize_args("列出文件", &json!({"path": "x"})).is_none());

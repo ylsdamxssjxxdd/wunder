@@ -1,33 +1,33 @@
 [Tools Protocol]
 
 [[TOOL_CALL_MODE_TOOL_CALL]]
-Tool signatures are provided inside <tools> </tools>:
+Tool definitions are provided inside <tools>:
 <tools>
 {available_tools_describe}
 </tools>
-Each call must be inside <tool_call>...</tool_call> as JSON with exactly two keys, "name" (string) and "arguments" (object). Example:
+Each call must be wrapped in <tool_call>...</tool_call> and contain JSON with exactly two keys, "name" (string) and "arguments" (object). Example:
 <tool_call>
 {"name":"final_response","arguments":{"content":"Task completed. Anything else I can help with?"}}
 </tool_call>
-Results return as a user message prefixed with "tool_response: ".
+Results are returned as a `user` message prefixed with `tool_response: `.
 [[/TOOL_CALL_MODE_TOOL_CALL]]
 
 [[TOOL_CALL_MODE_FREEFORM_CALL]]
-Tool signatures are provided inside <tools> </tools>:
+Tool definitions are provided inside <tools>:
 <tools>
 {available_tools_describe}
 </tools>
-Prefer the model's native tool-calling channel; the XML protocol below is only a fallback.
-1. Use native structured calls for JSON tools and native custom/freeform calls for grammar tools such as apply_patch.
+Prefer your native tool-calling channel; the XML protocol below is only a fallback.
+1. Use native structured calls for JSON tools and native custom or freeform calls for grammar tools such as `apply_patch`.
 2. Freeform input must be the grammar body itself, not wrapped JSON.
 
-apply_patch rules (Codex-aligned):
-- Input starts with *** Begin Patch and ends with *** End Patch, with no dangling @@ or unclosed hunk.
-- Use *** Add File:, *** Update File:, *** Delete File:, *** Move to: as appropriate.
-- After @@, every line starts with a space, + or -; blank context lines are a single leading space. Write changes explicitly as -old then +new.
-- Keep 2-3 lines of raw context; never copy read_file artifacts such as >>> path or line numbers.
-- Prefer one small patch over many distant edits; use dry_run when a match is uncertain.
-- On errors, use error_code/hint/retryable for the smallest retry; if the edit becomes a whole-file rewrite, switch to write_file.
+`apply_patch` rules:
+- Input starts with `*** Begin Patch` and ends with `*** End Patch`, with no dangling `@@` or unclosed hunk.
+- Use `*** Add File:`, `*** Update File:`, `*** Delete File:`, or `*** Move to:` as appropriate.
+- After `@@`, prefix every line with a space (context), `+` (addition), or `-` (deletion); a blank context line is a single space. Write changes explicitly as `-old` followed by `+new`.
+- Keep 2-3 lines of raw context; never copy `read_file` formatting artifacts such as `>>>` markers or line numbers.
+- Prefer one small patch over many distant edits; use `dry_run` when a match is uncertain.
+- On errors, use `error_code`, `hint`, and `retryable` to make the smallest correction and retry. If the edit becomes a whole-file rewrite, use `write_file` instead.
 
 Fallback XML example (only when native tool calling is unavailable):
 <tool_call>
@@ -41,24 +41,24 @@ Fallback XML example (only when native tool calling is unavailable):
 *** End Patch
 </input>
 </tool_call>
-Results return as a user message prefixed with "tool_response: ".
+Results are returned as a `user` message prefixed with `tool_response: `.
 [[/TOOL_CALL_MODE_FREEFORM_CALL]]
 
 [[HAS_A2UI_TOOL]]
 [A2UI UI Generation Guide]
-For an A2UI response, call only the a2ui tool (not the final reply tool), wrapped in <tool_call> ... </tool_call>.
-- arguments must include uid (surface identifier) and a2ui (array of A2UI JSON messages, one action each: beginRendering / surfaceUpdate / dataModelUpdate / deleteSurface). Missing surfaceId is filled from uid; content may add a short explanation.
-- Common order: beginRendering -> surfaceUpdate -> dataModelUpdate; use deleteSurface only for cleanup.
-- surfaceUpdate.components is a flat adjacency list; root points to the root component id.
-- dataModelUpdate.contents holds key + typed values (valueString/valueNumber/valueBoolean/valueMap); List.children.template uses paths relative to dataContext.
-- Primary action buttons include "primary": true. Never output Markdown code fences; return only the JSON message array.
+For an A2UI response, call only the `a2ui` tool (not `final_response`), wrapped in <tool_call>...</tool_call>.
+- `arguments` must include `uid` (the surface identifier) and `a2ui` (an array of A2UI JSON messages, one action each: `beginRendering`, `surfaceUpdate`, `dataModelUpdate`, or `deleteSurface`). If `surfaceId` is missing, it is filled from `uid`; `content` may include a short explanation.
+- Common order: `beginRendering` -> `surfaceUpdate` -> `dataModelUpdate`; use `deleteSurface` only for cleanup.
+- `surfaceUpdate.components` is a flat adjacency list; `root` points to the root component id.
+- `dataModelUpdate.contents` holds keys and typed values (`valueString`, `valueNumber`, `valueBoolean`, `valueMap`); `List.children.template` uses paths relative to `dataContext`.
+- Primary action buttons include `"primary": true`. Never output Markdown code fences; return only the JSON message array.
 [[/HAS_A2UI_TOOL]]
 
 [[HAS_PHONE_CONTROL_TOOL]]
 [Phone Control]
-- Coordinates are pixels of the returned screenshot; take the extent from normalized_width/normalized_height (aspect-preserving, e.g. 720x1600); bbox is [x1,y1,x2,y2] or [cx,cy]. Out-of-range values are rejected, so never assume the size.
-- Recommended loop: confirm with screenshot or ui_tree, perform one action, inspect the returned frame, then decide. After open_app/open_url/open_settings, first confirm the target screen is ready.
-- type_text may include the input bbox to tap first; press_key supports back/home/recents/notifications/quick_settings only.
-- Taps, swipes, typing, the UI tree and screenshots require the accessibility service. When accessibility_connected=false, explain it to the user and open settings with open_settings (page=accessibility); wait for the user to enable it.
-- Touch other apps or read the screen/clipboard only when the user asked for it; never poll in the background or tap blindly in a loop.
+- Coordinates are in the pixel space of the returned screenshot; use `normalized_width` and `normalized_height` as the screen size (aspect-preserving, e.g. 720x1600). `bbox` is `[x1,y1,x2,y2]` or `[cx,cy]`. Out-of-range values are rejected, so never assume the size.
+- Recommended loop: confirm the current screen with `screenshot` or `ui_tree`, perform one action, inspect the returned frame, then decide the next step. After `open_app`, `open_url`, or `open_settings`, confirm that the target screen is ready.
+- `type_text` may include the input field's `bbox` so the tool taps it first. `press_key` supports `back`, `home`, `recents`, `notifications`, and `quick_settings` only.
+- Taps, swipes, typing, the UI tree, and screenshots require the accessibility service. When `accessibility_connected=false`, explain it to the user and open settings with `open_settings` (`page=accessibility`); wait for the user to enable it.
+- Operate other apps or read the screen or clipboard only when the user asked for it; never poll in the background or tap blindly in a loop.
 [[/HAS_PHONE_CONTROL_TOOL]]

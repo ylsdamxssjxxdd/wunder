@@ -2404,8 +2404,13 @@ fn project_read_image_success(data: &Value) -> Option<Value> {
             "has_audio",
             "requested_frame_rate",
             "applied_frame_rate",
+            "requested_frame_step",
+            "applied_frame_step",
+            "warnings",
         ] {
-            if let Some(value) = result.get(key).filter(|value| !value.is_null()) {
+            if let Some(value) = result.get(key).filter(|value| {
+                !value.is_null() && !matches!(value, Value::Array(items) if items.is_empty())
+            }) {
                 projected.insert(key.to_string(), value.clone());
             }
         }
@@ -2819,8 +2824,6 @@ fn project_file_write_success(data: &Value) -> Option<Value> {
             "cursor",
             "unified_diff",
             "unified_diff_truncated",
-            // 不给 diff 正文时，「改在哪 / 改了几处」靠这两个字段回答。
-            "changed_lines",
             "replacements",
             "range",
             // 行号被 anchor 纠正过时的偏移量：模型据此更新自己的行号记忆。
@@ -2833,7 +2836,6 @@ fn project_file_write_success(data: &Value) -> Option<Value> {
             "edits_applied",
             "edits_missed",
             "partial",
-            "diff_omitted",
         ],
     );
     // 回执已逐项写明行数、sha256 与语法结论；重复的扁平字段只多占上下文。

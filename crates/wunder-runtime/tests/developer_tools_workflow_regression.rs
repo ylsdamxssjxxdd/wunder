@@ -742,7 +742,7 @@ fn localized_schedule_text_and_browser_surface_match_model_feedback() {
         .into_iter()
         .find(|spec| spec.name == "browser")
         .expect("browser spec");
-    let projected = wunder_server::tools::prompt_tool_spec(&browser, "en-US");
+    let projected = wunder_server::tools::prompt_tool_spec(&browser);
     let properties = projected.input_schema["properties"]
         .as_object()
         .expect("browser properties");
@@ -868,10 +868,83 @@ async fn search_content_reports_phrase_fallback_strategy() {
 }
 
 #[tokio::test]
-async fn write_tool_never_echoes_what_the_call_already_sent() {
+async fn history_placeholders_are_rejected_before_any_write_or_exec() {
     let fixture = ToolFixture::new();
 
-    // 新建文件：正文就是这次调用发出去的内容，回执里给行数与指纹就够了。
+    // 模型把历史投影里的对象哨兵当成正文发回来：必须失败，且磁盘不留文件。
+    let sentinel = invoke(
+        &fixture,
+        "write_file",
+        json!({
+            "path": "broken/notes.txt",
+            "content": {
+                "__wunder_history_elided__": 7620,
+                "hint": "Omitted from model history; the argument was already applied."
+            }
+        }),
+    )
+    .await;
+    assert_eq!(sentinel["ok"], false, "{sentinel}");
+    assert_eq!(
+        sentinel["error_meta"]["code"],
+        json!("TOOL_ARG_HISTORY_PLACEHOLDER")
+    );
+    assert!(
+        !fixture.workspace_path("broken/notes.txt").exists(),
+        "placeholder must never reach disk"
+    );
+
+    // 旧版字符串标记（历史数据里仍可能存在）同样拦下。
+    let legacy = invoke(
+        &fixture,
+        "write_file",
+        json!({
+            "path": "broken/legacy.txt",
+            "content": "…[wunder] 3811 characters of this argument were omitted from model history. The paired tool result is authoritative."
+        }),
+    )
+    .await;
+    assert_eq!(legacy["ok"], false, "{legacy}");
+    assert_eq!(
+        legacy["error_meta"]["code"],
+        json!("TOOL_ARG_HISTORY_PLACEHOLDER")
+    );
+    assert!(!fixture.workspace_path("broken/legacy.txt").exists());
+
+    // 命令参数里出现占位符时，命令不能被执行。
+    let command = invoke(
+        &fixture,
+        "exec_command",
+        json!({
+            "command": {
+                "__wunder_history_elided__": 3268,
+                "hint": "Omitted from model history; the argument was already applied."
+            }
+        }),
+    )
+    .await;
+    assert_eq!(command["ok"], false, "{command}");
+    assert_eq!(
+        command["error_meta"]["code"],
+        json!("TOOL_ARG_HISTORY_PLACEHOLDER")
+    );
+
+    // 正常正文里恰好包含标记字样不算占位符（必须是完整标记句）。
+    let benign = invoke(
+        &fixture,
+        "write_file",
+        json!({ "path": "notes/ok.txt", "content": "print('…[wunder]')\n" }),
+    )
+    .await;
+    assert_eq!(benign["ok"], true, "{benign}");
+    assert!(fixture.workspace_path("notes/ok.txt").exists());
+}
+
+#[tokio::test]
+async fn write_tool_echoes_what_it_wrote_so_the_model_does_not_reread() {
+    let fixture = ToolFixture::new();
+
+    // 新建文件：整份正文以新增行的形式回到模型，下一步不必回读。
     let mut fresh = String::new();
     for index in 0..3000 {
         fresh.push_str(&format!("row {:05} payload payload payload\n", index));
@@ -884,25 +957,27 @@ async fn write_tool_never_echoes_what_the_call_already_sent() {
     .await;
     assert_eq!(created["ok"], true, "{created}");
     assert_eq!(created["data"]["added_lines"], 3000);
-    assert_eq!(created["data"]["unified_diff_truncated"], true);
+    assert_eq!(created["data"]["unified_diff_truncated"], false);
     let created_diff = created["data"]["unified_diff"].as_str().expect("diff");
     assert!(
-        created_diff.contains("diff body omitted"),
-        "new file must not replay its own body: {created_diff}"
+        created_diff.contains("+row 00000 payload"),
+        "{created_diff}"
     );
     assert!(
-        created_diff.len() < 512,
-        "new file diff must be a notice, got {} bytes",
+        created_diff.contains("+row 02999 payload"),
+        "{created_diff}"
+    );
+    assert!(
+        created_diff.len() > 100 * 1024,
+        "full body must reach the model, got {} bytes",
         created_diff.len()
     );
     // 前端差异卡片仍保留有界块（80 行上限），但它不进模型上下文。
-    assert!(
-        created["data"]["files"][0]["diff_blocks"][0]["lines"]
-            .as_array()
-            .is_some_and(|lines| lines.len() <= 80)
-    );
+    assert!(created["data"]["files"][0]["diff_blocks"][0]["lines"]
+        .as_array()
+        .is_some_and(|lines| lines.len() <= 80));
 
-    // 覆盖写：落盘的就是这次发出去的正文，模型面同样不回灌 diff；只给落点。
+    // 覆盖写：模型面看到真实的新旧行，而不是「省略了多少字符」。
     let mut replaced = String::new();
     for index in 0..3000 {
         replaced.push_str(&format!("row {:05} REWRITTEN payload payload\n", index));
@@ -916,18 +991,18 @@ async fn write_tool_never_echoes_what_the_call_already_sent() {
     assert_eq!(updated["ok"], true, "{updated}");
     assert_eq!(updated["data"]["added_lines"], 3000);
     assert_eq!(updated["data"]["deleted_lines"], 3000);
-    assert_eq!(updated["data"]["unified_diff_truncated"], true);
-    assert_eq!(updated["data"]["diff_omitted"], json!("authored"));
-    assert_eq!(updated["data"]["changed_lines"], json!([1]));
+    assert_eq!(updated["data"]["unified_diff_truncated"], false);
     let updated_diff = updated["data"]["unified_diff"].as_str().expect("diff");
     assert!(
-        updated_diff.contains("diff omitted"),
-        "big overwrite must not replay its body: {}",
+        updated_diff.contains("-row 00000 payload")
+            && updated_diff.contains("+row 00000 REWRITTEN"),
+        "overwrite must replay real changed lines: {}",
         &updated_diff[..updated_diff.len().min(160)]
     );
-    assert!(updated_diff.len() < 512, "{}", updated_diff.len());
+    assert!(updated_diff.len() > 200 * 1024, "{}", updated_diff.len());
+    assert!(updated["data"].get("changed_lines").is_none());
 
-    // 唯一的例外：dry_run 预览问的就是「会变成什么样」，必须给真 diff。
+    // dry_run 预览问的就是「会变成什么样」，同样给真 diff。
     invoke(
         &fixture,
         "write_file",
@@ -948,6 +1023,5 @@ async fn write_tool_never_echoes_what_the_call_already_sent() {
         "preview must show the real diff: {}",
         &preview_diff[..preview_diff.len().min(200)]
     );
-    assert!(preview["data"]["diff_omitted"].is_null(), "{preview}");
     assert!(updated["data"]["bytes"].as_u64().unwrap_or(0) > 0);
 }

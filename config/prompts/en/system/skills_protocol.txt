@@ -1,9 +1,10 @@
 [Skills Protocol]
-- Mounted skills are split into built-in skills (system/repo workflows, possibly outside the private skills directory and read-only) and user-built skills (installed and maintained by the user).
-- If the user names or requests a mounted skill, or the task intent matches a skill's Frontmatter, the first tool call must be the skill tool with that skill's name.
-- Before its `SKILL.md` loads, do not call file listing, search, file read/write, command execution or any other tool; do not plan or execute the skill workflow first.
-- Follow the loaded `SKILL.md`. Inspect available skills only when neither the user nor the task intent identifies one. Prefer the skill tool or the real `SKILL.md` paths below; do not scan skill directories just to confirm a path.
-- The default call returns `SKILL.md` plus its resource index: do not call action=manifest first or reload the same skill; continue with the returned cursor only when truncated=true.
+- Mounted skills are divided into built-in skills (system or repository workflows, possibly outside the user skills directory and read-only) and user-built skills (installed and maintained by the user).
+- If the user names or requests a mounted skill, or the task intent matches a skill's `frontmatter`, the first tool call must be `skill_call` with that skill's name.
+- Before its `SKILL.md` is loaded, do not call `list_files`, `search_content`, file read/write, command execution, or any other tool; do not plan or start the skill workflow first.
+- Follow the loaded `SKILL.md`. Inspect available skills only when neither the user nor the task intent identifies one. Prefer `skill_call` or the exact `SKILL.md` paths below; do not scan skill directories just to confirm a path.
+- The default call returns `SKILL.md` and its resource index. Do not call `action=manifest` first or reload the same skill.
+- If the `SKILL.md` body is truncated, the result includes `truncated=true`; continue with `next_cursor`. If the resource index is truncated, the result includes `index_scan_limited=true`; continue with `index_next_cursor`.
 
 [Mounted Built-in Skills]
 {BUILTIN_SKILLS_LIST}

@@ -23,61 +23,64 @@
       <span v-if="durationLabel" class="timeline-process-duration">{{ durationLabel }}</span>
     </button>
 
-    <div v-if="open" ref="processBodyRef" class="timeline-process-body" @scroll.passive="handleProcessScroll" @wheel.passive="handleProcessWheel" @pointerdown="pageAnchor = null" @keydown="pageAnchor = null">
-      <div v-if="loading && !loaded" class="timeline-process-note">{{ t('chat.timeline.processLoading') }}</div>
-      <template v-else-if="error">
-        <div class="timeline-process-note">{{ t('chat.timeline.processFailed') }}</div>
-        <button class="timeline-process-retry" type="button" @click="load">{{ t('chat.timeline.processRetry') }}</button>
-      </template>
-      <template v-else>
-        <div v-if="hasOlderItems" class="timeline-process-page-state timeline-process-page-state-top" role="status">
-          {{ pageError ? t('chat.timeline.processPageFailed') : loadingMore ? t('chat.timeline.processLoading') : t('chat.timeline.processScrollEarlier') }}
-        </div>
-        <div class="timeline-group">
-        <div v-for="row in displayRows" :key="row.key" :data-process-key="row.key">
-          <MessageTimelineThinkingEntry
-            v-if="row.kind === 'reasoning'"
-            :entry="row.entry"
-            :open="row.liveOnly ? !liveReasoningClosed : (openKeys.has(row.key) || (row.key === autoOpenReasoningKey && !closedReasoningKeys.has(row.key)))"
-            @toggle="row.liveOnly ? toggleLiveReasoning() : toggleReasoningRow(row.key)"
-          />
-          <MessageTimelineToolEntry
-            v-else-if="row.kind === 'tool'"
-            :entry="row.entry"
-            :open="isRowOpen(row.key)"
-            :patch-view="patchViewFor(row.entry)"
-            :structured-view="structuredViewFor(row.entry)"
-            @toggle="toggleKey(row.key)"
-          />
-          <div
-            v-else
-            class="timeline-body-block"
-            :class="{ 'timeline-live-print': row.live }"
-            data-turn-slot="body"
-          >
-            <!-- The row the model is still printing renders as live plain text
-                 in its own place: this is the only copy of that round's prose,
-                 so nothing is appended to the fold a second time. -->
-            <template v-if="row.live">{{ row.text }}</template>
-            <MessageMarkdownBody
-              v-else
-              :cache-key="`${cacheKeyPrefix}${row.key}`"
-              :content="row.text"
-              :explicit-content="true"
-              :assistant-display="true"
-              @rendered="restorePageAnchor"
-            />
+    <div v-if="open" class="timeline-process-scroll">
+      <div ref="processBodyRef" class="timeline-process-body" @scroll.passive="handleProcessScroll" @wheel.passive="handleProcessWheel" @pointerdown="pageAnchor = null" @keydown="pageAnchor = null">
+        <div v-if="loading && !loaded" class="timeline-process-note">{{ t('chat.timeline.processLoading') }}</div>
+        <template v-else-if="error">
+          <div class="timeline-process-note">{{ t('chat.timeline.processFailed') }}</div>
+          <button class="timeline-process-retry" type="button" @click="load">{{ t('chat.timeline.processRetry') }}</button>
+        </template>
+        <template v-else>
+          <div v-if="hasOlderItems" class="timeline-process-page-state timeline-process-page-state-top" role="status">
+            {{ pageError ? t('chat.timeline.processPageFailed') : loadingMore ? t('chat.timeline.processLoading') : t('chat.timeline.processScrollEarlier') }}
           </div>
-        </div>
-        </div>
-        <div v-if="hasNewerItems" class="timeline-process-page-state" role="status">
-          {{ pageError ? t('chat.timeline.processPageFailed') : loadingMore ? t('chat.timeline.processLoading') : t('chat.timeline.processScrollLater') }}
-        </div>
-        <!-- 有工具轮次的流式尾部：正文区在思考/工具阶段让位，这段文字只在过程区
-             直播，而且必须印在该轮自己的持久行里（见 displayRows / placeLivePrint）。
-             它们还没落库时正文区仍在直播同一段文本，所以这里不再另起一行兜底：
-             一处一轮，绝不同时出现两份。 -->
-      </template>
+          <div class="timeline-group">
+          <div v-for="row in displayRows" :key="row.key" :data-process-key="row.key">
+            <MessageTimelineThinkingEntry
+              v-if="row.kind === 'reasoning'"
+              :entry="row.entry"
+              :open="row.liveOnly ? !liveReasoningClosed : (openKeys.has(row.key) || (row.key === autoOpenReasoningKey && !closedReasoningKeys.has(row.key)))"
+              @toggle="row.liveOnly ? toggleLiveReasoning() : toggleReasoningRow(row.key)"
+            />
+            <MessageTimelineToolEntry
+              v-else-if="row.kind === 'tool'"
+              :entry="row.entry"
+              :open="isRowOpen(row.key)"
+              :patch-view="patchViewFor(row.entry)"
+              :structured-view="structuredViewFor(row.entry)"
+              @toggle="toggleKey(row.key)"
+            />
+            <div
+              v-else
+              class="timeline-body-block"
+              :class="{ 'timeline-live-print': row.live }"
+              data-turn-slot="body"
+            >
+              <!-- The row the model is still printing renders as live plain text
+                   in its own place: this is the only copy of that round's prose,
+                   so nothing is appended to the fold a second time. -->
+              <template v-if="row.live">{{ row.text }}</template>
+              <MessageMarkdownBody
+                v-else
+                :cache-key="`${cacheKeyPrefix}${row.key}`"
+                :content="row.text"
+                :explicit-content="true"
+                :assistant-display="true"
+                @rendered="restorePageAnchor"
+              />
+            </div>
+          </div>
+          </div>
+          <div v-if="hasNewerItems" class="timeline-process-page-state" role="status">
+            {{ pageError ? t('chat.timeline.processPageFailed') : loadingMore ? t('chat.timeline.processLoading') : t('chat.timeline.processScrollLater') }}
+          </div>
+          <!-- 有工具轮次的流式尾部：正文区在思考/工具阶段让位，这段文字只在过程区
+               直播，而且必须印在该轮自己的持久行里（见 displayRows / placeLivePrint）。
+               它们还没落库时正文区仍在直播同一段文本，所以这里不再另起一行兜底：
+               一处一轮，绝不同时出现两份。 -->
+        </template>
+      </div>
+      <ThinScrollbar :target="processBodyRef" />
     </div>
   </div>
 </template>
@@ -90,6 +93,7 @@ import { placeLivePrint } from './livePrintRow';
 import { resolveEntryOpen } from './timelineCommandFold';
 import MessageTimelineThinkingEntry from './MessageTimelineThinkingEntry.vue';
 import MessageTimelineToolEntry from './MessageTimelineToolEntry.vue';
+import ThinScrollbar from '@/components/common/ThinScrollbar.vue';
 import { t } from '@/i18n';
 import { getThreadLogTurn } from '@/api/chat';
 import {
@@ -977,6 +981,13 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   white-space: nowrap;
+}
+
+/* 过程体与细滚动条共处一层：滚动条贴过程体右缘覆盖显示，不占布局宽度。 */
+.timeline-process-scroll {
+  position: relative;
+  width: 100%;
+  min-width: 0;
 }
 
 /* 过程体限高滚动：一次工作过程固定在同一区域内展开，长轮次不撑开整条消息。 */

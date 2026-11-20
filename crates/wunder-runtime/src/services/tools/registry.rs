@@ -57,7 +57,7 @@ pub(crate) const DESCRIPTORS: &[ToolDescriptor] = &[
         canonical: "执行命令",
         kind: ToolKind::Exec,
         parallel_safe: false,
-        arg_aliases: &[("content", "command")],
+        arg_aliases: &[("content", "command"), ("command", "cmd")],
     },
     ToolDescriptor {
         canonical: "搜索内容",

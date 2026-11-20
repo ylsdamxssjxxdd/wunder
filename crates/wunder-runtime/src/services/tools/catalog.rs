@@ -1990,6 +1990,7 @@ pub fn resolve_runtime_tool_display_name(config: &Config, runtime_name: &str) ->
 
 fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
     match canonical {
+        "执行命令" => Some("execute_command"),
         "问询面板" => Some("question_panel"),
         "技能调用" => Some("skill_call"),
         // 合并后以字面替换为主，模型侧优先暴露 `edit`。
@@ -2396,7 +2397,7 @@ mod tests {
         build_mcp_tool_alias_entries, builtin_tool_specs_with_language,
         collect_available_tool_names, collect_enabled_tool_names_for_catalog,
         collect_prompt_tool_specs_with_language, current_tool_schema_reference,
-        expand_browser_group_selection, resolve_tool_name,
+        expand_browser_group_selection, resolve_tool_name, select_english_tool_alias,
     };
     use crate::config::{Config, McpServerConfig, McpToolSpec};
     use crate::schemas::ToolSpec;
@@ -2964,6 +2965,16 @@ mod tests {
         assert_eq!(resolve_tool_name("exec_command"), "执行命令");
         assert_eq!(resolve_tool_name("lsp"), "lsp");
         assert_eq!(resolve_tool_name("node_invoke"), "node_invoke");
+    }
+
+    #[test]
+    fn english_prompt_prefers_execute_command_name() {
+        let aliases = vec!["exec_command".to_string(), "execute_command".to_string()];
+        let allowed: std::collections::HashSet<String> = aliases.iter().cloned().collect();
+        assert_eq!(
+            select_english_tool_alias("执行命令", &aliases, &allowed).as_deref(),
+            Some("execute_command")
+        );
     }
 
     #[test]

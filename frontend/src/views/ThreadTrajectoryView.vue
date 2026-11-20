@@ -218,115 +218,118 @@
     </div>
 
     <div class="tt-body" :class="{ 'tt-has-details': selectedCell }">
-      <div
-        ref="ledgerEl"
-        class="tt-ledger"
-        @scroll.passive="onLedgerScroll"
-        @pointerdown.self="clearSelection"
-      >
-        <div class="tt-truncated-hint tt-truncated-hint-top" role="status" aria-live="polite">
-          <span>{{ olderLoading ? '正在读取记录…' : historyError ? '读取暂时失败，继续滚动可重试' : truncated ? '向上滚动查看更早记录' : '已到最早记录' }}</span>
-        </div>
-        <div class="tt-ledger-canvas" :style="{ height: `${ledgerHeight}px` }">
-          <table
-            class="tt-table"
-            :style="{ transform: `translateY(${windowTopPx}px)` }"
-          >
-            <colgroup>
-              <col class="tt-col-event">
-              <col>
-            </colgroup>
-            <tbody>
-              <tr
-                v-for="row in windowRows"
-                :key="row.key"
-                class="tt-row"
-                :class="rowClasses(row.record)"
-                :data-timeline-focus="row.record.collapsedSummary ? undefined : focusAttr(row.record)"
-                :data-record-index="row.record.collapsedSummary ? undefined : row.record.cell.index"
-                :data-record-id="row.record.collapsedSummary ? undefined : row.record.cell.recordId"
-                :tabindex="0"
-                :role="row.record.collapsedSummary ? 'button' : undefined"
-                :aria-label="row.record.collapsedSummary ? row.record.collapsedSummary + ' · ' + t('messenger.trajectory.expand') : undefined"
-                @keydown.enter.self.prevent="onRowClick(row.record)"
-                @keydown.space.self.prevent="onRowClick(row.record)"
-                @click="onRowClick(row.record)"
-                @dblclick.stop="onRowDoubleClick(row.record)"
-              >
-                <td class="tt-event-cell">
-                  <button
-                    v-if="requestDotFor(row.record)"
-                    class="tt-request-dot"
-                    type="button"
-                    :style="{ left: `${requestDotFor(row.record)!.left}px` }"
-                    :title="t('messenger.trajectory.requestLabel', { request: requestDotFor(row.record)!.request.number })"
-                    @click.stop="selectIndex(requestDotFor(row.record)!.request.assistantIndex)"
-                    @dblclick.stop
-                  >
-                    <span class="tt-request-dot-label">
-                      {{ t('messenger.trajectory.requestLabel', { request: requestDotFor(row.record)!.request.number }) }}
-                    </span>
-                  </button>
-                  <button v-if="row.record.turnStart && row.record.turn !== null" class="tt-turn-label tt-turn-control"
-                    type="button" :disabled="!collapsibleTurnKeys.has(row.record.turn)"
-                    :aria-expanded="!collapsedTurns.has(row.record.turn)"
-                    :title="t(collapsedTurns.has(row.record.turn) ? 'messenger.trajectory.expandTurn' : 'messenger.trajectory.collapseTurn')"
-                    @click.stop="toggleTurn(row.record.turn)" @dblclick.stop>
-                    <span aria-hidden="true">{{ collapsedTurns.has(row.record.turn) ? '▸' : '▾' }}</span>
-                    {{ t('messenger.trajectory.turnLabel', { turn: row.record.turn }) }}
-                  </button>
-                </td>
-                <td class="tt-content-cell">
-                  <template v-if="row.record.collapsedSummary">
-                    <div class="tt-collapsed-summary" :class="`tt-collapsed-${row.record.collapsedSummaryKind}`" :title="row.record.collapsedSummary + ' · ' + t('messenger.trajectory.expand')">
-                      {{ row.record.collapsedSummary }}
-                    </div>
-                  </template>
-                  <template v-else>
-                    <div class="tt-kind-slot">
-                      <span class="tt-kind-tag" :class="`tt-kind-${row.record.cell.kind}`">
-                        {{ kindLabel(row.record.cell.kind) }}
+      <div class="tt-ledger-wrap">
+        <div
+          ref="ledgerEl"
+          class="tt-ledger"
+          @scroll.passive="onLedgerScroll"
+          @pointerdown.self="clearSelection"
+        >
+          <div class="tt-truncated-hint tt-truncated-hint-top" role="status" aria-live="polite">
+            <span>{{ olderLoading ? '正在读取记录…' : historyError ? '读取暂时失败，继续滚动可重试' : truncated ? '向上滚动查看更早记录' : '已到最早记录' }}</span>
+          </div>
+          <div class="tt-ledger-canvas" :style="{ height: `${ledgerHeight}px` }">
+            <table
+              class="tt-table"
+              :style="{ transform: `translateY(${windowTopPx}px)` }"
+            >
+              <colgroup>
+                <col class="tt-col-event">
+                <col>
+              </colgroup>
+              <tbody>
+                <tr
+                  v-for="row in windowRows"
+                  :key="row.key"
+                  class="tt-row"
+                  :class="rowClasses(row.record)"
+                  :data-timeline-focus="row.record.collapsedSummary ? undefined : focusAttr(row.record)"
+                  :data-record-index="row.record.collapsedSummary ? undefined : row.record.cell.index"
+                  :data-record-id="row.record.collapsedSummary ? undefined : row.record.cell.recordId"
+                  :tabindex="0"
+                  :role="row.record.collapsedSummary ? 'button' : undefined"
+                  :aria-label="row.record.collapsedSummary ? row.record.collapsedSummary + ' · ' + t('messenger.trajectory.expand') : undefined"
+                  @keydown.enter.self.prevent="onRowClick(row.record)"
+                  @keydown.space.self.prevent="onRowClick(row.record)"
+                  @click="onRowClick(row.record)"
+                  @dblclick.stop="onRowDoubleClick(row.record)"
+                >
+                  <td class="tt-event-cell">
+                    <button
+                      v-if="requestDotFor(row.record)"
+                      class="tt-request-dot"
+                      type="button"
+                      :style="{ left: `${requestDotFor(row.record)!.left}px` }"
+                      :title="t('messenger.trajectory.requestLabel', { request: requestDotFor(row.record)!.request.number })"
+                      @click.stop="selectIndex(requestDotFor(row.record)!.request.assistantIndex)"
+                      @dblclick.stop
+                    >
+                      <span class="tt-request-dot-label">
+                        {{ t('messenger.trajectory.requestLabel', { request: requestDotFor(row.record)!.request.number }) }}
                       </span>
-                    </div>
-                    <div class="tt-record-content">
-                      <template v-if="row.record.cell.kind === 'tool' || row.record.cell.kind === 'subtool'">
-                        <span class="tt-tool-name">{{ row.record.cell.text }}</span>
-                        <span v-if="argsPreview(row.record.cell)" class="tt-tool-args">{{ argsPreview(row.record.cell) }}</span>
-                        <span v-if="row.record.cell.resultPreviewMarkdown" class="tt-tool-result">
-                          <span class="tt-tool-result-arrow">→</span>{{ row.record.cell.resultPreviewMarkdown }}
+                    </button>
+                    <button v-if="row.record.turnStart && row.record.turn !== null" class="tt-turn-label tt-turn-control"
+                      type="button" :disabled="!collapsibleTurnKeys.has(row.record.turn)"
+                      :aria-expanded="!collapsedTurns.has(row.record.turn)"
+                      :title="t(collapsedTurns.has(row.record.turn) ? 'messenger.trajectory.expandTurn' : 'messenger.trajectory.collapseTurn')"
+                      @click.stop="toggleTurn(row.record.turn)" @dblclick.stop>
+                      <span aria-hidden="true">{{ collapsedTurns.has(row.record.turn) ? '▸' : '▾' }}</span>
+                      {{ t('messenger.trajectory.turnLabel', { turn: row.record.turn }) }}
+                    </button>
+                  </td>
+                  <td class="tt-content-cell">
+                    <template v-if="row.record.collapsedSummary">
+                      <div class="tt-collapsed-summary" :class="`tt-collapsed-${row.record.collapsedSummaryKind}`" :title="row.record.collapsedSummary + ' · ' + t('messenger.trajectory.expand')">
+                        {{ row.record.collapsedSummary }}
+                      </div>
+                    </template>
+                    <template v-else>
+                      <div class="tt-kind-slot">
+                        <span class="tt-kind-tag" :class="`tt-kind-${row.record.cell.kind}`">
+                          {{ kindLabel(row.record.cell.kind) }}
                         </span>
-                        <span v-if="row.record.cell.isError" class="tt-state-chip tt-state-error">
-                          {{ t('messenger.trajectory.stateFailed') }}
+                      </div>
+                      <div class="tt-record-content">
+                        <template v-if="row.record.cell.kind === 'tool' || row.record.cell.kind === 'subtool'">
+                          <span class="tt-tool-name">{{ row.record.cell.text }}</span>
+                          <span v-if="argsPreview(row.record.cell)" class="tt-tool-args">{{ argsPreview(row.record.cell) }}</span>
+                          <span v-if="row.record.cell.resultPreviewMarkdown" class="tt-tool-result">
+                            <span class="tt-tool-result-arrow">→</span>{{ row.record.cell.resultPreviewMarkdown }}
+                          </span>
+                          <span v-if="row.record.cell.isError" class="tt-state-chip tt-state-error">
+                            {{ t('messenger.trajectory.stateFailed') }}
+                          </span>
+                        </template>
+                        <template v-else-if="row.record.cell.toolCallOnly">
+                          <span class="tt-record-empty">{{ t('messenger.trajectory.toolCallsOnly') }}</span>
+                        </template>
+                        <template v-else-if="row.record.cell.text">
+                          <span class="tt-record-text">{{ row.record.cell.text }}</span>
+                        </template>
+                        <template v-else>
+                          <span class="tt-record-empty">{{ t('messenger.trajectory.noContent') }}</span>
+                        </template>
+                        <span v-if="row.record.cell.isError && row.record.cell.kind !== 'tool' && row.record.cell.kind !== 'subtool'" class="tt-state-chip tt-state-error"
+                          :title="row.record.cell.failure?.message">{{ statusLabel(row.record.cell) }}</span>
+                        <span v-else-if="row.record.cell.retry?.willRetry && row.record.cell.status === 'running'" class="tt-state-chip">
+                          {{ t('messenger.trajectory.stateRetrying') }}
                         </span>
-                      </template>
-                      <template v-else-if="row.record.cell.toolCallOnly">
-                        <span class="tt-record-empty">{{ t('messenger.trajectory.toolCallsOnly') }}</span>
-                      </template>
-                      <template v-else-if="row.record.cell.text">
-                        <span class="tt-record-text">{{ row.record.cell.text }}</span>
-                      </template>
-                      <template v-else>
-                        <span class="tt-record-empty">{{ t('messenger.trajectory.noContent') }}</span>
-                      </template>
-                      <span v-if="row.record.cell.isError && row.record.cell.kind !== 'tool' && row.record.cell.kind !== 'subtool'" class="tt-state-chip tt-state-error"
-                        :title="row.record.cell.failure?.message">{{ statusLabel(row.record.cell) }}</span>
-                      <span v-else-if="row.record.cell.retry?.willRetry && row.record.cell.status === 'running'" class="tt-state-chip">
-                        {{ t('messenger.trajectory.stateRetrying') }}
-                      </span>
-                    </div>
-                  </template>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                      </div>
+                    </template>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div v-if="loading || loadError || records.length === 0" class="tt-empty">
+            {{ loading
+              ? t('common.loading')
+              : loadError
+                ? t('messenger.trajectory.loadFailed')
+                : t('messenger.trajectory.empty') }}
+          </div>
         </div>
-        <div v-if="loading || loadError || records.length === 0" class="tt-empty">
-          {{ loading
-            ? t('common.loading')
-            : loadError
-              ? t('messenger.trajectory.loadFailed')
-              : t('messenger.trajectory.empty') }}
-        </div>
+        <ThinScrollbar :target="ledgerEl" />
       </div>
 
       <template v-if="selectedCell && selectedRecord">
@@ -358,162 +361,165 @@
               @click="activeTab = tab"
             >{{ tab }}</button>
           </div>
-          <div class="tt-detail-body">
-            <!-- 概述 -->
-            <div v-if="activeTab === overviewTab" class="tt-detail-body-summary">
-              <dl class="tt-overview">
-                <div class="tt-overview-row">
-                  <dt>{{ t('messenger.trajectory.status') }}</dt>
-                  <dd>{{ statusLabel(selectedCell) }}</dd>
-                </div>
-                <div v-if="hierarchyLinks.length > 0" class="tt-overview-row">
-                  <dt>{{ t('messenger.trajectory.hierarchy') }}</dt>
-                  <dd>
-                    <button
-                      v-for="link in hierarchyLinks"
-                      :key="link.label"
-                      class="tt-link"
-                      type="button"
-                      @click="link.action"
-                    >{{ link.label }} ›</button>
-                  </dd>
-                </div>
-                <div v-if="selectedCell.toolName" class="tt-overview-row">
-                  <dt>{{ t('messenger.trajectory.kindTool') }}</dt>
-                  <dd class="tt-mono">{{ selectedCell.toolName }}</dd>
-                </div>
-              <template v-if="selectedCell.usage">
-                <div class="tt-overview-row">
-                  <dt>{{ t('messenger.trajectory.token') }}</dt>
-                  <dd>{{ formatTokens(selectedCell.usage.output) }}</dd>
-                </div>
-              </template>
-                <div v-else-if="selectedCell.kind === 'message'" class="tt-overview-row">
-                  <dt>{{ t('messenger.trajectory.token') }}</dt>
-                  <dd>{{ t('messenger.trajectory.usageNotReported') }}</dd>
-                </div>
-                <div v-for="row in timingRows" :key="row.label" class="tt-overview-row">
-                  <dt>{{ row.label }}</dt>
-                  <dd :class="{ 'tt-dd-clickable': row.toggleable }" @click="row.toggleable ? toggleTimestampMode() : undefined">
-                    {{ row.value }}
-                  </dd>
-                </div>
-                <div v-for="row in trajectoryDiagnosticRows(selectedCell, modelT)" :key="row.label" class="tt-overview-row tt-diagnostic-row">
-                  <dt>{{ row.label }}</dt>
-                  <dd>{{ row.value }}</dd>
-                </div>
-              </dl>
-              <template v-if="selectedCell.kind === 'message'">
-                <div v-if="selectedCell.inputDetail" class="tt-overview-section">
-                  <button class="tt-section-title" type="button" @click="toggleSection('input')">
-                    {{ t('messenger.trajectory.input') }}
-                    <span class="tt-section-chevron" :class="{ 'tt-section-chevron-open': openSections.input }">›</span>
-                  </button>
-                  <div v-if="openSections.input" class="tt-section-scroll">
-                    <div class="tt-markdown-payload" v-html="inputMarkdown" />
+          <div class="tt-detail-scroll">
+            <div ref="detailScrollEl" class="tt-detail-body">
+              <!-- 概述 -->
+              <div v-if="activeTab === overviewTab" class="tt-detail-body-summary">
+                <dl class="tt-overview">
+                  <div class="tt-overview-row">
+                    <dt>{{ t('messenger.trajectory.status') }}</dt>
+                    <dd>{{ statusLabel(selectedCell) }}</dd>
                   </div>
-                </div>
-                <div v-if="selectedCell.thinkingDetail" class="tt-overview-section">
-                  <button class="tt-section-title" type="button" @click="toggleSection('thinking')">
-                    {{ t('messenger.trajectory.thinking') }}
-                    <span class="tt-section-chevron" :class="{ 'tt-section-chevron-open': openSections.thinking }">›</span>
-                  </button>
-                  <div v-if="openSections.thinking" class="tt-section-scroll">
-                    <div class="tt-markdown-payload" v-html="thinkingMarkdown" />
+                  <div v-if="hierarchyLinks.length > 0" class="tt-overview-row">
+                    <dt>{{ t('messenger.trajectory.hierarchy') }}</dt>
+                    <dd>
+                      <button
+                        v-for="link in hierarchyLinks"
+                        :key="link.label"
+                        class="tt-link"
+                        type="button"
+                        @click="link.action"
+                      >{{ link.label }} ›</button>
+                    </dd>
                   </div>
-                </div>
-                <div v-if="selectedCell.outputDetail" class="tt-overview-section">
-                  <button class="tt-section-title" type="button" @click="toggleSection('output')">
-                    {{ t('messenger.trajectory.output') }}
-                    <span class="tt-section-chevron" :class="{ 'tt-section-chevron-open': openSections.output }">›</span>
-                  </button>
-                  <div v-if="openSections.output" class="tt-section-scroll">
-                    <div class="tt-markdown-payload" v-html="outputMarkdown" />
+                  <div v-if="selectedCell.toolName" class="tt-overview-row">
+                    <dt>{{ t('messenger.trajectory.kindTool') }}</dt>
+                    <dd class="tt-mono">{{ selectedCell.toolName }}</dd>
                   </div>
-                </div>
-              </template>
-              <template v-else-if="selectedCell.kind === 'compacted'">
-                <div v-if="selectedCell.outputDetail" class="tt-overview-section">
-                  <button class="tt-section-title" type="button" @click="toggleSection('output')">
-                    {{ t('messenger.trajectory.output') }}
-                    <span class="tt-section-chevron" :class="{ 'tt-section-chevron-open': openSections.output }">›</span>
-                  </button>
-                  <div v-if="openSections.output" class="tt-section-scroll">
-                    <div class="tt-markdown-payload" v-html="outputMarkdown" />
+                <template v-if="selectedCell.usage">
+                  <div class="tt-overview-row">
+                    <dt>{{ t('messenger.trajectory.token') }}</dt>
+                    <dd>{{ formatTokens(selectedCell.usage.output) }}</dd>
                   </div>
+                </template>
+                  <div v-else-if="selectedCell.kind === 'message'" class="tt-overview-row">
+                    <dt>{{ t('messenger.trajectory.token') }}</dt>
+                    <dd>{{ t('messenger.trajectory.usageNotReported') }}</dd>
+                  </div>
+                  <div v-for="row in timingRows" :key="row.label" class="tt-overview-row">
+                    <dt>{{ row.label }}</dt>
+                    <dd :class="{ 'tt-dd-clickable': row.toggleable }" @click="row.toggleable ? toggleTimestampMode() : undefined">
+                      {{ row.value }}
+                    </dd>
+                  </div>
+                  <div v-for="row in trajectoryDiagnosticRows(selectedCell, modelT)" :key="row.label" class="tt-overview-row tt-diagnostic-row">
+                    <dt>{{ row.label }}</dt>
+                    <dd>{{ row.value }}</dd>
+                  </div>
+                </dl>
+                <template v-if="selectedCell.kind === 'message'">
+                  <div v-if="selectedCell.inputDetail" class="tt-overview-section">
+                    <button class="tt-section-title" type="button" @click="toggleSection('input')">
+                      {{ t('messenger.trajectory.input') }}
+                      <span class="tt-section-chevron" :class="{ 'tt-section-chevron-open': openSections.input }">›</span>
+                    </button>
+                    <div v-if="openSections.input" class="tt-section-scroll">
+                      <div class="tt-markdown-payload" v-html="inputMarkdown" />
+                    </div>
+                  </div>
+                  <div v-if="selectedCell.thinkingDetail" class="tt-overview-section">
+                    <button class="tt-section-title" type="button" @click="toggleSection('thinking')">
+                      {{ t('messenger.trajectory.thinking') }}
+                      <span class="tt-section-chevron" :class="{ 'tt-section-chevron-open': openSections.thinking }">›</span>
+                    </button>
+                    <div v-if="openSections.thinking" class="tt-section-scroll">
+                      <div class="tt-markdown-payload" v-html="thinkingMarkdown" />
+                    </div>
+                  </div>
+                  <div v-if="selectedCell.outputDetail" class="tt-overview-section">
+                    <button class="tt-section-title" type="button" @click="toggleSection('output')">
+                      {{ t('messenger.trajectory.output') }}
+                      <span class="tt-section-chevron" :class="{ 'tt-section-chevron-open': openSections.output }">›</span>
+                    </button>
+                    <div v-if="openSections.output" class="tt-section-scroll">
+                      <div class="tt-markdown-payload" v-html="outputMarkdown" />
+                    </div>
+                  </div>
+                </template>
+                <template v-else-if="selectedCell.kind === 'compacted'">
+                  <div v-if="selectedCell.outputDetail" class="tt-overview-section">
+                    <button class="tt-section-title" type="button" @click="toggleSection('output')">
+                      {{ t('messenger.trajectory.output') }}
+                      <span class="tt-section-chevron" :class="{ 'tt-section-chevron-open': openSections.output }">›</span>
+                    </button>
+                    <div v-if="openSections.output" class="tt-section-scroll">
+                      <div class="tt-markdown-payload" v-html="outputMarkdown" />
+                    </div>
+                  </div>
+                </template>
+              </div>
+              <!-- 预览 -->
+              <div v-else-if="activeTab === previewTab" class="tt-markdown-preview">
+                <div class="tt-markdown-payload" v-html="previewMarkdown" />
+              </div>
+              <!-- 原始内容 -->
+              <div v-else-if="activeTab === rawTab || (selectedCell.kind === 'compacted' && activeTab === t('messenger.trajectory.tabRawOutput'))" class="tt-payload-stack">
+                <pre v-if="selectedCell.kind === 'compacted' && selectedCell.outputDetail" class="tt-payload-pre"><code>{{ selectedCell.outputDetail }}</code></pre>
+                <pre v-if="selectedCell.thinkingDetail" class="tt-payload-pre"><code>{{ selectedCell.thinkingDetail }}</code></pre>
+                <pre v-if="selectedCell.inputDetail" class="tt-payload-pre"><code>{{ selectedCell.inputDetail }}</code></pre>
+                <div v-if="!selectedCell.inputDetail && !selectedCell.thinkingDetail && !selectedCell.outputDetail" class="tt-no-payload">
+                  {{ t('messenger.trajectory.noContent') }}
                 </div>
-              </template>
-            </div>
-            <!-- 预览 -->
-            <div v-else-if="activeTab === previewTab" class="tt-markdown-preview">
-              <div class="tt-markdown-payload" v-html="previewMarkdown" />
-            </div>
-            <!-- 原始内容 -->
-            <div v-else-if="activeTab === rawTab || (selectedCell.kind === 'compacted' && activeTab === t('messenger.trajectory.tabRawOutput'))" class="tt-payload-stack">
-              <pre v-if="selectedCell.kind === 'compacted' && selectedCell.outputDetail" class="tt-payload-pre"><code>{{ selectedCell.outputDetail }}</code></pre>
-              <pre v-if="selectedCell.thinkingDetail" class="tt-payload-pre"><code>{{ selectedCell.thinkingDetail }}</code></pre>
-              <pre v-if="selectedCell.inputDetail" class="tt-payload-pre"><code>{{ selectedCell.inputDetail }}</code></pre>
-              <div v-if="!selectedCell.inputDetail && !selectedCell.thinkingDetail && !selectedCell.outputDetail" class="tt-no-payload">
-                {{ t('messenger.trajectory.noContent') }}
+              </div>
+              <!-- 参数 -->
+              <div v-else-if="activeTab === paramsTab" class="tt-payload-stack">
+                <div v-if="detailLoading" class="tt-no-payload">{{ t('common.loading') }}</div>
+                <div v-else-if="detailError" class="tt-no-payload">
+                  {{ t('messenger.trajectory.detailLoadFailed') }}
+                  <button class="tt-link" type="button" @click="retrySelectedDetail">{{ t('messenger.trajectory.retryDetail') }}</button>
+                </div>
+                <template v-else>
+                <TrajectoryJsonTree
+                  v-if="selectedArgs"
+                  :data="selectedArgs"
+                  :collapsed-string-lines="12"
+                />
+                <pre v-else-if="selectedCell.inputDetail" class="tt-payload-pre"><code>{{ selectedCell.inputDetail }}</code></pre>
+                <div v-else class="tt-no-payload">{{ t('messenger.trajectory.paramUnavailable') }}</div>
+                </template>
+              </div>
+              <!-- 结果 -->
+              <div v-else-if="activeTab === resultTab" class="tt-payload-stack">
+                <div v-if="detailLoading" class="tt-no-payload">{{ t('common.loading') }}</div>
+                <div v-else-if="detailError" class="tt-no-payload">
+                  {{ t('messenger.trajectory.detailLoadFailed') }}
+                  <button class="tt-link" type="button" @click="retrySelectedDetail">{{ t('messenger.trajectory.retryDetail') }}</button>
+                </div>
+                <template v-else>
+                <TrajectoryJsonTree
+                  v-if="selectedResult"
+                  :data="selectedResult"
+                  :collapsed-string-lines="12"
+                />
+                <pre v-else-if="selectedCell.result" class="tt-payload-pre"><code>{{ selectedCell.result }}</code></pre>
+                <div v-else class="tt-no-payload">{{ t('messenger.trajectory.noOutput') }}</div>
+                </template>
+              </div>
+              <!-- Schema -->
+              <div v-else-if="activeTab === schemaTab" class="tt-payload-stack">
+                <div v-if="detailLoading" class="tt-no-payload">{{ t('common.loading') }}</div>
+                <div v-else-if="detailError" class="tt-no-payload">
+                  {{ t('messenger.trajectory.detailLoadFailed') }}
+                  <button class="tt-link" type="button" @click="retrySelectedDetail">{{ t('messenger.trajectory.retryDetail') }}</button>
+                </div>
+                <template v-else>
+                <pre v-if="selectedCell.schemaDetail" class="tt-payload-pre"><code>{{ selectedCell.schemaDetail }}</code></pre>
+                <div v-else class="tt-no-payload">{{ t('messenger.trajectory.schemaUnavailable') }}</div>
+                </template>
+              </div>
+              <!-- 计时 -->
+              <div v-else class="tt-detail-body-summary">
+                <dl class="tt-overview">
+                  <div v-for="row in fullTimingRows" :key="row.label" class="tt-overview-row">
+                    <dt>{{ row.label }}</dt>
+                    <dd :class="{ 'tt-dd-clickable': row.toggleable }" @click="row.toggleable ? toggleTimestampMode() : undefined">
+                      {{ row.value }}
+                    </dd>
+                  </div>
+                </dl>
               </div>
             </div>
-            <!-- 参数 -->
-            <div v-else-if="activeTab === paramsTab" class="tt-payload-stack">
-              <div v-if="detailLoading" class="tt-no-payload">{{ t('common.loading') }}</div>
-              <div v-else-if="detailError" class="tt-no-payload">
-                {{ t('messenger.trajectory.detailLoadFailed') }}
-                <button class="tt-link" type="button" @click="retrySelectedDetail">{{ t('messenger.trajectory.retryDetail') }}</button>
-              </div>
-              <template v-else>
-              <TrajectoryJsonTree
-                v-if="selectedArgs"
-                :data="selectedArgs"
-                :collapsed-string-lines="12"
-              />
-              <pre v-else-if="selectedCell.inputDetail" class="tt-payload-pre"><code>{{ selectedCell.inputDetail }}</code></pre>
-              <div v-else class="tt-no-payload">{{ t('messenger.trajectory.paramUnavailable') }}</div>
-              </template>
-            </div>
-            <!-- 结果 -->
-            <div v-else-if="activeTab === resultTab" class="tt-payload-stack">
-              <div v-if="detailLoading" class="tt-no-payload">{{ t('common.loading') }}</div>
-              <div v-else-if="detailError" class="tt-no-payload">
-                {{ t('messenger.trajectory.detailLoadFailed') }}
-                <button class="tt-link" type="button" @click="retrySelectedDetail">{{ t('messenger.trajectory.retryDetail') }}</button>
-              </div>
-              <template v-else>
-              <TrajectoryJsonTree
-                v-if="selectedResult"
-                :data="selectedResult"
-                :collapsed-string-lines="12"
-              />
-              <pre v-else-if="selectedCell.result" class="tt-payload-pre"><code>{{ selectedCell.result }}</code></pre>
-              <div v-else class="tt-no-payload">{{ t('messenger.trajectory.noOutput') }}</div>
-              </template>
-            </div>
-            <!-- Schema -->
-            <div v-else-if="activeTab === schemaTab" class="tt-payload-stack">
-              <div v-if="detailLoading" class="tt-no-payload">{{ t('common.loading') }}</div>
-              <div v-else-if="detailError" class="tt-no-payload">
-                {{ t('messenger.trajectory.detailLoadFailed') }}
-                <button class="tt-link" type="button" @click="retrySelectedDetail">{{ t('messenger.trajectory.retryDetail') }}</button>
-              </div>
-              <template v-else>
-              <pre v-if="selectedCell.schemaDetail" class="tt-payload-pre"><code>{{ selectedCell.schemaDetail }}</code></pre>
-              <div v-else class="tt-no-payload">{{ t('messenger.trajectory.schemaUnavailable') }}</div>
-              </template>
-            </div>
-            <!-- 计时 -->
-            <div v-else class="tt-detail-body-summary">
-              <dl class="tt-overview">
-                <div v-for="row in fullTimingRows" :key="row.label" class="tt-overview-row">
-                  <dt>{{ row.label }}</dt>
-                  <dd :class="{ 'tt-dd-clickable': row.toggleable }" @click="row.toggleable ? toggleTimestampMode() : undefined">
-                    {{ row.value }}
-                  </dd>
-                </div>
-              </dl>
-            </div>
+            <ThinScrollbar :target="detailScrollEl" />
           </div>
         </aside>
       </template>
@@ -530,6 +536,7 @@ import { searchThreadView, getThreadViewTrajectoryPage, getThreadViewBody } from
 import { exportSingleSessionLog } from '@/utils/sessionLogExport'
 import { renderMarkdown } from '@/utils/markdown'
 import TrajectoryJsonTree from './trajectory/TrajectoryJsonTree.vue'
+import ThinScrollbar from '@/components/common/ThinScrollbar.vue'
 import {
   buildRequestNumbers,
   buildStepUsageBars,
@@ -665,6 +672,7 @@ const collapsedAssistants = ref(new Set<string>())
 
 const trackEl = ref<HTMLElement | null>(null)
 const ledgerEl = ref<HTMLElement | null>(null)
+const detailScrollEl = ref<HTMLElement | null>(null)
 const scrollTop = ref(0)
 const ledgerViewport = ref(360)
 const trackWidth = ref(600)

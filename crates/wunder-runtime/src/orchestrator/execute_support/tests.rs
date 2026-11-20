@@ -1364,6 +1364,6 @@ fn assistant_history_snapshot_projects_model_copy_but_keeps_full_arguments() {
     let arguments = model_calls[0]["function"]["arguments"]
         .as_str()
         .expect("arguments");
-    assert!(arguments.contains("characters of this argument were omitted"));
+    assert!(arguments.contains(crate::services::history::HISTORY_ELIDED_ARG_KEY));
     assert!(arguments.len() < body.len());
 }
