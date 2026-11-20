@@ -2393,8 +2393,22 @@ fn project_web_fetch_success(data: &Value) -> Option<Value> {
 
 fn project_read_image_success(data: &Value) -> Option<Value> {
     let map = model_tool_result_data_map(data)?;
-    let mut projected =
-        pick_non_empty_fields(map, &["path", "media_kind", "size_bytes", "view", "stats"]);
+    let mut projected = pick_non_empty_fields(
+        map,
+        &[
+            "path",
+            "source_public_path",
+            "media_kind",
+            "size_bytes",
+            "view",
+            "stats",
+            "crop",
+            "mode",
+            "frame",
+            "frame_scope",
+            "compare",
+        ],
+    );
     let result = map.get("result").and_then(Value::as_object);
     if let Some(result) = result {
         for key in [

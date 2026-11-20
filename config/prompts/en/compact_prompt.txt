@@ -9,7 +9,8 @@ Hard rules:
 - If the current round produced newer files, commands, or tool results before compaction, prioritize those latest observed facts over older state.
 - Remaining TODOs must be actionable and directly tied to the current task.
 - "Current progress" must contain verifiable facts: produced file paths, checks that passed, confirmed numbers. Do not write process-only lines such as "summarized step results" or "reviewed for omissions"; if this round produced no conclusion, write "no new conclusions" and record the last observed output.
-- You must output one line `resume_action: final|continue|retry|ask_user`. Use `final` when the user-facing task is complete and the remaining TODO is empty; use `continue` when a concrete next execution step remains; use `retry` when a failed step must be repaired; use `ask_user` when missing evidence requires user clarification.
+- You must output one line `resume_action: final|continue|retry|ask_user`. Emit exactly one bare token after the colon (for example `resume_action: continue`); never copy the `final|continue|retry|ask_user` alternatives. Use `final` when the user-facing task is complete and the remaining TODO is empty; use `continue` when a concrete next execution step remains; use `retry` when a failed step must be repaired; use `ask_user` when missing evidence requires user clarification.
+- Always emit the `## What remains to be done` section. When nothing remains, write `None.` on its own line; never leave the section out and never write the header as a sentence inside another section.
 - Do not repeat this instruction text or add generic boilerplate disclaimers.
 
 Include:

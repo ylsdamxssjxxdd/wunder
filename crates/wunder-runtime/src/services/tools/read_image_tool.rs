@@ -1,8 +1,9 @@
 use super::{build_model_tool_success, ToolContext};
 use crate::schemas::AttachmentPayload;
 use crate::services::chat_media::{
-    derive_image_pair_view, derive_image_view, detect_media_kind_from_path,
-    process_visual_media_path, ImageCrop, ImageViewStats, MediaViewDims,
+    derive_image_diff_view, derive_image_pair_view, derive_image_view, detect_media_kind_from_path,
+    extract_gif_frames, process_visual_media_path, GifFrame, GifFrameSet, ImageCrop,
+    ImageViewStats, MediaViewDims, VisualMediaQuery, MAX_GIF_INDEXED_FRAMES,
 };
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
@@ -187,6 +188,15 @@ struct ReadImageArgs {
     /// 而不是只回首帧或散落一串帧图。
     #[serde(default)]
     sheet: bool,
+    /// 动图按帧号精确取帧（0-based，与联系表标注的帧号同一套编号）。
+    #[serde(default)]
+    frame: Option<usize>,
+    /// 一次取多帧（0-based），最多 `MAX_GIF_INDEXED_FRAMES` 帧。
+    #[serde(default)]
+    frames: Option<Vec<usize>>,
+    /// 联系表从第几帧开始抽（0-based，动图）；用来翻页看后半段。
+    #[serde(default)]
+    frame_start: Option<usize>,
     #[serde(default)]
     crop: Option<String>,
     #[serde(default)]
@@ -199,6 +209,102 @@ struct ReadImageArgs {
     stats_only: bool,
     #[serde(default)]
     compare_with: Option<String>,
+    /// compare_with 的呈现方式：side_by_side（默认）或 diff（三联图 + SSIM 指标）。
+    #[serde(default)]
+    compare_mode: Option<String>,
+    /// compare_with 指向动图时取第几帧（0-based）。
+    #[serde(default)]
+    compare_frame: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompareMode {
+    SideBySide,
+    Diff,
+}
+
+impl CompareMode {
+    fn parse(raw: Option<&str>) -> Result<Self> {
+        let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+            return Ok(Self::SideBySide);
+        };
+        match raw.to_ascii_lowercase().replace('-', "_").as_str() {
+            "side_by_side" | "pair" | "before_after" => Ok(Self::SideBySide),
+            "diff" | "difference" | "heatmap" | "delta" => Ok(Self::Diff),
+            _ => Err(anyhow!(crate::i18n::prompt_t_with_params(
+                "tool.read_image.compare_mode_invalid",
+                &std::collections::HashMap::from([("value".to_string(), raw.to_string())]),
+            ))),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::SideBySide => "side_by_side",
+            Self::Diff => "diff",
+        }
+    }
+}
+
+/// 帧号请求：`frame` 与 `frames` 互斥；去重后按给出顺序取帧。
+fn requested_frame_indices(payload: &ReadImageArgs) -> Result<Option<Vec<usize>>> {
+    if payload.frame.is_some() && payload.frames.is_some() {
+        return Err(anyhow!(crate::i18n::prompt_t(
+            "tool.read_image.frame_exclusive"
+        )));
+    }
+    let mut indices: Vec<usize> = match (payload.frame, payload.frames.as_ref()) {
+        (Some(index), _) => vec![index],
+        (None, Some(list)) => {
+            let mut deduped = Vec::with_capacity(list.len());
+            for index in list {
+                if !deduped.contains(index) {
+                    deduped.push(*index);
+                }
+            }
+            deduped
+        }
+        (None, None) => return Ok(None),
+    };
+    if indices.is_empty() {
+        return Err(anyhow!(crate::i18n::prompt_t(
+            "tool.read_image.frame_list_empty"
+        )));
+    }
+    if indices.len() > MAX_GIF_INDEXED_FRAMES {
+        return Err(anyhow!(crate::i18n::prompt_t_with_params(
+            "tool.read_image.frame_too_many",
+            &std::collections::HashMap::from([(
+                "max".to_string(),
+                MAX_GIF_INDEXED_FRAMES.to_string(),
+            )]),
+        )));
+    }
+    indices.shrink_to_fit();
+    Ok(Some(indices))
+}
+
+fn frame_entry_data(frame: &GifFrame) -> Value {
+    json!({
+        "index": frame.index,
+        "timestamp_ms": frame.timestamp_ms,
+        "delay_ms": frame.delay_ms,
+        "name": frame.attachment.name,
+        "path": frame.attachment.public_path,
+    })
+}
+
+fn frame_scope_notice(frame_set: &GifFrameSet) -> String {
+    let Some(frame) = frame_set.frames.first() else {
+        return String::new();
+    };
+    format!(
+        " Frame {} of {} at {:.2}s (frame delay {} ms).",
+        frame.index,
+        frame_set.total_frames,
+        frame.timestamp_ms as f64 / 1000.0,
+        frame.delay_ms
+    )
 }
 
 pub fn is_read_image_tool_name(name: &str) -> bool {
@@ -252,7 +358,9 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         .map(str::trim)
         .filter(|value| !value.is_empty());
     if crop_raw.is_some() && crop_xyxy_raw.is_some() {
-        return Err(anyhow!(crate::i18n::prompt_t("tool.read_image.crop_exclusive")));
+        return Err(anyhow!(crate::i18n::prompt_t(
+            "tool.read_image.crop_exclusive"
+        )));
     }
     let crop = match (crop_raw, crop_xyxy_raw) {
         (Some(raw), None) => Some(ImageCrop::parse(raw)?),
@@ -262,6 +370,27 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
     };
     let has_view_ops =
         crop.is_some() || payload.scale.is_some() || payload.stats || payload.stats_only;
+    let compare_mode = CompareMode::parse(payload.compare_mode.as_deref())?;
+    let frame_indices = requested_frame_indices(&payload)?;
+    if frame_indices.is_some() {
+        if payload.sheet {
+            return Err(anyhow!(crate::i18n::prompt_t(
+                "tool.read_image.frame_sheet_exclusive"
+            )));
+        }
+        if media_kind != "gif" {
+            return Err(anyhow!(crate::i18n::prompt_t_with_params(
+                "tool.read_image.frame_requires_gif",
+                &std::collections::HashMap::from([("media_kind".to_string(), media_kind.clone())]),
+            )));
+        }
+    }
+    if payload.frame_start.is_some() && media_kind != "gif" {
+        return Err(anyhow!(crate::i18n::prompt_t_with_params(
+            "tool.read_image.frame_start_requires_gif",
+            &std::collections::HashMap::from([("media_kind".to_string(), media_kind.clone())]),
+        )));
+    }
 
     // 图片指纹：给模型一个“这份内容是否变过”的客观依据（sha256 前 8 位 + mtime）。
     let fingerprint = if media_kind == "image" {
@@ -274,6 +403,95 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         &resolved.to_string_lossy(),
         &fingerprint,
     );
+    // 原始素材（尤其是动图 GIF）的公开路径：界面可以直接播放，模型也能回到整段素材。
+    let source_public_path = context
+        .workspace
+        .display_path(context.workspace_id, &resolved);
+
+    // 动图按帧号取帧：帧先落成 PNG，后面的 crop/scale/stats/对比都当普通图片处理。
+    let mut frame_set: Option<GifFrameSet> = None;
+    let mut subject_path = resolved.clone();
+    if let Some(indices) = frame_indices.as_ref() {
+        let set = extract_gif_frames(
+            context.workspace.as_ref(),
+            context.workspace_id,
+            &resolved,
+            indices,
+        )
+        .await?;
+        if indices.len() > 1 {
+            if has_view_ops {
+                return Err(anyhow!(crate::i18n::prompt_t(
+                    "tool.read_image.frames_view_exclusive"
+                )));
+            }
+            if payload
+                .compare_with
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+            {
+                return Err(anyhow!(crate::i18n::prompt_t(
+                    "tool.read_image.frames_compare_exclusive"
+                )));
+            }
+        } else if let Some(frame) = set.frames.first() {
+            subject_path = frame.file_path.clone();
+        }
+        frame_set = Some(set);
+    }
+
+    // 动图/视频的 crop/scale/stats 必须先落成单帧，否则工具会悄悄处理首帧。
+    if has_view_ops && media_kind != "image" && frame_set.is_none() {
+        return Err(anyhow!(crate::i18n::prompt_t(
+            "tool.read_image.view_image_only"
+        )));
+    }
+
+    // 多帧：一次附上每帧 PNG 与帧号/时间，模型可以逐张看图，不必再自己抽帧。
+    if let Some(set) = frame_set.as_ref().filter(|set| set.frames.len() > 1) {
+        let attachments: Vec<Value> = set
+            .frames
+            .iter()
+            .map(|frame| serde_json::to_value(&frame.attachment).unwrap_or(Value::Null))
+            .collect();
+        let entries: Vec<Value> = set.frames.iter().map(frame_entry_data).collect();
+        let indices_text = set
+            .frames
+            .iter()
+            .map(|frame| frame.index.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let data = json!({
+            "path": raw_path,
+            "resolved_path": resolved.to_string_lossy().to_string(),
+            "media_kind": media_kind,
+            "size_bytes": metadata.len(),
+            "source_public_path": source_public_path,
+            "mode": "frames",
+            "frame_scope": {
+                "total_frames": set.total_frames,
+                "duration_ms": set.duration_ms,
+                "requested": indices_text,
+                "frames": entries,
+            },
+            "result": {
+                "kind": "image",
+                "frame_count": attachments.len(),
+                "total_frame_count": set.total_frames,
+                "attachments": attachments,
+            },
+        });
+        return Ok(build_model_tool_success(
+            "read_image",
+            "completed",
+            format!(
+                "Returned frames [{indices_text}] of {} ({:.2}s total, 0-based). Each PNG is attached and named with its frame index; pass frame=N for one frame at full detail, or sheet=true for a labelled overview.",
+                set.total_frames,
+                set.duration_ms as f64 / 1000.0
+            ),
+            data,
+        ));
+    }
 
     let compare_with = payload
         .compare_with
@@ -281,11 +499,15 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         .map(str::trim)
         .filter(|value| !value.is_empty());
     if let Some(compare_raw) = compare_with {
-        if media_kind != "image" {
-            return Err(anyhow!(crate::i18n::prompt_t("tool.read_image.view_image_only")));
-        }
         if has_view_ops {
-            return Err(anyhow!(crate::i18n::prompt_t("tool.read_image.compare_exclusive")));
+            return Err(anyhow!(crate::i18n::prompt_t(
+                "tool.read_image.compare_exclusive"
+            )));
+        }
+        if media_kind != "image" && frame_set.is_none() {
+            return Err(anyhow!(crate::i18n::prompt_t(
+                "tool.read_image.compare_media_only"
+            )));
         }
         let compare_resolved = super::resolve_tool_path(
             context.workspace.as_ref(),
@@ -299,26 +521,104 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         if !compare_metadata.is_file() {
             return Err(anyhow!(crate::i18n::prompt_t("tool.read_image.not_file")));
         }
-        let pair = derive_image_pair_view(
-            context.workspace.as_ref(),
-            context.workspace_id,
-            &resolved,
-            &compare_resolved,
-        )
-        .await?;
-        let attachments = vec![serde_json::to_value(&pair.attachment).unwrap_or(Value::Null)];
+        let mut compare_subject = compare_resolved.clone();
+        let mut compare_frame_entry: Option<Value> = None;
+        if let Some(compare_index) = payload.compare_frame {
+            let compare_sample = read_visual_media_sample(&compare_resolved, 512).await?;
+            let compare_kind =
+                detect_media_kind_from_path(&compare_resolved, &compare_sample).unwrap_or_default();
+            if compare_kind != "gif" {
+                return Err(anyhow!(crate::i18n::prompt_t_with_params(
+                    "tool.read_image.compare_frame_requires_gif",
+                    &std::collections::HashMap::from([("media_kind".to_string(), compare_kind,)]),
+                )));
+            }
+            let set = extract_gif_frames(
+                context.workspace.as_ref(),
+                context.workspace_id,
+                &compare_resolved,
+                &[compare_index],
+            )
+            .await?;
+            if let Some(frame) = set.frames.first() {
+                compare_subject = frame.file_path.clone();
+                compare_frame_entry = Some(frame_entry_data(frame));
+            }
+        }
+        let mut frame_note = String::new();
+        let mut frame_entry: Option<Value> = None;
+        if let Some(set) = frame_set.as_ref() {
+            if let Some(frame) = set.frames.first() {
+                frame_note = frame_scope_notice(set);
+                frame_entry = Some(frame_entry_data(frame));
+            }
+        }
+        let mut compare_data = json!({
+            "left_path": raw_path,
+            "right_path": compare_raw,
+            "mode": compare_mode.label(),
+            "left_frame": frame_entry,
+            "right_frame": compare_frame_entry,
+        });
+        let (attachment, message) = match compare_mode {
+            CompareMode::SideBySide => {
+                let pair = derive_image_pair_view(
+                    context.workspace.as_ref(),
+                    context.workspace_id,
+                    &subject_path,
+                    &compare_subject,
+                )
+                .await?;
+                compare_data["left"] = serde_json::to_value(&pair.left).unwrap_or(Value::Null);
+                compare_data["right"] = serde_json::to_value(&pair.right).unwrap_or(Value::Null);
+                let message = format!(
+                    "Prepared a side-by-side comparison for model inspection: left is {raw_path}, right is {compare_raw}.{frame_note}{}",
+                    unchanged_content_notice(unchanged, &fingerprint)
+                );
+                (pair.attachment, message)
+            }
+            CompareMode::Diff => {
+                let diff = derive_image_diff_view(
+                    context.workspace.as_ref(),
+                    context.workspace_id,
+                    &subject_path,
+                    &compare_subject,
+                )
+                .await?;
+                compare_data["metrics"] =
+                    serde_json::to_value(&diff.metrics).unwrap_or(Value::Null);
+                let metrics = &diff.metrics;
+                let resized_note = if metrics.right_resized {
+                    format!(
+                        " The right image was {}x{} and was resized to {}x{} for pixel comparison.",
+                        metrics.right_width,
+                        metrics.right_height,
+                        metrics.compared_width,
+                        metrics.compared_height
+                    )
+                } else {
+                    String::new()
+                };
+                let message = format!(
+                    "Computed an image diff: SSIM {:.4} (1.0 = identical), mean |Δ| {:.1}/255, {:.2}% of pixels changed by more than {} (max Δ {}). Panels left to right: left image, red diff heatmap, right image. Left is {raw_path}, right is {compare_raw}.{frame_note}{resized_note}",
+                    metrics.ssim,
+                    metrics.mean_abs_diff,
+                    metrics.changed_ratio * 100.0,
+                    metrics.change_threshold,
+                    metrics.max_abs_diff,
+                );
+                (diff.attachment, message)
+            }
+        };
+        let attachments = vec![serde_json::to_value(&attachment).unwrap_or(Value::Null)];
         let mut data = json!({
             "path": raw_path,
             "resolved_path": resolved.to_string_lossy().to_string(),
             "media_kind": media_kind,
             "size_bytes": metadata.len(),
-            "mode": "side_by_side",
-            "compare": {
-                "left_path": raw_path,
-                "right_path": compare_raw,
-                "left": pair.left,
-                "right": pair.right,
-            },
+            "source_public_path": source_public_path,
+            "mode": compare_mode.label(),
+            "compare": compare_data,
             "result": {
                 "kind": "image",
                 "frame_count": attachments.len(),
@@ -333,24 +633,16 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         return Ok(build_model_tool_success(
             "read_image",
             "completed",
-            format!(
-                "Prepared a side-by-side comparison for model inspection: left is {}, right is {}.{}",
-                raw_path,
-                compare_raw,
-                unchanged_content_notice(unchanged, &fingerprint)
-            ),
+            message,
             data,
         ));
     }
 
     if has_view_ops {
-        if media_kind != "image" {
-            return Err(anyhow!(crate::i18n::prompt_t("tool.read_image.view_image_only")));
-        }
         let view = derive_image_view(
             context.workspace.as_ref(),
             context.workspace_id,
-            &resolved,
+            &subject_path,
             crop,
             payload.scale,
             payload.stats || payload.stats_only,
@@ -368,7 +660,8 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
             width: view.view_width,
             height: view.view_height,
         };
-        let view_reference = crop
+        let view_reference = view
+            .crop
             .map(|crop| (crop.width, crop.height))
             .unwrap_or((view.source_width, view.source_height));
         let mut data = json!({
@@ -376,6 +669,7 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
             "resolved_path": resolved.to_string_lossy().to_string(),
             "media_kind": media_kind,
             "size_bytes": metadata.len(),
+            "source_public_path": source_public_path,
             "view": image_view_data_relative(&view_dims, view_reference),
             "result": {
                 "kind": "image",
@@ -383,8 +677,13 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
                 "attachments": attachments,
             },
         });
-        if let Some(crop) = crop {
-            data["crop"] = image_crop_data(crop);
+        if let Some(applied) = view.crop {
+            let mut crop_data = image_crop_data(applied);
+            if view.crop_clamped {
+                crop_data["clamped"] = json!(true);
+                crop_data["requested"] = image_crop_data(view.crop_requested.unwrap_or(applied));
+            }
+            data["crop"] = crop_data;
         }
         if let Some(stats) = view.stats.as_ref() {
             data["stats"] = serde_json::to_value(stats).unwrap_or(Value::Null);
@@ -394,12 +693,40 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
             data["sha256_8"] = json!(fingerprint.sha256_8);
             data["unchanged_since_last_read"] = json!(unchanged);
         }
+        let mut frame_note = String::new();
+        if let Some(set) = frame_set.as_ref() {
+            frame_note = frame_scope_notice(set);
+            if let Some(frame) = set.frames.first() {
+                data["frame"] = frame_entry_data(frame);
+                data["frame_scope"] = json!({
+                    "total_frames": set.total_frames,
+                    "duration_ms": set.duration_ms,
+                });
+            }
+        }
+        let clamped_notice = view
+            .crop
+            .filter(|_| view.crop_clamped)
+            .map(|applied| {
+                format!(
+                    " crop was clamped to the image bounds: x={}, y={}, width={}, height={} (requested region went past {}x{}).",
+                    applied.x,
+                    applied.y,
+                    applied.width,
+                    applied.height,
+                    view.source_width,
+                    view.source_height
+                )
+            })
+            .unwrap_or_default();
         let message = if payload.stats_only {
-            format!("Computed region statistics for {}.", raw_path)
+            format!("Computed region statistics for {raw_path}.{frame_note}{clamped_notice}")
         } else {
             format!(
-                "Prepared visual media {} for model inspection.{}{}",
+                "Prepared visual media {} for model inspection.{}{}{}{}",
                 raw_path,
+                frame_note,
+                clamped_notice,
                 image_resize_notice_relative(&view_dims, view_reference),
                 unchanged_content_notice(unchanged, &fingerprint)
             )
@@ -411,15 +738,27 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
             data,
         ));
     }
+
+    // 动图默认只回首帧，等于什么都没看：没有明确取帧参数时直接给带帧号的联系表。
+    let auto_sheet = media_kind == "gif"
+        && !payload.sheet
+        && frame_set.is_none()
+        && payload.frame_step.is_none()
+        && payload.frame_rate.is_none()
+        && payload.frame_start.is_none();
+    let sheet = payload.sheet || auto_sheet;
     let result = process_visual_media_path(
         context.workspace.as_ref(),
         context.config,
         context.workspace_id,
         &resolved,
         None,
-        payload.frame_rate,
-        payload.frame_step,
-        payload.sheet,
+        VisualMediaQuery {
+            frame_rate: payload.frame_rate,
+            frame_step: payload.frame_step,
+            sheet,
+            frame_start: payload.frame_start,
+        },
     )
     .await?;
     let view_data = result.view.as_ref().map(image_view_data);
@@ -444,12 +783,24 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         data["sha256_8"] = json!(fingerprint.sha256_8);
         data["unchanged_since_last_read"] = json!(unchanged);
     }
+    if auto_sheet {
+        if let Some(warnings) = data["result"]["warnings"].as_array_mut() {
+            warnings.push(json!(
+                "No frame parameters were given, so a labelled contact sheet of the whole animation was returned instead of the first frame. Use frame=N for one exact frame, or frame_start=N to page through later frames."
+            ));
+        }
+    }
+    let auto_notice = if auto_sheet {
+        " Animated GIF: returned a labelled contact sheet instead of the first frame; every cell is marked with its 0-based frame index, and frame=N fetches one frame at full detail."
+    } else {
+        ""
+    };
     Ok(build_model_tool_success(
         "read_image",
         "completed",
         format!(
-            "Prepared visual media {} for model inspection.{}{}",
-            raw_path, resize_notice, unchanged_notice
+            "Prepared visual media {} for model inspection.{}{}{}",
+            raw_path, auto_notice, resize_notice, unchanged_notice,
         ),
         data,
     ))
@@ -692,14 +1043,19 @@ pub(crate) fn format_image_stats_text(stats: &ImageViewStats) -> String {
 }
 
 async fn read_visual_media_sample(path: &Path, max_bytes: usize) -> Result<Vec<u8>> {
-    let mut file = tokio::fs::File::open(path)
-        .await
-        .map_err(|err| anyhow!(format!("{}: {err}", crate::i18n::prompt_t("tool.read.not_found"))))?;
+    let mut file = tokio::fs::File::open(path).await.map_err(|err| {
+        anyhow!(format!(
+            "{}: {err}",
+            crate::i18n::prompt_t("tool.read.not_found")
+        ))
+    })?;
     let mut buffer = vec![0_u8; max_bytes];
-    let read = file
-        .read(&mut buffer)
-        .await
-        .map_err(|err| anyhow!(format!("{}: {err}", crate::i18n::prompt_t("tool.read.not_found"))))?;
+    let read = file.read(&mut buffer).await.map_err(|err| {
+        anyhow!(format!(
+            "{}: {err}",
+            crate::i18n::prompt_t("tool.read.not_found")
+        ))
+    })?;
     buffer.truncate(read);
     Ok(buffer)
 }

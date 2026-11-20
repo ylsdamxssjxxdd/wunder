@@ -56,6 +56,9 @@ pub fn display_lines(data: &Value, args: &Value, is_zh: bool) -> Vec<String> {
     if let Some(line) = frames_line(&kind, data, is_zh) {
         lines.push(line);
     }
+    if let Some(line) = frame_scope_line(data, is_zh) {
+        lines.push(line);
+    }
     if let Some(line) = duration_line(data, is_zh) {
         lines.push(line);
     }
@@ -401,9 +404,73 @@ fn duration_line(data: &Value, is_zh: bool) -> Option<String> {
     Some(line)
 }
 
+/// 按帧号取帧时的实际帧号与总帧数：折叠后仍能看出这次看的是哪一帧。
+fn frame_scope_line(data: &Value, is_zh: bool) -> Option<String> {
+    let scope = data.get("frame_scope").filter(|value| value.is_object())?;
+    let total = number(scope, &["total_frames"])?;
+    let indices = match scope.get("frames").and_then(Value::as_array) {
+        Some(frames) if !frames.is_empty() => frames
+            .iter()
+            .filter_map(|frame| number(frame, &["index"]).map(trim_float))
+            .collect::<Vec<_>>()
+            .join(","),
+        _ => number(
+            data.get("frame").filter(|value| value.is_object())?,
+            &["index"],
+        )
+        .map(trim_float)?,
+    };
+    if indices.is_empty() {
+        return None;
+    }
+    let mut line = if is_zh {
+        format!("帧 {indices} / 共 {} 帧", trim_float(total))
+    } else {
+        format!("frames {indices} of {}", trim_float(total))
+    };
+    if let Some(duration) = number(scope, &["duration_ms"]).or_else(|| {
+        number(
+            data.get("result").filter(|value| value.is_object())?,
+            &["duration_ms"],
+        )
+    }) {
+        line.push_str(&format!(" · {}s", fixed1(duration / 1000.0)));
+    }
+    Some(line)
+}
+
 fn compare_line(data: &Value, is_zh: bool) -> Option<String> {
     let compare = data.get("compare").filter(|value| value.is_object())?;
     let right = string(compare, &["right_path"])?;
+    if string(compare, &["mode"]).as_deref() == Some("diff") {
+        let metrics = compare.get("metrics").filter(|value| value.is_object());
+        let ssim = metrics.and_then(|metrics| number(metrics, &["ssim"]));
+        let delta = metrics.and_then(|metrics| number(metrics, &["mean_abs_diff"]));
+        let changed = metrics.and_then(|metrics| number(metrics, &["changed_ratio"]));
+        let mut parts = vec![if is_zh {
+            format!("差异 {right}")
+        } else {
+            format!("diff {right}")
+        }];
+        if let Some(ssim) = ssim {
+            parts.push(format!("SSIM {:.4}", ssim));
+        }
+        if let Some(delta) = delta {
+            parts.push(if is_zh {
+                format!("平均差 {:.1}/255", delta)
+            } else {
+                format!("mean |Δ| {:.1}/255", delta)
+            });
+        }
+        if let Some(changed) = changed {
+            parts.push(if is_zh {
+                format!("改动 {:.2}%", changed * 100.0)
+            } else {
+                format!("changed {:.2}%", changed * 100.0)
+            });
+        }
+        return Some(parts.join(" · "));
+    }
     Some(if is_zh {
         format!("并排对比 · 右 {right}")
     } else {
@@ -573,6 +640,53 @@ mod tests {
         assert!(lines.iter().any(|line| line == "查看 200×150 · 缩小 50%"));
         assert!(lines.iter().any(|line| line == "裁切 xyxy:0,0,400,300"));
         assert!(summary(&data, &corners, true).contains("裁切 xyxy:0,0,400,300"));
+    }
+
+    #[test]
+    fn frame_scope_lists_the_exact_frames_that_were_returned() {
+        let data = json!({
+            "path": "pelican.gif",
+            "media_kind": "gif",
+            "mode": "frames",
+            "frame_scope": {
+                "total_frames": 40,
+                "duration_ms": 1600,
+                "frames": [{"index": 0}, {"index": 12}, {"index": 24}]
+            },
+            "result": {"kind": "image", "frame_count": 3}
+        });
+        let args = json!({"path": "pelican.gif", "frames": [0, 12, 24]});
+        let lines = display_lines(&data, &args, true);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "帧 0,12,24 / 共 40 帧 · 1.6s"),
+            "got {lines:?}"
+        );
+    }
+
+    #[test]
+    fn diff_compare_states_ssim_and_changed_share() {
+        let data = json!({
+            "path": "v2.png",
+            "media_kind": "image",
+            "compare": {
+                "left_path": "v2.png",
+                "right_path": "v1.png",
+                "mode": "diff",
+                "metrics": {"ssim": 0.8123, "mean_abs_diff": 12.4, "changed_ratio": 0.0834}
+            },
+            "result": {"kind": "image", "frame_count": 1}
+        });
+        let args = json!({"path": "v2.png", "compare_with": "v1.png", "compare_mode": "diff"});
+        let lines = display_lines(&data, &args, true);
+        let diff_line = lines
+            .iter()
+            .find(|line| line.contains("差异 v1.png"))
+            .expect("diff line");
+        assert!(diff_line.contains("SSIM 0.8123"));
+        assert!(diff_line.contains("平均差 12.4/255"));
+        assert!(diff_line.contains("改动 8.34%"));
     }
 
     #[test]

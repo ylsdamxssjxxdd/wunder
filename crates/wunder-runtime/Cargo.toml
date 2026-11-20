@@ -96,6 +96,10 @@ name = "cloud_reconnect"
 required-features = ["sqlite-storage"]
 
 [[test]]
+name = "compaction_resume_continuation"
+required-features = ["sqlite-storage"]
+
+[[test]]
 name = "context_overflow_recovery_regression"
 required-features = ["sqlite-storage"]
 

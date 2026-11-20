@@ -47,6 +47,13 @@ const MAX_GIF_SAMPLED_FRAMES: usize = 16;
 /// 一张联系表最多回多少格。视频和动图共用同一预算：格子再多就既看不清
 /// 单帧，也失去“一眼看完整段”的意义。
 const MAX_CONTACT_SHEET_FRAMES: usize = 16;
+/// 一次按帧号最多取多少帧。每帧都是一张入模图，8 帧已足够定位动作与对比。
+pub const MAX_GIF_INDEXED_FRAMES: usize = 8;
+/// 联系表格子宽。格子高按帧的真实宽高比算出，避免 16:9 画面塞进 1.6:1
+/// 格子后上下留边、甚至被观看端裁掉画面顶部。
+const SHEET_CELL_WIDTH: u32 = 384;
+const SHEET_CELL_MIN_HEIGHT: u32 = 144;
+const SHEET_CELL_MAX_HEIGHT: u32 = 480;
 const REINLINE_IMAGE_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const DEFAULT_ASR_BASE_URL: &str = "https://api.openai.com/v1";
 const FFMPEG_BIN_ENV: &str = "WUNDER_FFMPEG_BIN";
@@ -74,8 +81,23 @@ pub struct MediaViewDims {
 pub struct SheetLayout {
     pub columns: usize,
     pub rows: usize,
+    /// 每格的显示尺寸。同一张表里所有格子一致，格子高宽比按帧的真实
+    /// 宽高比取中位数算出，16:9 素材不会落进 1.6:1 的格子。
+    pub cell_width: u32,
+    pub cell_height: u32,
     /// 联系表里每一格对应的源帧序号（0-based）。
     pub frame_indices: Vec<usize>,
+}
+
+/// 动图/视频抽帧的一次查询。集中成一个结构，避免每加一个取帧维度就
+/// 往 `process_visual_media_path` 后面再塞一个位置参数。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct VisualMediaQuery {
+    pub frame_rate: Option<f64>,
+    pub frame_step: Option<usize>,
+    pub sheet: bool,
+    /// 联系表/抽样从第几帧开始（动图按源帧号，视频按抽样序号）。
+    pub frame_start: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -151,9 +173,11 @@ pub async fn process_chat_media_upload(
         &workspace_id,
         &source_path,
         upload.content_type.as_deref(),
-        requested_frame_rate,
-        requested_frame_step,
-        false,
+        VisualMediaQuery {
+            frame_rate: requested_frame_rate,
+            frame_step: requested_frame_step,
+            ..VisualMediaQuery::default()
+        },
     )
     .await
 }
@@ -176,9 +200,11 @@ pub async fn reprocess_chat_media_source(
         &workspace_id,
         &source_path,
         None,
-        requested_frame_rate,
-        requested_frame_step,
-        false,
+        VisualMediaQuery {
+            frame_rate: requested_frame_rate,
+            frame_step: requested_frame_step,
+            ..VisualMediaQuery::default()
+        },
     )
     .await
 }
@@ -189,9 +215,7 @@ pub async fn process_visual_media_path(
     workspace_id: &str,
     source_path: &Path,
     content_type_hint: Option<&str>,
-    requested_frame_rate: Option<f64>,
-    requested_frame_step: Option<usize>,
-    sheet: bool,
+    query: VisualMediaQuery,
 ) -> Result<ChatMediaProcessResult> {
     let filename = source_path
         .file_name()
@@ -203,24 +227,14 @@ pub async fn process_visual_media_path(
     let media_kind = detect_media_kind(filename.as_str(), content_type_hint)
         .ok_or_else(|| anyhow!("unsupported media type, expected image/audio/video"))?;
     match media_kind {
-        MediaKind::Image => {
-            process_image_source(
-                workspace,
-                workspace_id,
-                source_path,
-                requested_frame_rate,
-                requested_frame_step,
-                sheet,
-            )
-            .await
-        }
+        MediaKind::Image => process_image_source(workspace, workspace_id, source_path, query).await,
         MediaKind::Audio => {
             process_audio_source(
                 config,
                 source_path,
                 filename.as_str(),
                 source_public_path,
-                sheet,
+                query.sheet,
             )
             .await
         }
@@ -232,9 +246,7 @@ pub async fn process_visual_media_path(
                 source_path,
                 filename.as_str(),
                 source_public_path,
-                requested_frame_rate,
-                requested_frame_step,
-                sheet,
+                query,
             )
             .await
         }
@@ -345,9 +357,7 @@ async fn process_image_source(
     workspace: &WorkspaceManager,
     workspace_id: &str,
     source_path: &Path,
-    requested_frame_rate: Option<f64>,
-    requested_frame_step: Option<usize>,
-    sheet: bool,
+    query: VisualMediaQuery,
 ) -> Result<ChatMediaProcessResult> {
     let filename = source_path
         .file_name()
@@ -391,9 +401,7 @@ async fn process_image_source(
             source_path,
             filename.as_str(),
             bytes.as_slice(),
-            requested_frame_rate,
-            requested_frame_step,
-            sheet,
+            query,
         )
         .await;
     }
@@ -427,7 +435,7 @@ async fn process_image_source(
         },
     };
     let mut warnings = Vec::new();
-    if sheet {
+    if query.sheet {
         warnings.push(
             "sheet only applies to animated GIF and video; this still image was returned as-is."
                 .to_string(),
@@ -517,10 +525,14 @@ async fn process_gif_source(
     source_path: &Path,
     filename: &str,
     bytes: &[u8],
-    requested_frame_rate: Option<f64>,
-    requested_frame_step: Option<usize>,
-    sheet: bool,
+    query: VisualMediaQuery,
 ) -> Result<ChatMediaProcessResult> {
+    let VisualMediaQuery {
+        frame_rate: requested_frame_rate,
+        frame_step: requested_frame_step,
+        sheet,
+        frame_start,
+    } = query;
     let mut requested_step = normalize_requested_frame_step(requested_frame_step)?;
     let decoder = GifDecoder::new(Cursor::new(bytes)).context("failed to decode gif frames")?;
     let frames = decoder
@@ -531,7 +543,30 @@ async fn process_gif_source(
         return Err(anyhow!("gif contains no readable frames"));
     }
     let total_frame_count = frames.len();
+    let timeline = gif_timeline(&frames);
+    let duration_ms = timeline
+        .last()
+        .map(|timing| timing.timestamp_ms + timing.delay_ms);
+    let start = frame_start.unwrap_or(0);
+    if start >= total_frame_count {
+        return Err(anyhow!(crate::i18n::prompt_t_with_params(
+            "tool.read_image.frame_out_of_range",
+            &std::collections::HashMap::from([
+                ("frame".to_string(), start.to_string()),
+                ("total".to_string(), total_frame_count.to_string()),
+                (
+                    "range".to_string(),
+                    format!("0-{}", total_frame_count.saturating_sub(1)),
+                ),
+            ]),
+        )));
+    }
     let mut warnings = Vec::new();
+    if start > 0 {
+        warnings.push(format!(
+            "Sampling started at frame {start} (of {total_frame_count} frames, 0-based); earlier frames were skipped."
+        ));
+    }
 
     // 模型对动图最自然的表达是 `frame_rate: 8`（视频那套参数）。只认
     // `frame_step` 会把它悄悄降级成“首帧”，看起来像工具不支持动图。
@@ -554,7 +589,10 @@ async fn process_gif_source(
 
     // 联系表：把整段动画均匀抽成一张网格图，一眼看得到节奏、飘动和循环
     // 接缝；比返回 N 张全尺寸帧更省上下文，也免去模型自己写 PIL 拼图。
-    if sheet {
+    if sheet && total_frame_count == 1 {
+        warnings.push("sheet was ignored: this gif has a single frame.".to_string());
+    }
+    if sheet && total_frame_count > 1 {
         let step = if requested_step == 0 {
             (total_frame_count / 8).max(1)
         } else {
@@ -562,7 +600,7 @@ async fn process_gif_source(
         };
         let mut sampled = Vec::new();
         for (index, frame) in frames.into_iter().enumerate() {
-            if index % step != 0 {
+            if index < start || (index - start) % step != 0 {
                 continue;
             }
             sampled.push((index, frame.into_buffer()));
@@ -573,7 +611,7 @@ async fn process_gif_source(
         let (attachment, layout) =
             render_contact_sheet_attachment(workspace, workspace_id, filename, sampled).await?;
         warnings.push(format!(
-            "contact sheet samples every {step} frame(s): {} cells, source {} frames.",
+            "Contact sheet samples every {step} frame(s) starting at frame {start}: {} cells, source {} frames. Grid is row-major and every cell is labelled with its 0-based frame index; read a single cell at full detail with frame=N.",
             layout.frame_indices.len(),
             total_frame_count
         ));
@@ -582,7 +620,7 @@ async fn process_gif_source(
             name: filename.to_string(),
             source_public_path: workspace.display_path(workspace_id, source_path),
             transcript: None,
-            duration_ms: None,
+            duration_ms,
             requested_frame_rate,
             applied_frame_rate: None,
             requested_frame_step: Some(step),
@@ -617,7 +655,7 @@ async fn process_gif_source(
             // 转而自己去写抽帧脚本（本次会话就是这么绕远的）。
             let suggested = total_frame_count.div_ceil(8).max(1);
             warnings.push(format!(
-                "gif has {total_frame_count} frames but only frame 1 was returned. Pass sheet=true for a contact sheet of the whole loop, or frame_step=N to sample every Nth frame (e.g. frame_step={suggested})."
+                "This gif has {total_frame_count} frames but frame_step=0 returned frame 0 only. Use frame=N for one exact frame, sheet=true for a labelled contact sheet of the whole loop, or frame_step=N to sample every Nth frame (e.g. frame_step={suggested})."
             ));
         }
         let preview = render_gif_frame_attachment(
@@ -637,7 +675,7 @@ async fn process_gif_source(
             name: filename.to_string(),
             source_public_path: public_path,
             transcript: None,
-            duration_ms: None,
+            duration_ms,
             requested_frame_rate,
             applied_frame_rate: None,
             requested_frame_step: Some(0),
@@ -654,7 +692,7 @@ async fn process_gif_source(
 
     let mut attachments = Vec::new();
     for (index, frame) in frames.into_iter().enumerate() {
-        if index % requested_step != 0 {
+        if index < start || (index - start) % requested_step != 0 {
             continue;
         }
         attachments.push(
@@ -676,7 +714,7 @@ async fn process_gif_source(
         name: filename.to_string(),
         source_public_path: public_path,
         transcript: None,
-        duration_ms: None,
+        duration_ms,
         requested_frame_rate,
         applied_frame_rate: None,
         requested_frame_step,
@@ -698,10 +736,19 @@ async fn process_video_source(
     source_path: &Path,
     filename: &str,
     source_public_path: String,
-    requested_frame_rate: Option<f64>,
-    requested_frame_step: Option<usize>,
-    sheet: bool,
+    query: VisualMediaQuery,
 ) -> Result<ChatMediaProcessResult> {
+    let VisualMediaQuery {
+        frame_rate: requested_frame_rate,
+        frame_step: requested_frame_step,
+        sheet,
+        frame_start,
+    } = query;
+    if frame_start.is_some() {
+        return Err(anyhow!(
+            "frame_start is only supported for animated GIFs; for video pass frame_rate to control sampling"
+        ));
+    }
     if requested_frame_step.is_some() {
         return Err(anyhow!("frame_step is only supported for gif uploads"));
     }
@@ -1463,7 +1510,10 @@ fn normalize_requested_frame_step(value: Option<usize>) -> Result<usize> {
 /// 目标帧率折算成抽帧间隔：25fps 的动图按 8fps 看，就是每 3 帧取 1 帧。
 /// 单独成函数是为了让“参数域收敛”可测，不依赖解码器。
 fn gif_step_for_frame_rate(gif_fps: f64, requested_rate: f64) -> usize {
-    if !gif_fps.is_finite() || gif_fps <= 0.0 || !requested_rate.is_finite() || requested_rate <= 0.0
+    if !gif_fps.is_finite()
+        || gif_fps <= 0.0
+        || !requested_rate.is_finite()
+        || requested_rate <= 0.0
     {
         return 1;
     }
@@ -1494,15 +1544,168 @@ fn gif_average_fps(frames: &[image::Frame]) -> f64 {
     (1000.0 / average_ms).clamp(1.0, 50.0)
 }
 
-async fn render_gif_frame_attachment(
+/// 逐帧时序：第几帧、这一帧停留多久、对应动画里的第几毫秒。
+/// 只按帧号取帧而不给时间，模型就没法把「第 7 帧」和「0.28 秒」对上，
+/// 也没法判断两帧之间是不是漏看了关键动作。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GifFrameTiming {
+    pub delay_ms: u64,
+    pub timestamp_ms: u64,
+}
+
+fn gif_delay_ms(frame: &image::Frame) -> u64 {
+    let (numer, denom) = frame.delay().numer_denom_ms();
+    if denom == 0 {
+        return 0;
+    }
+    u64::from(numer) / u64::from(denom)
+}
+
+pub fn gif_timeline(frames: &[image::Frame]) -> Vec<GifFrameTiming> {
+    let mut elapsed = 0_u64;
+    frames
+        .iter()
+        .map(|frame| {
+            let delay_ms = gif_delay_ms(frame);
+            let timing = GifFrameTiming {
+                delay_ms,
+                timestamp_ms: elapsed,
+            };
+            elapsed = elapsed.saturating_add(delay_ms);
+            timing
+        })
+        .collect()
+}
+
+/// 一帧按帧号取出的结果：像素已落盘，附件与时间和源帧号一起给模型。
+#[derive(Debug, Clone)]
+pub struct GifFrame {
+    pub index: usize,
+    pub timestamp_ms: u64,
+    pub delay_ms: u64,
+    pub attachment: AttachmentPayload,
+    pub file_path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct GifFrameSet {
+    pub total_frames: usize,
+    pub duration_ms: u64,
+    pub timings: Vec<GifFrameTiming>,
+    pub frames: Vec<GifFrame>,
+}
+
+/// 按帧号取帧的解码部分：与落盘/工作区无关，便于直接单测帧号与时间戳语义。
+#[derive(Debug)]
+struct DecodedGifFrames {
+    total_frames: usize,
+    timings: Vec<GifFrameTiming>,
+    picked: Vec<(usize, image::RgbaImage)>,
+}
+
+fn decode_gif_frames(bytes: &[u8], requested: &[usize]) -> Result<DecodedGifFrames> {
+    let decoder = GifDecoder::new(Cursor::new(bytes)).context("failed to decode gif frames")?;
+    let frames = decoder
+        .into_frames()
+        .collect_frames()
+        .context("failed to collect gif frames")?;
+    if frames.is_empty() {
+        return Err(anyhow!("gif contains no readable frames"));
+    }
+    let total_frames = frames.len();
+    let timings = gif_timeline(&frames);
+    let mut picked = Vec::with_capacity(requested.len());
+    for index in requested {
+        if *index >= total_frames {
+            return Err(anyhow!(crate::i18n::prompt_t_with_params(
+                "tool.read_image.frame_out_of_range",
+                &std::collections::HashMap::from([
+                    ("frame".to_string(), index.to_string()),
+                    ("total".to_string(), total_frames.to_string()),
+                    (
+                        "range".to_string(),
+                        format!("0-{}", total_frames.saturating_sub(1)),
+                    ),
+                ]),
+            )));
+        }
+        picked.push((*index, frames[*index].buffer().clone()));
+    }
+    Ok(DecodedGifFrames {
+        total_frames,
+        timings,
+        picked,
+    })
+}
+
+/// 按帧号精确取动图帧（0-based，与联系表的 `frame_indices` 同一套编号）。
+/// 抽帧是模型确认动作细节的唯一可靠手段：抽样和联系表都会漏帧，
+/// 只有“我要第 N 帧”能避免模型反复读整张动图。
+pub async fn extract_gif_frames(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    source_path: &Path,
+    indices: &[usize],
+) -> Result<GifFrameSet> {
+    if indices.is_empty() {
+        return Err(anyhow!("no gif frame index was requested"));
+    }
+    let bytes = fs::read(source_path).await?;
+    let requested: Vec<usize> = indices.to_vec();
+    let decoded = blocking::run_cpu("chat_media.extract_gif_frames", move || {
+        decode_gif_frames(&bytes, &requested)
+    })
+    .await?;
+    let DecodedGifFrames {
+        total_frames,
+        timings,
+        picked,
+    } = decoded;
+    let duration_ms = timings
+        .last()
+        .map(|timing| timing.timestamp_ms + timing.delay_ms)
+        .unwrap_or(0);
+    let filename = source_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| "gif".to_string());
+    let mut frames = Vec::with_capacity(picked.len());
+    for (index, image) in picked {
+        let (attachment, file_path) =
+            save_gif_frame(workspace, workspace_id, &filename, image, index).await?;
+        let timing = timings.get(index).copied().unwrap_or(GifFrameTiming {
+            delay_ms: 0,
+            timestamp_ms: 0,
+        });
+        frames.push(GifFrame {
+            index,
+            timestamp_ms: timing.timestamp_ms,
+            delay_ms: timing.delay_ms,
+            attachment,
+            file_path,
+        });
+    }
+    Ok(GifFrameSet {
+        total_frames,
+        duration_ms,
+        timings,
+        frames,
+    })
+}
+
+async fn save_gif_frame(
     workspace: &WorkspaceManager,
     workspace_id: &str,
     source_name: &str,
     image: image::RgbaImage,
     index: usize,
-) -> Result<AttachmentPayload> {
+) -> Result<(AttachmentPayload, PathBuf)> {
     let derived_root = persist_derived_root(workspace, workspace_id, source_name).await?;
-    let output_path = derived_root.join(format!("frame_{:04}.png", index + 1));
+    // 文件名用 0-based 源帧号，和 `frame=N`、`sheet.frame_indices` 同一套编号，
+    // 模型不必在“文件名 8 / frame=7”之间做一次心算。
+    let file_name = format!("frame_{:04}.png", index);
+    let output_path = derived_root.join(&file_name);
     let output_path_for_write = output_path.clone();
     blocking::run_fs(
         "services.chat_media.save_gif_frame",
@@ -1516,71 +1719,200 @@ async fn render_gif_frame_attachment(
     .await
     .map_err(|err| anyhow!("gif frame save task failed: {err}"))?;
     let public_path = workspace.display_path(workspace_id, &output_path);
-    let name = output_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .map(ToString::to_string)
-        .unwrap_or_else(|| format!("frame_{:04}.png", index + 1));
-    Ok(AttachmentPayload {
-        name: Some(name),
+    let attachment = AttachmentPayload {
+        name: Some(file_name),
         content: None,
         content_type: Some("image/png".to_string()),
         public_path: Some(public_path),
-    })
+    };
+    Ok((attachment, output_path))
 }
 
-/// 纯布局/绘制：把帧缩略图排成固定网格，返回画布与每格源帧序号。
+async fn render_gif_frame_attachment(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    source_name: &str,
+    image: image::RgbaImage,
+    index: usize,
+) -> Result<AttachmentPayload> {
+    save_gif_frame(workspace, workspace_id, source_name, image, index)
+        .await
+        .map(|(attachment, _)| attachment)
+}
+
+/// 纯布局/绘制：把帧缩略图排进网格，返回画布与每格源帧序号。
 /// 抽出来是为了不依赖工作区就能单测排布与尺寸。
-/// 动图与视频共用：格子尺寸固定，帧按比例缩进格子并居中。
+///
+/// 格子高宽比按源帧宽高比的中位数算，而不是写死 320×200：16:9 素材装进
+/// 1.6:1 的格子会上下留边，观看端再按格子裁一次就把画面顶部切掉了。
+/// 每格左下角画 0-based 帧号，模型能把格子直接对回 `frame=N`。
 fn compose_contact_sheet(
     frames: Vec<(usize, image::RgbaImage)>,
 ) -> Result<(image::RgbaImage, SheetLayout)> {
     if frames.is_empty() {
         return Err(anyhow!("contact sheet source produced no frames"));
     }
-    const CELL_WIDTH: u32 = 320;
-    const CELL_HEIGHT: u32 = 200;
     const GAP: u32 = 4;
+    let (cell_width, cell_height) = sheet_cell_size(&frames);
     let columns = frames.len().min(4).max(1);
     let rows = frames.len().div_ceil(columns).max(1);
-    let width = columns as u32 * CELL_WIDTH + (columns as u32 + 1) * GAP;
-    let height = rows as u32 * CELL_HEIGHT + (rows as u32 + 1) * GAP;
-    let mut canvas = image::RgbaImage::from_pixel(width, height, image::Rgba([244, 244, 244, 255]));
+    let width = columns as u32 * cell_width + (columns as u32 + 1) * GAP;
+    let height = rows as u32 * cell_height + (rows as u32 + 1) * GAP;
+    let mut canvas = image::RgbaImage::from_pixel(width, height, image::Rgba([236, 236, 236, 255]));
     let mut frame_indices = Vec::with_capacity(frames.len());
     for (slot, (index, frame)) in frames.into_iter().enumerate() {
         frame_indices.push(index);
-        let thumb = fit_thumbnail(&frame, CELL_WIDTH, CELL_HEIGHT);
+        let thumb = fit_thumbnail(&frame, cell_width, cell_height);
         let column = (slot % columns) as u32;
         let row = (slot / columns) as u32;
-        let x = GAP
-            + column * (CELL_WIDTH + GAP)
-            + (CELL_WIDTH - thumb.width()) / 2;
-        let y = GAP + row * (CELL_HEIGHT + GAP) + (CELL_HEIGHT - thumb.height()) / 2;
+        let cell_x = GAP + column * (cell_width + GAP);
+        let cell_y = GAP + row * (cell_height + GAP);
+        let x = cell_x + (cell_width - thumb.width()) / 2;
+        let y = cell_y + (cell_height - thumb.height()) / 2;
         image::imageops::overlay(&mut canvas, &thumb, i64::from(x), i64::from(y));
+        draw_frame_index_label(&mut canvas, cell_x, cell_y, cell_width, cell_height, index);
     }
     Ok((
         canvas,
         SheetLayout {
             columns,
             rows,
+            cell_width,
+            cell_height,
             frame_indices,
         },
     ))
 }
 
-/// 等比缩放到单元格内。16:9 的视频帧若直接拉成 320×200 会横向压扁，
-/// 节奏和比例都会看错，所以只缩不拉伸，四周留底色。
-fn fit_thumbnail(
-    frame: &image::RgbaImage,
+/// 格子尺寸：宽度固定，高度跟随帧宽高比中位数。中位数比平均值稳，
+/// 个别异形帧（补间、导出错帧）拉不歪整张表。
+fn sheet_cell_size(frames: &[(usize, image::RgbaImage)]) -> (u32, u32) {
+    let mut aspects: Vec<f64> = frames
+        .iter()
+        .filter_map(|(_, frame)| {
+            let (width, height) = frame.dimensions();
+            (width > 0 && height > 0).then(|| f64::from(width) / f64::from(height))
+        })
+        .collect();
+    aspects.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    let aspect = aspects
+        .get(aspects.len() / 2)
+        .copied()
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .unwrap_or(16.0 / 9.0)
+        .clamp(0.4, 4.0);
+    let height = (f64::from(SHEET_CELL_WIDTH) / aspect).round() as u32;
+    (
+        SHEET_CELL_WIDTH,
+        height.clamp(SHEET_CELL_MIN_HEIGHT, SHEET_CELL_MAX_HEIGHT),
+    )
+}
+
+/// 5×7 点阵数字。联系表只需要标帧号，不引字体库。
+const DIGIT_GLYPHS: [[u8; 7]; 10] = [
+    [
+        0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110,
+    ],
+    [
+        0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
+    ],
+    [
+        0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111,
+    ],
+    [
+        0b11111, 0b00010, 0b00100, 0b00010, 0b00001, 0b10001, 0b01110,
+    ],
+    [
+        0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010,
+    ],
+    [
+        0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110,
+    ],
+    [
+        0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110,
+    ],
+    [
+        0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000,
+    ],
+    [
+        0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110,
+    ],
+    [
+        0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100,
+    ],
+];
+
+/// 在格子左下角画帧号（深色底 + 白字），不遮住画面主体，也把“这格是第几帧”
+/// 直接写进像素，模型读图时不必再靠行列自己数。
+fn draw_frame_index_label(
+    canvas: &mut image::RgbaImage,
+    cell_x: u32,
+    cell_y: u32,
     cell_width: u32,
     cell_height: u32,
-) -> image::RgbaImage {
+    index: usize,
+) {
+    let scale = (cell_height / 120).clamp(2, 4);
+    let glyph_width = 5 * scale;
+    let glyph_height = 7 * scale;
+    let digit_gap = scale;
+    let digits: Vec<u8> = index
+        .to_string()
+        .bytes()
+        .filter(|byte| byte.is_ascii_digit())
+        .map(|byte| byte - b'0')
+        .collect();
+    if digits.is_empty() {
+        return;
+    }
+    let text_width = digits.len() as u32 * glyph_width + (digits.len() as u32 - 1) * digit_gap;
+    let padding = 2 * scale;
+    let plate_width = (text_width + padding * 2).min(cell_width);
+    let plate_height = (glyph_height + padding * 2).min(cell_height);
+    let plate_x = cell_x + 3;
+    let plate_y = cell_y + cell_height.saturating_sub(plate_height + 3);
+    for y in plate_y..plate_y.saturating_add(plate_height) {
+        for x in plate_x..plate_x.saturating_add(plate_width) {
+            if x < canvas.width() && y < canvas.height() {
+                canvas.put_pixel(x, y, image::Rgba([32, 32, 32, 255]));
+            }
+        }
+    }
+    for (position, digit) in digits.iter().enumerate() {
+        let glyph = DIGIT_GLYPHS
+            .get(*digit as usize)
+            .copied()
+            .unwrap_or([0_u8; 7]);
+        let origin_x = plate_x + padding + position as u32 * (glyph_width + digit_gap);
+        let origin_y = plate_y + padding;
+        for (row, bits) in glyph.iter().enumerate() {
+            for column in 0..5_u32 {
+                if bits & (1 << (4 - column)) == 0 {
+                    continue;
+                }
+                for dy in 0..scale {
+                    for dx in 0..scale {
+                        let x = origin_x + column * scale + dx;
+                        let y = origin_y + row as u32 * scale + dy;
+                        if x < canvas.width() && y < canvas.height() {
+                            canvas.put_pixel(x, y, image::Rgba([255, 255, 255, 255]));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 等比缩放到单元格内。16:9 的视频帧若直接拉成 320×200 会横向压扁，
+/// 节奏和比例都会看错，所以只缩不拉伸，四周留底色。
+fn fit_thumbnail(frame: &image::RgbaImage, cell_width: u32, cell_height: u32) -> image::RgbaImage {
     let (width, height) = frame.dimensions();
     if width == 0 || height == 0 {
         return image::RgbaImage::new(1, 1);
     }
-    let scale = (f64::from(cell_width) / f64::from(width))
-        .min(f64::from(cell_height) / f64::from(height));
+    let scale =
+        (f64::from(cell_width) / f64::from(width)).min(f64::from(cell_height) / f64::from(height));
     let target_width = ((f64::from(width) * scale).round() as u32).clamp(1, cell_width);
     let target_height = ((f64::from(height) * scale).round() as u32).clamp(1, cell_height);
     image::imageops::resize(
@@ -1591,7 +1923,7 @@ fn fit_thumbnail(
     )
 }
 
-/// 把抽出的帧拼成一张联系表：最多 4 列，固定 320×200 单元格。
+/// 把抽出的帧拼成一张联系表：最多 4 列，格子按帧宽高比自适应并标注帧号。
 /// 返回附件与每格对应的源帧序号，模型可以直接按行列读节奏和接缝。
 async fn render_contact_sheet_attachment(
     workspace: &WorkspaceManager,
@@ -2217,7 +2549,9 @@ impl ImageCrop {
             height: values[3],
         };
         if crop.width == 0 || crop.height == 0 {
-            return Err(anyhow!(crate::i18n::prompt_t("tool.read_image.invalid_crop")));
+            return Err(anyhow!(crate::i18n::prompt_t(
+                "tool.read_image.invalid_crop"
+            )));
         }
         Ok(crop)
     }
@@ -2236,6 +2570,24 @@ impl ImageCrop {
             width,
             height,
         })
+    }
+
+    /// 把裁切区裁到图片边界内。越界是常见的坐标误差（模型把宽高当成了
+    /// 右下角、或按缩略图尺寸估算），不该整次读图失败：能裁就裁到边界，
+    /// 并在结果里说明实际裁到了哪里。起点就落在图外时返回 None。
+    pub fn clamp_to(self, width: u32, height: u32) -> Option<(Self, bool)> {
+        if width == 0 || height == 0 || self.x >= width || self.y >= height {
+            return None;
+        }
+        let x2 = self.x.saturating_add(self.width).min(width);
+        let y2 = self.y.saturating_add(self.height).min(height);
+        let clamped = Self {
+            x: self.x,
+            y: self.y,
+            width: x2.saturating_sub(self.x),
+            height: y2.saturating_sub(self.y),
+        };
+        (clamped.width > 0 && clamped.height > 0).then_some((clamped, clamped != self))
     }
 }
 
@@ -2257,6 +2609,11 @@ pub struct ImageView {
     pub source_height: u32,
     pub view_width: u32,
     pub view_height: u32,
+    /// 实际生效的裁切区（越界时已收敛到图片边界）。
+    pub crop: Option<ImageCrop>,
+    /// 调用方请求的裁切区，仅在发生收敛时与 `crop` 不同。
+    pub crop_requested: Option<ImageCrop>,
+    pub crop_clamped: bool,
 }
 
 struct RenderedImageView {
@@ -2267,6 +2624,9 @@ struct RenderedImageView {
     view_width: u32,
     view_height: u32,
     view_changed: bool,
+    crop: Option<ImageCrop>,
+    crop_requested: Option<ImageCrop>,
+    crop_clamped: bool,
 }
 
 /// 读图工具的裁切/缩放/统计：派生图落盘为工作区附件，统计在缩放前的裁切
@@ -2282,7 +2642,9 @@ pub async fn derive_image_view(
 ) -> Result<ImageView> {
     if let Some(scale) = scale {
         if !scale.is_finite() || scale <= 0.0 || scale > IMAGE_VIEW_MAX_SCALE {
-            return Err(anyhow!(crate::i18n::prompt_t("tool.read_image.invalid_scale")));
+            return Err(anyhow!(crate::i18n::prompt_t(
+                "tool.read_image.invalid_scale"
+            )));
         }
     }
     let bytes = fs::read(source_path).await?;
@@ -2317,8 +2679,8 @@ pub async fn derive_image_view(
             public_path: Some(workspace.display_path(workspace_id, &output_path)),
         })
     } else {
-        let mime =
-            source_mime.ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.read_image.not_image")))?;
+        let mime = source_mime
+            .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.read_image.not_image")))?;
         Some(AttachmentPayload {
             name: Some(filename),
             content: None,
@@ -2333,6 +2695,9 @@ pub async fn derive_image_view(
         source_height: rendered.source_height,
         view_width: rendered.view_width,
         view_height: rendered.view_height,
+        crop: rendered.crop,
+        crop_requested: rendered.crop_requested,
+        crop_clamped: rendered.crop_clamped,
     })
 }
 
@@ -2455,6 +2820,248 @@ fn render_image_pair(left_bytes: &[u8], right_bytes: &[u8]) -> Result<RenderedIm
     })
 }
 
+/// 两张图的差异度量。数值留成文本，图片被上下文省略后模型仍能引用结论。
+#[derive(Debug, Clone, Serialize)]
+pub struct ImageDiffMetrics {
+    pub left_width: u32,
+    pub left_height: u32,
+    pub right_width: u32,
+    pub right_height: u32,
+    pub compared_width: u32,
+    pub compared_height: u32,
+    /// 两张图尺寸不同时，右图被缩放到左图尺寸后再比较。
+    pub right_resized: bool,
+    /// 结构相似度（0–1，1 表示完全一致）。8×8 窗口、均匀权重的近似实现。
+    pub ssim: f64,
+    /// 逐像素平均绝对差（0–255，三个通道取平均）。
+    pub mean_abs_diff: f64,
+    /// 单通道绝对差的最大值。
+    pub max_abs_diff: u32,
+    /// 超过 `change_threshold` 的像素占比（0–1）。
+    pub changed_ratio: f64,
+    pub change_threshold: u32,
+}
+
+pub struct ImageDiffView {
+    pub attachment: AttachmentPayload,
+    pub metrics: ImageDiffMetrics,
+}
+
+/// 差异阈值：低于它的差值多是重编码噪点与抗锯齿，不该算“改过”。
+const IMAGE_DIFF_THRESHOLD: u32 = 16;
+/// 三联图每一联的最宽边。三联合计 ≤ 1936，落在模型高细节上限内。
+const IMAGE_DIFF_PANE: u32 = 640;
+const IMAGE_DIFF_GAP: u32 = 8;
+
+/// 帧间/版本间对比：左图 | 差异热力图 | 右图，一次同时给出“哪里变了”
+/// 和“变了多少”，比来回肉眼比对十几轮可靠得多。
+pub async fn derive_image_diff_view(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    left_path: &Path,
+    right_path: &Path,
+) -> Result<ImageDiffView> {
+    let left_bytes = fs::read(left_path).await?;
+    let right_bytes = fs::read(right_path).await?;
+    let rendered = blocking::run_cpu("read_image_diff_view", move || {
+        render_image_diff(&left_bytes, &right_bytes)
+    })
+    .await?;
+    let filename = format!(
+        "{}__diff__{}",
+        image_file_stem(left_path),
+        image_file_stem(right_path)
+    );
+    let derived_root = persist_derived_root(workspace, workspace_id, &filename).await?;
+    let output_path = derived_root.join("diff.jpg");
+    fs::write(&output_path, &rendered.bytes).await?;
+    Ok(ImageDiffView {
+        attachment: AttachmentPayload {
+            name: Some(format!("{filename}_diff.jpg")),
+            content: None,
+            content_type: Some("image/jpeg".to_string()),
+            public_path: Some(workspace.display_path(workspace_id, &output_path)),
+        },
+        metrics: rendered.metrics,
+    })
+}
+
+struct RenderedImageDiff {
+    bytes: Vec<u8>,
+    metrics: ImageDiffMetrics,
+}
+
+fn render_image_diff(left_bytes: &[u8], right_bytes: &[u8]) -> Result<RenderedImageDiff> {
+    let left = image::load_from_memory(left_bytes)
+        .map_err(|_| anyhow!(crate::i18n::prompt_t("tool.read_image.not_image")))?;
+    let right = image::load_from_memory(right_bytes)
+        .map_err(|_| anyhow!(crate::i18n::prompt_t("tool.read_image.not_image")))?;
+    let (left_width, left_height) = (left.width().max(1), left.height().max(1));
+    let (right_width, right_height) = (right.width().max(1), right.height().max(1));
+    let right_resized = (left_width, left_height) != (right_width, right_height);
+    let right_compared = if right_resized {
+        image::DynamicImage::ImageRgb8(rgb_on_white(&right)).resize_exact(
+            left_width,
+            left_height,
+            image::imageops::FilterType::Triangle,
+        )
+    } else {
+        right.clone()
+    };
+    let left_rgb = rgb_on_white(&left);
+    let right_rgb = rgb_on_white(&right_compared);
+
+    let pixel_count = u64::from(left_width) * u64::from(left_height);
+    let mut mean_abs = 0.0_f64;
+    let mut max_abs = 0_u32;
+    let mut changed = 0_u64;
+    let mut heatmap = image::RgbaImage::new(left_width, left_height);
+    for (index, (left_pixel, right_pixel)) in left_rgb.pixels().zip(right_rgb.pixels()).enumerate()
+    {
+        let mut channel_peak = 0_u32;
+        let mut channel_sum = 0_u32;
+        for channel in 0..3 {
+            let difference =
+                u32::from(left_pixel[channel]).abs_diff(u32::from(right_pixel[channel]));
+            channel_sum += difference;
+            channel_peak = channel_peak.max(difference);
+        }
+        mean_abs += f64::from(channel_sum) / 3.0;
+        max_abs = max_abs.max(channel_peak);
+        if channel_peak > IMAGE_DIFF_THRESHOLD {
+            changed += 1;
+        }
+        // 暗底保留原图结构，差异越大越红：改在哪里、改了多少一眼可见。
+        let luma = (0.299 * f64::from(left_pixel[0])
+            + 0.587 * f64::from(left_pixel[1])
+            + 0.114 * f64::from(left_pixel[2]))
+            * 0.50
+            + 40.0;
+        let red = (luma + f64::from(channel_peak) * 4.0).min(255.0) as u8;
+        let x = (index as u32) % left_width;
+        let y = (index as u32) / left_width;
+        heatmap.put_pixel(x, y, image::Rgba([red, luma as u8, luma as u8, 255]));
+    }
+    let metrics = ImageDiffMetrics {
+        left_width,
+        left_height,
+        right_width,
+        right_height,
+        compared_width: left_width,
+        compared_height: left_height,
+        right_resized,
+        ssim: (ssim_score(&left, &right_compared) * 10_000.0).round() / 10_000.0,
+        mean_abs_diff: ((mean_abs / pixel_count.max(1) as f64) * 100.0).round() / 100.0,
+        max_abs_diff: max_abs,
+        changed_ratio: ((changed as f64 / pixel_count.max(1) as f64) * 10_000.0).round() / 10_000.0,
+        change_threshold: IMAGE_DIFF_THRESHOLD,
+    };
+
+    let left_panel = rgb_on_white(&fit_into_pane(&left, IMAGE_DIFF_PANE));
+    let right_panel = rgb_on_white(&fit_into_pane(&right, IMAGE_DIFF_PANE));
+    let heat_panel = rgb_on_white(&fit_into_pane(
+        &DynamicImage::ImageRgba8(heatmap),
+        IMAGE_DIFF_PANE,
+    ));
+    let height = left_panel
+        .height()
+        .max(right_panel.height())
+        .max(heat_panel.height())
+        .max(1);
+    let width = left_panel.width()
+        + IMAGE_DIFF_GAP
+        + heat_panel.width()
+        + IMAGE_DIFF_GAP
+        + right_panel.width();
+    let mut canvas = image::RgbImage::from_pixel(width, height, image::Rgb([255, 255, 255]));
+    image::imageops::overlay(&mut canvas, &left_panel, 0, 0);
+    image::imageops::overlay(
+        &mut canvas,
+        &heat_panel,
+        i64::from(left_panel.width() + IMAGE_DIFF_GAP),
+        0,
+    );
+    image::imageops::overlay(
+        &mut canvas,
+        &right_panel,
+        i64::from(left_panel.width() + IMAGE_DIFF_GAP + heat_panel.width() + IMAGE_DIFF_GAP),
+        0,
+    );
+    let (bytes, _, _) = encode_image_view_with_preference(
+        &DynamicImage::ImageRgb8(canvas),
+        true,
+        IMAGE_VIEW_MAX_ENCODED_BYTES,
+    )?;
+    Ok(RenderedImageDiff { bytes, metrics })
+}
+
+/// 灰度 SSIM 的近似实现：8×8 均匀窗口，窗口间不重叠。
+/// 只用于“这版比上版好了多少”的相对判断，不追求与论文实现逐位一致。
+fn ssim_score(left: &DynamicImage, right: &DynamicImage) -> f64 {
+    const WINDOW: u32 = 8;
+    let left_gray = left.to_luma8();
+    let right_gray = right.to_luma8();
+    let (width, height) = (
+        left_gray.width().min(right_gray.width()),
+        left_gray.height().min(right_gray.height()),
+    );
+    if width == 0 || height == 0 {
+        return 1.0;
+    }
+    let c1 = (0.01_f64 * 255.0).powi(2);
+    let c2 = (0.03_f64 * 255.0).powi(2);
+    let mut total = 0.0_f64;
+    let mut windows = 0_u32;
+    let mut y = 0;
+    while y < height {
+        let mut x = 0;
+        while x < width {
+            let w = (width - x).min(WINDOW);
+            let h = (height - y).min(WINDOW);
+            let count = f64::from(w * h);
+            let mut sum_left = 0.0_f64;
+            let mut sum_right = 0.0_f64;
+            for dy in 0..h {
+                for dx in 0..w {
+                    sum_left += f64::from(left_gray.get_pixel(x + dx, y + dy)[0]);
+                    sum_right += f64::from(right_gray.get_pixel(x + dx, y + dy)[0]);
+                }
+            }
+            let mean_left = sum_left / count;
+            let mean_right = sum_right / count;
+            let mut var_left = 0.0_f64;
+            let mut var_right = 0.0_f64;
+            let mut covariance = 0.0_f64;
+            for dy in 0..h {
+                for dx in 0..w {
+                    let a = f64::from(left_gray.get_pixel(x + dx, y + dy)[0]) - mean_left;
+                    let b = f64::from(right_gray.get_pixel(x + dx, y + dy)[0]) - mean_right;
+                    var_left += a * a;
+                    var_right += b * b;
+                    covariance += a * b;
+                }
+            }
+            var_left /= count;
+            var_right /= count;
+            covariance /= count;
+            let numerator = (2.0 * mean_left * mean_right + c1) * (2.0 * covariance + c2);
+            let denominator = (mean_left * mean_left + mean_right * mean_right + c1)
+                * (var_left + var_right + c2);
+            if denominator != 0.0 {
+                total += numerator / denominator;
+                windows += 1;
+            }
+            x += WINDOW;
+        }
+        y += WINDOW;
+    }
+    if windows == 0 {
+        1.0
+    } else {
+        total / f64::from(windows)
+    }
+}
+
 fn render_image_view(
     bytes: &[u8],
     crop: Option<ImageCrop>,
@@ -2465,32 +3072,36 @@ fn render_image_view(
     let image = image::load_from_memory(bytes)
         .map_err(|_| anyhow!(crate::i18n::prompt_t("tool.read_image.not_image")))?;
     let (source_width, source_height) = (image.width(), image.height());
+    let mut applied_crop = None;
+    let mut crop_clamped = false;
     let cropped = match crop {
-        Some(crop) => {
-            if crop.x.saturating_add(crop.width) > source_width
-                || crop.y.saturating_add(crop.height) > source_height
-            {
+        Some(requested) => {
+            let Some((effective, clamped)) = requested.clamp_to(source_width, source_height) else {
+                // 起点就在图外：这不是“边界误差”，是真的指错了地方，必须
+                // 报错并把合法范围一起给出来，模型才能立刻改对。
                 return Err(anyhow!(crate::i18n::t_with_params(
                     "tool.read_image.crop_out_of_bounds",
                     &std::collections::HashMap::from([
                         ("width".to_string(), source_width.to_string()),
                         ("height".to_string(), source_height.to_string()),
-                        ("x".to_string(), crop.x.to_string()),
-                        ("y".to_string(), crop.y.to_string()),
-                        ("crop_width".to_string(), crop.width.to_string()),
-                        ("crop_height".to_string(), crop.height.to_string()),
+                        ("x".to_string(), requested.x.to_string()),
+                        ("y".to_string(), requested.y.to_string()),
+                        ("crop_width".to_string(), requested.width.to_string()),
+                        ("crop_height".to_string(), requested.height.to_string()),
                         (
                             "x2".to_string(),
-                            crop.x.saturating_add(crop.width).to_string(),
+                            requested.x.saturating_add(requested.width).to_string(),
                         ),
                         (
                             "y2".to_string(),
-                            crop.y.saturating_add(crop.height).to_string(),
+                            requested.y.saturating_add(requested.height).to_string(),
                         ),
                     ]),
                 )));
-            }
-            image.crop_imm(crop.x, crop.y, crop.width, crop.height)
+            };
+            applied_crop = Some(effective);
+            crop_clamped = clamped;
+            image.crop_imm(effective.x, effective.y, effective.width, effective.height)
         }
         None => image,
     };
@@ -2561,6 +3172,9 @@ fn render_image_view(
         view_width: scaled.width(),
         view_height: scaled.height(),
         view_changed,
+        crop: applied_crop,
+        crop_requested: crop,
+        crop_clamped,
     })
 }
 
@@ -2649,7 +3263,9 @@ fn encode_image_view_with_preference(
             return Ok((jpeg, "image/jpeg", "jpg"));
         }
     }
-    Err(anyhow!(crate::i18n::prompt_t("tool.read_image.view_too_large")))
+    Err(anyhow!(crate::i18n::prompt_t(
+        "tool.read_image.view_too_large"
+    )))
 }
 
 fn rgb_on_white(image: &DynamicImage) -> image::RgbImage {
@@ -2788,9 +3404,8 @@ fn compute_image_view_stats(image: &DynamicImage) -> ImageViewStats {
 mod tests {
     use super::{
         compose_contact_sheet, contact_sheet_frame_rate, detect_media_kind_from_path,
-        effective_frame_rate,
-        extract_video_frames, extract_workspace_id_from_public_path, fit_thumbnail,
-        gif_step_for_frame_rate, list_frame_paths, load_contact_sheet_frames,
+        effective_frame_rate, extract_video_frames, extract_workspace_id_from_public_path,
+        fit_thumbnail, gif_step_for_frame_rate, list_frame_paths, load_contact_sheet_frames,
         load_image_data_url_for_path, normalize_filename, normalize_requested_frame_rate,
         normalize_requested_frame_step, probe_media, ImageViewCache, ImageViewKey,
         DEFAULT_VIDEO_FRAME_RATE, IMAGE_VIEW_CACHE_BYTES, IMAGE_VIEW_CACHE_VERSION,
@@ -2826,8 +3441,9 @@ mod tests {
         assert_eq!(layout.columns, 4);
         assert_eq!(layout.rows, 2);
         assert_eq!(layout.frame_indices, vec![0, 3, 6, 9, 12, 15, 18, 21]);
-        // 4 列 × 320 + 5 个 4px 间隔；2 行 × 200 + 3 个 4px 间隔。
-        assert_eq!(canvas.dimensions(), (1300, 412));
+        // 帧是 32×20（8:5），格子高按宽高比算成 240；4 列 + 5 个 4px 间隔、2 行 + 3 个间隔。
+        assert_eq!((layout.cell_width, layout.cell_height), (384, 240));
+        assert_eq!(canvas.dimensions(), (1556, 492));
     }
 
     /// 视频帧通常是 16:9，直接拉成 320×200 会横向压扁；格子内只等比缩放。
@@ -2844,25 +3460,163 @@ mod tests {
         let (canvas, layout) = compose_contact_sheet(frames).expect("sheet");
         assert_eq!((layout.columns, layout.rows), (4, 4));
         assert_eq!(layout.frame_indices.len(), 16);
-        // 4 列 / 4 行：4×320 + 5×4 = 1300；4×200 + 5×4 = 820。
-        assert_eq!(canvas.dimensions(), (1300, 820));
+        // 16:9 素材的格子仍是 16:9（384×216），画面不需要上下留边、也不会被裁。
+        assert_eq!((layout.cell_width, layout.cell_height), (384, 216));
+        assert_eq!(canvas.dimensions(), (1556, 884));
 
         let thumb = fit_thumbnail(
             &image::RgbaImage::from_pixel(1920, 1080, image::Rgba([0, 0, 0, 255])),
-            320,
-            200,
+            384,
+            216,
         );
-        assert_eq!(thumb.dimensions(), (320, 180));
+        assert_eq!(thumb.dimensions(), (384, 216));
         let tall = fit_thumbnail(
             &image::RgbaImage::from_pixel(600, 1200, image::Rgba([0, 0, 0, 255])),
-            320,
-            200,
+            384,
+            216,
         );
-        assert_eq!(tall.dimensions(), (100, 200));
+        assert_eq!(tall.dimensions(), (108, 216));
+    }
+
+    /// 每格都打上 0-based 帧号：格子左下角必须出现白色数字像素。
+    #[test]
+    fn contact_sheet_stamps_frame_indices_on_every_cell() {
+        let frames = vec![(
+            7_usize,
+            image::RgbaImage::from_pixel(64, 36, image::Rgba([0, 0, 0, 255])),
+        )];
+        let (canvas, layout) = compose_contact_sheet(frames).expect("sheet");
+        assert_eq!(layout.frame_indices, vec![7]);
+        let cell_bottom = 4 + layout.cell_height;
+        let mut white = 0;
+        for y in cell_bottom.saturating_sub(24)..cell_bottom {
+            for x in 4..72 {
+                let pixel = canvas.get_pixel(x, y);
+                if pixel.0[0] > 200 && pixel.0[1] > 200 && pixel.0[2] > 200 {
+                    white += 1;
+                }
+            }
+        }
+        assert!(white > 20, "frame index label missing: {white}");
+    }
+
+    /// SSIM：完全相同的图必须是 1，明显改动必须显著下降。
+    #[test]
+    fn ssim_separates_identical_and_changed_images() {
+        let base = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            64,
+            64,
+            image::Rgb([90, 90, 90]),
+        ));
+        assert!((super::ssim_score(&base, &base) - 1.0).abs() < 1e-9);
+        let mut changed = image::RgbImage::from_pixel(64, 64, image::Rgb([90, 90, 90]));
+        for y in 0..32 {
+            for x in 0..32 {
+                changed.put_pixel(x, y, image::Rgb([220, 220, 220]));
+            }
+        }
+        let score = super::ssim_score(&base, &image::DynamicImage::ImageRgb8(changed));
+        // 1/4 的画面整块变色，8×8 均匀窗口下 SSIM 约 0.92：只要求明显下降。
+        assert!(
+            score < 0.95,
+            "changed image should score lower, got {score}"
+        );
+    }
+
+    /// 差异图：整块改色必须体现在 SSIM、改动占比与最大差值上。
+    #[test]
+    fn image_diff_reports_metrics_and_panels() {
+        let left = png_bytes(&fixture_image());
+        let mut changed = fixture_image().to_rgb8();
+        for y in 0..10 {
+            for x in 0..10 {
+                changed.put_pixel(x, y, image::Rgb([255, 0, 0]));
+            }
+        }
+        let right = png_bytes(&image::DynamicImage::ImageRgb8(changed));
+        let rendered = super::render_image_diff(&left, &right).expect("diff");
+        assert!(
+            rendered.metrics.ssim < 1.0,
+            "ssim {}",
+            rendered.metrics.ssim
+        );
+        assert!(rendered.metrics.changed_ratio > 0.0);
+        assert!(rendered.metrics.max_abs_diff > super::IMAGE_DIFF_THRESHOLD);
+        assert!(!rendered.metrics.right_resized);
+        assert!(!rendered.bytes.is_empty());
+    }
+
+    fn gif_bytes(frames: &[(u32, [u8; 3])]) -> Vec<u8> {
+        let mut out = Vec::new();
+        {
+            let mut encoder = image::codecs::gif::GifEncoder::new(&mut out);
+            encoder
+                .set_repeat(image::codecs::gif::Repeat::Infinite)
+                .expect("repeat");
+            for (delay_ms, color) in frames {
+                let image = image::RgbaImage::from_pixel(
+                    8,
+                    8,
+                    image::Rgba([color[0], color[1], color[2], 255]),
+                );
+                encoder
+                    .encode_frame(image::Frame::from_parts(
+                        image,
+                        0,
+                        0,
+                        image::Delay::from_numer_denom_ms(*delay_ms, 1),
+                    ))
+                    .expect("encode frame");
+            }
+        }
+        out
+    }
+
+    /// 按帧号取帧必须精确：帧号、时间戳与像素都来自同一帧，越界要报出合法范围。
+    #[test]
+    fn decode_gif_frames_returns_exact_indices_and_timing() {
+        let bytes = gif_bytes(&[(40, [255, 0, 0]), (100, [0, 255, 0]), (60, [0, 0, 255])]);
+        let decoded = super::decode_gif_frames(&bytes, &[2, 0]).expect("decode");
+        assert_eq!(decoded.total_frames, 3);
+        assert_eq!(
+            decoded
+                .picked
+                .iter()
+                .map(|(index, _)| *index)
+                .collect::<Vec<_>>(),
+            vec![2, 0]
+        );
+        assert!(decoded
+            .picked
+            .iter()
+            .all(|(_, frame)| frame.dimensions() == (8, 8)));
+        assert_eq!(decoded.timings[1].timestamp_ms, 40);
+        assert_eq!(decoded.timings[2].timestamp_ms, 140);
+        assert_eq!(decoded.picked[0].1.get_pixel(0, 0)[2], 255);
+        let err = super::decode_gif_frames(&bytes, &[3]).expect_err("out of range");
+        assert!(err.to_string().contains("out of range"), "{err}");
+    }
+
+    /// 帧时序：逐帧延迟累加成时间戳，模型才能把帧号对上秒数。
+    #[test]
+    fn gif_timeline_accumulates_frame_delays() {
+        let frame = |delay_ms: u32| {
+            image::Frame::from_parts(
+                image::RgbaImage::new(1, 1),
+                0,
+                0,
+                image::Delay::from_numer_denom_ms(delay_ms, 1),
+            )
+        };
+        let timeline = super::gif_timeline(&[frame(40), frame(100), frame(60)]);
+        assert_eq!(timeline[0].timestamp_ms, 0);
+        assert_eq!(timeline[1].timestamp_ms, 40);
+        assert_eq!(timeline[2].timestamp_ms, 140);
+        assert_eq!(timeline[2].delay_ms, 60);
     }
 
     /// 真实 ffmpeg 端到端：4 秒 320×240 素材解出 4 格联系表，
-    /// 4:3 画面在 320×200 格子里等比缩放、左右留底色（不横向压扁）。
+    /// 4:3 画面配 4:3 格子，画面铺满格子、不横向压扁。
     /// 没装 ffmpeg 的环境直接跳过，不把环境缺失算成失败。
     #[tokio::test]
     async fn video_contact_sheet_pipeline_reads_real_frames() {
@@ -2916,8 +3670,8 @@ mod tests {
         let frames = load_contact_sheet_frames(paths).await.expect("load frames");
         let (canvas, layout) = compose_contact_sheet(frames).expect("sheet");
         assert_eq!(layout.frame_indices.len(), layout.columns * layout.rows);
-        // 266×200 居中后左侧留 27px 底色，取 (5,5) 必须是画布底色。
-        assert_eq!(canvas.get_pixel(5, 5).0[0], 244);
+        // 4:3 帧配 4:3 格子，画面铺满格子；(1,1) 落在格子外的留白上，必须是画布底色。
+        assert_eq!(canvas.get_pixel(1, 1).0[0], 236);
     }
 
     /// 长视频也要覆盖整段：1 小时素材按 16 格就是 16/3600 fps，
@@ -3145,11 +3899,35 @@ mod tests {
     }
 
     #[test]
-    fn render_image_view_rejects_out_of_bounds_crop() {
+    fn render_image_view_clamps_crop_at_the_image_edge() {
         let bytes = png_bytes(&fixture_image());
         let crop = super::ImageCrop {
             x: 90,
             y: 70,
+            width: 20,
+            height: 20,
+        };
+        let view = super::render_image_view(&bytes, Some(crop), None, false, false)
+            .expect("越界部分应收敛到图片边界");
+        assert_eq!(
+            view.crop,
+            Some(super::ImageCrop {
+                x: 90,
+                y: 70,
+                width: 10,
+                height: 10,
+            })
+        );
+        assert!(view.crop_clamped);
+        assert_eq!(view.crop_requested, Some(crop));
+    }
+
+    #[test]
+    fn render_image_view_rejects_crop_starting_outside_the_image() {
+        let bytes = png_bytes(&fixture_image());
+        let crop = super::ImageCrop {
+            x: 120,
+            y: 10,
             width: 20,
             height: 20,
         };

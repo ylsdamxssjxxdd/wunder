@@ -7,6 +7,9 @@ pub(super) use super::memory_auto_extract::*;
 use super::memory_compaction_budget::rebalance_retained_interaction_context;
 pub(super) use super::memory_compaction_window::*;
 
+mod compaction_resume;
+pub(super) use compaction_resume::*;
+
 pub(super) const COMPACTION_MIN_CURRENT_USER_MESSAGE_TOKENS: i64 = 64;
 pub(super) const COMPACTION_RETAINED_INTERACTION_EXCHANGE_COUNT: usize = 2;
 pub(super) const COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT: usize =
@@ -29,9 +32,16 @@ pub(super) const COMPACTION_MIN_SUMMARY_MEANINGFUL_CHARS: usize = 8;
 pub(super) const COMPACTION_DEBUG_PREVIEW_CHARS: usize = 240;
 pub(super) const COMPACTION_MIN_RETAINED_INTERACTION_TOKENS: i64 = 128;
 pub(super) const COMPACTION_CURRENT_TURN_FINAL_NOTE: &str =
-    "The compaction summary indicates that the current user-facing task has no remaining executable work, or only needs a final/clarifying response. Treat retained user messages as historical context, not as a fresh request. Do not call tools, regenerate artifacts, rewrite files, or restart the original request solely because older messages are visible. Provide the final response now from the compaction summary and retained latest messages.";
+    "The compaction summary reports that this turn can conclude. Treat retained user messages as historical context, not as a fresh request, and do not restart the original request or redo work the summary already records as done.";
+pub(super) const COMPACTION_FINAL_DIRECTIVE_FINAL: &str =
+    "- Directive: verify the delivery claim before answering. If the summary still lists concrete remaining steps, or a deliverable it claims was never observed, continue with those steps instead of reporting the task as finished; read-only checks (list/read/status) are always allowed. Otherwise provide the final response now from the compaction summary and the retained messages, and state plainly whatever is still unfinished.";
+pub(super) const COMPACTION_FINAL_DIRECTIVE_ASK_USER: &str =
+    "- Directive: the summary says the turn needs user input. Ask the specific question the summary identifies; do not restart the original request, and use only read-only checks if you need them to phrase the question.";
 pub(super) const COMPACTION_CURRENT_TURN_SUCCESS_NOTE: &str =
-    "The current user request already produced successful tool output before compaction, but that does not by itself mean the user-facing task is complete. Continue from the latest retained tool observation and the compaction summary. Treat retained user messages as historical context, not as a fresh request. If the summary resume action is final or ask_user, do not call tools; answer or ask the user now. If the resume action is continue, perform only the named remaining step. Do not restart or redo completed work.";
+    "The current user request already produced successful tool output before compaction, but that does not by itself mean the user-facing task is complete. Continue from the latest retained tool observation and the compaction summary. Treat retained user messages as historical context, not as a fresh request. Do not restart or redo completed work; perform the remaining steps the summary names, verify the deliverable, then answer. Read-only checks are always allowed.";
+pub(super) const COMPACTION_CONTINUATION_REMINDER: &str =
+    "The remaining-work section above is authoritative. Only answer without further tool calls when it is empty and every claimed deliverable has been observed.";
+pub(super) const COMPACTION_CONTINUATION_NOTE_MAX_TOKENS: i64 = 16_384;
 pub(super) const COMPACTION_CURRENT_TURN_REPAIR_NOTE: &str =
     "[Compaction continuation]\nThe current user request already entered tool execution and the latest tool output reports failure. Do not restart from the original user request. Continue from the retained failure observation, change strategy, and repair or explain based on the available evidence.";
 
@@ -1123,150 +1133,38 @@ pub(super) fn infer_next_step_after_successful_tool(
     None
 }
 
+/// Appends the whole compaction summary to a continuation note.
+///
+/// The summary is deliberately not clipped: the remaining-work section sits at
+/// the end of the document, so a head-only excerpt silently deleted the very
+/// list that says the task is unfinished. Size is bounded upstream by
+/// `COMPACTION_SUMMARY_MAX_CHARS` and, if the request budget is still too tight,
+/// by the rebuilt-context guard.
 pub(super) fn append_compaction_summary_excerpt(note: &mut String, summary_text: &str) {
     let body = strip_compaction_prefix_text(summary_text);
-    let excerpt = trim_text_to_chars(body.trim(), 1_200, COMPACTION_TEXT_TRUNCATION_SUFFIX);
-    if excerpt.trim().is_empty() {
+    let body = body.trim();
+    if body.is_empty() {
         return;
     }
     note.push('\n');
     note.push_str("- summary_excerpt:\n");
-    note.push_str(&excerpt);
+    note.push_str(body);
 }
 
-pub(super) fn detect_compaction_resume_action(summary_text: &str) -> CompactionResumeAction {
-    let body = strip_compaction_prefix_text(summary_text);
-    let normalized = body.replace("\r\n", "\n");
-    for line in normalized.lines() {
-        let trimmed = line.trim().trim_start_matches(['-', '*', ' ']).trim();
-        let lower = trimmed.to_ascii_lowercase();
-        if let Some(value) = lower
-            .strip_prefix("resume_action:")
-            .or_else(|| lower.strip_prefix("next_action:"))
-            .or_else(|| lower.strip_prefix("resume action:"))
-            .or_else(|| lower.strip_prefix("next action:"))
-        {
-            return parse_compaction_resume_action_value(value);
-        }
-        if let Some(value) = trimmed
-            .strip_prefix("下一步动作：")
-            .or_else(|| trimmed.strip_prefix("下一步动作:"))
-            .or_else(|| trimmed.strip_prefix("续跑动作："))
-            .or_else(|| trimmed.strip_prefix("续跑动作:"))
-        {
-            return parse_compaction_resume_action_value(value);
-        }
-    }
-
-    infer_compaction_resume_action_from_sections(&normalized)
-}
-
-pub(super) fn parse_compaction_resume_action_value(value: &str) -> CompactionResumeAction {
-    let raw = value
-        .trim()
-        .trim_matches(['`', '"', '\'', '*', ' ', '-', ':', '：']);
-    let direct = raw.trim();
-    match direct {
-        "最终回复" | "结束" | "完成" => return CompactionResumeAction::Final,
-        "继续" => return CompactionResumeAction::Continue,
-        "重试" | "修复" => return CompactionResumeAction::Retry,
-        "询问用户" | "澄清" => return CompactionResumeAction::AskUser,
-        _ => {}
-    }
-    let cleaned = raw.to_ascii_lowercase();
-    let first = cleaned
-        .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | ';' | '，' | '；'))
-        .next()
-        .unwrap_or_default()
-        .trim();
-    match first {
-        "final" | "finish" | "done" | "complete" | "completed" | "answer" => {
-            CompactionResumeAction::Final
-        }
-        "continue" | "next" | "work" | "run" => CompactionResumeAction::Continue,
-        "retry" | "repair" | "fix" => CompactionResumeAction::Retry,
-        "ask_user" | "ask-user" | "ask" | "clarify" | "clarification" => {
-            CompactionResumeAction::AskUser
-        }
-        _ => CompactionResumeAction::Unknown,
+fn compaction_final_directive(resume_action: CompactionResumeAction) -> &'static str {
+    match resume_action {
+        CompactionResumeAction::AskUser => COMPACTION_FINAL_DIRECTIVE_ASK_USER,
+        _ => COMPACTION_FINAL_DIRECTIVE_FINAL,
     }
 }
 
-pub(super) fn infer_compaction_resume_action_from_sections(
-    summary_text: &str,
-) -> CompactionResumeAction {
-    let body = summary_text.trim();
-    if body.is_empty() {
-        return CompactionResumeAction::Unknown;
-    }
-    if summary_has_failure_signal(body) {
-        return CompactionResumeAction::Retry;
-    }
-    if summary_has_no_remaining_work_signal(body) {
-        return CompactionResumeAction::Final;
-    }
-    if summary_has_pending_work_signal(body) {
-        return CompactionResumeAction::Continue;
-    }
-    if summary_has_completed_signal(body) {
-        return CompactionResumeAction::Final;
-    }
-    CompactionResumeAction::Unknown
-}
-
-pub(super) fn summary_has_completed_signal(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    lower.contains("completed")
-        || lower.contains("already produced")
-        || lower.contains("already generated")
-        || lower.contains("done")
-        || text.contains("已完成")
-        || text.contains("已经完成")
-        || text.contains("已生成")
-        || text.contains("已经生成")
-        || text.contains("已绘制")
-}
-
-pub(super) fn summary_has_no_remaining_work_signal(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    lower.contains("no remaining")
-        || lower.contains("nothing remains")
-        || lower.contains("no explicit todo")
-        || lower.contains("no pending")
-        || lower.contains("no further")
-        || text.contains("无明确待办")
-        || text.contains("没有明确待办")
-        || text.contains("无需继续")
-        || text.contains("没有剩余待办")
-        || text.contains("无剩余待办")
-}
-
-pub(super) fn summary_has_pending_work_signal(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    lower.contains("remaining todo")
-        || lower.contains("pending")
-        || lower.contains("next step")
-        || lower.contains("todo:")
-        || lower.contains("continue")
-        || text.contains("待执行")
-        || text.contains("剩余待办")
-        || text.contains("下一步")
-        || text.contains("继续")
-}
-
-pub(super) fn summary_has_failure_signal(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    lower.contains("failed")
-        || lower.contains("failure")
-        || lower.contains("error")
-        || lower.contains("retry")
-        || lower.contains("repair")
-        || text.contains("失败")
-        || text.contains("错误")
-        || text.contains("修复")
-        || text.contains("重试")
-}
-
+/// Builds the continuation note for a turn that the summary marks as finished.
+///
+/// The note must never assert that no work remains: the summary can be wrong or
+/// truncated, and the previous wording ("has no remaining executable work …
+/// do not call tools") made a model stop mid-task and report an unfinished film
+/// as done. Verification stays allowed; concrete pending steps win over the
+/// `final` label.
 pub(super) fn build_current_turn_final_continuation_note(
     resume_action: CompactionResumeAction,
     summary_text: &str,
@@ -1274,12 +1172,14 @@ pub(super) fn build_current_turn_final_continuation_note(
     let mut note = String::from("[Compaction continuation]\n\n[Compaction summary decision]\n");
     note.push_str("- resume_action: ");
     note.push_str(resume_action.as_str());
-    append_compaction_summary_excerpt(&mut note, summary_text);
     note.push('\n');
-    note.push_str(COMPACTION_CURRENT_TURN_FINAL_NOTE.trim());
+    note.push_str(compaction_final_directive(resume_action));
+    append_compaction_summary_excerpt(&mut note, summary_text);
+    note.push_str("\n\n[Reminder]\n");
+    note.push_str(COMPACTION_CONTINUATION_REMINDER.trim());
     trim_text_to_tokens(
         &note,
-        COMPACTION_MIN_CURRENT_USER_MESSAGE_TOKENS.max(1_024),
+        COMPACTION_CONTINUATION_NOTE_MAX_TOKENS,
         COMPACTION_TEXT_TRUNCATION_SUFFIX,
     )
 }
@@ -1293,7 +1193,6 @@ pub(super) fn build_tool_success_continuation_note(
     note.push_str("\n\n[Compaction summary decision]\n");
     note.push_str("- resume_action: ");
     note.push_str(resume_action.as_str());
-    append_compaction_summary_excerpt(&mut note, summary_text);
     if let Some(snapshot) = progress.latest_tool_observation.as_ref() {
         note.push_str("\n\n[Latest retained tool observation]\n");
         note.push_str("- tool: ");
@@ -1321,11 +1220,14 @@ pub(super) fn build_tool_success_continuation_note(
             note.push('\n');
         }
     }
-    note.push_str("\n");
+    note.push('\n');
     note.push_str(COMPACTION_CURRENT_TURN_SUCCESS_NOTE.trim());
+    append_compaction_summary_excerpt(&mut note, summary_text);
+    note.push_str("\n\n[Reminder]\n");
+    note.push_str(COMPACTION_CONTINUATION_REMINDER.trim());
     trim_text_to_tokens(
         &note,
-        COMPACTION_MIN_CURRENT_USER_MESSAGE_TOKENS.max(1_024),
+        COMPACTION_CONTINUATION_NOTE_MAX_TOKENS,
         COMPACTION_TEXT_TRUNCATION_SUFFIX,
     )
 }

@@ -441,10 +441,93 @@ fn test_current_turn_replay_uses_final_continuation_when_summary_has_no_todo() {
         .unwrap_or_default();
 
     assert_eq!(replay.mode, CurrentUserReplayMode::FinalContinuation);
-    assert!(content.contains("Provide the final response now"));
+    assert!(content.contains("provide the final response now"));
     assert!(content.contains("resume_action: final"));
-    assert!(content.contains("Do not call tools, regenerate artifacts, rewrite files"));
+    assert!(
+        !content.contains("Do not call tools"),
+        "a finished turn must still be allowed to verify its deliverable"
+    );
+    assert!(content.contains("read-only checks (list/read/status) are always allowed"));
+    assert!(content.contains("## 剩余待办\n无明确待办。"));
     assert!(!content.contains("/workspaces/admin__c__1/nailong_armor.png"));
+}
+
+#[test]
+fn test_final_continuation_note_keeps_the_whole_summary() {
+    let summary = format!(
+        "## Current progress\n{}\n## What remains to be done\n1. Render `final.mp4`.\n2. Place `audio.py`.\nresume_action: final",
+        "filler line\n".repeat(200)
+    );
+    let note = build_current_turn_final_continuation_note(CompactionResumeAction::Final, &summary);
+
+    assert!(note.contains("1. Render `final.mp4`."));
+    assert!(note.contains("2. Place `audio.py`."));
+    assert!(!note.contains("...(truncated)"));
+}
+
+#[test]
+fn test_compaction_resume_action_reads_what_remains_to_be_done_as_pending() {
+    // Shape of the summary that made a model deliver an unfinished film as done.
+    let summary = "## Current progress\n\n**Task**: Build a no-narration knowledge short film.\n\n**Project created**: `sky_C` with `film.js` and `scenes.js`; `node --check` OK.\n\n## Key findings / decisions\n\n- Chose the night look.\n\n## Important context / constraints\n\n- Subtitles only below y=840.\n\n## What remains to be done\n\n1. Delete `sky_C/sunset.patch.js`.\n2. Write `sky_C/storyboard.md`.\n3. Re-render stills and run `--lint`.\n4. Full render is still missing.\n\n## Critical references\n\n- `references/engine.md`";
+
+    assert_eq!(
+        detect_compaction_resume_action(summary),
+        CompactionResumeAction::Continue
+    );
+    assert!(!summary_has_completed_signal(summary));
+}
+
+#[test]
+fn test_compaction_resume_action_ignores_negated_completion() {
+    for summary in [
+        "The render is not done yet.\nThe audio pass still needs to run.",
+        "## Current progress\n完成尚未完成的部分。\n## 剩余待办\n还要渲染全片。",
+        "The task is still in progress.",
+        "工作还没完成，需要继续渲染。",
+    ] {
+        assert_eq!(
+            detect_compaction_resume_action(summary),
+            CompactionResumeAction::Continue,
+            "{summary}"
+        );
+    }
+}
+
+#[test]
+fn test_compaction_resume_action_defaults_to_continue_without_signals() {
+    let summary = "## Current progress\n- Built the scene module.\n## Critical references\n- engine.md";
+    assert_eq!(
+        detect_compaction_resume_action(summary),
+        CompactionResumeAction::Continue
+    );
+}
+
+#[test]
+fn test_compaction_resume_action_final_requires_an_empty_remaining_section() {
+    let done = "## Current progress\nAll shots rendered and checked.\n## What remains to be done\nNone.";
+    assert_eq!(
+        detect_compaction_resume_action(done),
+        CompactionResumeAction::Final
+    );
+
+    // The model may claim `final`; a non-empty remaining section still wins.
+    let pending_with_final = "## Current progress\nBuilt the scenes.\n## What remains to be done\n1. Render `final.mp4`.\nresume_action: final";
+    assert_eq!(
+        detect_compaction_resume_action(pending_with_final),
+        CompactionResumeAction::Continue
+    );
+}
+
+#[test]
+fn test_parse_compaction_resume_action_value_ignores_echoed_template() {
+    assert_eq!(
+        parse_compaction_resume_action_value("final|continue|retry|ask_user"),
+        CompactionResumeAction::Unknown
+    );
+    assert_eq!(
+        parse_compaction_resume_action_value("continue"),
+        CompactionResumeAction::Continue
+    );
 }
 
 #[test]

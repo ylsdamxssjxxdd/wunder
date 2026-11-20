@@ -1360,8 +1360,8 @@
     "zh-CN": "crop 与 crop_xyxy 不能同时使用。宽高写法用 crop=\"x,y,w,h\"，对角坐标写法用 crop_xyxy=\"x1,y1,x2,y2\"。"
   },
   "tool.read_image.crop_out_of_bounds": {
-    "en-US": "crop exceeds the image bounds (image is {width}x{height} pixels; normalized crop is x={x}, y={y}, w={crop_width}, h={crop_height}, x2={x2}, y2={y2}, bottom-right exclusive).",
-    "zh-CN": "crop 超出图片范围（图片为 {width}x{height} 像素；归一化裁切区域为 x={x}、y={y}、w={crop_width}、h={crop_height}、x2={x2}、y2={y2}，右下角不包含）。"
+    "en-US": "crop starts outside the image (image is {width}x{height}; requested x={x}, y={y}, w={crop_width}, h={crop_height}). Regions that only extend past the edge are clamped to the boundary automatically.",
+    "zh-CN": "裁切起点在图片之外（图片为 {width}x{height}；请求 x={x}、y={y}、w={crop_width}、h={crop_height}）。仅超出边界的部分会自动收敛到图片边界。"
   },
   "tool.read_image.invalid_scale": {
     "en-US": "scale must be a number in (0, 16].",
@@ -1372,12 +1372,12 @@
     "zh-CN": "scale 过大：输出边长上限 4096px（当前裁切区域最大可用 scale={max_scale}）。"
   },
   "tool.read_image.view_image_only": {
-    "en-US": "crop/scale/stats are only supported for still images; extract video or GIF frames first (frame_rate or ffmpeg).",
-    "zh-CN": "crop/scale/stats 仅支持静态图片；视频或 GIF 请先抽帧（frame_rate 或 ffmpeg）。"
+    "en-US": "crop/scale/stats are only supported for still images and single GIF frames. Pass frame=N to read one GIF frame, or frame_rate for video.",
+    "zh-CN": "crop/scale/stats 仅支持静态图片与单帧 GIF。GIF 先用 frame=N 取一帧，视频用 frame_rate 抽帧。"
   },
   "tool.read_image.compare_exclusive": {
-    "en-US": "compare_with returns a side-by-side image and cannot be combined with crop/scale/stats; call them separately.",
-    "zh-CN": "compare_with 返回并排对比图，不能与 crop/scale/stats 同时使用，请分别调用。"
+    "en-US": "compare_with cannot be combined with crop/scale/stats; call them separately. Add compare_mode=diff for SSIM metrics plus a heatmap.",
+    "zh-CN": "compare_with 不能与 crop/scale/stats 同时使用，请分别调用；需要 SSIM 指标与热力图时加 compare_mode=diff。"
   },
   "tool.read_image.view_too_large": {
     "en-US": "The derived image is still too large after re-encoding; use a smaller crop or scale.",
@@ -2235,7 +2235,7 @@
     "en-US": "Optional. Working directory relative to the current workspace only (no absolute paths).",
     "zh-CN": "可选，工作目录仅支持工作区内相对路径（不允许绝对路径）。"
   },
-    "tool.spec.exec.description": {
+  "tool.spec.exec.description": {
     "en-US": "Run a shell command in the workspace and stream its output. content is the command; workdir is a workspace-relative directory; description is a short user-facing action. The call waits up to yield_time_ms (default 10000) and returns immediately on exit. A still-running command returns command_session_id, the current seq and partial output: continue the same process with command_session (empty chars to read, non-empty chars to write, after_seq to resume, wait_for=exit to block), never rerun it just to poll. Set run_in_background=true for long-running work: it returns immediately and you will be notified automatically when the command exits, so you can continue with other work or end the turn. A non-zero exit code is normal result data, not a tool failure. Large output is bounded and may be available as a paged tool-result handle. Never use a bare sleep command to idle-wait. Never pipe a long script through a heredoc (<<'EOF') in content: a truncated body only yields a 'here-document delimited by end-of-file' stub. Unterminated heredocs are rejected outright; write the file first and then run it.",
     "zh-CN": "在工作区执行 shell 命令并流式输出。content 是命令，workdir 是工作区内相对目录，description 是给用户看的简短动作。调用最多等待 yield_time_ms（默认 10000），命令提前退出会立即返回。仍在运行时返回 command_session_id、当前 seq 和已有输出：用命令会话继续同一进程（chars 为空读取、非空写入，after_seq 续读，wait_for=exit 等到退出），不要为了轮询而重跑。长时间的活可用 run_in_background=true：立即返回，命令结束时自动通知你，期间可以继续其他工作或结束本轮。非 0 退出码是正常结果数据，不是工具失败。大输出会有界截断，并可能保存为可分页的结果句柄。不要用单独的 sleep 空等。 长脚本不要塞进 heredoc（content 里 <<'EOF'）：一旦内容被截断，只会得到一个 here-document delimited by end-of-file 的空壳脚本；未闭合的 heredoc 会被直接拒绝，请先用写入文件落盘再执行。"
   },
@@ -2523,9 +2523,9 @@
     "en-US": "Optional. Directory to search. Defaults to the agent's working directory if omitted; relative paths are resolved against that root.",
     "zh-CN": "可选，搜索的目录。省略时默认使用智能体工作目录；相对路径按该目录解释。"
   },
-      "tool.spec.text_edit.description": {
-    "en-US": "Edit UTF-8 files. Default (or command=str_replace): file_path + old_string + new_string; old_string must match exactly once unless replace_all=true. command=create: file_path + file_text, new files only. command=insert: file_path + insert_line + new_string; insert after a 1-based line, 0 prepends. command=view: file_path and optional view_range. command=undo_edit / redo: file_path only; walk the write history one step back or forward until it bottoms out, so a bad write needs no manual repair. Alternatively use input for a multi-file apply_patch without file_path; do not mix with command or replacement fields. Every write mode supports dry_run=true. Read the current text first, keep indentation, and strip display line numbers; only LF/CRLF differences are normalized. Range replace: file_path + start_line + end_line + new_string (1-based, inclusive), mutually exclusive with old_string. Results carry a receipt, change counts and the complete unified diff of what this call wrote, so the next edit can be located without re-reading the file; only pathological output above the safety valve is folded into a header plus exact omitted counts. If you need text the diff did not cover, read only the symbol's line range from the receipt, or locate the definition/keyword with `search_content` (搜索内容) or the `read_file` pattern mode first and read the surrounding lines; do not re-read the whole file. A missed old_string returns the 3 nearest fragments with line ranges and per-line differences. Batch replace: file_path + edits of {old_string,new_string,replace_all?}, applied in order and written once; on_miss=stop (default) writes nothing and reports every miss, on_miss=continue writes what matched. Matching loosens through trailing whitespace, block indent, in-line whitespace and finally all whitespace; the receipt's match names the tier. Content differences still return the nearest fragments.",
-    "zh-CN": "编辑 UTF-8 文件。默认（或 command=str_replace）：file_path + old_string + new_string；old_string 须逐字唯一匹配，replace_all=true 才替换全部。command=create：file_path + file_text，仅新建。command=insert：file_path + insert_line + new_string，在指定行之后插入，行号从 1 开始，0 表示开头。command=view：file_path，可选 view_range。command=undo_edit / redo：只给 file_path，沿写入历史一次退一步或进一步，退到最早会明确报「已退回最早的可用版本」，写坏了不必手工修。也可单独用 input 应用多文件 apply_patch，无需 file_path；不要与 command 或替换字段混用。所有写入方式均支持 dry_run=true 预演且不改文件。先读取当前原文，保持缩进，不带展示行号；仅 LF/CRLF 差异按目标文件换行风格归一化。行区间替换：file_path + start_line + end_line + new_string（1-based 含两端），与 old_string 互斥。结果带回执、变更计数与本次写入的完整 unified diff，定位下一步改动无需回读整篇；只有超过病态体积安全阀的输出才折成头与准确省略量。需要 diff 未覆盖的文本时，按回执里的符号行区间做范围读取，或先用「搜索内容」(search_content) 或「读取文件」的 pattern 定位定义与关键词、再读命中周边；不要整篇重读。old_string 未匹配时返回最相似 3 个片段、行区间与逐行差异。批量替换：file_path + edits（每条形如 {old_string,new_string,replace_all?}），按顺序套用，整批只落盘一次；on_miss=stop（默认）未命中就整批不写并逐条报出，on_miss=continue 先落已命中的部分。定位按「行尾空白→块内缩进→行内空白→去掉全部空白」逐级放宽，回执 match 说明用了哪档；内容不同仍报最近片段。"
+  "tool.spec.text_edit.description": {
+    "en-US": "Edit UTF-8 files. Default (or command=str_replace): file_path + old_string + new_string; old_string must match exactly once unless replace_all=true. command=create: file_path + file_text, new files only. command=insert: file_path + insert_line + new_string; insert after a 1-based line, 0 prepends. command=view: file_path and optional view_range. command=undo_edit / redo: file_path only; walk the write history one step back or forward until it bottoms out, so a bad write needs no manual repair. Alternatively use input for a multi-file apply_patch without file_path; do not mix with command or replacement fields. Every write mode supports dry_run=true. Read the current text first, keep indentation, and strip display line numbers; only LF/CRLF differences are normalized. Range replace: file_path + start_line + end_line + new_string (1-based, inclusive), mutually exclusive with old_string. Results carry a receipt, change counts and the complete unified diff of what this call wrote, so the next edit can be located without re-reading the file; only pathological output above the safety valve is folded into a header plus exact omitted counts. If you need text the diff did not cover, read only the symbol's line range from the receipt, or locate the definition/keyword with `search_content` (搜索内容) or the `read_file` pattern mode first and read the surrounding lines; do not re-read the whole file. A missed old_string returns the 3 nearest fragments with line ranges and per-line differences. Batch replace: file_path + edits of {old_string,new_string,replace_all?}, applied in order and written once; on_miss=stop (default) writes nothing and reports every miss, on_miss=continue writes what matched. Matching loosens through trailing whitespace, block indent, in-line whitespace and finally all whitespace; the receipt's match names the tier. Content differences still return the nearest fragments. Range replace swaps the whole inclusive range for new_string (the old first line is not kept): for a large rewrite use it instead of a shell heredoc, then run the compiler as a separate command.",
+    "zh-CN": "编辑 UTF-8 文件。默认（或 command=str_replace）：file_path + old_string + new_string；old_string 须逐字唯一匹配，replace_all=true 才替换全部。command=create：file_path + file_text，仅新建。command=insert：file_path + insert_line + new_string，在指定行之后插入，行号从 1 开始，0 表示开头。command=view：file_path，可选 view_range。command=undo_edit / redo：只给 file_path，沿写入历史一次退一步或进一步，退到最早会明确报「已退回最早的可用版本」，写坏了不必手工修。也可单独用 input 应用多文件 apply_patch，无需 file_path；不要与 command 或替换字段混用。所有写入方式均支持 dry_run=true 预演且不改文件。先读取当前原文，保持缩进，不带展示行号；仅 LF/CRLF 差异按目标文件换行风格归一化。行区间替换：file_path + start_line + end_line + new_string（1-based 含两端），与 old_string 互斥。结果带回执、变更计数与本次写入的完整 unified diff，定位下一步改动无需回读整篇；只有超过病态体积安全阀的输出才折成头与准确省略量。需要 diff 未覆盖的文本时，按回执里的符号行区间做范围读取，或先用「搜索内容」(search_content) 或「读取文件」的 pattern 定位定义与关键词、再读命中周边；不要整篇重读。old_string 未匹配时返回最相似 3 个片段、行区间与逐行差异。批量替换：file_path + edits（每条形如 {old_string,new_string,replace_all?}），按顺序套用，整批只落盘一次；on_miss=stop（默认）未命中就整批不写并逐条报出，on_miss=continue 先落已命中的部分。定位按「行尾空白→块内缩进→行内空白→去掉全部空白」逐级放宽，回执 match 说明用了哪档；内容不同仍报最近片段。行区间替换用 new_string 整段取代区间内所有行（原首行不会保留）：大段重写用它，不要用 shell heredoc，随后单独跑一次编译验证。"
   },
   "tool.spec.text_edit.args.file_path": {
     "en-US": "Target file or view directory; required for replacement and all subcommands. Omit for input-mode patches; their paths are in the patch.",
@@ -2916,8 +2916,8 @@
     "zh-CN": "本地视觉媒体路径，可使用工作区相对路径或允许的绝对路径。"
   },
   "tool.spec.read_image.description": {
-    "en-US": "Read a local image, GIF, or video into the current model context; not a web image-search tool. The default view is auto-fitted for the model (long side <=2048px, ~2500 patches); heavy reduction makes small text and 1px lines unreliable. crop=x,y,w,h means left/top/width/height, not corners; for corner coordinates use crop_xyxy=x1,y1,x2,y2. Add scale to inspect original-resolution details. stats returns region numbers (mean luma, non-background/edge pixel ratios); stats_only returns numbers without pixels. Videos use frame_rate to extract frames. Images stay in context across rounds; re-read the path only when you need the pixels again (e.g. after compaction). To edit or retouch this image, pass its path in the image generation tool's input_paths array; for clarity enhancement keep the source dimensions and do not pass size.",
-    "zh-CN": "读取本地图片、GIF 或视频并送入当前模型上下文，不是联网看图工具。默认视图会自动压到适合模型的尺寸（长边 ≤2048px、约 2500 个 32px patch），大幅缩小后小字与 1px 细线不可靠。crop=x,y,w,h 是左上角+宽高，不是对角坐标；对角坐标必须显式用 crop_xyxy=x1,y1,x2,y2，二者不可同传。可配合 scale 放大原尺寸细节。stats 附带区域平均亮度、非背景/边缘像素占比等数值，stats_only 只返回数值不回图。视频用 frame_rate 抽帧。图像随上下文保留，不必每轮重读；确实需要再看像素时（如压缩清退后）再按路径重读。需要修改或修图（换背景、去杂物、降噪、增强清晰度等）时，把这张图的路径放进图像生成工具的 input_paths 数组；高清化保持原图尺寸，不要传 size。"
+    "en-US": "Read a local image, GIF, or video into the current model context; not a web image-search tool. The default view is auto-fitted for the model (long side <=2048px, ~2500 patches); heavy reduction makes small text and 1px lines unreliable. crop=x,y,w,h means left/top/width/height, not corners; for corner coordinates use crop_xyxy=x1,y1,x2,y2. Add scale to inspect original-resolution details. stats returns region numbers (mean luma, non-background/edge pixel ratios); stats_only returns numbers without pixels. Videos use frame_rate to extract frames. Images stay in context across rounds; re-read the path only when you need the pixels again (e.g. after compaction). To edit or retouch this image, pass its path in the image generation tool's input_paths array; for clarity enhancement keep the source dimensions and do not pass size. Animated GIFs: reading without frame parameters returns a labelled contact sheet instead of only the first frame; frame=N returns one exact 0-based frame, frames=[...] up to 8, frame_start=N pages a long animation. For before/after checks pass compare_with, plus compare_mode=diff for SSIM metrics and a red change heatmap.",
+    "zh-CN": "读取本地图片、GIF 或视频并送入当前模型上下文，不是联网看图工具。默认视图会自动压到适合模型的尺寸（长边 ≤2048px、约 2500 个 32px patch），大幅缩小后小字与 1px 细线不可靠。crop=x,y,w,h 是左上角+宽高，不是对角坐标；对角坐标必须显式用 crop_xyxy=x1,y1,x2,y2，二者不可同传。可配合 scale 放大原尺寸细节。stats 附带区域平均亮度、非背景/边缘像素占比等数值，stats_only 只返回数值不回图。视频用 frame_rate 抽帧。图像随上下文保留，不必每轮重读；确实需要再看像素时（如压缩清退后）再按路径重读。需要修改或修图（换背景、去杂物、降噪、增强清晰度等）时，把这张图的路径放进图像生成工具的 input_paths 数组；高清化保持原图尺寸，不要传 size。动图：不带取帧参数时返回带帧号的联系表，而不是只有首帧；frame=N 取某一精确帧，frames=[...] 一次最多 8 帧，frame_start=N 分页看长动画。判断两版差异时传 compare_with，再加 compare_mode=diff 可得到 SSIM 指标与红色变化热力图。"
   },
   "tool.spec.read_image.args.crop": {
     "en-US": "Optional still-image crop in source pixels: \"x,y,w,h\" = left, top, WIDTH, HEIGHT (not bottom-right coordinates). Applied before scale; stats are computed on this region. Mutually exclusive with crop_xyxy.",
@@ -2940,20 +2940,20 @@
     "zh-CN": "可选，默认 false：只返回区域数值，不内联图片。适合对大量帧做纯数值检查（如安全区巡检），不消耗视觉额度。"
   },
   "tool.spec.read_image.args.compare_with": {
-    "en-US": "Optional path of a second still image. Returns one side-by-side image (left = path, right = compare_with) at full model detail, for before/after or A/B comparison. Cannot be combined with crop/scale/stats.",
-    "zh-CN": "可选，第二张静态图片的路径。返回一张并排对比图（左=path，右=compare_with），两半仍保持入模细节级别，适合前后对比或 A/B 对照。不能与 crop/scale/stats 同时使用。"
+    "en-US": "Optional path of a second still image. Returns one side-by-side image (left = path, right = compare_with) at full model detail, for before/after or A/B comparison. Cannot be combined with crop/scale/stats. Add compare_mode=diff for SSIM plus a red diff heatmap, and compare_frame=N when this path is an animated GIF.",
+    "zh-CN": "可选，第二张静态图片的路径。返回一张并排对比图（左=path，右=compare_with），两半仍保持入模细节级别，适合前后对比或 A/B 对照。不能与 crop/scale/stats 同时使用。需要 SSIM 与红色差异热力图时加 compare_mode=diff；该路径是动图时可用 compare_frame=N 指定帧。"
   },
   "tool.spec.read_image.args.frame_rate": {
     "en-US": "Optional frame extraction rate (FPS) for video files, and for animated GIFs (converted to a frame step). Pair with sheet=true for a compact overview.",
     "zh-CN": "可选，视频文件的抽帧频率（FPS），也适用于动图 GIF（会换算成抽帧间隔）。与 sheet=true 搭配可一次看完整段动画。"
   },
   "tool.spec.read_image.args.frame_step": {
-    "en-US": "Optional frame step for GIF files. 0 means first frame only; 2 means frames 1,3,5... Ignored when sheet=true (sheet picks an even sampling automatically unless this is set).",
-    "zh-CN": "可选，GIF 文件的间隔取帧参数。0 表示仅首帧；2 表示取第 1、3、5... 帧。sheet=true 时若不填则自动均匀抽样。"
+    "en-US": "Optional frame step for GIF files. 0 means first frame only; 2 means frames 1,3,5... Ignored when sheet=true (sheet picks an even sampling automatically unless this is set). For one exact frame use frame=N instead.",
+    "zh-CN": "可选，GIF 文件的间隔取帧参数。0 表示仅首帧；2 表示取第 1、3、5... 帧。sheet=true 时若不填则自动均匀抽样。需要精确某一帧请用 frame=N。"
   },
   "tool.spec.read_image.args.sheet": {
-    "en-US": "Optional for animated GIF and video: return one contact sheet sampling up to 16 frames (max 4 columns) instead of a single frame or a long frame list. The result's sheet.frame_indices maps each cell to its sampled frame; use it to inspect motion, pacing, and loop seams.",
-    "zh-CN": "可选，适用于动图 GIF 与视频：返回一张联系表，均匀抽取最多 16 帧（最多 4 列），而不是只回首帧或散落一串帧图。结果的 sheet.frame_indices 给出每格对应的采样帧序号，用于检查运动、节奏和循环接缝。"
+    "en-US": "Optional for animated GIF and video: return one contact sheet sampling up to 16 frames (max 4 columns) instead of a single frame or a long frame list. The result's sheet.frame_indices maps each cell to its sampled frame; use it to inspect motion, pacing, and loop seams. Cells follow the real frame aspect ratio (16:9 stays 16:9, nothing is cropped), every cell is stamped with its 0-based frame index, and frame_start=N pages through later parts.",
+    "zh-CN": "可选，适用于动图 GIF 与视频：返回一张联系表，均匀抽取最多 16 帧（最多 4 列），而不是只回首帧或散落一串帧图。结果的 sheet.frame_indices 给出每格对应的采样帧序号，用于检查运动、节奏和循环接缝。格子宽高比跟随真实帧比例（16:9 仍是 16:9，不裁画面），每格标注 0-based 帧号，翻页看后半段用 frame_start=N。"
   },
   "tool.spec.generate_speech.description": {
     "en-US": "Generate speech with the configured TTS model and save the audio into the workspace.",
@@ -3789,16 +3789,84 @@
   "tool.exec.reused_running.en-US": "The exact same command is already running in this thread and its session was reused (reused=true). Do not start another copy; wait on it with command_session and wait_for=exit.",
   "tool.spec.exec.args.yield_time_ms.zh-CN": "首次等待输出的时间（毫秒），默认 10000，最大 30000；命令提前结束会立即返回。仍在运行时结果带 command_session_id 与当前 seq；需要等它跑完就用命令会话的 wait_for=exit（yield_time_ms 可到 300000）。该参数只控制等待窗口，不会到点杀死命令。",
   "tool.spec.exec.args.yield_time_ms.en-US": "Initial wait for output in milliseconds (default 10000, max 30000). Commands that finish sooner return immediately. If it is still running, the result carries command_session_id and the current seq; to wait for completion use command_session with wait_for=exit (yield_time_ms up to 300000). This is a wait window, not a kill timeout.",
-    "tool.spec.text_edit.args.edits": {
+  "tool.spec.text_edit.args.edits": {
     "en-US": "Ordered replace steps written once as a batch; mutually exclusive with old_string/start_line/command/input.",
     "zh-CN": "按顺序套用的批量替换步骤，整批只落盘一次；与 old_string/start_line/command/input 互斥。"
   },
-    "tool.spec.text_edit.args.on_miss": {
+  "tool.spec.text_edit.args.on_miss": {
     "en-US": "Only with edits: stop (default) writes nothing, continue writes matched steps.",
     "zh-CN": "仅用于 edits：stop（默认）整批不写，continue 先落已命中的部分。"
   },
   "tool.spec.text_edit.args.anchor": {
     "en-US": "Optional with start_line/end_line: the current first line of that range (or any unique snippet inside it). The range is shifted to wherever it actually is, and range_shift reports the offset; missing or ambiguous anchors are rejected instead of guessed. Requires new_string and no old_string.",
     "zh-CN": "仅与 start_line/end_line 搭配：填该区间第一行的当前原文（或区间内唯一的一段）。命中后就按实际行号整体平移区间，并用 range_shift 回报挪了几行；锚点找不到或命中多处直接报错，不猜位置。不能与 old_string 同用。"
+  },
+  "tool.read_image.frame_exclusive": {
+    "en-US": "frame and frames are mutually exclusive: frame=N for one exact frame, frames=[a,b,c] for several (0-based).",
+    "zh-CN": "frame 与 frames 不能同时使用：取单帧用 frame=N，取多帧用 frames=[a,b,c]（均 0-based）。"
+  },
+  "tool.read_image.frame_sheet_exclusive": {
+    "en-US": "frame/frames cannot be combined with sheet: sheet returns a labelled overview, frame=N returns one exact frame. Call them separately.",
+    "zh-CN": "frame/frames 不能与 sheet 同用：sheet 返回带帧号的概览，frame=N 返回精确单帧，请分两步调用。"
+  },
+  "tool.read_image.frame_requires_gif": {
+    "en-US": "frame indexing is only supported for animated GIFs (this file is {media_kind}). Use frame_rate for video, or read the image directly for stills.",
+    "zh-CN": "按帧号取帧仅支持动图 GIF（当前文件类型为 {media_kind}）。视频请用 frame_rate，静态图片直接读图即可。"
+  },
+  "tool.read_image.frame_start_requires_gif": {
+    "en-US": "frame_start is only supported for animated GIFs (this file is {media_kind}).",
+    "zh-CN": "frame_start 仅支持动图 GIF（当前文件类型为 {media_kind}）。"
+  },
+  "tool.read_image.compare_frame_requires_gif": {
+    "en-US": "compare_frame requires compare_with to point at an animated GIF (it is {media_kind}).",
+    "zh-CN": "compare_frame 要求 compare_with 指向动图 GIF（当前为 {media_kind}）。"
+  },
+  "tool.read_image.frame_out_of_range": {
+    "en-US": "frame {frame} is out of range: this GIF has {total} frames (valid 0-based indices {range}).",
+    "zh-CN": "帧号 {frame} 超出范围：该动图共 {total} 帧（合法 0-based 帧号 {range}）。"
+  },
+  "tool.read_image.frame_list_empty": {
+    "en-US": "frames must contain at least one 0-based frame index.",
+    "zh-CN": "frames 至少需要一个 0-based 帧号。"
+  },
+  "tool.read_image.frame_too_many": {
+    "en-US": "Too many frames requested: at most {max} per call. Use frame_step or sheet for a wide overview.",
+    "zh-CN": "请求的帧过多：单次最多 {max} 帧。需要整体概览请用 frame_step 或 sheet。"
+  },
+  "tool.read_image.frames_view_exclusive": {
+    "en-US": "frames=[...] returns whole frames and cannot be combined with crop/scale/stats; take one frame with frame=N and crop it.",
+    "zh-CN": "frames=[...] 返回整帧，不能与 crop/scale/stats 同用；先用 frame=N 取单帧再裁切。"
+  },
+  "tool.read_image.frames_compare_exclusive": {
+    "en-US": "frames=[...] cannot be combined with compare_with; pick one frame with frame=N and compare that.",
+    "zh-CN": "frames=[...] 不能与 compare_with 同用；请用 frame=N 取单帧后再对比。"
+  },
+  "tool.read_image.compare_mode_invalid": {
+    "en-US": "Unknown compare_mode \"{value}\": use side_by_side (default) or diff (three-panel diff image with SSIM metrics).",
+    "zh-CN": "无法识别的 compare_mode \"{value}\"：请用 side_by_side（默认）或 diff（三联差异图 + SSIM 指标）。"
+  },
+  "tool.spec.read_image.args.frame": {
+    "en-US": "0-based frame index of an animated GIF (matches the numbers stamped on contact-sheet cells). Returns exactly that frame at full detail; can be combined with crop/scale/stats/compare_with.",
+    "zh-CN": "动图 GIF 的 0-based 帧号（与联系表每格标注的帧号一致）。返回该帧的完整细节，可与 crop/scale/stats/compare_with 组合使用。"
+  },
+  "tool.spec.read_image.args.frames": {
+    "en-US": "Several 0-based GIF frame indices in one call (max 8). Returns one PNG per frame with its index and timestamp; cannot be combined with sheet/crop/scale/stats/compare_with.",
+    "zh-CN": "一次取多个 0-based GIF 帧号（最多 8 个）。每帧返回一张 PNG 并附帧号与时间；不能与 sheet/crop/scale/stats/compare_with 同用。"
+  },
+  "tool.spec.read_image.args.frame_start": {
+    "en-US": "With sheet=true on an animated GIF: start sampling at this 0-based frame, to page through later parts of a long animation. Out-of-range values report the valid range.",
+    "zh-CN": "动图 sheet=true 时的抽样起点（0-based 帧号），用于分页查看长动画的后半段。越界会返回合法范围。"
+  },
+  "tool.spec.read_image.args.compare_mode": {
+    "en-US": "How compare_with is rendered. side_by_side (default) = one image, left/right at full model detail. diff = three panels (left, red diff heatmap, right) plus SSIM, mean |delta| and changed-pixel ratio; right is resized to the left size when dimensions differ.",
+    "zh-CN": "compare_with 的呈现方式。side_by_side（默认）= 一张左右并排图，两半保持入模细节；diff = 三联图（左图、红色差异热力图、右图）并给出 SSIM、平均绝对差与被改动像素占比；尺寸不同时右图缩放到左图尺寸。"
+  },
+  "tool.spec.read_image.args.compare_frame": {
+    "en-US": "0-based frame index to take from compare_with when it is an animated GIF, so you can compare frame against frame without extracting files yourself.",
+    "zh-CN": "当 compare_with 指向动图时，取该图的 0-based 帧号参与对比；可直接帧对帧比较，不必自己抽帧。"
+  },
+  "tool.read_image.compare_media_only": {
+    "en-US": "compare_with works on still images and single GIF frames. Pass frame=N to compare one GIF frame (use compare_frame=N for a frame of compare_with).",
+    "zh-CN": "compare_with 仅支持静态图片与单帧 GIF。对比 GIF 请先用 frame=N 取帧（compare_with 侧用 compare_frame=N）。"
   }
 }

@@ -722,11 +722,29 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 super::schema::string("compare_with")
                     .desc(t("tool.spec.read_image.args.compare_with"))
                     .optional(),
+                super::schema::string("compare_mode")
+                    .desc(t("tool.spec.read_image.args.compare_mode"))
+                    .enums(vec!["side_by_side", "diff"])
+                    .optional(),
+                super::schema::integer("compare_frame")
+                    .desc(t("tool.spec.read_image.args.compare_frame"))
+                    .optional(),
                 super::schema::number("frame_rate")
                     .desc(t("tool.spec.read_image.args.frame_rate"))
                     .optional(),
                 super::schema::integer("frame_step")
                     .desc(t("tool.spec.read_image.args.frame_step"))
+                    .optional(),
+                super::schema::integer("frame")
+                    .desc(t("tool.spec.read_image.args.frame"))
+                    .optional(),
+                super::schema::array("frames")
+                    .desc(t("tool.spec.read_image.args.frames"))
+                    .items(super::schema::integer("_"))
+                    .max_items(8)
+                    .optional(),
+                super::schema::integer("frame_start")
+                    .desc(t("tool.spec.read_image.args.frame_start"))
                     .optional(),
                 super::schema::boolean("sheet")
                     .desc(t("tool.spec.read_image.args.sheet"))
@@ -1761,7 +1779,11 @@ fn current_tool_spec(
         .iter()
         .find(|base| base.enabled && base.name.trim() == tool_name)
     {
-        return Some(knowledge_tool_spec(base, tool_name, i18n::prompt_language()));
+        return Some(knowledge_tool_spec(
+            base,
+            tool_name,
+            i18n::prompt_language(),
+        ));
     }
 
     let canonical = resolve_tool_name(tool_name);
