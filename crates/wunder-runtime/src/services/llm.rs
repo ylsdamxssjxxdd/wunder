@@ -3353,6 +3353,31 @@ mod tests {
     }
 
     #[test]
+    fn merge_stream_delta_field_keeps_brace_only_fragments() {
+        // 参数正文永远以左花括号开头，所以“单独一个左花括号”的分片恰好是
+        // 累积文本的前缀。前缀去重若把它当成过期快照丢掉，落盘就会静默少一个。
+        let brace = char::from(123).to_string();
+        let mut merged = String::new();
+        let fragments = [
+            brace.clone(),
+            "\"content\": \"a ".to_string(),
+            brace.clone(),
+            ":.1f}".to_string(),
+            brace.clone(),
+            "}".to_string(),
+        ];
+        for fragment in &fragments {
+            merge_stream_delta_field(&mut merged, fragment);
+        }
+
+        let mut expected = String::new();
+        for fragment in &fragments {
+            expected.push_str(fragment);
+        }
+        assert_eq!(merged, expected, "分片被当成重复快照丢弃了");
+    }
+
+    #[test]
     fn merge_stream_delta_field_preserves_whitespace_only_fragment() {
         let mut merged = String::new();
         for fragment in ["which", " ", "python3"] {
@@ -3363,6 +3388,43 @@ mod tests {
     }
 
     #[test]
+    fn update_stream_tool_calls_keeps_a_lone_brace_delta() {
+        // 真实故障形态：提供方把单独一个左花括号作为一个 delta 分片发来。
+        // 参数正文本身就以左花括号开头，前缀去重会把它当重复丢掉。
+        let brace = char::from(123).to_string();
+        let mut head = String::from(brace.as_str());
+        head.push_str("\"content\": \"a ");
+        let tail = String::from(":.1f}\"}");
+
+        let mut expected = String::new();
+        expected.push_str(&head);
+        expected.push_str(&brace);
+        expected.push_str(&tail);
+
+        let mut acc = Vec::new();
+        for fragment in [head.as_str(), brace.as_str(), tail.as_str()] {
+            update_stream_tool_calls_delta(
+                &mut acc,
+                &json!({
+                    "tool_calls": [{
+                        "index": 0,
+                        "function": {
+                            "name": "write_file",
+                            "arguments": fragment
+                        }
+                    }]
+                }),
+            );
+        }
+
+        let finalized = finalize_stream_tool_calls(&acc).expect("tool calls should exist");
+        assert_eq!(
+            finalized[0]["function"]["arguments"],
+            expected,
+            "流式分片里的左花括号被吞掉了"
+        );
+    }
+
     fn update_stream_tool_calls_preserves_whitespace_in_arguments() {
         let mut acc = Vec::new();
         update_stream_tool_calls_delta(

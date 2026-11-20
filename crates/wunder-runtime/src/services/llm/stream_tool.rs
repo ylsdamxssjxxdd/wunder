@@ -383,6 +383,13 @@ fn apply_stream_arguments_field(
     }
 }
 
+/// 「片段是累积内容的更长前缀」说明提供方在 delta 通道里塞了累积快照，
+/// 直接替换即可。反过来的「片段是当前内容的前缀」只可能是更早的过期快照，
+/// 但参数正文永远以左花括号开头——单独一个左花括号的合法分片也是前缀，
+/// 一拍脑袋去重就会静默吞掉它（写文件少一个花括号的根因）。
+/// 因此反向去重只对够长的整段快照生效，短分片一律按正常内容追加。
+const STALE_SNAPSHOT_MIN_CHARS: usize = 64;
+
 pub(super) fn merge_stream_delta_field(target: &mut String, fragment: &str) {
     if fragment.is_empty() {
         return;
@@ -391,14 +398,11 @@ pub(super) fn merge_stream_delta_field(target: &mut String, fragment: &str) {
         target.push_str(fragment);
         return;
     }
-    if target == fragment {
-        return;
-    }
     if fragment.starts_with(target.as_str()) {
         *target = fragment.to_string();
         return;
     }
-    if target.starts_with(fragment) {
+    if fragment.chars().count() >= STALE_SNAPSHOT_MIN_CHARS && target.starts_with(fragment) {
         return;
     }
     target.push_str(fragment);
