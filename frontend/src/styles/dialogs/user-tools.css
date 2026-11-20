@@ -1965,6 +1965,47 @@
   animation: knowledge-spin 0.9s linear infinite;
 }
 
+/* 新增弹窗的两种入口：逐项填写 / 粘贴配置（与桌面版一致）。 */
+.user-tools-dialog .mcp-mode-switch {
+  display: flex;
+  gap: 6px;
+}
+
+.user-tools-dialog .mcp-mode-btn {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--user-tools-border);
+  border-radius: 8px;
+  background: var(--user-tools-surface);
+  color: var(--user-tools-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.user-tools-dialog .mcp-mode-btn:hover:not(:disabled) {
+  border-color: var(--user-tools-accent);
+  color: var(--user-tools-text);
+}
+
+.user-tools-dialog .mcp-mode-btn.is-active {
+  border-color: var(--user-tools-accent);
+  background: var(--ui-accent-soft);
+  color: var(--user-tools-accent);
+}
+
+.user-tools-dialog .mcp-mode-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.user-tools-dialog .mcp-import-hint {
+  color: var(--user-tools-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .user-tools-dialog .mcp-import-textarea .el-textarea__inner {
   min-height: 240px;
   resize: vertical;

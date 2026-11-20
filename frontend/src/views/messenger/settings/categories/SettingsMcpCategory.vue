@@ -15,7 +15,7 @@
 import type { MessengerControllerContext } from '@/views/messenger/controller/messengerControllerContext';
 import { defineRecoverableAsyncComponent } from '@/utils/asyncComponentRecovery';
 
-/** 设置分类「MCP 服务」：只承载 MCP 面板，不再与技能/知识库共用选项卡。 */
+/** 设置分类「MCP」：只承载 MCP 面板，不再与技能/知识库共用选项卡。 */
 const UserMcpPane = defineRecoverableAsyncComponent(
   () => import('@/components/user-tools/UserMcpPane.vue')
 );

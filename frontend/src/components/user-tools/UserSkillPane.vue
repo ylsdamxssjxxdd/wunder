@@ -11,10 +11,19 @@
 
     <div class="mst-toolbar">
       <div class="mst-toolbar-title">
-        <span>{{ t('userTools.skills.list.title') }}</span>
+        <span>{{ t('userTools.skills.title') }}</span>
         <span class="mst-toolbar-count">{{ skills.length }}</span>
       </div>
       <div class="mst-toolbar-actions">
+        <button
+          class="mst-btn mst-btn--icon"
+          type="button"
+          :title="t('common.refresh')"
+          :aria-label="t('common.refresh')"
+          @click="reloadSkills"
+        >
+          <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
+        </button>
         <button
           class="mst-btn mst-btn--icon"
           type="button"
@@ -33,15 +42,6 @@
           @click="exportSkill"
         >
           <i class="fa-solid fa-download" aria-hidden="true"></i>
-        </button>
-        <button
-          class="mst-btn mst-btn--icon"
-          type="button"
-          :title="t('common.refresh')"
-          :aria-label="t('common.refresh')"
-          @click="reloadSkills"
-        >
-          <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
         </button>
       </div>
     </div>

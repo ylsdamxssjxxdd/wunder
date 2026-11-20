@@ -17,15 +17,6 @@
         >
           <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
         </button>
-        <button
-          class="mst-btn mst-btn--icon"
-          type="button"
-          :title="t('userTools.mcp.action.import')"
-          :aria-label="t('userTools.mcp.action.import')"
-          @click="openImportModal"
-        >
-          <i class="fa-solid fa-file-import" aria-hidden="true"></i>
-        </button>
         <button class="mst-btn mst-btn--primary" type="button" @click="addServer">
           <i class="fa-solid fa-plus" aria-hidden="true"></i>
           <span>{{ t('userTools.mcp.action.add') }}</span>
@@ -161,99 +152,99 @@
         </div>
       </template>
       <div v-if="activeServer" class="user-tools-form">
-        <div class="form-row">
-          <label>{{ t('userTools.mcp.form.name') }}</label>
+        <!-- 新增时两种入口：逐项填写，或直接粘贴配置；编辑只走字段。 -->
+        <div v-if="mcpModalAdding" class="mcp-mode-switch">
+          <button
+            class="mcp-mode-btn"
+            :class="{ 'is-active': mcpModalMode === 'fields' }"
+            type="button"
+            :disabled="saving"
+            @click="setMcpModalMode('fields')"
+          >
+            {{ t('userTools.mcp.import.mode.fields') }}
+          </button>
+          <button
+            class="mcp-mode-btn"
+            :class="{ 'is-active': mcpModalMode === 'paste' }"
+            type="button"
+            :disabled="saving"
+            @click="setMcpModalMode('paste')"
+          >
+            {{ t('userTools.mcp.import.mode.paste') }}
+          </button>
+        </div>
+        <div v-if="mcpModalMode === 'paste'" class="form-row">
+          <label>{{ t('userTools.mcp.import.paste') }}</label>
           <el-input
-            v-model="activeServer.name"
-            :placeholder="t('userTools.mcp.form.placeholder.name')"
-            @input="scheduleSave"
-          />
-        </div>
-        <div class="form-row">
-          <label>{{ t('userTools.mcp.form.displayName') }}</label>
-          <el-input
-            v-model="activeServer.display_name"
-            :placeholder="t('userTools.mcp.form.placeholder.displayName')"
-            @input="scheduleSave"
-          />
-        </div>
-        <div class="form-row">
-          <label>{{ t('userTools.mcp.form.endpoint') }}</label>
-          <el-input v-model="activeServer.endpoint" placeholder="http://127.0.0.1:9000/mcp" @input="scheduleSave" />
-        </div>
-        <div class="form-row">
-          <label>{{ t('userTools.mcp.form.transport') }}</label>
-          <el-select v-model="activeServer.transport" placeholder="auto" @change="scheduleSave">
-            <el-option label="auto" value="" />
-            <el-option label="sse" value="sse" />
-            <el-option label="http" value="http" />
-            <el-option label="streamable-http" value="streamable-http" />
-          </el-select>
-        </div>
-        <div class="form-row">
-          <label>{{ t('userTools.mcp.form.description') }}</label>
-          <el-input
-            v-model="activeServer.description"
+            v-model="importContent"
+            class="mcp-import-textarea"
             type="textarea"
-            :placeholder="t('userTools.mcp.form.placeholder.description')"
-            @input="scheduleSave"
+            :rows="12"
+            :placeholder="t('userTools.mcp.import.placeholder')"
           />
+          <div class="mcp-import-hint">{{ t('userTools.mcp.import.hint') }}</div>
+          <div v-if="importError" class="error-text">{{ importError }}</div>
         </div>
-        <div class="form-row">
-          <label>{{ t('userTools.mcp.form.headers') }}</label>
-          <el-input
-            v-model="headersText"
-            type="textarea"
-            placeholder='{"Authorization":"Bearer ..."}'
-            @input="handleHeadersInput"
-          />
-          <div class="error-text">{{ headersError }}</div>
-        </div>
-        <div class="form-row">
-          <label>{{ t('userTools.mcp.form.structPreview') }}</label>
-          <el-input type="textarea" :model-value="structPreview" readonly />
-        </div>
+        <template v-else>
+          <div class="form-row">
+            <label>{{ t('userTools.mcp.form.name') }}</label>
+            <el-input
+              v-model="activeServer.name"
+              :placeholder="t('userTools.mcp.form.placeholder.name')"
+              @input="scheduleSave"
+            />
+          </div>
+          <div class="form-row">
+            <label>{{ t('userTools.mcp.form.displayName') }}</label>
+            <el-input
+              v-model="activeServer.display_name"
+              :placeholder="t('userTools.mcp.form.placeholder.displayName')"
+              @input="scheduleSave"
+            />
+          </div>
+          <div class="form-row">
+            <label>{{ t('userTools.mcp.form.endpoint') }}</label>
+            <el-input v-model="activeServer.endpoint" placeholder="http://127.0.0.1:9000/mcp" @input="scheduleSave" />
+          </div>
+          <div class="form-row">
+            <label>{{ t('userTools.mcp.form.transport') }}</label>
+            <el-select v-model="activeServer.transport" placeholder="auto" @change="scheduleSave">
+              <el-option label="auto" value="" />
+              <el-option label="sse" value="sse" />
+              <el-option label="http" value="http" />
+              <el-option label="streamable-http" value="streamable-http" />
+            </el-select>
+          </div>
+          <div class="form-row">
+            <label>{{ t('userTools.mcp.form.description') }}</label>
+            <el-input
+              v-model="activeServer.description"
+              type="textarea"
+              :placeholder="t('userTools.mcp.form.placeholder.description')"
+              @input="scheduleSave"
+            />
+          </div>
+          <div class="form-row">
+            <label>{{ t('userTools.mcp.form.headers') }}</label>
+            <el-input
+              v-model="headersText"
+              type="textarea"
+              placeholder='{"Authorization":"Bearer ..."}'
+              @input="handleHeadersInput"
+            />
+            <div class="error-text">{{ headersError }}</div>
+          </div>
+          <div class="form-row">
+            <label>{{ t('userTools.mcp.form.structPreview') }}</label>
+            <el-input type="textarea" :model-value="structPreview" readonly />
+          </div>
+        </template>
       </div>
       <div v-else class="empty-text">{{ t('userTools.mcp.modal.empty') }}</div>
       <template #footer>
         <el-button class="user-tools-footer-btn" @click="closeMcpModal">{{ t('common.cancel') }}</el-button>
         <el-button class="user-tools-footer-btn primary" @click="applyMcpModal">
-          {{ t('common.save') }}
-        </el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog
-      v-model="importModalVisible"
-      class="user-tools-dialog user-tools-subdialog"
-      width="min(640px, calc(100vw - 32px))"
-      top="4vh"
-      :show-close="false"
-      :close-on-click-modal="false"
-      append-to-body
-    >
-      <template #header>
-        <div class="user-tools-header">
-          <div class="user-tools-title">{{ t('userTools.mcp.import.title') }}</div>
-          <button class="icon-btn" type="button" @click="closeImportModal">&times;</button>
-        </div>
-      </template>
-      <div class="user-tools-form">
-        <div class="form-row">
-          <label>{{ t('userTools.mcp.import.structLabel') }}</label>
-          <el-input
-            v-model="importContent"
-            class="mcp-import-textarea"
-            type="textarea"
-            :rows="10"
-            :placeholder="t('userTools.mcp.import.placeholder')"
-          />
-        </div>
-      </div>
-      <template #footer>
-        <el-button class="user-tools-footer-btn" @click="closeImportModal">{{ t('common.cancel') }}</el-button>
-        <el-button class="user-tools-footer-btn primary" @click="applyImportModal">
-          {{ t('userTools.mcp.action.import') }}
+          {{ isPasteMode ? t('userTools.mcp.import.parse') : t('common.save') }}
         </el-button>
       </template>
     </el-dialog>
@@ -332,14 +323,19 @@ const refreshingAll = ref(false);
 const pendingNewIndex = ref(-1);
 
 const mcpModalVisible = ref(false);
-const importModalVisible = ref(false);
+/** 新增弹窗内的默认入口：逐项填写；粘贴配置是另一种入口。 */
+const mcpModalMode = ref<'fields' | 'paste'>('fields');
 const toolDetailVisible = ref(false);
 const mcpModalTitle = ref(t('userTools.mcp.modal.editTitle'));
 
 const headersText = ref('');
 const headersError = ref('');
 const importContent = ref('');
+const importError = ref('');
 const toolDetail = ref(null);
+
+const mcpModalAdding = computed(() => pendingNewIndex.value >= 0);
+const isPasteMode = computed(() => mcpModalAdding.value && mcpModalMode.value === 'paste');
 
 const activeServer = computed(() => servers.value[selectedIndex.value] || null);
 const activeTools = computed(() => toolsByIndex.value[selectedIndex.value] || []);
@@ -654,6 +650,7 @@ const handleHeadersInput = () => {
 const openEditModal = () => {
   if (!activeServer.value) return;
   mcpModalTitle.value = t('userTools.mcp.modal.editTitle');
+  mcpModalMode.value = 'fields';
   headersText.value = activeServer.value.headers && Object.keys(activeServer.value.headers).length
     ? JSON.stringify(activeServer.value.headers, null, 2)
     : '';
@@ -661,15 +658,19 @@ const openEditModal = () => {
   mcpModalVisible.value = true;
 };
 
-const closeMcpModal = () => {
-  mcpModalVisible.value = false;
+const setMcpModalMode = (mode: 'fields' | 'paste') => {
+  mcpModalMode.value = mode;
+  importError.value = '';
+};
+
+/** 取消新增时回收空草稿行：填过关键字段的行留给用户继续编辑。 */
+const discardPendingDraft = () => {
   const index = pendingNewIndex.value;
   pendingNewIndex.value = -1;
   if (index < 0) {
     return;
   }
   const draft = servers.value[index];
-  // 只丢弃没填任何关键字段的新增草稿，填过的行保留给用户继续编辑。
   if (!draft || String(draft.name || '').trim() || String(draft.endpoint || '').trim()) {
     return;
   }
@@ -682,7 +683,17 @@ const closeMcpModal = () => {
   selectedIndex.value = servers.value.length ? Math.min(index, servers.value.length - 1) : -1;
 };
 
+const closeMcpModal = () => {
+  mcpModalVisible.value = false;
+  discardPendingDraft();
+};
+
 const applyMcpModal = async () => {
+  // 粘贴模式与逐项填写共用同一个弹窗，只是入口不同。
+  if (isPasteMode.value) {
+    await applyPasteImport();
+    return;
+  }
   if (headersError.value) {
     ElMessage.warning(t('userTools.mcp.headers.invalid'));
     return;
@@ -693,54 +704,66 @@ const applyMcpModal = async () => {
   ElMessage.success(t('userTools.mcp.saved'));
 };
 
-const openImportModal = () => {
-  importContent.value = '';
-  importModalVisible.value = true;
+const collectImportedServers = (parsed) => {
+  const imported = [];
+  const pushEntry = (serverId, config) => {
+    const server = buildUserMcpServerFromConfig(serverId, config);
+    if (server) {
+      imported.push(server);
+    }
+  };
+  if (Array.isArray(parsed)) {
+    parsed.forEach((entry) => {
+      if (isPlainObject(entry)) {
+        pushEntry(entry.id || entry.name || '', entry);
+      }
+    });
+    return imported;
+  }
+  if (!isPlainObject(parsed)) {
+    return imported;
+  }
+  if (isPlainObject(parsed.mcpServers)) {
+    Object.entries(parsed.mcpServers).forEach(([serverId, config]) => pushEntry(serverId, config));
+    return imported;
+  }
+  pushEntry(parsed.id || parsed.name || '', parsed);
+  return imported;
 };
 
-const closeImportModal = () => {
-  importModalVisible.value = false;
-};
-
-const applyImportModal = async () => {
+/**
+ * 粘贴导入：与逐项填写共用新增弹窗。解析失败只把错误写回弹窗，
+ * 粘贴内容不丢；成功后不保留空草稿行。
+ */
+const applyPasteImport = async () => {
   const raw = (importContent.value || '').trim();
+  importError.value = '';
   if (!raw) {
-    ElMessage.warning(t('userTools.mcp.struct.required'));
+    importError.value = t('userTools.mcp.struct.required');
     return;
   }
   let parsed;
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    ElMessage.error(t('userTools.mcp.struct.parseFailed'));
+    importError.value = t('userTools.mcp.struct.parseFailed');
     return;
   }
-  const imported = [];
-  if (parsed.mcpServers && isPlainObject(parsed.mcpServers)) {
-    Object.entries(parsed.mcpServers).forEach(([serverId, config]) => {
-      const server = buildUserMcpServerFromConfig(serverId, config);
-      if (server) {
-        imported.push(server);
-      }
-    });
-  } else {
-    const serverId = parsed.id || parsed.name || '';
-    const server = buildUserMcpServerFromConfig(serverId, parsed);
-    if (server) {
-      imported.push(server);
-    }
-  }
+  const imported = collectImportedServers(parsed);
   if (!imported.length) {
-    ElMessage.warning(t('userTools.mcp.struct.noValid'));
+    importError.value = t('userTools.mcp.struct.noValid');
     return;
   }
+  discardPendingDraft();
   let lastIndex = selectedIndex.value;
   imported.forEach((server) => {
     lastIndex = upsertUserMcpServer(server);
   });
   selectedIndex.value = lastIndex;
   await saveServers();
-  closeImportModal();
+  mcpModalVisible.value = false;
+  pendingNewIndex.value = -1;
+  importContent.value = '';
   ElMessage.success(t('userTools.mcp.import.success'));
 };
 
@@ -761,6 +784,9 @@ const addServer = () => {
   selectedIndex.value = servers.value.length - 1;
   pendingNewIndex.value = selectedIndex.value;
   mcpModalTitle.value = t('userTools.mcp.modal.addTitle');
+  mcpModalMode.value = 'fields';
+  importContent.value = '';
+  importError.value = '';
   headersText.value = '';
   headersError.value = '';
   mcpModalVisible.value = true;
