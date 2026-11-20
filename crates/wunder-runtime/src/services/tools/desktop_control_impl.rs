@@ -485,7 +485,7 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
     {
         return Err(anyhow!(format!(
             "{} (normalized {norm_width}x{norm_height})",
-            crate::i18n::t("tool.desktop_control.bbox_out_of_range")
+            crate::i18n::prompt_t("tool.desktop_control.bbox_out_of_range")
         )));
     }
     if payload
@@ -495,7 +495,7 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
     {
         return Err(anyhow!(format!(
             "{} (normalized {norm_width}x{norm_height})",
-            crate::i18n::t("tool.desktop_control.bbox_out_of_range")
+            crate::i18n::prompt_t("tool.desktop_control.bbox_out_of_range")
         )));
     }
     let screen_max_x = (screen_width - 1).max(0);
@@ -561,13 +561,13 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.key_required")))?;
+                .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.key_required")))?;
             send_key_sequence(key)?;
         }
         DesktopAction::TypeText => {
             let text = payload.text.as_deref().unwrap_or("").to_string();
             if text.trim().is_empty() {
-                return Err(anyhow!(crate::i18n::t(
+                return Err(anyhow!(crate::i18n::prompt_t(
                     "tool.desktop_control.text_required"
                 )));
             }
@@ -594,7 +594,7 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
         DesktopAction::DragDrop => {
             let to_bbox = payload
                 .to_bbox
-                .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.to_bbox_required")))?;
+                .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.to_bbox_required")))?;
             let (to_cx_norm_raw, to_cy_norm_raw) = to_bbox.center();
             let to_cx_norm = to_cx_norm_raw.clamp(0, norm_width);
             let to_cy_norm = to_cy_norm_raw.clamp(0, norm_height);
@@ -658,14 +658,14 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
             } else {
                 format!("Completed desktop action {}.", payload.action_raw)
             };
-            (summary, crate::i18n::t(prompt_key))
+            (summary, crate::i18n::prompt_t(prompt_key))
         }
         None => (
             format!(
                 "Desktop action {} was applied, but the screenshot failed.",
                 payload.action_raw
             ),
-            crate::i18n::t("tool.desktop_control.followup_prompt_no_frame"),
+            crate::i18n::prompt_t("tool.desktop_control.followup_prompt_no_frame"),
         ),
     };
     let mut data = json!({
@@ -737,7 +737,7 @@ pub async fn build_followup_user_message(result_data: &Value) -> Result<Option<V
 fn parse_followup_payload(result_data: &Value) -> Result<Option<FollowupPayload>> {
     let obj = result_data
         .as_object()
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.capture_failed")))?;
+        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.capture_failed")))?;
     let Some(current_path) = obj
         .get("screenshot_path")
         .and_then(Value::as_str)
@@ -752,7 +752,7 @@ fn parse_followup_payload(result_data: &Value) -> Result<Option<FollowupPayload>
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
-        .unwrap_or_else(|| crate::i18n::t("tool.desktop_control.followup_prompt"));
+        .unwrap_or_else(|| crate::i18n::prompt_t("tool.desktop_control.followup_prompt"));
     Ok(Some(FollowupPayload {
         current_path: PathBuf::from(current_path),
         prompt,
@@ -762,9 +762,9 @@ fn parse_followup_payload(result_data: &Value) -> Result<Option<FollowupPayload>
 async fn read_screenshot_data_url(path: &Path) -> Result<String> {
     let bytes = tokio::fs::read(path)
         .await
-        .map_err(|_| anyhow!(crate::i18n::t("tool.desktop_control.capture_failed")))?;
+        .map_err(|_| anyhow!(crate::i18n::prompt_t("tool.desktop_control.capture_failed")))?;
     if bytes.len() as u64 > MAX_SCREENSHOT_BYTES {
-        return Err(anyhow!(crate::i18n::t(
+        return Err(anyhow!(crate::i18n::prompt_t(
             "tool.desktop_control.capture_too_large"
         )));
     }
@@ -783,15 +783,15 @@ struct FollowupPayload {
 fn parse_desktop_control_args(args: &Value) -> Result<DesktopControlArgs> {
     let obj = args
         .as_object()
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.invalid_args")))?;
+        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.invalid_args")))?;
     let action_raw = obj
         .get("action")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.action_required")))?;
+        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.action_required")))?;
     let action = DesktopAction::from_raw(action_raw)
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.unknown_action")))?;
+        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.unknown_action")))?;
     let allowed: &[&str] = match action {
         DesktopAction::PressKey => &["bbox", "action", "key"],
         DesktopAction::TypeText => &["bbox", "action", "text"],
@@ -822,21 +822,21 @@ fn parse_desktop_control_args(args: &Value) -> Result<DesktopControlArgs> {
     let to_bbox = obj.get("to_bbox").map(parse_bbox).transpose()?;
     match action {
         DesktopAction::PressKey if required_text(obj, "key").is_none() => {
-            return Err(anyhow!(crate::i18n::t("tool.desktop_control.key_required")));
+            return Err(anyhow!(crate::i18n::prompt_t("tool.desktop_control.key_required")));
         }
         DesktopAction::TypeText if required_text(obj, "text").is_none() => {
-            return Err(anyhow!(crate::i18n::t(
+            return Err(anyhow!(crate::i18n::prompt_t(
                 "tool.desktop_control.text_required"
             )));
         }
         DesktopAction::DragDrop if to_bbox.is_none() => {
-            return Err(anyhow!(crate::i18n::t(
+            return Err(anyhow!(crate::i18n::prompt_t(
                 "tool.desktop_control.to_bbox_required"
             )));
         }
         DesktopAction::Wait | DesktopAction::PressKey | DesktopAction::TypeText => {}
         _ if bbox.is_none() => {
-            return Err(anyhow!(crate::i18n::t(
+            return Err(anyhow!(crate::i18n::prompt_t(
                 "tool.desktop_control.bbox_required"
             )));
         }
@@ -913,30 +913,30 @@ fn parse_bbox(value: &Value) -> Result<BBox> {
                     Value::Array(items) => Some(items),
                     _ => None,
                 })
-                .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))?;
+                .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.invalid_bbox")))?;
             decoded.as_slice()
         }
-        _ => return Err(anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox"))),
+        _ => return Err(anyhow!(crate::i18n::prompt_t("tool.desktop_control.invalid_bbox"))),
     };
     if arr.len() == 4 {
         let x1 = parse_i32(arr.first())
-            .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))?;
+            .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.invalid_bbox")))?;
         let y1 = parse_i32(arr.get(1))
-            .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))?;
+            .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.invalid_bbox")))?;
         let x2 = parse_i32(arr.get(2))
-            .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))?;
+            .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.invalid_bbox")))?;
         let y2 = parse_i32(arr.get(3))
-            .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))?;
+            .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.invalid_bbox")))?;
         return bounded_bbox(x1, y1, x2, y2);
     }
     if arr.len() == 2 {
         let cx = parse_i32(arr.first())
-            .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))?;
+            .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.invalid_bbox")))?;
         let cy = parse_i32(arr.get(1))
-            .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))?;
+            .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.invalid_bbox")))?;
         return bounded_bbox(cx, cy, cx, cy);
     }
-    Err(anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))
+    Err(anyhow!(crate::i18n::prompt_t("tool.desktop_control.invalid_bbox")))
 }
 
 fn bounded_bbox(x1: i32, y1: i32, x2: i32, y2: i32) -> Result<BBox> {
@@ -944,7 +944,7 @@ fn bounded_bbox(x1: i32, y1: i32, x2: i32, y2: i32) -> Result<BBox> {
         .into_iter()
         .any(|value| !(0..=MAX_NORMALIZED_COORD).contains(&value))
     {
-        return Err(anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")));
+        return Err(anyhow!(crate::i18n::prompt_t("tool.desktop_control.invalid_bbox")));
     }
     Ok(BBox { x1, y1, x2, y2 })
 }
@@ -958,7 +958,7 @@ fn ensure_desktop_enabled(config: &Config) -> Result<()> {
     if desktop_tools_enabled(config) {
         return Ok(());
     }
-    Err(anyhow!(crate::i18n::t("tool.desktop_control.disabled")))
+    Err(anyhow!(crate::i18n::prompt_t("tool.desktop_control.disabled")))
 }
 
 fn build_followup_prompt(base: String, norm_width: i32, norm_height: i32) -> String {
@@ -1037,7 +1037,7 @@ async fn capture_screenshot(
     {
         Ok(value) => value,
         Err(err) if err.to_string().contains("timed out") => {
-            return Err(anyhow!(crate::i18n::t(
+            return Err(anyhow!(crate::i18n::prompt_t(
                 "tool.desktop_control.capture_timeout"
             )));
         }
@@ -1224,7 +1224,7 @@ fn capture_screenshot_blocking(
     // click that was just sent.
     if let Some((expected_width, expected_height)) = expected_screen {
         if screen_width != expected_width || screen_height != expected_height {
-            return Err(anyhow!(crate::i18n::t(
+            return Err(anyhow!(crate::i18n::prompt_t(
                 "tool.desktop_control.screen_changed"
             )));
         }
@@ -1238,7 +1238,7 @@ fn capture_screenshot_blocking(
     )?;
     let png = encode_png(&resized, norm_width as u32, norm_height as u32)?;
     if png.len() as u64 > MAX_SCREENSHOT_BYTES {
-        return Err(anyhow!(crate::i18n::t(
+        return Err(anyhow!(crate::i18n::prompt_t(
             "tool.desktop_control.capture_too_large"
         )));
     }
@@ -1339,7 +1339,7 @@ fn resize_rgba(
     norm_height: u32,
 ) -> Result<Vec<u8>> {
     let image = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(width, height, rgba.to_vec())
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.capture_failed")))?;
+        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.capture_failed")))?;
     let resized = image::imageops::resize(
         &image,
         norm_width,
@@ -1361,7 +1361,7 @@ fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
 fn screen_size() -> Result<(i32, i32)> {
     let (width, height) = screen_metrics()?;
     if width <= 0 || height <= 0 {
-        return Err(anyhow!(crate::i18n::t(
+        return Err(anyhow!(crate::i18n::prompt_t(
             "tool.desktop_control.capture_failed"
         )));
     }
@@ -1389,7 +1389,7 @@ fn screen_metrics() -> Result<(i32, i32)> {
 
 #[cfg(not(any(windows, target_os = "linux")))]
 fn screen_metrics() -> Result<(i32, i32)> {
-    Err(anyhow!(crate::i18n::t(
+    Err(anyhow!(crate::i18n::prompt_t(
         "tool.desktop_control.unsupported_platform"
     )))
 }
@@ -1586,7 +1586,7 @@ fn capture_screen_rgba() -> Result<(i32, i32, Vec<u8>)> {
 
     let (width, height) = screen_metrics()?;
     if width <= 0 || height <= 0 {
-        return Err(anyhow!(crate::i18n::t(
+        return Err(anyhow!(crate::i18n::prompt_t(
             "tool.desktop_control.capture_failed"
         )));
     }
@@ -1594,14 +1594,14 @@ fn capture_screen_rgba() -> Result<(i32, i32, Vec<u8>)> {
     unsafe {
         let screen_dc: HDC = GetDC(HWND::default());
         if screen_dc == 0 {
-            return Err(anyhow!(crate::i18n::t(
+            return Err(anyhow!(crate::i18n::prompt_t(
                 "tool.desktop_control.capture_failed"
             )));
         }
         let mem_dc: HDC = CreateCompatibleDC(screen_dc);
         if mem_dc == 0 {
             ReleaseDC(HWND::default(), screen_dc);
-            return Err(anyhow!(crate::i18n::t(
+            return Err(anyhow!(crate::i18n::prompt_t(
                 "tool.desktop_control.capture_failed"
             )));
         }
@@ -1609,7 +1609,7 @@ fn capture_screen_rgba() -> Result<(i32, i32, Vec<u8>)> {
         if bmp == 0 {
             DeleteDC(mem_dc);
             ReleaseDC(HWND::default(), screen_dc);
-            return Err(anyhow!(crate::i18n::t(
+            return Err(anyhow!(crate::i18n::prompt_t(
                 "tool.desktop_control.capture_failed"
             )));
         }
@@ -1630,7 +1630,7 @@ fn capture_screen_rgba() -> Result<(i32, i32, Vec<u8>)> {
             DeleteObject(bmp as _);
             DeleteDC(mem_dc);
             ReleaseDC(HWND::default(), screen_dc);
-            return Err(anyhow!(crate::i18n::t(
+            return Err(anyhow!(crate::i18n::prompt_t(
                 "tool.desktop_control.capture_failed"
             )));
         }
@@ -1674,7 +1674,7 @@ fn capture_screen_rgba() -> Result<(i32, i32, Vec<u8>)> {
         ReleaseDC(HWND::default(), screen_dc);
 
         if scan == 0 {
-            return Err(anyhow!(crate::i18n::t(
+            return Err(anyhow!(crate::i18n::prompt_t(
                 "tool.desktop_control.capture_failed"
             )));
         }
@@ -1696,14 +1696,14 @@ fn capture_screen_rgba() -> Result<(i32, i32, Vec<u8>)> {
         let width = (xlib.XDisplayWidth)(display, screen);
         let height = (xlib.XDisplayHeight)(display, screen);
         if width <= 0 || height <= 0 {
-            return Err(anyhow!(crate::i18n::t(
+            return Err(anyhow!(crate::i18n::prompt_t(
                 "tool.desktop_control.capture_failed"
             )));
         }
         let root = (xlib.XRootWindow)(display, screen);
         let visual = (xlib.XDefaultVisual)(display, screen);
         if visual.is_null() {
-            return Err(anyhow!(crate::i18n::t(
+            return Err(anyhow!(crate::i18n::prompt_t(
                 "tool.desktop_control.capture_failed"
             )));
         }
@@ -1718,7 +1718,7 @@ fn capture_screen_rgba() -> Result<(i32, i32, Vec<u8>)> {
             x11_dl::xlib::ZPixmap,
         );
         if image.is_null() {
-            return Err(anyhow!(crate::i18n::t(
+            return Err(anyhow!(crate::i18n::prompt_t(
                 "tool.desktop_control.capture_failed"
             )));
         }
@@ -1726,7 +1726,7 @@ fn capture_screen_rgba() -> Result<(i32, i32, Vec<u8>)> {
         let bytes_per_pixel = (image_ref.bits_per_pixel / 8) as usize;
         if bytes_per_pixel != 3 && bytes_per_pixel != 4 {
             (xlib.XDestroyImage)(image);
-            return Err(anyhow!(crate::i18n::t(
+            return Err(anyhow!(crate::i18n::prompt_t(
                 "tool.desktop_control.capture_failed"
             )));
         }
@@ -1771,7 +1771,7 @@ fn with_x11<T>(
     unsafe {
         let display = (xlib.XOpenDisplay)(std::ptr::null());
         if display.is_null() {
-            return Err(anyhow!(crate::i18n::t(
+            return Err(anyhow!(crate::i18n::prompt_t(
                 "tool.desktop_control.unsupported_platform"
             )));
         }
@@ -1797,7 +1797,7 @@ fn with_xtest<T>(
     unsafe {
         let display = (xlib.XOpenDisplay)(std::ptr::null());
         if display.is_null() {
-            return Err(anyhow!(crate::i18n::t(
+            return Err(anyhow!(crate::i18n::prompt_t(
                 "tool.desktop_control.unsupported_platform"
             )));
         }
@@ -1821,7 +1821,7 @@ fn x11_color(value: u32, mask: std::ffi::c_ulong) -> u8 {
 
 #[cfg(not(any(windows, target_os = "linux")))]
 fn capture_screen_rgba() -> Result<(i32, i32, Vec<u8>)> {
-    Err(anyhow!(crate::i18n::t(
+    Err(anyhow!(crate::i18n::prompt_t(
         "tool.desktop_control.unsupported_platform"
     )))
 }
@@ -1893,7 +1893,7 @@ fn send_key_sequence(keys: &str) -> Result<()> {
         .filter(|s| !s.is_empty())
         .collect();
     if parts.is_empty() {
-        return Err(anyhow!(crate::i18n::t("tool.desktop_control.key_required")));
+        return Err(anyhow!(crate::i18n::prompt_t("tool.desktop_control.key_required")));
     }
     let mut modifiers = Vec::new();
     let mut main = None;
@@ -1915,7 +1915,7 @@ fn send_key_sequence(keys: &str) -> Result<()> {
         return Ok(());
     }
     if modifiers.is_empty() {
-        return Err(anyhow!(crate::i18n::t("tool.desktop_control.key_required")));
+        return Err(anyhow!(crate::i18n::prompt_t("tool.desktop_control.key_required")));
     }
     for modifier in modifiers {
         key_down(modifier)?;
@@ -2005,7 +2005,7 @@ fn send_unicode_text(text: &str) -> Result<()> {
             )
         };
         if sent != chunk.len() as u32 {
-            return Err(anyhow!(crate::i18n::t(
+            return Err(anyhow!(crate::i18n::prompt_t(
                 "tool.desktop_control.capture_failed"
             )));
         }
@@ -2020,11 +2020,11 @@ unsafe fn x11_keysym_keycode(
     name: &str,
 ) -> Result<u32> {
     let name = std::ffi::CString::new(name)
-        .map_err(|_| anyhow!(crate::i18n::t("tool.desktop_control.key_required")))?;
+        .map_err(|_| anyhow!(crate::i18n::prompt_t("tool.desktop_control.key_required")))?;
     let keysym = (xlib.XStringToKeysym)(name.as_ptr());
     let keycode = (xlib.XKeysymToKeycode)(display, keysym);
     if keysym == 0 || keycode == 0 {
-        return Err(anyhow!(crate::i18n::t(
+        return Err(anyhow!(crate::i18n::prompt_t(
             "tool.desktop_control.capture_failed"
         )));
     }
@@ -2039,7 +2039,7 @@ unsafe fn x11_fake_keycode(
     pressed: bool,
 ) -> Result<()> {
     if (xtest.XTestFakeKeyEvent)(display, keycode, i32::from(pressed), 0) == 0 {
-        return Err(anyhow!(crate::i18n::t(
+        return Err(anyhow!(crate::i18n::prompt_t(
             "tool.desktop_control.capture_failed"
         )));
     }
@@ -2165,7 +2165,7 @@ fn send_unicode_text(text: &str) -> Result<()> {
 
 #[cfg(not(any(windows, target_os = "linux")))]
 fn send_unicode_text(_text: &str) -> Result<()> {
-    Err(anyhow!(crate::i18n::t(
+    Err(anyhow!(crate::i18n::prompt_t(
         "tool.desktop_control.unsupported_platform"
     )))
 }
@@ -2225,7 +2225,7 @@ fn parse_modifier(key: &str) -> Option<VkCode> {
 
 fn send_key(key: &str) -> Result<()> {
     let vk = build_vk_for_key(key)
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.key_required")))?;
+        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.key_required")))?;
     key_down(vk)?;
     key_up(vk)?;
     Ok(())
@@ -2295,7 +2295,7 @@ fn send_key_event(key: VkCode, key_up: bool) -> Result<()> {
     };
     let sent = unsafe { SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) };
     if sent == 0 {
-        return Err(anyhow!(crate::i18n::t(
+        return Err(anyhow!(crate::i18n::prompt_t(
             "tool.desktop_control.capture_failed"
         )));
     }
@@ -2310,10 +2310,10 @@ fn send_key_event(key: VkCode, key_up: bool) -> Result<()> {
         VkCode::Alt => "Alt_L".to_string(),
         VkCode::LWin => "Super_L".to_string(),
         VkCode::Raw(value) => x11_key_name(value)
-            .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.key_required")))?,
+            .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.key_required")))?,
     };
     let name = std::ffi::CString::new(name)
-        .map_err(|_| anyhow!(crate::i18n::t("tool.desktop_control.key_required")))?;
+        .map_err(|_| anyhow!(crate::i18n::prompt_t("tool.desktop_control.key_required")))?;
     with_xtest(|xlib, xtest, display, _| unsafe {
         let keysym = (xlib.XStringToKeysym)(name.as_ptr());
         let keycode = (xlib.XKeysymToKeycode)(display, keysym);
@@ -2321,7 +2321,7 @@ fn send_key_event(key: VkCode, key_up: bool) -> Result<()> {
             || keycode == 0
             || (xtest.XTestFakeKeyEvent)(display, keycode as u32, i32::from(!key_up), 0) == 0
         {
-            return Err(anyhow!(crate::i18n::t(
+            return Err(anyhow!(crate::i18n::prompt_t(
                 "tool.desktop_control.capture_failed"
             )));
         }
@@ -2364,7 +2364,7 @@ fn send_key_event(key: VkCode, _key_up: bool) -> Result<()> {
         VkCode::Raw(value) => value,
         VkCode::Control | VkCode::Shift | VkCode::Alt | VkCode::LWin => 0,
     };
-    Err(anyhow!(crate::i18n::t(
+    Err(anyhow!(crate::i18n::prompt_t(
         "tool.desktop_control.unsupported_platform"
     )))
 }
@@ -2394,7 +2394,7 @@ fn set_cursor_pos(x: i32, y: i32) -> Result<()> {
     use windows_sys::Win32::UI::WindowsAndMessaging::SetCursorPos;
     let ok = unsafe { SetCursorPos(x, y) };
     if ok == 0 {
-        return Err(anyhow!(crate::i18n::t(
+        return Err(anyhow!(crate::i18n::prompt_t(
             "tool.desktop_control.capture_failed"
         )));
     }
@@ -2405,7 +2405,7 @@ fn set_cursor_pos(x: i32, y: i32) -> Result<()> {
 fn set_cursor_pos(x: i32, y: i32) -> Result<()> {
     with_xtest(|xlib, xtest, display, screen| unsafe {
         if (xtest.XTestFakeMotionEvent)(display, screen, x, y, 0) == 0 {
-            return Err(anyhow!(crate::i18n::t(
+            return Err(anyhow!(crate::i18n::prompt_t(
                 "tool.desktop_control.capture_failed"
             )));
         }
@@ -2416,7 +2416,7 @@ fn set_cursor_pos(x: i32, y: i32) -> Result<()> {
 
 #[cfg(not(any(windows, target_os = "linux")))]
 fn set_cursor_pos(_x: i32, _y: i32) -> Result<()> {
-    Err(anyhow!(crate::i18n::t(
+    Err(anyhow!(crate::i18n::prompt_t(
         "tool.desktop_control.unsupported_platform"
     )))
 }
@@ -2506,7 +2506,7 @@ fn send_mouse_event(event: MouseEvent) -> Result<()> {
     };
     let sent = unsafe { SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) };
     if sent == 0 {
-        return Err(anyhow!(crate::i18n::t(
+        return Err(anyhow!(crate::i18n::prompt_t(
             "tool.desktop_control.capture_failed"
         )));
     }
@@ -2526,7 +2526,7 @@ fn send_mouse_event(event: MouseEvent) -> Result<()> {
     );
     with_xtest(|xlib, xtest, display, _| unsafe {
         if (xtest.XTestFakeButtonEvent)(display, button, i32::from(press), 0) == 0 {
-            return Err(anyhow!(crate::i18n::t(
+            return Err(anyhow!(crate::i18n::prompt_t(
                 "tool.desktop_control.capture_failed"
             )));
         }
@@ -2537,7 +2537,7 @@ fn send_mouse_event(event: MouseEvent) -> Result<()> {
 
 #[cfg(not(any(windows, target_os = "linux")))]
 fn send_mouse_event(_event: MouseEvent) -> Result<()> {
-    Err(anyhow!(crate::i18n::t(
+    Err(anyhow!(crate::i18n::prompt_t(
         "tool.desktop_control.unsupported_platform"
     )))
 }
@@ -2563,7 +2563,7 @@ fn send_mouse_wheel(steps: i32) -> Result<()> {
     };
     let sent = unsafe { SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) };
     if sent == 0 {
-        return Err(anyhow!(crate::i18n::t(
+        return Err(anyhow!(crate::i18n::prompt_t(
             "tool.desktop_control.capture_failed"
         )));
     }
@@ -2581,7 +2581,7 @@ fn send_mouse_wheel(steps: i32) -> Result<()> {
             if (xtest.XTestFakeButtonEvent)(display, button, 1, 0) == 0
                 || (xtest.XTestFakeButtonEvent)(display, button, 0, 0) == 0
             {
-                return Err(anyhow!(crate::i18n::t(
+                return Err(anyhow!(crate::i18n::prompt_t(
                     "tool.desktop_control.capture_failed"
                 )));
             }
@@ -2593,7 +2593,7 @@ fn send_mouse_wheel(steps: i32) -> Result<()> {
 
 #[cfg(not(any(windows, target_os = "linux")))]
 fn send_mouse_wheel(_steps: i32) -> Result<()> {
-    Err(anyhow!(crate::i18n::t(
+    Err(anyhow!(crate::i18n::prompt_t(
         "tool.desktop_control.unsupported_platform"
     )))
 }

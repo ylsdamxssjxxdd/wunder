@@ -284,7 +284,7 @@ fn resolve_memory_identifier_text(
     match matches.len() {
         0 => Ok(memory_id),
         1 => Ok(matches.remove(0)),
-        _ => Err(anyhow!(i18n::t("tool.memory_manager.not_found"))),
+        _ => Err(anyhow!(i18n::prompt_t("tool.memory_manager.not_found"))),
     }
 }
 
@@ -303,7 +303,7 @@ fn resolve_related_memory_record_id(
             .get_fragment(user_id, agent_id, &resolved)
             .is_none()
     {
-        return Err(anyhow!(i18n::t("tool.memory_manager.not_found")));
+        return Err(anyhow!(i18n::prompt_t("tool.memory_manager.not_found")));
     }
     Ok(Some(resolved))
 }
@@ -339,27 +339,27 @@ fn build_memory_manager_detail(action: &str, data: &Value) -> String {
             .collect()
     };
     match action {
-        "add" => i18n::t_with_params(
+        "add" => i18n::prompt_t_with_params(
             "tool.memory_manager.detail.add",
             &params(&[("title", title(&memory_id))]),
         ),
-        "update" => i18n::t_with_params(
+        "update" => i18n::prompt_t_with_params(
             "tool.memory_manager.detail.update",
             &params(&[("title", title(&memory_id))]),
         ),
-        "get" => i18n::t_with_params(
+        "get" => i18n::prompt_t_with_params(
             "tool.memory_manager.detail.get",
             &params(&[("title", title(&memory_id))]),
         ),
-        "remove" => i18n::t_with_params(
+        "remove" => i18n::prompt_t_with_params(
             "tool.memory_manager.detail.remove",
             &params(&[("memory_id", memory_id)]),
         ),
-        "clear" => i18n::t_with_params(
+        "clear" => i18n::prompt_t_with_params(
             "tool.memory_manager.detail.clear",
             &params(&[("count", deleted)]),
         ),
-        "list" => i18n::t_with_params(
+        "list" => i18n::prompt_t_with_params(
             "tool.memory_manager.detail.list",
             &params(&[("count", count)]),
         ),
@@ -371,12 +371,12 @@ fn build_memory_manager_detail(action: &str, data: &Value) -> String {
                 .trim()
                 .to_string();
             if query.is_empty() {
-                i18n::t_with_params(
+                i18n::prompt_t_with_params(
                     "tool.memory_manager.detail.found",
                     &params(&[("count", count)]),
                 )
             } else {
-                i18n::t_with_params(
+                i18n::prompt_t_with_params(
                     "tool.memory_manager.detail.search",
                     &params(&[("query", query), ("count", count)]),
                 )
@@ -478,7 +478,7 @@ pub(crate) async fn execute_memory_manager_tool(
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let action = normalize_memory_manager_action(&payload.action);
     if action.is_empty() {
-        return Err(anyhow!(i18n::t("tool.memory_manager.invalid_action")));
+        return Err(anyhow!(i18n::prompt_t("tool.memory_manager.invalid_action")));
     }
 
     let agent_scope = normalize_agent_memory_scope(context.agent_id);
@@ -512,7 +512,7 @@ pub(crate) async fn execute_memory_manager_tool(
                     "count": items.len(),
                     "items": items,
                 }),
-                Some(i18n::t("tool.memory_manager.note_new_sessions_only")),
+                Some(i18n::prompt_t("tool.memory_manager.note_new_sessions_only")),
             )
         }
         "get" => {
@@ -523,11 +523,11 @@ pub(crate) async fn execute_memory_manager_tool(
                 &payload,
             )?;
             if memory_id.is_empty() {
-                return Err(anyhow!(i18n::t("tool.memory_manager.memory_id_required")));
+                return Err(anyhow!(i18n::prompt_t("tool.memory_manager.memory_id_required")));
             }
             let record = fragment_store
                 .get_fragment(context.user_id, context.agent_id, &memory_id)
-                .ok_or_else(|| anyhow!(i18n::t("tool.memory_manager.not_found")))?;
+                .ok_or_else(|| anyhow!(i18n::prompt_t("tool.memory_manager.not_found")))?;
             build_memory_manager_success(
                 action.as_str(),
                 &agent_scope,
@@ -535,13 +535,13 @@ pub(crate) async fn execute_memory_manager_tool(
                     "memory_id": compact_memory_id_for_model(&record.memory_id),
                     "item": build_memory_detail_item(&record),
                 }),
-                Some(i18n::t("tool.memory_manager.note_get_full_detail")),
+                Some(i18n::prompt_t("tool.memory_manager.note_get_full_detail")),
             )
         }
         "add" => {
             let content = normalize_memory_content(&payload);
             if content.is_empty() {
-                return Err(anyhow!(i18n::t("error.content_required")));
+                return Err(anyhow!(i18n::prompt_t("error.content_required")));
             }
             let title = normalize_memory_title(&payload);
             let category = normalize_memory_category(&payload);
@@ -595,7 +595,7 @@ pub(crate) async fn execute_memory_manager_tool(
                     "saved": true,
                     "title": detail_title,
                 }),
-                Some(i18n::t("tool.memory_manager.note_new_sessions_only")),
+                Some(i18n::prompt_t("tool.memory_manager.note_new_sessions_only")),
             )
         }
         "update" => {
@@ -606,11 +606,11 @@ pub(crate) async fn execute_memory_manager_tool(
                 &payload,
             )?;
             if memory_id.is_empty() {
-                return Err(anyhow!(i18n::t("tool.memory_manager.memory_id_required")));
+                return Err(anyhow!(i18n::prompt_t("tool.memory_manager.memory_id_required")));
             }
             let content = normalize_memory_content(&payload);
             if content.is_empty() {
-                return Err(anyhow!(i18n::t("error.content_required")));
+                return Err(anyhow!(i18n::prompt_t("error.content_required")));
             }
             let title = normalize_memory_title(&payload);
             let category = normalize_memory_category(&payload);
@@ -669,7 +669,7 @@ pub(crate) async fn execute_memory_manager_tool(
                     "updated": true,
                     "title": detail_title,
                 }),
-                Some(i18n::t("tool.memory_manager.note_new_sessions_only")),
+                Some(i18n::prompt_t("tool.memory_manager.note_new_sessions_only")),
             )
         }
         "remove" => {
@@ -680,7 +680,7 @@ pub(crate) async fn execute_memory_manager_tool(
                 &payload,
             )?;
             if memory_id.is_empty() {
-                return Err(anyhow!(i18n::t("tool.memory_manager.memory_id_required")));
+                return Err(anyhow!(i18n::prompt_t("tool.memory_manager.memory_id_required")));
             }
             let fragment_deleted =
                 fragment_store.delete_fragment(context.user_id, context.agent_id, &memory_id);
@@ -696,7 +696,7 @@ pub(crate) async fn execute_memory_manager_tool(
                     "memory_id": compact_memory_id_for_model(&memory_id),
                     "deleted": deleted,
                 }),
-                Some(i18n::t("tool.memory_manager.note_new_sessions_only")),
+                Some(i18n::prompt_t("tool.memory_manager.note_new_sessions_only")),
             )
         }
         "clear" => {
@@ -710,7 +710,7 @@ pub(crate) async fn execute_memory_manager_tool(
                 json!({
                     "deleted": deleted,
                 }),
-                Some(i18n::t("tool.memory_manager.note_new_sessions_only")),
+                Some(i18n::prompt_t("tool.memory_manager.note_new_sessions_only")),
             )
         }
         "search" => {
@@ -750,10 +750,10 @@ pub(crate) async fn execute_memory_manager_tool(
                     "count": items.len(),
                     "items": items,
                 }),
-                Some(i18n::t("tool.memory_manager.note_recall_current_session")),
+                Some(i18n::prompt_t("tool.memory_manager.note_recall_current_session")),
             )
         }
-        _ => return Err(anyhow!(i18n::t("tool.memory_manager.invalid_action"))),
+        _ => return Err(anyhow!(i18n::prompt_t("tool.memory_manager.invalid_action"))),
     };
 
     Ok(response)
@@ -771,7 +771,7 @@ fn validate_memory_manager_args(args: &Value) -> Result<()> {
         .ok_or_else(|| anyhow!("memory_manager action is required"))?;
     let action = normalize_memory_manager_action(raw_action);
     if action.is_empty() {
-        return Err(anyhow!(i18n::t("tool.memory_manager.invalid_action")));
+        return Err(anyhow!(i18n::prompt_t("tool.memory_manager.invalid_action")));
     }
     let allowed = match action.as_str() {
         "list" => &["action", "query", "limit", "order"][..],
@@ -816,7 +816,7 @@ fn validate_memory_manager_args(args: &Value) -> Result<()> {
             .is_some_and(|value| !value.trim().is_empty())
     });
     if matches!(action.as_str(), "get" | "update" | "remove") && !has_id {
-        return Err(anyhow!(i18n::t("tool.memory_manager.memory_id_required")));
+        return Err(anyhow!(i18n::prompt_t("tool.memory_manager.memory_id_required")));
     }
     if matches!(action.as_str(), "add" | "update")
         && !object
@@ -824,7 +824,7 @@ fn validate_memory_manager_args(args: &Value) -> Result<()> {
             .and_then(Value::as_str)
             .is_some_and(|value| !value.trim().is_empty())
     {
-        return Err(anyhow!(i18n::t("error.content_required")));
+        return Err(anyhow!(i18n::prompt_t("error.content_required")));
     }
     Ok(())
 }
@@ -1311,7 +1311,7 @@ mod tests {
     async fn memory_manager_tool_requires_memory_id_for_read_write_delete_actions() {
         let harness = TestHarness::new();
         let context = harness.context("u1", "sess-required", Some("agent-demo"));
-        let expected = i18n::t("tool.memory_manager.memory_id_required");
+        let expected = i18n::prompt_t("tool.memory_manager.memory_id_required");
 
         let get_err = execute_memory_manager_tool(&context, &json!({ "action": "get" }))
             .await

@@ -171,7 +171,7 @@ impl Orchestrator {
             // Function-call tools are billed as input tokens on every turn,
             // just like the XML tool block. Use the reduced model-facing
             // surface; execution keeps validating the authoritative schema.
-            let spec = crate::tools::prompt_tool_spec(&spec, "en-US");
+            let spec = crate::tools::prompt_tool_spec(&spec);
             let runtime_name = name_map
                 .get(&spec.name)
                 .cloned()

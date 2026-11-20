@@ -294,7 +294,7 @@ pub(super) fn emit_wait_progress(
         "progress",
         &json!({
             "stage": "subagent_wait",
-            "summary": i18n::t("monitor.summary.subagent_wait"),
+            "summary": i18n::prompt_t("monitor.summary.subagent_wait"),
             "dispatch_id": selector.dispatch_id.clone(),
             "parent_id": selector.parent_id.clone(),
             "total": snapshots.len(),

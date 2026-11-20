@@ -354,7 +354,7 @@ pub(crate) fn resolve_tool_path(
             && !extra_roots.is_empty()
             && !is_public_workspace_path(raw_path)
         {
-            return Err(anyhow!(crate::i18n::t("error.path_out_of_bounds")));
+            return Err(anyhow!(crate::i18n::prompt_t("error.path_out_of_bounds")));
         }
     }
     match workspace.resolve_path(user_id, raw_path) {

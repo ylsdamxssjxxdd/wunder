@@ -90,7 +90,7 @@ pub(crate) async fn execute_skill_call(context: &ToolContext<'_>, args: &Value) 
         .trim()
         .to_string();
     if raw_name.is_empty() {
-        return Err(anyhow!(i18n::t("tool.skill_call.name_required")));
+        return Err(anyhow!(i18n::prompt_t("tool.skill_call.name_required")));
     }
 
     let mut selected: Option<SkillSpec> = None;
@@ -117,7 +117,7 @@ pub(crate) async fn execute_skill_call(context: &ToolContext<'_>, args: &Value) 
                     .map(|spec| spec.name.clone())
                     .collect::<Vec<_>>()
                     .join(", ");
-                return Err(anyhow!(i18n::t_with_params(
+                return Err(anyhow!(i18n::prompt_t_with_params(
                     "tool.skill_call.ambiguous",
                     &HashMap::from([
                         ("name".to_string(), raw_name.clone()),
@@ -135,7 +135,7 @@ pub(crate) async fn execute_skill_call(context: &ToolContext<'_>, args: &Value) 
     }
 
     let Some(spec) = selected else {
-        return Err(anyhow!(i18n::t_with_params(
+        return Err(anyhow!(i18n::prompt_t_with_params(
             "tool.skill_call.not_found",
             &HashMap::from([("name".to_string(), raw_name)]),
         )));

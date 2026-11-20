@@ -213,7 +213,7 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let raw_path = payload.path.trim();
     if raw_path.is_empty() {
-        return Err(anyhow!(crate::i18n::t("tool.read.no_path")));
+        return Err(anyhow!(crate::i18n::prompt_t("tool.read.no_path")));
     }
 
     let extra_roots = super::collect_read_roots(context);
@@ -226,17 +226,17 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
 
     let metadata = tokio::fs::metadata(&resolved)
         .await
-        .map_err(|_| anyhow!(crate::i18n::t("tool.read.not_found")))?;
+        .map_err(|_| anyhow!(crate::i18n::prompt_t("tool.read.not_found")))?;
     if !metadata.is_file() {
-        return Err(anyhow!(crate::i18n::t("tool.read_image.not_file")));
+        return Err(anyhow!(crate::i18n::prompt_t("tool.read_image.not_file")));
     }
     if metadata.len() > MAX_READ_VISUAL_MEDIA_BYTES {
-        return Err(anyhow!(crate::i18n::t("tool.read.too_large")));
+        return Err(anyhow!(crate::i18n::prompt_t("tool.read.too_large")));
     }
 
     let sample = read_visual_media_sample(&resolved, 512).await?;
     let media_kind = detect_media_kind_from_path(&resolved, &sample)
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
+        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.read_image.not_image")))?;
     let crop_raw = payload
         .crop
         .as_deref()
@@ -248,7 +248,7 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         .map(str::trim)
         .filter(|value| !value.is_empty());
     if crop_raw.is_some() && crop_xyxy_raw.is_some() {
-        return Err(anyhow!(crate::i18n::t("tool.read_image.crop_exclusive")));
+        return Err(anyhow!(crate::i18n::prompt_t("tool.read_image.crop_exclusive")));
     }
     let crop = match (crop_raw, crop_xyxy_raw) {
         (Some(raw), None) => Some(ImageCrop::parse(raw)?),
@@ -278,10 +278,10 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         .filter(|value| !value.is_empty());
     if let Some(compare_raw) = compare_with {
         if media_kind != "image" {
-            return Err(anyhow!(crate::i18n::t("tool.read_image.view_image_only")));
+            return Err(anyhow!(crate::i18n::prompt_t("tool.read_image.view_image_only")));
         }
         if has_view_ops {
-            return Err(anyhow!(crate::i18n::t("tool.read_image.compare_exclusive")));
+            return Err(anyhow!(crate::i18n::prompt_t("tool.read_image.compare_exclusive")));
         }
         let compare_resolved = super::resolve_tool_path(
             context.workspace.as_ref(),
@@ -291,9 +291,9 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         )?;
         let compare_metadata = tokio::fs::metadata(&compare_resolved)
             .await
-            .map_err(|_| anyhow!(crate::i18n::t("tool.read.not_found")))?;
+            .map_err(|_| anyhow!(crate::i18n::prompt_t("tool.read.not_found")))?;
         if !compare_metadata.is_file() {
-            return Err(anyhow!(crate::i18n::t("tool.read_image.not_file")));
+            return Err(anyhow!(crate::i18n::prompt_t("tool.read_image.not_file")));
         }
         let pair = derive_image_pair_view(
             context.workspace.as_ref(),
@@ -341,7 +341,7 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
 
     if has_view_ops {
         if media_kind != "image" {
-            return Err(anyhow!(crate::i18n::t("tool.read_image.view_image_only")));
+            return Err(anyhow!(crate::i18n::prompt_t("tool.read_image.view_image_only")));
         }
         let view = derive_image_view(
             context.workspace.as_ref(),
@@ -457,7 +457,7 @@ pub async fn build_followup_user_message(
     let Some(result) = parse_result_payload(result_data) else {
         return Ok(None);
     };
-    let prompt = crate::i18n::t("tool.read_image.followup_prompt");
+    let prompt = crate::i18n::prompt_t("tool.read_image.followup_prompt");
     let attachments = result
         .result
         .get("attachments")
@@ -512,7 +512,7 @@ pub async fn build_followup_user_message(
                 if !path.is_empty() && hinted_paths.insert(path.clone()) {
                     content.push(json!({
                         "type": "text",
-                        "text": crate::i18n::t_with_params(
+                        "text": crate::i18n::prompt_t_with_params(
                             "tool.read_image.followup_path_hint",
                             &std::collections::HashMap::from([(
                                 "path".to_string(),
@@ -528,7 +528,7 @@ pub async fn build_followup_user_message(
             } else if result.media_kind == "image" && single_attachment {
                 let bytes = tokio::fs::read(&result.resolved_path)
                     .await
-                    .map_err(|_| anyhow!(crate::i18n::t("tool.read.not_found")))?;
+                    .map_err(|_| anyhow!(crate::i18n::prompt_t("tool.read.not_found")))?;
                 let data_url = crate::services::chat_media::encode_model_ready_data_url(
                     bytes,
                     content_type.clone(),
@@ -538,7 +538,7 @@ pub async fn build_followup_user_message(
                 if hinted_paths.insert(path.clone()) {
                     content.push(json!({
                         "type": "text",
-                        "text": crate::i18n::t_with_params(
+                        "text": crate::i18n::prompt_t_with_params(
                             "tool.read_image.followup_path_hint",
                             &std::collections::HashMap::from([(
                                 "path".to_string(),
@@ -610,7 +610,7 @@ fn persistent_image_view_texts(data: &Value) -> Vec<String> {
         let fields = ["x", "y", "width", "height", "x2", "y2"]
             .map(|key| crop.get(key).and_then(Value::as_u64));
         if let [Some(x), Some(y), Some(width), Some(height), Some(x2), Some(y2)] = fields {
-            texts.push(crate::i18n::t_with_params(
+            texts.push(crate::i18n::prompt_t_with_params(
                 "tool.read_image.followup_crop",
                 &std::collections::HashMap::from([
                     ("x".to_string(), x.to_string()),
@@ -644,7 +644,7 @@ fn persistent_image_view_texts(data: &Value) -> Vec<String> {
                 } else {
                     "tool.read_image.followup_resize"
                 };
-                texts.push(crate::i18n::t_with_params(
+                texts.push(crate::i18n::prompt_t_with_params(
                     key,
                     &std::collections::HashMap::from([
                         ("reference_width".to_string(), reference.0.to_string()),
@@ -661,7 +661,7 @@ fn persistent_image_view_texts(data: &Value) -> Vec<String> {
 }
 
 pub(crate) fn format_image_stats_text(stats: &ImageViewStats) -> String {
-    crate::i18n::t_with_params(
+    crate::i18n::prompt_t_with_params(
         "tool.read_image.followup_stats",
         &std::collections::HashMap::from([
             ("width".to_string(), stats.width.to_string()),
@@ -689,12 +689,12 @@ pub(crate) fn format_image_stats_text(stats: &ImageViewStats) -> String {
 async fn read_visual_media_sample(path: &Path, max_bytes: usize) -> Result<Vec<u8>> {
     let mut file = tokio::fs::File::open(path)
         .await
-        .map_err(|err| anyhow!(format!("{}: {err}", crate::i18n::t("tool.read.not_found"))))?;
+        .map_err(|err| anyhow!(format!("{}: {err}", crate::i18n::prompt_t("tool.read.not_found"))))?;
     let mut buffer = vec![0_u8; max_bytes];
     let read = file
         .read(&mut buffer)
         .await
-        .map_err(|err| anyhow!(format!("{}: {err}", crate::i18n::t("tool.read.not_found"))))?;
+        .map_err(|err| anyhow!(format!("{}: {err}", crate::i18n::prompt_t("tool.read.not_found"))))?;
     buffer.truncate(read);
     Ok(buffer)
 }
@@ -932,7 +932,7 @@ mod tests {
 
         assert_eq!(content.len(), 3);
         assert_eq!(content[0].get("type").and_then(Value::as_str), Some("text"));
-        let expected_prompt = crate::i18n::t("tool.read_image.followup_prompt");
+        let expected_prompt = crate::i18n::prompt_t("tool.read_image.followup_prompt");
         assert_eq!(
             content[0].get("text").and_then(Value::as_str),
             Some(expected_prompt.as_str())

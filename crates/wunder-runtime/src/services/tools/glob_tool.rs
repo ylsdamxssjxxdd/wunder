@@ -157,7 +157,7 @@ fn glob_files_inner(
     let root = resolve_tool_path(workspace, user_id, raw_path, extra_roots)?;
     if !root.exists() {
         return Ok(build_failed_tool_result(
-            i18n::t("tool.list.path_not_found"),
+            i18n::prompt_t("tool.list.path_not_found"),
             json!({ "path": raw_path }),
             ToolErrorMeta::new(
                 "TOOL_GLOB_PATH_NOT_FOUND",

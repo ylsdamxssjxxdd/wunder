@@ -65,7 +65,7 @@ pub(crate) async fn execute_thread_control_tool(
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let action = normalize_action(&payload.action);
     if action.is_empty() {
-        return Err(anyhow!(i18n::t("error.content_required")));
+        return Err(anyhow!(i18n::prompt_t("error.content_required")));
     }
     validate_action_fields(args, &action)?;
     match action.as_str() {
@@ -237,7 +237,7 @@ fn format_ts(ts: f64) -> String {
 fn require_user_id<'a>(context: &'a ToolContext<'a>) -> Result<&'a str> {
     let user_id = context.user_id.trim();
     if user_id.is_empty() {
-        return Err(anyhow!(i18n::t("error.user_id_required")));
+        return Err(anyhow!(i18n::prompt_t("error.user_id_required")));
     }
     Ok(user_id)
 }
@@ -264,7 +264,7 @@ fn load_session_record(
     context
         .storage
         .get_chat_session(user_id, session_id)?
-        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))
+        .ok_or_else(|| anyhow!(i18n::prompt_t("error.session_not_found")))
 }
 
 fn validate_agent_access(context: &ToolContext<'_>, user_id: &str, agent_id: &str) -> Result<()> {
@@ -275,7 +275,7 @@ fn validate_agent_access(context: &ToolContext<'_>, user_id: &str, agent_id: &st
     context
         .storage
         .get_user_agent(user_id, cleaned)?
-        .ok_or_else(|| anyhow!(i18n::t("error.agent_not_found")))?;
+        .ok_or_else(|| anyhow!(i18n::prompt_t("error.agent_not_found")))?;
     Ok(())
 }
 
@@ -521,7 +521,7 @@ async fn list_threads(context: &ToolContext<'_>, args: ThreadControlArgs) -> Res
         "children" => {
             let target = target
                 .as_ref()
-                .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+                .ok_or_else(|| anyhow!(i18n::prompt_t("error.session_not_found")))?;
             list_direct_children(
                 context,
                 user_id,
@@ -559,7 +559,7 @@ async fn list_threads(context: &ToolContext<'_>, args: ThreadControlArgs) -> Res
         _ => {
             let target = target
                 .as_ref()
-                .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+                .ok_or_else(|| anyhow!(i18n::prompt_t("error.session_not_found")))?;
             collect_branch_records(
                 context,
                 user_id,
@@ -596,13 +596,13 @@ async fn info_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Resu
     let current = current_session_record(context, user_id)?;
     let session_id = normalize_optional_string(args.session_id.clone())
         .or_else(|| current.as_ref().map(|record| record.session_id.clone()))
-        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+        .ok_or_else(|| anyhow!(i18n::prompt_t("error.session_not_found")))?;
     let record = load_session_record(context, user_id, &session_id)?;
     let agent_key = session_agent_key(&record);
     if let Some(explicit_agent_id) = normalize_optional_string(args.agent_id.clone()) {
         validate_agent_access(context, user_id, &explicit_agent_id)?;
         if explicit_agent_id != agent_key {
-            return Err(anyhow!(i18n::t("error.permission_denied")));
+            return Err(anyhow!(i18n::prompt_t("error.permission_denied")));
         }
     }
     let parent = record
@@ -703,7 +703,7 @@ async fn create_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Re
 async fn switch_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Result<Value> {
     let user_id = require_user_id(context)?;
     let session_id = normalize_optional_string(args.session_id.clone())
-        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+        .ok_or_else(|| anyhow!(i18n::prompt_t("error.session_not_found")))?;
     let record = load_session_record(context, user_id, &session_id)?;
     let agent_key = session_agent_key(&record);
     validate_agent_access(context, user_id, &agent_key)?;
@@ -735,13 +735,13 @@ async fn back_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Resu
     let current = current_session_record(context, user_id)?;
     let session_id = normalize_optional_string(args.session_id.clone())
         .or_else(|| current.as_ref().map(|record| record.session_id.clone()))
-        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+        .ok_or_else(|| anyhow!(i18n::prompt_t("error.session_not_found")))?;
     let record = load_session_record(context, user_id, &session_id)?;
     let parent_session_id = record
         .parent_session_id
         .as_deref()
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+        .ok_or_else(|| anyhow!(i18n::prompt_t("error.session_not_found")))?;
     switch_thread(
         context,
         ThreadControlArgs {
@@ -777,9 +777,9 @@ async fn update_thread_title(context: &ToolContext<'_>, args: ThreadControlArgs)
     let current = current_session_record(context, user_id)?;
     let session_id = normalize_optional_string(args.session_id.clone())
         .or_else(|| current.as_ref().map(|record| record.session_id.clone()))
-        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+        .ok_or_else(|| anyhow!(i18n::prompt_t("error.session_not_found")))?;
     let title = normalize_optional_string(args.title.clone())
-        .ok_or_else(|| anyhow!(i18n::t("error.content_required")))?;
+        .ok_or_else(|| anyhow!(i18n::prompt_t("error.content_required")))?;
     let mut record = load_session_record(context, user_id, &session_id)?;
     record.title = title;
     record.updated_at = now_ts();
@@ -817,7 +817,7 @@ async fn archive_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> R
     let current = current_session_record(context, user_id)?;
     let session_id = normalize_optional_string(args.session_id.clone())
         .or_else(|| current.as_ref().map(|record| record.session_id.clone()))
-        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+        .ok_or_else(|| anyhow!(i18n::prompt_t("error.session_not_found")))?;
     let mut record = load_session_record(context, user_id, &session_id)?;
     let agent_key = session_agent_key(&record);
     validate_agent_access(context, user_id, &agent_key)?;
@@ -863,7 +863,7 @@ async fn archive_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> R
 async fn restore_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Result<Value> {
     let user_id = require_user_id(context)?;
     let session_id = normalize_optional_string(args.session_id.clone())
-        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+        .ok_or_else(|| anyhow!(i18n::prompt_t("error.session_not_found")))?;
     let mut record = load_session_record(context, user_id, &session_id)?;
     let agent_key = session_agent_key(&record);
     validate_agent_access(context, user_id, &agent_key)?;

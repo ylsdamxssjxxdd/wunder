@@ -647,7 +647,7 @@ impl Orchestrator {
                             executed
                         } else {
                             let mut denied = ToolResultPayload::error(
-                                i18n::t("tool.exec.not_allowed"),
+                                i18n::prompt_t("tool.exec.not_allowed"),
                                 json!({ "tool": name.clone() }),
                             );
                             if let Some(meta) = policy_meta.clone() {

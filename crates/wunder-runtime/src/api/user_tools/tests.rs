@@ -336,7 +336,7 @@ fn user_catalog_collapses_provider_browser_tools_into_one_entry() {
     assert_eq!(
         names
             .iter()
-            .filter(|name| **name == crate::tools::BROWSER_GROUP_NAME)
+            .filter(|name| **name == crate::tools::BROWSER_GROUP_NAME_ALIAS)
             .count(),
         1,
         "the browser surface must read as exactly one user-facing entry: {names:?}"
@@ -345,8 +345,14 @@ fn user_catalog_collapses_provider_browser_tools_into_one_entry() {
         names.iter().all(|name| !name.starts_with("browser_")),
         "provider tool names must stay out of the user catalog: {names:?}"
     );
+    // 工具面统一英文：目录给出英文别名，不再回落到中文规范名。
+    let exec_aliases: Vec<String> = crate::tools::builtin_aliases()
+        .into_iter()
+        .filter(|(_, canonical)| canonical == "执行命令")
+        .map(|(alias, _)| alias)
+        .collect();
     assert!(
-        names.contains(&"执行命令"),
+        names.iter().any(|name| exec_aliases.iter().any(|alias| alias == name)),
         "collapsing the browser surface must not drop other tools: {names:?}"
     );
     assert_eq!(

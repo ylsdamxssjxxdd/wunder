@@ -116,21 +116,21 @@ impl ScreenAction {
 fn parse_screen_args(args: &Value) -> Result<ScreenAction> {
     let obj = args
         .as_object()
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.android_screen.invalid_args")))?;
+        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.android_screen.invalid_args")))?;
     let action_raw = obj
         .get("action")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.android_screen.action_required")))?;
+        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.android_screen.action_required")))?;
     ScreenAction::from_raw(action_raw)
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.android_screen.unknown_action")))
+        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.android_screen.unknown_action")))
 }
 
 pub async fn tool_android_screen(_context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let action = parse_screen_args(args)?;
     let host = android_screen_host()
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.android_screen.disabled")))?;
+        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.android_screen.disabled")))?;
     execute_with_host(host, action).await
 }
 
@@ -206,11 +206,11 @@ async fn execute_with_host(
                 data["action_applied"] = json!(false);
                 data["state"] = json!("failed");
                 data["code"] = json!("capture_failed");
-                data["message"] = json!(crate::i18n::t("tool.android_screen.capture_failed"));
+                data["message"] = json!(crate::i18n::prompt_t("tool.android_screen.capture_failed"));
                 return Ok(build_model_tool_success_with_hint(
                     TOOL_ANDROID_SCREEN_ALIAS,
                     "failed",
-                    crate::i18n::t("tool.android_screen.action_failed"),
+                    crate::i18n::prompt_t("tool.android_screen.action_failed"),
                     data,
                     None,
                 ));
@@ -220,7 +220,7 @@ async fn execute_with_host(
             data["width"] = json!(width);
             data["height"] = json!(height);
             data["screenshot_bytes"] = json!(bytes);
-            hint = Some(crate::i18n::t("tool.android_screen.next_step_hint"));
+            hint = Some(crate::i18n::prompt_t("tool.android_screen.next_step_hint"));
         }
         (true, ScreenAction::Status) => {
             data["authorized"] = json!(authorized);
@@ -233,7 +233,7 @@ async fn execute_with_host(
             data["requested"] = json!(true);
         }
         (false, _) => {
-            let fallback = crate::i18n::t("tool.android_screen.action_failed");
+            let fallback = crate::i18n::prompt_t("tool.android_screen.action_failed");
             let localized = localize_screen_message(code, message.as_deref(), &fallback);
             data["message"] = json!(localized);
             if let Some(code) = code {
@@ -248,7 +248,7 @@ async fn execute_with_host(
         data["message"]
             .as_str()
             .map(ToString::to_string)
-            .unwrap_or_else(|| crate::i18n::t("tool.android_screen.action_failed"))
+            .unwrap_or_else(|| crate::i18n::prompt_t("tool.android_screen.action_failed"))
     };
     Ok(build_model_tool_success_with_hint(
         TOOL_ANDROID_SCREEN_ALIAS,
@@ -272,7 +272,7 @@ fn completed_state(action: ScreenAction) -> &'static str {
 
 fn screen_summary(action: ScreenAction, authorized: bool, width: i64, height: i64) -> String {
     match action {
-        ScreenAction::Capture => crate::i18n::t_with_params(
+        ScreenAction::Capture => crate::i18n::prompt_t_with_params(
             "tool.android_screen.summary_capture",
             &HashMap::from([
                 ("width".to_string(), width.to_string()),
@@ -285,9 +285,9 @@ fn screen_summary(action: ScreenAction, authorized: bool, width: i64, height: i6
             } else {
                 "tool.android_screen.summary_status_off"
             };
-            crate::i18n::t(key)
+            crate::i18n::prompt_t(key)
         }
-        ScreenAction::RequestPermission => crate::i18n::t("tool.android_screen.summary_permission"),
+        ScreenAction::RequestPermission => crate::i18n::prompt_t("tool.android_screen.summary_permission"),
     }
 }
 
@@ -306,7 +306,7 @@ fn localize_screen_message(code: Option<&str>, message: Option<&str>, fallback: 
         _ => None,
     };
     if let Some(key) = key {
-        let localized = crate::i18n::t(key);
+        let localized = crate::i18n::prompt_t(key);
         if localized != key {
             return localized;
         }

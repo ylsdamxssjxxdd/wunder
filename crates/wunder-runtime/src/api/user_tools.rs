@@ -1515,7 +1515,6 @@ fn build_user_tools_summary(
     _storage: &dyn StorageBackend,
 ) -> AvailableToolsResponse {
     let config = &context.config;
-    let language = i18n::get_language().to_lowercase();
     let alias_map = crate::tools::builtin_aliases();
     let mut canonical_aliases: HashMap<String, Vec<String>> = HashMap::new();
     for (alias, canonical) in alias_map {
@@ -1543,20 +1542,17 @@ fn build_user_tools_summary(
         if crate::tools::is_browser_tool_name(&spec.name) {
             if !browser_summarized {
                 browser_summarized = true;
-                builtin_tools.push(crate::tools::browser_tool_summary_spec(&language));
+                builtin_tools.push(crate::tools::browser_tool_summary_spec());
             }
             continue;
         }
-        let name = if language.starts_with("en") {
-            aliases
-                .iter()
-                .find(|alias| allowed.contains(alias.as_str()))
-                .cloned()
-                .or_else(|| aliases.first().cloned())
-                .unwrap_or_else(|| spec.name.clone())
-        } else {
-            spec.name.clone()
-        };
+        // 工具面统一英文：对外清单优先给出英文别名。
+        let name = aliases
+            .iter()
+            .find(|alias| allowed.contains(alias.as_str()))
+            .cloned()
+            .or_else(|| aliases.first().cloned())
+            .unwrap_or_else(|| spec.name.clone());
         if !seen_builtin.insert(name.clone()) {
             continue;
         }

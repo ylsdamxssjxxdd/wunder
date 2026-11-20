@@ -266,7 +266,11 @@ impl CliRuntime {
             &wunder_home.join("data").join("instances"),
             &instance_id,
         ) {
-            Ok(guard) => Some(Arc::new(guard)),
+            Ok(guard) => {
+                // 后台命令记录用它标注归属；没有存活文件就无法判活，不标记。
+                wunder_server::instance_liveness::set_current_instance(&instance_id);
+                Some(Arc::new(guard))
+            }
             Err(error) => {
                 eprintln!("[warn] claim instance liveness file failed: {}", error);
                 None
@@ -290,10 +294,17 @@ impl CliRuntime {
             eprintln!("[warn] ignoring notify setting: {err}");
         }
         // 上一进程遗留的后台命令记录：沙盒会话恢复观察，本地会话结算失联。
+        // 桌面版等其他存活实例仍在跟踪的记录由归属判活跳过，命令行不能代它结算。
         {
             let state = runtime.state.clone();
+            let instance_dir = runtime.instance_dir();
             tokio::spawn(async move {
-                match wunder_server::startup::recover_background_commands(state).await {
+                match wunder_server::startup::recover_background_commands(
+                    state,
+                    Some(instance_dir),
+                )
+                .await
+                {
                     Ok(0) => {}
                     Ok(recovered) => {
                         eprintln!("[wunder] recovered {recovered} background command(s)")

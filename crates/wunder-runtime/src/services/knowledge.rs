@@ -51,7 +51,7 @@ impl KnowledgeSection {
             }
             let mut normalized = name.to_string();
             if labels.contains(name) {
-                normalized = i18n::t("knowledge.section.full_text");
+                normalized = i18n::prompt_t("knowledge.section.full_text");
             }
             if cleaned
                 .last()
@@ -114,7 +114,7 @@ impl KnowledgeDocument {
             .iter()
             .map(|part| {
                 if labels.contains(part) {
-                    i18n::t("knowledge.section.full_text")
+                    i18n::prompt_t("knowledge.section.full_text")
                 } else {
                     part.clone()
                 }
@@ -472,7 +472,7 @@ fn parse_markdown_sections(path: &Path) -> Vec<KnowledgeSection> {
     if sections.is_empty() && !document_content.is_empty() {
         sections.push(KnowledgeSection {
             document,
-            section_path: vec![i18n::t("knowledge.section.full_text")],
+            section_path: vec![i18n::prompt_t("knowledge.section.full_text")],
             content: document_content.clone(),
             code: String::new(),
         });
@@ -490,13 +490,8 @@ fn read_markdown_text(path: &Path) -> Option<String> {
 }
 
 fn build_system_prompt(limit: usize) -> String {
-    let language = i18n::get_language();
-    let template = if language.starts_with("en") {
-        KNOWLEDGE_PROMPT_EN
-    } else {
-        KNOWLEDGE_PROMPT_ZH
-    };
-    template.replace("{limit}", &limit.to_string())
+    // 知识库检索提示词属于模型面文本，只维护英文一套。
+    KNOWLEDGE_PROMPT_EN.replace("{limit}", &limit.to_string())
 }
 
 fn build_literal_knowledge_llm_config(
@@ -607,11 +602,7 @@ fn materialize_documents_from_reply(
 }
 
 fn build_question(base_name: &str, query: &str, candidates: &[KnowledgeSection]) -> String {
-    let labels = if i18n::get_language().starts_with("en") {
-        QUESTION_LABELS_EN
-    } else {
-        QUESTION_LABELS_ZH
-    };
+    let labels = QUESTION_LABELS_EN;
     let mut lines = Vec::new();
     for section in candidates {
         let preview = section.preview();
@@ -722,7 +713,7 @@ fn materialize_documents(
 }
 
 fn fallback_documents(candidates: &[KnowledgeSection], limit: usize) -> Vec<KnowledgeDocument> {
-    let reason = i18n::t("knowledge.fallback_reason");
+    let reason = i18n::prompt_t("knowledge.fallback_reason");
     candidates
         .iter()
         .take(limit)
@@ -918,14 +909,6 @@ struct QuestionLabels {
     footer: &'static str,
 }
 
-const QUESTION_LABELS_ZH: QuestionLabels = QuestionLabels {
-    base_name: "【知识库名称】",
-    user_query: "【用户提问】",
-    candidates: "【候选知识点列表】",
-    empty: "- （暂无知识点）",
-    footer: "请按要求返回 JSON 结果。",
-};
-
 const QUESTION_LABELS_EN: QuestionLabels = QuestionLabels {
     base_name: "[Knowledge Base]",
     user_query: "[User Question]",
@@ -933,14 +916,6 @@ const QUESTION_LABELS_EN: QuestionLabels = QuestionLabels {
     empty: "- (No items available)",
     footer: "Return the JSON result as required.",
 };
-
-const KNOWLEDGE_PROMPT_ZH: &str = "你是一名字面知识库检索助手，需要根据用户提问在给定的知识点列表中挑选最相关的内容。\n\
-请严格按照以下要求输出：\n\
-1. 每个知识点都对应唯一编号（如 K0001），请优先依赖编号定位章节。\n\
-2. 最多返回{limit}个知识点，可根据相关度筛选；即便相关度较低，也尽量返回2-3条最接近的知识点，避免空列表。\n\
-3. 输出必须使用 <knowledge></knowledge> 包裹 JSON，字段为 documents(List)。\n\
-4. documents 中的每个对象需包含 code、name、score(0~1) 与 reason(简述命中原因)。\n\
-5. 未命中时也要输出空数组，切勿输出 JSON 之外的多余文字。";
 
 const KNOWLEDGE_PROMPT_EN: &str = "You are a knowledge-base retrieval assistant. Select the most relevant items from the list based on the user query.\n\
 Follow these requirements strictly:\n\

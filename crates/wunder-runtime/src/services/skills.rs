@@ -149,7 +149,7 @@ pub async fn execute_skill(spec: &SkillSpec, args: &Value, timeout_s: u64) -> Re
         .arg(&entrypoint)
         .current_dir(&spec.root)
         .env("PYTHONIOENCODING", "utf-8")
-        .env("WUNDER_LANGUAGE", i18n::get_language())
+        .env("WUNDER_LANGUAGE", i18n::prompt_language())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -193,12 +193,8 @@ pub async fn execute_skill(spec: &SkillSpec, args: &Value, timeout_s: u64) -> Re
 }
 
 fn skill_timeout_message() -> String {
-    let language = i18n::get_language().to_lowercase();
-    if language.starts_with("en") {
-        "Skill execution timed out".to_string()
-    } else {
-        "技能执行超时".to_string()
-    }
+    // 工具结果面向模型，固定英文，避免维护两套文案。
+    "Skill execution timed out".to_string()
 }
 
 fn resolve_skill_runner_path() -> PathBuf {
@@ -372,11 +368,11 @@ fn extract_meta_description(meta: &HashMap<String, YamlValue>) -> String {
             }
         }
     }
-    i18n::t("skill.description.missing")
+    i18n::prompt_t("skill.description.missing")
 }
 
 fn extract_skill_description(meta: &HashMap<String, YamlValue>, content: &str) -> String {
-    let missing = i18n::t("skill.description.missing");
+    let missing = i18n::prompt_t("skill.description.missing");
     let meta_description = extract_meta_description(meta);
     if meta_description != missing {
         return meta_description;

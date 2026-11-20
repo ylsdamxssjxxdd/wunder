@@ -129,12 +129,10 @@ pub fn resolve_system_pack_root(config: &Config, pack_id: &str) -> PathBuf {
     resolve_system_packs_root(config).join(pack_id.trim())
 }
 
-pub fn resolve_default_user_pack_id_for_language(raw_language: Option<&str>) -> String {
-    if normalize_locale(raw_language).eq_ignore_ascii_case("en") {
-        DEFAULT_EN_PACK_ID.to_string()
-    } else {
-        DEFAULT_ZH_PACK_ID.to_string()
-    }
+pub fn resolve_default_user_pack_id_for_language(_raw_language: Option<&str>) -> String {
+    // 系统提示词只维护英文一套，内置模板包默认也就固定英文包，
+    // 不再随界面语言在 default-zh / default-en 之间切换。
+    DEFAULT_EN_PACK_ID.to_string()
 }
 
 pub fn resolve_default_user_pack_id() -> String {
@@ -411,19 +409,13 @@ mod tests {
     };
 
     #[test]
-    fn resolve_default_user_pack_id_for_language_tracks_language() {
-        assert_eq!(
-            resolve_default_user_pack_id_for_language(Some("zh-CN")),
-            DEFAULT_ZH_PACK_ID
-        );
-        assert_eq!(
-            resolve_default_user_pack_id_for_language(Some("en-US")),
-            DEFAULT_EN_PACK_ID
-        );
-        assert_eq!(
-            resolve_default_user_pack_id_for_language(Some("en")),
-            DEFAULT_EN_PACK_ID
-        );
+    fn resolve_default_user_pack_id_for_language_is_always_english() {
+        for language in [None, Some("zh-CN"), Some("en-US"), Some("en")] {
+            assert_eq!(
+                resolve_default_user_pack_id_for_language(language),
+                DEFAULT_EN_PACK_ID
+            );
+        }
     }
 
     #[test]

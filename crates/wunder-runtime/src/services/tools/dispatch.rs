@@ -65,7 +65,7 @@ pub async fn execute_builtin_tool(
             context.session_id,
         )
     {
-        return Err(anyhow!(i18n::t_with_params(
+        return Err(anyhow!(i18n::prompt_t_with_params(
             "error.tool.blocked_in_subagent_session",
             &HashMap::from([("tool".to_string(), canonical.clone())])
         )));

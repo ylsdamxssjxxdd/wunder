@@ -393,15 +393,15 @@ impl PhoneArgs {
 fn parse_phone_args(args: &Value) -> Result<PhoneArgs> {
     let obj = args
         .as_object()
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.phone_control.invalid_args")))?;
+        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.phone_control.invalid_args")))?;
     let action_raw = obj
         .get("action")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.phone_control.action_required")))?;
+        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.phone_control.action_required")))?;
     let action = PhoneAction::from_raw(action_raw)
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.phone_control.unknown_action")))?;
+        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.phone_control.unknown_action")))?;
     let bbox = parse_bbox_field(obj.get("bbox"))?;
     let to_bbox = parse_bbox_field(obj.get("to_bbox"))?;
     let text = optional_string(obj, "text", MAX_TEXT_CHARS);
@@ -425,10 +425,10 @@ fn parse_phone_args(args: &Value) -> Result<PhoneArgs> {
         PhoneAction::Tap | PhoneAction::LongPress | PhoneAction::Swipe
     );
     if requires_bbox && bbox.is_none() {
-        return Err(anyhow!(crate::i18n::t("tool.phone_control.bbox_required")));
+        return Err(anyhow!(crate::i18n::prompt_t("tool.phone_control.bbox_required")));
     }
     if action == PhoneAction::Swipe && to_bbox.is_none() {
-        return Err(anyhow!(crate::i18n::t(
+        return Err(anyhow!(crate::i18n::prompt_t(
             "tool.phone_control.to_bbox_required"
         )));
     }
@@ -439,18 +439,18 @@ fn parse_phone_args(args: &Value) -> Result<PhoneArgs> {
             .filter(|value| !value.is_empty())
             .is_none()
     {
-        return Err(anyhow!(crate::i18n::t("tool.phone_control.text_required")));
+        return Err(anyhow!(crate::i18n::prompt_t("tool.phone_control.text_required")));
     }
     if action == PhoneAction::PressKey {
         let key = key
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| anyhow!(crate::i18n::t("tool.phone_control.key_required")))?;
+            .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.phone_control.key_required")))?;
         if !PRESS_KEYS.contains(&key) {
             return Err(anyhow!(format!(
                 "{} ({})",
-                crate::i18n::t("tool.phone_control.invalid_key"),
+                crate::i18n::prompt_t("tool.phone_control.invalid_key"),
                 PRESS_KEYS.join("/")
             )));
         }
@@ -462,16 +462,16 @@ fn parse_phone_args(args: &Value) -> Result<PhoneArgs> {
             .filter(|value| !value.is_empty())
             .is_none()
     {
-        return Err(anyhow!(crate::i18n::t("tool.phone_control.app_required")));
+        return Err(anyhow!(crate::i18n::prompt_t("tool.phone_control.app_required")));
     }
     if action == PhoneAction::OpenUrl {
         let value = url
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| anyhow!(crate::i18n::t("tool.phone_control.url_required")))?;
+            .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.phone_control.url_required")))?;
         if !(value.starts_with("https://") || value.starts_with("http://")) {
-            return Err(anyhow!(crate::i18n::t("tool.phone_control.invalid_url")));
+            return Err(anyhow!(crate::i18n::prompt_t("tool.phone_control.invalid_url")));
         }
     }
     let page = obj
@@ -482,7 +482,7 @@ fn parse_phone_args(args: &Value) -> Result<PhoneArgs> {
         .unwrap_or("settings")
         .to_string();
     if action == PhoneAction::OpenSettings && !SETTINGS_PAGES.contains(&page.as_str()) {
-        return Err(anyhow!(crate::i18n::t(
+        return Err(anyhow!(crate::i18n::prompt_t(
             "tool.phone_control.invalid_settings_page"
         )));
     }
@@ -492,11 +492,11 @@ fn parse_phone_args(args: &Value) -> Result<PhoneArgs> {
             Some("get") => {}
             Some("set") => {
                 if text.as_deref().unwrap_or("").is_empty() {
-                    return Err(anyhow!(crate::i18n::t("tool.phone_control.text_required")));
+                    return Err(anyhow!(crate::i18n::prompt_t("tool.phone_control.text_required")));
                 }
             }
             _ => {
-                return Err(anyhow!(crate::i18n::t(
+                return Err(anyhow!(crate::i18n::prompt_t(
                     "tool.phone_control.operation_required"
                 )))
             }
@@ -535,22 +535,22 @@ fn parse_bbox_field(value: Option<&Value>) -> Result<Option<(i32, i32)>> {
         return Ok(None);
     };
     let Some(items) = value.as_array() else {
-        return Err(anyhow!(crate::i18n::t("tool.phone_control.invalid_bbox")));
+        return Err(anyhow!(crate::i18n::prompt_t("tool.phone_control.invalid_bbox")));
     };
     let numbers = items
         .iter()
         .map(|item| item.as_i64().map(|value| value as i32))
         .collect::<Option<Vec<i32>>>();
     let Some(numbers) = numbers else {
-        return Err(anyhow!(crate::i18n::t("tool.phone_control.invalid_bbox")));
+        return Err(anyhow!(crate::i18n::prompt_t("tool.phone_control.invalid_bbox")));
     };
     let center = match numbers.as_slice() {
         [x, y] => (*x, *y),
         [x1, y1, x2, y2] => ((x1 + x2) / 2, (y1 + y2) / 2),
-        _ => return Err(anyhow!(crate::i18n::t("tool.phone_control.invalid_bbox"))),
+        _ => return Err(anyhow!(crate::i18n::prompt_t("tool.phone_control.invalid_bbox"))),
     };
     if numbers.iter().any(|value| *value < 0 || *value > FRAME_BOX) {
-        return Err(anyhow!(crate::i18n::t(
+        return Err(anyhow!(crate::i18n::prompt_t(
             "tool.phone_control.bbox_out_of_range"
         )));
     }
@@ -559,7 +559,7 @@ fn parse_bbox_field(value: Option<&Value>) -> Result<Option<(i32, i32)>> {
 
 pub async fn tool_phone_control(_context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let host = phone_control_host()
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.phone_control.disabled")))?;
+        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.phone_control.disabled")))?;
     execute_with_host(host, args).await
 }
 
@@ -577,7 +577,7 @@ async fn execute_with_host(host: Arc<dyn PhoneControlHost>, args: &Value) -> Res
         {
             return Err(anyhow!(format!(
                 "{} (frame {norm_width}x{norm_height})",
-                crate::i18n::t("tool.phone_control.bbox_out_of_range")
+                crate::i18n::prompt_t("tool.phone_control.bbox_out_of_range")
             )));
         }
     }
@@ -667,7 +667,7 @@ async fn execute_with_host(host: Arc<dyn PhoneControlHost>, args: &Value) -> Res
         localize_host_message(
             code,
             message.as_deref(),
-            &crate::i18n::t("tool.phone_control.action_failed"),
+            &crate::i18n::prompt_t("tool.phone_control.action_failed"),
         )
     };
     let followup_prompt = if action.captures_frame() && screenshot_path.is_some() {
@@ -680,7 +680,7 @@ async fn execute_with_host(host: Arc<dyn PhoneControlHost>, args: &Value) -> Res
         // pixel grid of the screenshot it is looking at, not a fixed square.
         Some(format!(
             "{} (frame {norm_width}x{norm_height} px)",
-            crate::i18n::t(key)
+            crate::i18n::prompt_t(key)
         ))
     } else {
         None
@@ -735,12 +735,12 @@ async fn execute_with_host(host: Arc<dyn PhoneControlHost>, args: &Value) -> Res
 fn phone_summary(action: PhoneAction, foreground_app: &str) -> String {
     let action = action.as_str();
     if foreground_app.trim().is_empty() {
-        crate::i18n::t_with_params(
+        crate::i18n::prompt_t_with_params(
             "tool.phone_control.summary",
             &std::collections::HashMap::from([("action".to_string(), action.to_string())]),
         )
     } else {
-        crate::i18n::t_with_params(
+        crate::i18n::prompt_t_with_params(
             "tool.phone_control.summary_app",
             &std::collections::HashMap::from([
                 ("action".to_string(), action.to_string()),
@@ -765,7 +765,7 @@ fn localize_host_message(code: Option<&str>, message: Option<&str>, fallback: &s
         _ => None,
     };
     if let Some(key) = key {
-        let localized = crate::i18n::t(key);
+        let localized = crate::i18n::prompt_t(key);
         if localized != key {
             return localized;
         }
@@ -794,11 +794,11 @@ pub async fn build_followup_user_message(result_data: &Value) -> Result<Option<V
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
-        .unwrap_or_else(|| crate::i18n::t("tool.phone_control.followup_prompt"));
+        .unwrap_or_else(|| crate::i18n::prompt_t("tool.phone_control.followup_prompt"));
     let mut content = vec![json!({ "type": "text", "text": prompt })];
     content.push(json!({
         "type": "text",
-        "text": crate::i18n::t_with_params(
+        "text": crate::i18n::prompt_t_with_params(
             "tool.read_image.followup_path_hint",
             &std::collections::HashMap::from([(
                 "path".to_string(),
@@ -819,9 +819,9 @@ pub async fn build_followup_user_message(result_data: &Value) -> Result<Option<V
 async fn read_screenshot_data_url(path: &Path) -> Result<String> {
     let bytes = tokio::fs::read(path)
         .await
-        .map_err(|_| anyhow!(crate::i18n::t("tool.phone_control.capture_failed")))?;
+        .map_err(|_| anyhow!(crate::i18n::prompt_t("tool.phone_control.capture_failed")))?;
     if bytes.len() as u64 > MAX_SCREENSHOT_BYTES {
-        return Err(anyhow!(crate::i18n::t(
+        return Err(anyhow!(crate::i18n::prompt_t(
             "tool.phone_control.capture_too_large"
         )));
     }

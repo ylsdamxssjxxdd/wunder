@@ -746,7 +746,12 @@ impl NativeDesktop {
         // 打开同一线程时就能立即判断“持有者已经死了”，直接回收租约。
         let instance_dir = desktop.wunder_home.join("data").join("instances");
         let instance_guard = match InstanceGuard::claim(&instance_dir, &instance_id) {
-            Ok(guard) => Some(guard),
+            Ok(guard) => {
+                // 后台命令等跨重启记录用它标注归属；命令行启动时据此跳过
+                // 桌面版仍在跟踪的记录。没有存活文件就无法判活，宁可不标。
+                wunder_server::instance_liveness::set_current_instance(&instance_id);
+                Some(guard)
+            }
             Err(error) => {
                 tracing::warn!(%error, "claim instance liveness file failed");
                 None
@@ -831,8 +836,14 @@ impl NativeDesktop {
             // observer，本地会话结算为失联并通知一次。
             {
                 let state = Arc::clone(&desktop.state);
+                let background_instance_dir = instance_dir.clone();
                 runtime.spawn(async move {
-                    match wunder_server::startup::recover_background_commands(state).await {
+                    match wunder_server::startup::recover_background_commands(
+                        state,
+                        Some(background_instance_dir),
+                    )
+                    .await
+                    {
                         Ok(0) => {}
                         Ok(recovered) => {
                             tracing::info!(recovered, "recovered background command sessions")

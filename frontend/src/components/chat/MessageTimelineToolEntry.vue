@@ -20,16 +20,22 @@
         <span class="tl-entry-tool-label">{{ commandToolLabel || rowLabel }}</span>
       </span>
       <span v-if="entry.targets.length" class="tl-entry-chips">
-        <button
-          v-for="target in entry.targets"
-          :key="target.key"
-          class="tl-entry-chip"
-          type="button"
-          :title="target.path"
-          @click.stop="revealTarget(target.path)"
-        >
-          {{ target.label }}
-        </button>
+        <!-- 徽章只显示文件名。绝对路径（云端沙箱的物理路径）无法在左栏定位，
+             仍要露出来源文件名，此时降级为不可点击的静态徽章。 -->
+        <template v-for="target in entry.targets" :key="target.key">
+          <button
+            v-if="target.path"
+            class="tl-entry-chip"
+            type="button"
+            :title="target.title || target.path"
+            @click.stop="revealTarget(target.path)"
+          >
+            {{ target.label }}
+          </button>
+          <span v-else class="tl-entry-chip is-static" :title="target.title || target.label">
+            {{ target.label }}
+          </span>
+        </template>
       </span>
       <!-- 改动规模：与补丁卡片头部同口径，只显示真正存在的一侧，避免「+0 −0」。 -->
       <span
@@ -388,6 +394,7 @@ button.tl-entry-head:focus-visible {
 
 .tl-entry-chip {
   box-sizing: border-box;
+  display: inline-block;
   max-width: 180px;
   height: 18px;
   padding: 0 7px;
@@ -403,7 +410,12 @@ button.tl-entry-head:focus-visible {
   cursor: pointer;
 }
 
-.tl-entry-chip:hover {
+/* 不可定位的徽章（绝对路径）只是文件名标签，不再有悬停/点击暗示。 */
+.tl-entry-chip.is-static {
+  cursor: default;
+}
+
+button.tl-entry-chip:hover {
   background: var(--mz-selected, #f1efec);
   color: var(--mz-text-secondary, #3d3d3d);
 }

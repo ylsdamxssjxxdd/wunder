@@ -1416,7 +1416,7 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == TOOL_BROWSER)
             .expect("browser spec");
-        let projected = crate::tools::prompt_tool_spec(&spec, "en-US");
+        let projected = crate::tools::prompt_tool_spec(&spec);
         let properties = projected.input_schema["properties"]
             .as_object()
             .expect("browser properties");

@@ -27,7 +27,7 @@ pub(super) fn resolve_subagent_parent_scope(
 ) -> Result<String> {
     normalize_optional_string(explicit_parent_id)
         .or_else(|| normalize_optional_string(Some(current_session_id.to_string())))
-        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))
+        .ok_or_else(|| anyhow!(i18n::prompt_t("error.session_not_found")))
 }
 
 pub(super) fn normalize_status_wait_target(
@@ -95,11 +95,11 @@ pub(super) fn resolve_single_child_session_target(
 ) -> Result<String> {
     let user_id = context.user_id.trim();
     if user_id.is_empty() {
-        return Err(anyhow!(i18n::t("error.user_id_required")));
+        return Err(anyhow!(i18n::prompt_t("error.user_id_required")));
     }
     let current_session_id = context.session_id.trim();
     if current_session_id.is_empty() {
-        return Err(anyhow!(i18n::t("error.session_not_found")));
+        return Err(anyhow!(i18n::prompt_t("error.session_not_found")));
     }
 
     let mut resolved_session_ids = Vec::new();
@@ -227,11 +227,11 @@ pub(super) fn resolve_single_child_run_target(
 ) -> Result<String> {
     let user_id = context.user_id.trim();
     if user_id.is_empty() {
-        return Err(anyhow!(i18n::t("error.user_id_required")));
+        return Err(anyhow!(i18n::prompt_t("error.user_id_required")));
     }
     let current_session_id = context.session_id.trim();
     if current_session_id.is_empty() {
-        return Err(anyhow!(i18n::t("error.session_not_found")));
+        return Err(anyhow!(i18n::prompt_t("error.session_not_found")));
     }
 
     let mut requested_run_ids = target.run_ids.clone().unwrap_or_default();
@@ -593,7 +593,7 @@ pub(super) fn collect_snapshots(
 ) -> Result<Vec<SubagentRunSnapshot>> {
     let user_id = context.user_id.trim();
     if user_id.is_empty() {
-        return Err(anyhow!(i18n::t("error.user_id_required")));
+        return Err(anyhow!(i18n::prompt_t("error.user_id_required")));
     }
     if selector.run_ids.len() + selector.session_ids.len() > MAX_SESSION_LIST_ITEMS as usize {
         return Err(anyhow!("too many subagent targets"));

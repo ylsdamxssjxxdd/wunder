@@ -171,7 +171,7 @@ impl NativeDesktop {
                 .any(|record| tools::is_browser_tool_name(&record.name))
             {
                 records.retain(|record| !tools::is_browser_tool_name(&record.name));
-                let summary = tools::browser_tool_summary_spec("zh-CN");
+                let summary = tools::browser_tool_summary_spec();
                 records.push(ToolRecord {
                     name: summary.name,
                     description: summary.description,

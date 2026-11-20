@@ -50,8 +50,10 @@ export type TimelineReadLines = {
 export type TimelineTargetChip = {
   key: string;
   label: string;
-  /** 工作区相对路径；可点击定位到左栏工作目录区。 */
+  /** 工作区相对路径；可点击定位到左栏工作目录区。不可定位（绝对路径）时为空串。 */
   path: string;
+  /** 徽章的完整来源路径，仅用于悬停提示。 */
+  title: string;
 };
 
 export type TimelineToolEntry = {
@@ -136,6 +138,32 @@ const PATH_KEYS = [
 ] as const;
 
 const TEXT_KEYS = ['command', 'cmd', 'query', 'question', 'keyword', 'keywords', 'url', 'uri', 'skill', 'name'] as const;
+
+/**
+ * 「文件身份」字段：这些键上的绝对路径仍指向一个具体文件，徽章要显示文件名。
+ * `cwd` / `workdir` / `dir` 这类目录字段的绝对路径只是宿主机噪声，不在此列。
+ */
+const FILE_PATH_KEYS = [
+  'path',
+  'file',
+  'filename',
+  'file_path',
+  'filePath',
+  'target_path',
+  'targetPath',
+  'source_path',
+  'sourcePath',
+  'to_path',
+  'toPath',
+  'output_path',
+  'outputPath',
+  'input_path',
+  'inputPath',
+  'relative_path',
+  'relativePath'
+] as const;
+
+const FILE_PATH_KEY_SET = new Set<string>(FILE_PATH_KEYS);
 
 const CONTEXT_CN = '\u4e0a\u4e0b\u6587';
 const COMPACTION_CN = '\u538b\u7f29';
@@ -260,38 +288,51 @@ const fitChipLabel = (label: string, narrow = false): string => {
   return `${kept}…`;
 };
 
+type RawFieldValues = { paths: string[]; filePaths: string[]; texts: string[] };
+
 /**
  * 从工具调用/结果的原始 detail 里取路径与关键文本。
  * 只扫描有界前缀，避免整段大 JSON 解析进入流式热路径。
+ *
+ * `paths` 收集全部路径类字段；`filePaths` 只收「文件身份」字段（path/file_path…），
+ * 绝对路径在这两者里的待遇不同：目录类字段（`cwd`/`workdir`/`dir`）的绝对路径
+ * 只是宿主机噪声，文件身份字段的绝对路径仍要露出文件名。
  */
-const readRawObjectFields = (detail: unknown): { paths: string[]; texts: string[] } => {
+const readRawObjectFields = (detail: unknown): RawFieldValues => {
   const direct = asObject(detail);
   if (direct) {
     return readFieldsFromObject(direct);
   }
-  if (typeof detail !== 'string' || !detail) return { paths: [], texts: [] };
+  if (typeof detail !== 'string' || !detail) return { paths: [], filePaths: [], texts: [] };
   const parsed = parseDetailObject(detail.slice(0, 8192));
   if (parsed) return readFieldsFromObject(parsed);
   const sample = detail.slice(0, 4096);
   const paths: string[] = [];
+  const filePaths: string[] = [];
   const texts: string[] = [];
   PATH_KEYS.forEach((key) => {
     const match = new RegExp(`"${key}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`, 'i').exec(sample);
-    if (match?.[1]) paths.push(decodeJsonString(match[1]));
+    if (!match?.[1]) return;
+    const value = decodeJsonString(match[1]);
+    paths.push(value);
+    if (FILE_PATH_KEY_SET.has(key)) filePaths.push(value);
   });
   TEXT_KEYS.forEach((key) => {
     const match = new RegExp(`"${key}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`, 'i').exec(sample);
     if (match?.[1]) texts.push(decodeJsonString(match[1]));
   });
-  return { paths, texts };
+  return { paths, filePaths, texts };
 };
 
-const readFieldsFromObject = (source: UnknownObject): { paths: string[]; texts: string[] } => {
+const readFieldsFromObject = (source: UnknownObject): RawFieldValues => {
   const paths: string[] = [];
+  const filePaths: string[] = [];
   const texts: string[] = [];
   PATH_KEYS.forEach((key) => {
     const value = pickString(source[key]);
-    if (value) paths.push(value);
+    if (!value) return;
+    paths.push(value);
+    if (FILE_PATH_KEY_SET.has(key)) filePaths.push(value);
   });
   TEXT_KEYS.forEach((key) => {
     const value = pickString(source[key]);
@@ -301,9 +342,10 @@ const readFieldsFromObject = (source: UnknownObject): { paths: string[]; texts: 
   if (args) {
     const nested = readFieldsFromObject(args);
     paths.push(...nested.paths);
+    filePaths.push(...nested.filePaths);
     texts.push(...nested.texts);
   }
-  return { paths, texts };
+  return { paths, filePaths, texts };
 };
 
 const decodeJsonString = (value: string): string => {
@@ -635,35 +677,50 @@ const detailDuplicatesError = (detailText: string, errorText: string): boolean =
   return error.length >= 160 && detail.includes(error);
 };
 
+const isAbsolutePathLike = (path: string): boolean =>
+  path.startsWith('/') || /^[a-zA-Z]:\//.test(path);
+
 const buildTargets = (run: RawToolRun): TimelineTargetChip[] => {
   // 技能调用的 path 是技能入口资源（几乎总是 SKILL.md），把它做成目标徽章只会
   // 让每一行技能调用看起来是同一次调用；技能名已经由摘要承担。
   if (isSkillCallTool(run.toolName)) return [];
   const paths = new Set<string>();
+  // 绝对路径（云端沙箱给出的工作区物理路径）无法在左栏定位，但文件名必须露出来，
+  // 否则「写入 / 编辑」条目右侧就只剩一列 +/-，看不出改的是哪个文件。
+  const absolutePaths = new Set<string>();
   [run.resultItem, run.outputItem, run.callItem].forEach((item) => {
     if (!item) return;
     const fields = readRawObjectFields(item.detail);
     fields.paths.forEach((value) => {
       const normalized = normalizePathLike(value);
-      // 只接受工作区相对路径形态，避免把服务端绝对路径渲染出来。
-      if (!normalized || normalized.startsWith('/') || /^[a-zA-Z]:\//.test(normalized) || normalized.includes('..')) {
+      if (!normalized || normalized.includes('..')) return;
+      if (isAbsolutePathLike(normalized)) {
+        if (fields.filePaths.includes(value)) absolutePaths.add(normalized);
         return;
       }
       paths.add(normalized);
     });
   });
-  return Array.from(paths)
+  const chips: TimelineTargetChip[] = Array.from(paths)
     .slice(0, TARGET_LIMIT)
-    .map((path) => {
+    .map((path) => ({
+      key: path,
+      path,
       // 徽章只显示文件名：目录写在折叠行的工具名旁边是噪声，完整路径留在
       // `path` 里供点击打开与 title 提示。
-      const label = basenameOfPath(path) || path;
-      return {
-        key: path,
-        path,
-        label: fitChipLabel(label)
-      };
-    });
+      label: fitChipLabel(basenameOfPath(path) || path),
+      title: path
+    }));
+  if (chips.length >= TARGET_LIMIT) return chips;
+  for (const absolute of absolutePaths) {
+    if (chips.length >= TARGET_LIMIT) break;
+    const label = fitChipLabel(basenameOfPath(absolute) || absolute);
+    if (!label) continue;
+    // 相对路径已经表达了同一个文件时不再重复一枚不可点击的徽章。
+    if (chips.some((chip) => chip.label === label || chip.title === absolute)) continue;
+    chips.push({ key: absolute, path: '', label, title: absolute });
+  }
+  return chips;
 };
 
 const READ_TOOL_TOKENS = ['read_file', '\u8bfb\u53d6\u6587\u4ef6', 'read files'] as const;
@@ -731,13 +788,14 @@ const summaryDuplicatesTarget = (summary: string, targets: TimelineTargetChip[])
   // 摘要里可能只剩折叠路径（`.../src/lib.rs`），先按文件名归一化再比对。
   const summaryBase = !/\s/.test(normalized) ? basenameOfPath(normalized) : '';
   return targets.some((target) => {
-    const path = normalizePathLike(target.path);
-    const base = basenameOfPath(path);
-    const label = (target.label || '').replace(/^(?:\u2026|\.{3})\//, '');
-    return normalized === path ||
-      normalized === label ||
-      normalized === base ||
-      (Boolean(summaryBase) && summaryBase === base);
+    // 徽章的完整来源可能是绝对路径（不可点击定位），两种形态都要参与比对。
+    const sources = [target.path, target.title].map(normalizePathLike).filter(Boolean);
+    const label = (target.label || '').replace(/^(?:\u2026|\.\.\.)\//, '');
+    return sources.some((path) => {
+      const base = basenameOfPath(path);
+      return normalized === path || normalized === base ||
+        (Boolean(summaryBase) && summaryBase === base);
+    }) || normalized === label;
   });
 };
 

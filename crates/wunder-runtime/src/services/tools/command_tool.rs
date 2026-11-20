@@ -87,7 +87,7 @@ fn build_reused_command_result(
     context: &ToolContext<'_>,
     snapshot: &CommandSessionSnapshot,
 ) -> Value {
-    let guidance = i18n::t("tool.exec.reused_running");
+    let guidance = i18n::prompt_t("tool.exec.reused_running");
     let truncated = snapshot.stdout_dropped_bytes > 0
         || snapshot.stderr_dropped_bytes > 0
         || snapshot.pty_dropped_bytes > 0;
@@ -1614,7 +1614,7 @@ fn running_command_result(session_id: String) -> CommandRunResult {
 fn command_session_list(context: &ToolContext<'_>) -> Value {
     let Some(broker) = context.command_sessions.as_ref() else {
         return build_failed_tool_result(
-            &i18n::t("tool.command_session.unavailable"),
+            &i18n::prompt_t("tool.command_session.unavailable"),
             json!({}),
             ToolErrorMeta::new("TOOL_COMMAND_SESSION_UNAVAILABLE", None, false, None),
             false,
@@ -1666,12 +1666,12 @@ fn command_session_list(context: &ToolContext<'_>) -> Value {
     build_model_tool_success(
         "command_session",
         "listed",
-        i18n::t("tool.command_session.list_summary"),
+        i18n::prompt_t("tool.command_session.list_summary"),
         json!({
             "sessions": sessions,
             "total": total,
             "running": running,
-            "next_step": i18n::t("tool.command_session.list_next_step"),
+            "next_step": i18n::prompt_t("tool.command_session.list_next_step"),
         }),
     )
 }
@@ -1745,13 +1745,13 @@ pub(crate) async fn command_session_control(
             .await
         {
             return Ok(build_failed_tool_result(
-                &i18n::t("tool.command_session.sandbox_unavailable"),
+                &i18n::prompt_t("tool.command_session.sandbox_unavailable"),
                 json!({ "command_session_id": session_id }),
                 ToolErrorMeta::new("TOOL_COMMAND_SESSION_UNAVAILABLE", None, true, Some(200)),
                 false,
             ));
         }
-        stdin_note = Some(i18n::t("tool.command_session.interrupted"));
+        stdin_note = Some(i18n::prompt_t("tool.command_session.interrupted"));
     }
     if sandbox_backed && (input.uses_stdin_control() || !managed) {
         let Some(result) = crate::sandbox::control_command_session(
@@ -1775,7 +1775,7 @@ pub(crate) async fn command_session_control(
         .await
         else {
             return Ok(build_failed_tool_result(
-                &i18n::t("tool.command_session.sandbox_unavailable"),
+                &i18n::prompt_t("tool.command_session.sandbox_unavailable"),
                 json!({ "command_session_id": session_id }),
                 ToolErrorMeta::new("TOOL_COMMAND_SESSION_UNAVAILABLE", None, true, Some(200)),
                 false,
@@ -1789,14 +1789,14 @@ pub(crate) async fn command_session_control(
                 .to_string();
             if error.contains("stdin is unavailable") {
                 return Ok(build_failed_tool_result(
-                    &i18n::t("tool.command_session.stdin_closed"),
+                    &i18n::prompt_t("tool.command_session.stdin_closed"),
                     json!({
                         "command_session_id": session_id,
-                        "stdin_note": i18n::t("tool.command_session.stdin_closed_hint"),
+                        "stdin_note": i18n::prompt_t("tool.command_session.stdin_closed_hint"),
                     }),
                     ToolErrorMeta::new(
                         "TOOL_COMMAND_STDIN_CLOSED",
-                        Some(i18n::t("tool.command_session.stdin_closed_hint")),
+                        Some(i18n::prompt_t("tool.command_session.stdin_closed_hint")),
                         false,
                         None,
                     ),
@@ -1830,7 +1830,7 @@ pub(crate) async fn command_session_control(
     }
     let Some(broker) = broker else {
         return Ok(build_failed_tool_result(
-            &i18n::t("tool.command_session.unavailable"),
+            &i18n::prompt_t("tool.command_session.unavailable"),
             json!({}),
             ToolErrorMeta::new("TOOL_COMMAND_SESSION_UNAVAILABLE", None, false, None),
             false,
@@ -1875,11 +1875,11 @@ pub(crate) async fn command_session_control(
                     .await
                     .map_err(|error| anyhow!(error))?;
                 return Ok(build_failed_tool_result(
-                    &i18n::t("tool.command_session.stdin_closed"),
-                    with_stdin_note(data, i18n::t("tool.command_session.stdin_closed_hint")),
+                    &i18n::prompt_t("tool.command_session.stdin_closed"),
+                    with_stdin_note(data, i18n::prompt_t("tool.command_session.stdin_closed_hint")),
                     ToolErrorMeta::new(
                         "TOOL_COMMAND_STDIN_CLOSED",
-                        Some(i18n::t("tool.command_session.stdin_closed_hint")),
+                        Some(i18n::prompt_t("tool.command_session.stdin_closed_hint")),
                         false,
                         None,
                     ),
@@ -1887,7 +1887,7 @@ pub(crate) async fn command_session_control(
                 ));
             }
             CommandStdinWrite::SessionExited => {
-                stdin_note = Some(i18n::t("tool.command_session.stdin_after_exit"));
+                stdin_note = Some(i18n::prompt_t("tool.command_session.stdin_after_exit"));
             }
         }
     }
@@ -2006,15 +2006,15 @@ fn build_command_session_result(mut data: Value) -> Value {
             .and_then(Value::as_i64)
             .is_some_and(|code| code > 0)
     {
-        data["exit_note"] = json!(i18n::t("tool.exec.non_zero_exit_note"));
+        data["exit_note"] = json!(i18n::prompt_t("tool.exec.non_zero_exit_note"));
     }
     if running {
-        data["next_step"] = json!(i18n::t("tool.command_session.keep_waiting"));
+        data["next_step"] = json!(i18n::prompt_t("tool.command_session.keep_waiting"));
     }
     build_model_tool_success(
         "command_session",
         if running { "running" } else { "completed" },
-        i18n::t("tool.command_session.summary"),
+        i18n::prompt_t("tool.command_session.summary"),
         data,
     )
 }
@@ -2289,7 +2289,7 @@ fn build_sandbox_command_result(mut data: Value) -> Value {
             );
         }
         return build_failed_tool_result(
-            i18n::t("tool.exec.timeout"),
+            i18n::prompt_t("tool.exec.timeout"),
             data,
             tool_timeout_meta("TOOL_EXEC_TIMEOUT"),
             false,
@@ -2332,7 +2332,7 @@ fn build_sandbox_command_result(mut data: Value) -> Value {
             if let Value::Object(ref mut map) = data {
                 map.insert(
                     "exit_note".to_string(),
-                    json!(i18n::t("tool.exec.non_zero_exit_note")),
+                    json!(i18n::prompt_t("tool.exec.non_zero_exit_note")),
                 );
             }
         }
@@ -2407,7 +2407,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
     // 裸 sleep 在后台是合法作业（延迟执行）；只有前台空等才拦截。
     if !run_in_background && content_is_bare_sleep(&content) {
         return Ok(build_failed_tool_result(
-            i18n::t("tool.exec.sleep_not_allowed"),
+            i18n::prompt_t("tool.exec.sleep_not_allowed"),
             json!({ "command": content }),
             ToolErrorMeta::new(
                 "TOOL_EXEC_SLEEP_NOT_ALLOWED",
@@ -2459,7 +2459,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
     };
     if run_in_background && !dry_run && background_notifier.is_none() {
         return Ok(build_failed_tool_result(
-            i18n::t("tool.exec.background_unavailable"),
+            i18n::prompt_t("tool.exec.background_unavailable"),
             json!({ "run_in_background": true }),
             ToolErrorMeta::new(
                 "TOOL_EXEC_BACKGROUND_UNAVAILABLE",
@@ -2727,9 +2727,9 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                     );
                 }
                 let guidance = if run_in_background {
-                    i18n::t("tool.exec.background_notify_next_step")
+                    i18n::prompt_t("tool.exec.background_notify_next_step")
                 } else {
-                    i18n::t("tool.exec.background_next_step")
+                    i18n::prompt_t("tool.exec.background_next_step")
                 };
                 if let Value::Object(ref mut map) = data {
                     map.insert("background".to_string(), json!(run_in_background));
@@ -2765,7 +2765,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
 
     if content.is_empty() {
         return Ok(build_failed_tool_result(
-            i18n::t("tool.exec.command_required"),
+            i18n::prompt_t("tool.exec.command_required"),
             json!({}),
             ToolErrorMeta::new(
                 "TOOL_EXEC_COMMAND_REQUIRED",
@@ -2801,7 +2801,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
     };
     if !cwd.exists() {
         return Ok(build_failed_tool_result(
-            i18n::t("tool.exec.workdir_not_found"),
+            i18n::prompt_t("tool.exec.workdir_not_found"),
             json!({ "workdir": workdir }),
             ToolErrorMeta::new(
                 "TOOL_EXEC_WORKDIR_NOT_FOUND",
@@ -2814,7 +2814,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
     }
     if !cwd.is_dir() {
         return Ok(build_failed_tool_result(
-            i18n::t("tool.exec.workdir_not_dir"),
+            i18n::prompt_t("tool.exec.workdir_not_dir"),
             json!({ "workdir": workdir }),
             ToolErrorMeta::new(
                 "TOOL_EXEC_WORKDIR_NOT_DIR",
@@ -2848,7 +2848,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
     let single_command = commands.len() == 1;
     if commands.is_empty() {
         return Ok(build_failed_tool_result(
-            i18n::t("tool.exec.command_required"),
+            i18n::prompt_t("tool.exec.command_required"),
             json!({}),
             ToolErrorMeta::new(
                 "TOOL_EXEC_COMMAND_REQUIRED",
@@ -2915,7 +2915,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                 .any(|item| lower.starts_with(item))
             {
                 return Ok(build_failed_tool_result(
-                    i18n::t("tool.exec.not_allowed"),
+                    i18n::prompt_t("tool.exec.not_allowed"),
                     json!({ "command": line }),
                     ToolErrorMeta::new(
                         "TOOL_EXEC_NOT_ALLOWED",
@@ -2939,7 +2939,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                 .any(|item| lower.starts_with(item))
             {
                 return Ok(build_failed_tool_result(
-                    i18n::t("tool.exec.not_allowed"),
+                    i18n::prompt_t("tool.exec.not_allowed"),
                     json!({
                         "command": command,
                     }),
@@ -2962,14 +2962,14 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
         let command = if nested_powershell_enabled {
             match command_utils::rewrite_nested_powershell(&command) {
                 Some(command_utils::NestedPowerShell::Unwrap(script)) => {
-                    shell_note = Some(i18n::t("tool.exec.shell_unwrapped"));
+                    shell_note = Some(i18n::prompt_t("tool.exec.shell_unwrapped"));
                     // 剥出来的是脚本文本，不是单个程序：直接交给 shell，别先试一次
                     // 直启（`Write-Output` 不是可执行文件，只会多一次失败）。
                     force_shell_launch = true;
                     script
                 }
                 Some(command_utils::NestedPowerShell::Recode(text)) => {
-                    shell_note = Some(i18n::t("tool.exec.shell_reencoded"));
+                    shell_note = Some(i18n::prompt_t("tool.exec.shell_reencoded"));
                     text
                 }
                 None => command,
@@ -3044,9 +3044,9 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
         if run.running {
             context.workspace.mark_tree_dirty(context.workspace_id);
             let guidance = if run_in_background {
-                i18n::t("tool.exec.background_notify_next_step")
+                i18n::prompt_t("tool.exec.background_notify_next_step")
             } else {
-                i18n::t("tool.exec.background_next_step")
+                i18n::prompt_t("tool.exec.background_next_step")
             };
             let session_id = run.command_session_id.clone().unwrap_or_default();
             let partial_output = context.command_sessions.as_ref().and_then(|broker| {
@@ -3173,7 +3173,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             if let Some(last) = results.last_mut().and_then(Value::as_object_mut) {
                 last.insert(
                     "exit_note".to_string(),
-                    Value::String(i18n::t("tool.exec.non_zero_exit_note")),
+                    Value::String(i18n::prompt_t("tool.exec.non_zero_exit_note")),
                 );
             }
         }

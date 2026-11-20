@@ -1147,9 +1147,9 @@ fn build_knowledge_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "query": { "type": "string", "description": i18n::t("knowledge.tool.query.description") },
-            "keywords": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": i18n::t("knowledge.tool.keywords.description") },
-            "limit": { "type": "integer", "minimum": 1, "description": i18n::t("knowledge.tool.limit.description") }
+            "query": { "type": "string", "description": i18n::prompt_t("knowledge.tool.query.description") },
+            "keywords": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": i18n::prompt_t("knowledge.tool.keywords.description") },
+            "limit": { "type": "integer", "minimum": 1, "description": i18n::prompt_t("knowledge.tool.limit.description") }
         },
         "anyOf": [
             { "required": ["query"] },

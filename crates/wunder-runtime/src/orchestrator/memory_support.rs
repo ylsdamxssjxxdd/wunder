@@ -847,7 +847,7 @@ pub(super) fn extract_memory_summary_text_value(content: &Value) -> String {
                         segments.push(cleaned);
                     }
                 } else if part_type == "image_url" || obj.contains_key("image_url") {
-                    segments.push(i18n::t("memory.summary.image_placeholder"));
+                    segments.push(i18n::prompt_t("memory.summary.image_placeholder"));
                 } else if let Some(text) = obj.get("text").and_then(Value::as_str) {
                     let cleaned = strip_tool_calls(text).trim().to_string();
                     if !cleaned.is_empty() {
@@ -1642,7 +1642,7 @@ pub(super) fn strip_existing_memory_block_text(text: &str) -> String {
     let cleaned = text.trim_end();
     let mut prefixes = i18n::get_known_prefixes("memory.block_prefix");
     if prefixes.is_empty() {
-        prefixes.push(i18n::t("memory.block_prefix"));
+        prefixes.push(i18n::prompt_t("memory.block_prefix"));
     }
     let mut cut_index: Option<usize> = None;
     for prefix in prefixes {

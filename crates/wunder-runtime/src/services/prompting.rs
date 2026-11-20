@@ -164,7 +164,7 @@ impl PromptComposer {
         preview_skill: bool,
     ) -> String {
         let tool_key = build_tool_key(allowed_tool_names);
-        let language = i18n::get_language();
+        let language = i18n::prompt_language();
         let tool_mode_key = match tool_call_mode {
             ToolCallMode::FunctionCall => "function_call",
             ToolCallMode::ToolCall => "tool_call",
@@ -861,7 +861,7 @@ fn render_tool_spec(spec: &ToolSpec, freeform_mode: bool) -> String {
     // Text protocols pay for every tool definition in the system prompt, so
     // render the reduced model-facing surface instead of the authoritative
     // schema. Execution still validates against the full backend schema.
-    let projected = crate::tools::prompt_tool_spec(spec, &i18n::get_language());
+    let projected = crate::tools::prompt_tool_spec(spec);
     let spec = &projected;
     // serde_json 默认会按 key 排序输出，这里手动控制字段顺序，确保 name 在最前面便于模型检索。
     let name = serde_json::to_string(&spec.name).unwrap_or_else(|_| "\"\"".to_string());
@@ -982,20 +982,16 @@ fn resolve_prompt_path(path: &Path, locale_override: Option<&str>) -> PathBuf {
     resolved
 }
 
-fn resolve_requested_prompt_locale(locale_override: Option<&str>) -> Option<&'static str> {
-    let raw = locale_override.unwrap_or("").trim().to_ascii_lowercase();
-    if raw.starts_with("en") {
-        return Some("en");
-    }
-    if raw.starts_with("zh") {
-        return Some("zh");
-    }
-    match i18n::get_language().to_ascii_lowercase() {
-        language if language.starts_with("en") => Some("en"),
-        language if language.starts_with("zh") => Some("zh"),
-        _ => None,
-    }
+/// 系统提示词只维护英文一套。
+///
+/// 界面语言、用户模板包语言都不再改变提示词文件的选择：历史线程缓存键里的
+/// locale 仍会传入，但一律解析到 `prompts/en`，避免中英两套提示词各自漂移。
+fn resolve_requested_prompt_locale(_locale_override: Option<&str>) -> Option<&'static str> {
+    Some(PROMPT_LOCALE)
 }
+
+/// 系统提示词目录名（`config/prompts/<locale>/`）。
+const PROMPT_LOCALE: &str = "en";
 
 fn insert_locale_after_prompts(path: &Path, locale: &str) -> Option<PathBuf> {
     let mut prefix = PathBuf::new();
@@ -1228,16 +1224,11 @@ mod tests {
     fn shipped_engineering_prompt_documents_image_retouching() {
         // 图像工具可用时，系统提示必须明确“修图优先用它”；否则模型面对
         // 修图需求容易绕开工具去写代码或重新生成一张无关的图。
-        for (template, heading) in [
-            (
-                include_str!("../../../../config/prompts/zh/system/engineering.txt"),
-                "[图像生成与修图]",
-            ),
-            (
-                include_str!("../../../../config/prompts/en/system/engineering.txt"),
-                "[Image generation and retouching]",
-            ),
-        ] {
+        // 系统提示词只维护英文一套，这里只校验实际下发的那份。
+        for (template, heading) in [(
+            include_str!("../../../../config/prompts/en/system/engineering.txt"),
+            "[Image generation and retouching]",
+        )] {
             assert!(template.contains("[[HAS_GENERATE_IMAGE_TOOL]]"));
             let shown = apply_prompt_flags(
                 template,
@@ -1254,16 +1245,17 @@ mod tests {
     }
 
     #[test]
-    fn resolve_requested_prompt_locale_prefers_supported_override() {
+    fn resolve_requested_prompt_locale_is_always_english() {
         assert_eq!(resolve_requested_prompt_locale(Some("en-US")), Some("en"));
-        assert_eq!(resolve_requested_prompt_locale(Some("zh-Hans")), Some("zh"));
+        assert_eq!(resolve_requested_prompt_locale(Some("zh-Hans")), Some("en"));
+        assert_eq!(resolve_requested_prompt_locale(None), Some("en"));
     }
 
     #[test]
     fn browser_guidance_follows_tool_availability() {
         let prompt_root =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/prompts");
-        for (locale, marker) in [("zh", "[内置浏览器]"), ("en", "[Built-in browser]")] {
+        for (locale, marker) in [("en", "[Built-in browser]")] {
             let template =
                 std::fs::read_to_string(prompt_root.join(locale).join("system/engineering.txt"))
                     .expect("engineering template");
@@ -1287,12 +1279,6 @@ mod tests {
     fn skills_protocol_requires_loading_matched_skill_first() {
         let prompt_root =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/prompts");
-        let zh = std::fs::read_to_string(prompt_root.join("zh/system/skills_protocol.txt"))
-            .expect("zh skills protocol");
-        assert!(zh.contains("第一个工具调用必须是“技能调用”"));
-        assert!(zh.contains("不得先调用列出文件、搜索内容"));
-        assert!(zh.contains("任务意图命中技能 Frontmatter"));
-
         let en = std::fs::read_to_string(prompt_root.join("en/system/skills_protocol.txt"))
             .expect("en skills protocol");
         assert!(en.contains("the first tool call must be the skill tool"));
@@ -1313,8 +1299,11 @@ mod tests {
     /// 浏览器面新增 scroll（delta_x/delta_y）、console、navigate 的 path（工作区
     /// 预览）三个动作各约 30 个 token 的固定成本，同时把模型面上不存在的 drag
     /// 坐标字段收掉；这些是替代试错与额外往返的确定性信息，不是装饰。
+    ///
+    /// 上限从 10.4k 调到 12.8k：模型面统一英文后按英文计费，function_call 模式
+    /// 实测约 10.8k、text 协议约 12.0k（英文模板比中文更长），基线按英文重新校准。
     #[test]
-    fn first_turn_prompt_budget_stays_under_10k_tokens() {
+    fn first_turn_prompt_budget_stays_under_12k_tokens() {
         const RESERVE_TOKENS: usize = 1_200;
         fn estimate(text: &str) -> usize {
             let units: f64 = text
@@ -1335,7 +1324,9 @@ mod tests {
             allowed.len() >= 20,
             "catalog must expose the built-in tools"
         );
-        for (locale, function_call) in [("en", true), ("zh", false)] {
+        // 模型面只有英文一套提示词与工具面，两种协议各核一次。
+        for function_call in [true, false] {
+            let locale = "en";
             let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../config/prompts")
                 .join(locale)
@@ -1356,14 +1347,14 @@ mod tests {
                         .expect("tools protocol"),
                 );
             }
-            let language = if locale == "en" { "en-US" } else { "zh-CN" };
+            let language = "en-US";
             let specs = crate::tools::collect_prompt_tool_specs_with_language(
                 &config, &skills, &allowed, None, language,
             );
             let tools: Vec<Value> = specs
                 .iter()
                 .map(|spec| {
-                    let projected = crate::tools::prompt_tool_spec(spec, language);
+                    let projected = crate::tools::prompt_tool_spec(spec);
                     json!({
                         "type": "function",
                         "function": {
@@ -1388,7 +1379,7 @@ mod tests {
                 tools_text.chars().count()
             );
             assert!(
-                total < 10_400,
+                total < 12_800,
                 "first-turn prompt is ~{total} tokens in {locale} mode (static {static_tokens}, tools {tools_tokens})"
             );
         }

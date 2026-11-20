@@ -12,6 +12,22 @@
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+/// 本进程的实例 id，供跨重启记录（如后台命令）标注归属。
+static CURRENT_INSTANCE_ID: OnceLock<String> = OnceLock::new();
+
+/// 记录本进程的实例 id；只接受一次，非法 id 忽略。
+pub fn set_current_instance(instance_id: &str) {
+    let Ok(id) = sanitize_id(instance_id) else {
+        return;
+    };
+    let _ = CURRENT_INSTANCE_ID.set(id.to_string());
+}
+
+pub fn current_instance() -> Option<&'static str> {
+    CURRENT_INSTANCE_ID.get().map(String::as_str)
+}
 
 /// 持有实例存活文件；Drop 时解锁并删除。
 pub struct InstanceGuard {
@@ -183,5 +199,13 @@ mod tests {
         assert!(InstanceGuard::claim(&dir, "../escape").is_err());
         assert_eq!(is_instance_alive(&dir, ""), None);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn current_instance_keeps_the_first_valid_claim() {
+        set_current_instance("fixture-instance");
+        assert_eq!(current_instance(), Some("fixture-instance"));
+        set_current_instance("../invalid");
+        assert_eq!(current_instance(), Some("fixture-instance"));
     }
 }

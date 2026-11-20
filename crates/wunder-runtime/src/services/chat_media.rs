@@ -275,7 +275,7 @@ async fn cap_still_image_for_model(
         "cap_model_view",
         move || -> Result<(Vec<u8>, &'static str, &'static str)> {
             let image = image::load_from_memory(&bytes)
-                .map_err(|_| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
+                .map_err(|_| anyhow!(crate::i18n::prompt_t("tool.read_image.not_image")))?;
             let resized = image.resize_exact(width, height, image::imageops::FilterType::Lanczos3);
             encode_image_view_with_preference(&resized, prefer_jpeg, IMAGE_VIEW_MAX_ENCODED_BYTES)
         },
@@ -1850,13 +1850,13 @@ impl ImageCrop {
             height: values[3],
         };
         if crop.width == 0 || crop.height == 0 {
-            return Err(anyhow!(crate::i18n::t("tool.read_image.invalid_crop")));
+            return Err(anyhow!(crate::i18n::prompt_t("tool.read_image.invalid_crop")));
         }
         Ok(crop)
     }
 
     pub fn parse_xyxy(raw: &str) -> Result<Self> {
-        let invalid = || anyhow!(crate::i18n::t("tool.read_image.invalid_crop_xyxy"));
+        let invalid = || anyhow!(crate::i18n::prompt_t("tool.read_image.invalid_crop_xyxy"));
         let values = Self::parse_values(raw, "tool.read_image.invalid_crop_xyxy")?;
         let width = values[2].checked_sub(values[0]).ok_or_else(invalid)?;
         let height = values[3].checked_sub(values[1]).ok_or_else(invalid)?;
@@ -1915,7 +1915,7 @@ pub async fn derive_image_view(
 ) -> Result<ImageView> {
     if let Some(scale) = scale {
         if !scale.is_finite() || scale <= 0.0 || scale > IMAGE_VIEW_MAX_SCALE {
-            return Err(anyhow!(crate::i18n::t("tool.read_image.invalid_scale")));
+            return Err(anyhow!(crate::i18n::prompt_t("tool.read_image.invalid_scale")));
         }
     }
     let bytes = fs::read(source_path).await?;
@@ -1951,7 +1951,7 @@ pub async fn derive_image_view(
         })
     } else {
         let mime =
-            source_mime.ok_or_else(|| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
+            source_mime.ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.read_image.not_image")))?;
         Some(AttachmentPayload {
             name: Some(filename),
             content: None,
@@ -2049,9 +2049,9 @@ fn fit_into_pane(image: &DynamicImage, pane: u32) -> DynamicImage {
 
 fn render_image_pair(left_bytes: &[u8], right_bytes: &[u8]) -> Result<RenderedImagePair> {
     let left_image = image::load_from_memory(left_bytes)
-        .map_err(|_| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
+        .map_err(|_| anyhow!(crate::i18n::prompt_t("tool.read_image.not_image")))?;
     let right_image = image::load_from_memory(right_bytes)
-        .map_err(|_| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
+        .map_err(|_| anyhow!(crate::i18n::prompt_t("tool.read_image.not_image")))?;
     let left_source = (left_image.width(), left_image.height());
     let right_source = (right_image.width(), right_image.height());
     let left_fit = rgb_on_white(&fit_into_pane(&left_image, IMAGE_PAIR_PANE));
@@ -2096,7 +2096,7 @@ fn render_image_view(
     stats_only: bool,
 ) -> Result<RenderedImageView> {
     let image = image::load_from_memory(bytes)
-        .map_err(|_| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
+        .map_err(|_| anyhow!(crate::i18n::prompt_t("tool.read_image.not_image")))?;
     let (source_width, source_height) = (image.width(), image.height());
     let cropped = match crop {
         Some(crop) => {
@@ -2235,7 +2235,7 @@ pub fn encode_model_ready_image_bytes_with_hint(
                 return Ok((bytes.to_vec(), mime));
             };
             let image = image::load_from_memory(bytes)
-                .map_err(|_| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
+                .map_err(|_| anyhow!(crate::i18n::prompt_t("tool.read_image.not_image")))?;
             (image, width, height)
         }
     };
@@ -2282,7 +2282,7 @@ fn encode_image_view_with_preference(
             return Ok((jpeg, "image/jpeg", "jpg"));
         }
     }
-    Err(anyhow!(crate::i18n::t("tool.read_image.view_too_large")))
+    Err(anyhow!(crate::i18n::prompt_t("tool.read_image.view_too_large")))
 }
 
 fn rgb_on_white(image: &DynamicImage) -> image::RgbImage {

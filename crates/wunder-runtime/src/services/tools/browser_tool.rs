@@ -61,8 +61,9 @@ pub fn is_browser_tool_name(name: &str) -> bool {
 }
 
 /// 用户可见清单里代表浏览器能力的聚合名。模型侧只有 `browser` 工具；
-/// 聚合名用于授权展示，不是额外可调用工具。
+/// 聚合名用于授权展示，不是额外可调用工具，因此必须与可调用名区分开。
 pub const BROWSER_GROUP_NAME: &str = "浏览器";
+/// 聚合条目的英文展示名（用户清单与默认工具名统一用英文）。
 pub const BROWSER_GROUP_NAME_ALIAS: &str = "browser";
 
 /// Whether `name` is the aggregate entry standing for the whole browser family.
@@ -73,24 +74,15 @@ pub fn is_browser_group_name(name: &str) -> bool {
 }
 
 /// The aggregate entry shown to users in place of the provider's tool surface.
-pub fn browser_tool_summary_spec(language: &str) -> ToolSpec {
-    let english = language.starts_with("en");
+pub fn browser_tool_summary_spec() -> ToolSpec {
     const DESCRIPTION_KEY: &str = "tool.spec.browser_group.description";
-    let mut description = crate::i18n::t(DESCRIPTION_KEY);
+    let mut description = crate::i18n::prompt_t(DESCRIPTION_KEY);
     if description.is_empty() || description == DESCRIPTION_KEY {
         // 文案缺失时保底，不能让聚合条目显示成键名。
-        description = if english {
-            "Browser automation as one action tool, bounded by the session, allowed domains and timeout limits.".to_string()
-        } else {
-            "浏览器自动化能力的整组条目：代表 browser action 工具（打开页面、读取内容、点击输入、等待、截图），受会话、允许域名与超时限制。".to_string()
-        };
+        description = "Browser automation as one action tool, bounded by the session, allowed domains and timeout limits.".to_string();
     }
     ToolSpec {
-        name: if english {
-            BROWSER_GROUP_NAME_ALIAS.to_string()
-        } else {
-            BROWSER_GROUP_NAME.to_string()
-        },
+        name: BROWSER_GROUP_NAME_ALIAS.to_string(),
         title: None,
         description,
         // 聚合条目不可调用，只用于展示与选择，所以不带参数面。
@@ -136,7 +128,7 @@ pub async fn build_followup_user_message(
     let mut image_count = 0_usize;
     let mut content = vec![json!({
         "type": "text",
-        "text": crate::i18n::t("tool.browser.screenshot_followup_prompt")
+        "text": crate::i18n::prompt_t("tool.browser.screenshot_followup_prompt")
     })];
     for block in blocks {
         if block.get("type").and_then(Value::as_str) != Some("image") {
@@ -177,7 +169,7 @@ pub async fn build_followup_user_message(
         let display = context.workspace.display_path(context.workspace_id, &path);
         content.push(json!({
             "type": "text",
-            "text": crate::i18n::t_with_params(
+            "text": crate::i18n::prompt_t_with_params(
                 "tool.read_image.followup_path_hint",
                 &std::collections::HashMap::from([("path".to_string(), display)]),
             )

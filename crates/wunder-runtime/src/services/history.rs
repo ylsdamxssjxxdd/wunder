@@ -1343,14 +1343,13 @@ mod tests {
     }
 
     #[test]
-    fn load_compaction_prompt_uses_localized_template() {
-        let zh_prompt = with_language("zh-CN", HistoryManager::load_compaction_prompt);
-        assert!(zh_prompt.contains("## 当前进展"));
-        assert!(zh_prompt.contains("## 剩余待办"));
-
-        let en_prompt = with_language("en-US", HistoryManager::load_compaction_prompt);
-        assert!(en_prompt.contains("## Current progress"));
-        assert!(en_prompt.contains("## Critical references"));
+    fn load_compaction_prompt_uses_english_template() {
+        // 上下文压缩提示属于模型面文本，界面语言不再改变它。
+        for language in ["zh-CN", "en-US"] {
+            let prompt = with_language(language, HistoryManager::load_compaction_prompt);
+            assert!(prompt.contains("## Current progress"), "{language}");
+            assert!(prompt.contains("## Critical references"), "{language}");
+        }
     }
 
     #[test]

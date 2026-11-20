@@ -26,7 +26,7 @@ pub(crate) async fn execute_schedule_task_tool(
     let user_tool_manager = context
         .user_tool_manager
         .clone()
-        .ok_or_else(|| anyhow!(i18n::t("error.internal_error")))?;
+        .ok_or_else(|| anyhow!(i18n::prompt_t("error.internal_error")))?;
     let user_store = Arc::new(UserStore::new(context.storage.clone()));
     let skills = Arc::new(RwLock::new(context.skills.clone()));
     handle_cron_action(

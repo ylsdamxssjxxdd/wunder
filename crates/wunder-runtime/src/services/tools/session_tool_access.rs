@@ -282,14 +282,14 @@ pub(crate) fn load_agent_record(
         if allow_missing {
             return Ok(None);
         }
-        return Err(anyhow!(i18n::t("error.agent_not_found")));
+        return Err(anyhow!(i18n::prompt_t("error.agent_not_found")));
     };
     let access = storage.get_user_agent_access(user_id)?;
     if !is_agent_allowed_by_access(user_id, access.as_ref(), &record) {
         if allow_missing {
             return Ok(None);
         }
-        return Err(anyhow!(i18n::t("error.agent_not_found")));
+        return Err(anyhow!(i18n::prompt_t("error.agent_not_found")));
     }
     Ok(Some(record))
 }

@@ -421,12 +421,12 @@ async fn direct_web_fetch(
         let message = if detail.is_empty() {
             let mut params = HashMap::new();
             params.insert("status".to_string(), fetched.status.to_string());
-            i18n::t_with_params("tool.web_fetch.http_error", &params)
+            i18n::prompt_t_with_params("tool.web_fetch.http_error", &params)
         } else {
             let mut params = HashMap::new();
             params.insert("status".to_string(), fetched.status.to_string());
             params.insert("detail".to_string(), detail);
-            i18n::t_with_params("tool.web_fetch.http_error_with_detail", &params)
+            i18n::prompt_t_with_params("tool.web_fetch.http_error_with_detail", &params)
         };
         return Ok(web_fetch_failure(
             raw_url,
@@ -518,7 +518,7 @@ async fn direct_web_fetch(
                         HtmlPageKind::DynamicPage => "TOOL_WEB_FETCH_DYNAMIC_PAGE",
                         HtmlPageKind::BotProtection => "TOOL_WEB_FETCH_BOT_PROTECTION",
                     },
-                    i18n::t(message_key),
+                    i18n::prompt_t(message_key),
                     hint,
                     false,
                     None,
@@ -608,7 +608,7 @@ async fn direct_web_fetch(
                 Some(request_url),
                 "content_type",
                 "TOOL_WEB_FETCH_UNSUPPORTED_CONTENT_TYPE",
-                i18n::t_with_params("tool.web_fetch.unsupported_content_type", &params),
+                i18n::prompt_t_with_params("tool.web_fetch.unsupported_content_type", &params),
                 Some(
                     "Use web_fetch for HTML/text/JSON pages. Switch tools for binary downloads or interactive pages."
                         .to_string(),
@@ -632,7 +632,7 @@ async fn direct_web_fetch(
                 Some(request_url),
                 "extract",
                 "TOOL_WEB_FETCH_NO_CONTENT",
-                i18n::t("tool.web_fetch.no_content"),
+                i18n::prompt_t("tool.web_fetch.no_content"),
                 Some(
                     "Try a different page, extract_mode=text, or the browser tool if content depends on client-side rendering."
                         .to_string(),
@@ -677,7 +677,7 @@ async fn fetch_with_firecrawl_provider(
             {
                 let mut params = HashMap::new();
                 params.insert("detail".to_string(), err.to_string());
-                i18n::t_with_params("tool.web_fetch.provider_failed", &params)
+                i18n::prompt_t_with_params("tool.web_fetch.provider_failed", &params)
             },
             Some(
                 "Check tools.web.fetch.provider/firecrawl settings or switch provider to direct."
@@ -707,7 +707,7 @@ fn normalize_request_url(raw: &str) -> std::result::Result<Url, WebFetchFailure>
             None,
             "validation",
             "TOOL_WEB_FETCH_INVALID_URL",
-            i18n::t("tool.web_fetch.invalid_url"),
+            i18n::prompt_t("tool.web_fetch.invalid_url"),
             Some("Pass an absolute http:// or https:// URL.".to_string()),
             false,
             None,
@@ -720,7 +720,7 @@ fn normalize_request_url(raw: &str) -> std::result::Result<Url, WebFetchFailure>
             None,
             "validation",
             "TOOL_WEB_FETCH_INVALID_URL",
-            i18n::t("tool.web_fetch.invalid_url"),
+            i18n::prompt_t("tool.web_fetch.invalid_url"),
             Some("Pass an absolute http:// or https:// URL.".to_string()),
             false,
             None,
@@ -733,7 +733,7 @@ fn normalize_request_url(raw: &str) -> std::result::Result<Url, WebFetchFailure>
             Some(&url),
             "validation",
             "TOOL_WEB_FETCH_UNSUPPORTED_SCHEME",
-            i18n::t("tool.web_fetch.unsupported_scheme"),
+            i18n::prompt_t("tool.web_fetch.unsupported_scheme"),
             Some("Use http:// or https:// URLs only.".to_string()),
             false,
             None,
@@ -746,7 +746,7 @@ fn normalize_request_url(raw: &str) -> std::result::Result<Url, WebFetchFailure>
             Some(&url),
             "validation",
             "TOOL_WEB_FETCH_INVALID_URL",
-            i18n::t("tool.web_fetch.invalid_url"),
+            i18n::prompt_t("tool.web_fetch.invalid_url"),
             Some("Pass an absolute http:// or https:// URL with a host.".to_string()),
             false,
             None,
@@ -814,7 +814,7 @@ async fn fetch_url(
                 Some(&current),
                 "redirect",
                 "TOOL_WEB_FETCH_REDIRECT_LOOP",
-                i18n::t("tool.web_fetch.redirect_loop"),
+                i18n::prompt_t("tool.web_fetch.redirect_loop"),
                 Some("Use the final page URL directly if possible.".to_string()),
                 false,
                 None,
@@ -835,7 +835,7 @@ async fn fetch_url(
                     Some(&current),
                     "request",
                     "TOOL_TIMEOUT",
-                    i18n::t("tool.web_fetch.timeout"),
+                    i18n::prompt_t("tool.web_fetch.timeout"),
                     Some("Retry later or narrow to a faster public page.".to_string()),
                     true,
                     Some(timeout_secs.saturating_mul(1000)),
@@ -863,7 +863,7 @@ async fn fetch_url(
                     Some(&current),
                     "redirect",
                     "TOOL_WEB_FETCH_TOO_MANY_REDIRECTS",
-                    i18n::t("tool.web_fetch.too_many_redirects"),
+                    i18n::prompt_t("tool.web_fetch.too_many_redirects"),
                     Some(
                         "Use the final destination URL directly or reduce redirect hops."
                             .to_string(),
@@ -879,7 +879,7 @@ async fn fetch_url(
                     Some(&current),
                     "redirect",
                     "TOOL_WEB_FETCH_REDIRECT_INVALID",
-                    i18n::t("tool.web_fetch.redirect_missing_location"),
+                    i18n::prompt_t("tool.web_fetch.redirect_missing_location"),
                     Some("Retry with the final URL directly.".to_string()),
                     false,
                     None,
@@ -892,7 +892,7 @@ async fn fetch_url(
                     Some(&current),
                     "redirect",
                     "TOOL_WEB_FETCH_REDIRECT_INVALID",
-                    i18n::t("tool.web_fetch.redirect_invalid_location"),
+                    i18n::prompt_t("tool.web_fetch.redirect_invalid_location"),
                     Some("Retry with the final URL directly.".to_string()),
                     false,
                     None,
@@ -905,7 +905,7 @@ async fn fetch_url(
                     Some(&current),
                     "redirect",
                     "TOOL_WEB_FETCH_REDIRECT_INVALID",
-                    i18n::t("tool.web_fetch.redirect_invalid_location"),
+                    i18n::prompt_t("tool.web_fetch.redirect_invalid_location"),
                     Some("Retry with the final URL directly.".to_string()),
                     false,
                     None,
@@ -932,7 +932,7 @@ async fn fetch_url(
                 Some(&current),
                 "response_body",
                 "TOOL_TIMEOUT",
-                i18n::t("tool.web_fetch.timeout"),
+                i18n::prompt_t("tool.web_fetch.timeout"),
                 Some("Retry later or fetch a smaller/faster page.".to_string()),
                 true,
                 Some(timeout_secs.saturating_mul(1000)),
@@ -966,7 +966,7 @@ async fn fetch_url(
         Some(&current),
         "redirect",
         "TOOL_WEB_FETCH_TOO_MANY_REDIRECTS",
-        i18n::t("tool.web_fetch.too_many_redirects"),
+        i18n::prompt_t("tool.web_fetch.too_many_redirects"),
         Some("Use the final destination URL directly or reduce redirect hops.".to_string()),
         false,
         None,
@@ -1008,7 +1008,7 @@ async fn validate_remote_target(
             Some(url),
             "validation",
             "TOOL_WEB_FETCH_INVALID_URL",
-            i18n::t("tool.web_fetch.invalid_url"),
+            i18n::prompt_t("tool.web_fetch.invalid_url"),
             Some("Pass an absolute http:// or https:// URL with a host.".to_string()),
             false,
             None,
@@ -1021,7 +1021,7 @@ async fn validate_remote_target(
             Some(url),
             "validation",
             "TOOL_WEB_FETCH_INVALID_URL",
-            i18n::t("tool.web_fetch.invalid_url"),
+            i18n::prompt_t("tool.web_fetch.invalid_url"),
             Some("Use a valid public host name.".to_string()),
             false,
             None,
@@ -1038,7 +1038,7 @@ async fn validate_remote_target(
             Some(url),
             "validation",
             "TOOL_WEB_FETCH_BLOCKED_HOST",
-            i18n::t_with_params("tool.web_fetch.blocked_host", &params),
+            i18n::prompt_t_with_params("tool.web_fetch.blocked_host", &params),
             Some(private_target_hint()),
             false,
             None,
@@ -1057,7 +1057,7 @@ async fn validate_remote_target(
             Some(url),
             "dns_lookup",
             "TOOL_WEB_FETCH_DNS_FAILED",
-            format!("{}: {err}", i18n::t("tool.web_fetch.dns_failed")),
+            format!("{}: {err}", i18n::prompt_t("tool.web_fetch.dns_failed")),
             Some("Check DNS reachability or try another public host.".to_string()),
             true,
             Some(timeout_secs.saturating_mul(1000)),
@@ -1075,7 +1075,7 @@ async fn validate_remote_target(
             Some(url),
             "dns_lookup",
             "TOOL_TIMEOUT",
-            i18n::t("tool.web_fetch.timeout"),
+            i18n::prompt_t("tool.web_fetch.timeout"),
             Some("DNS lookup timed out. Retry later or use another reachable host.".to_string()),
             true,
             Some(timeout_secs.saturating_mul(1000)),
@@ -1088,7 +1088,7 @@ async fn validate_remote_target(
             Some(url),
             "dns_lookup",
             "TOOL_WEB_FETCH_DNS_FAILED",
-            format!("{}: {err}", i18n::t("tool.web_fetch.dns_failed")),
+            format!("{}: {err}", i18n::prompt_t("tool.web_fetch.dns_failed")),
             Some("Check DNS reachability or try another public host.".to_string()),
             true,
             Some(timeout_secs.saturating_mul(1000)),
@@ -1106,7 +1106,7 @@ async fn validate_remote_target(
             Some(url),
             "dns_lookup",
             "TOOL_WEB_FETCH_DNS_FAILED",
-            i18n::t("tool.web_fetch.dns_failed"),
+            i18n::prompt_t("tool.web_fetch.dns_failed"),
             Some("Check DNS reachability or try another public host.".to_string()),
             true,
             Some(timeout_secs.saturating_mul(1000)),
@@ -1130,7 +1130,7 @@ fn ensure_public_ip(
             Some(url),
             "validation",
             "TOOL_WEB_FETCH_BLOCKED_HOST",
-            i18n::t_with_params("tool.web_fetch.blocked_host", &params),
+            i18n::prompt_t_with_params("tool.web_fetch.blocked_host", &params),
             Some(private_target_hint()),
             false,
             None,
@@ -1351,7 +1351,7 @@ fn looks_like_text(bytes: &[u8]) -> bool {
 
 fn format_json_content(text: &str, mode: ExtractMode) -> Result<String> {
     let parsed: Value =
-        serde_json::from_str(text).map_err(|_| anyhow!(i18n::t("tool.web_fetch.invalid_json")))?;
+        serde_json::from_str(text).map_err(|_| anyhow!(i18n::prompt_t("tool.web_fetch.invalid_json")))?;
     let pretty = serde_json::to_string_pretty(&parsed).map_err(|err| anyhow!(err.to_string()))?;
     Ok(match mode {
         ExtractMode::Markdown => format!("```json\n{pretty}\n```"),
@@ -1549,7 +1549,7 @@ async fn fetch_with_browser_fallback(
                 status,
                 content_type,
                 diagnosis,
-                i18n::t("tool.web_fetch.no_content"),
+                i18n::prompt_t("tool.web_fetch.no_content"),
             )
         })?;
     if let Some(reason) = detect_bot_protection_reason(
@@ -1564,7 +1564,7 @@ async fn fetch_with_browser_fallback(
             Some(request_url),
             "browser_fallback",
             "TOOL_WEB_FETCH_BOT_PROTECTION",
-            i18n::t("tool.web_fetch.bot_protection"),
+            i18n::prompt_t("tool.web_fetch.bot_protection"),
             Some(
                 "The page still appears to be protected by verification after browser fallback. Try another source."
                     .to_string(),
@@ -1641,7 +1641,7 @@ fn browser_fallback_failure(
         Some(request_url),
         "browser_fallback",
         "TOOL_WEB_FETCH_BROWSER_FALLBACK_FAILED",
-        i18n::t_with_params("tool.web_fetch.browser_fallback_failed", &params),
+        i18n::prompt_t_with_params("tool.web_fetch.browser_fallback_failed", &params),
         Some(
             "Direct HTTP fetch did not return meaningful content, and browser fallback also failed. Try another public source."
                 .to_string(),
@@ -1821,7 +1821,7 @@ fn extract_html_content(html: &str, mode: ExtractMode) -> Result<HtmlExtraction>
     };
 
     if content.trim().is_empty() {
-        return Err(anyhow!(i18n::t("tool.web_fetch.no_content")));
+        return Err(anyhow!(i18n::prompt_t("tool.web_fetch.no_content")));
     }
 
     Ok(HtmlExtraction {

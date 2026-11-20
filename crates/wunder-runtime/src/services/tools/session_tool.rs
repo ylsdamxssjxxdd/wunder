@@ -22,7 +22,7 @@ pub(crate) async fn sessions_list(context: &ToolContext<'_>, args: &Value) -> Re
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let user_id = context.user_id.trim();
     if user_id.is_empty() {
-        return Err(anyhow!(i18n::t("error.user_id_required")));
+        return Err(anyhow!(i18n::prompt_t("error.user_id_required")));
     }
     let limit = clamp_limit(payload.limit, 50, MAX_SESSION_LIST_ITEMS);
     let message_limit = clamp_limit(payload.message_limit, 0, MAX_SESSION_MESSAGE_ITEMS);
@@ -94,17 +94,17 @@ pub(crate) async fn sessions_history(context: &ToolContext<'_>, args: &Value) ->
     let payload: SessionHistoryArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let session_id = normalize_optional_string(payload.session_key)
-        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+        .ok_or_else(|| anyhow!(i18n::prompt_t("error.session_not_found")))?;
     let user_id = context.user_id.trim();
     if user_id.is_empty() {
-        return Err(anyhow!(i18n::t("error.user_id_required")));
+        return Err(anyhow!(i18n::prompt_t("error.user_id_required")));
     }
     let limit = clamp_limit(payload.limit, 200, MAX_SESSION_HISTORY_ITEMS);
     let include_tools = payload.include_tools.unwrap_or(false);
     let record = context
         .storage
         .get_chat_session(user_id, &session_id)?
-        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+        .ok_or_else(|| anyhow!(i18n::prompt_t("error.session_not_found")))?;
     let messages = load_session_messages(
         context.workspace.clone(),
         user_id.to_string(),
@@ -129,19 +129,19 @@ pub(crate) async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Re
     let payload: SessionSendArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let session_id = normalize_optional_string(payload.session_key)
-        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+        .ok_or_else(|| anyhow!(i18n::prompt_t("error.session_not_found")))?;
     let message = payload.message.trim().to_string();
     if message.is_empty() {
-        return Err(anyhow!(i18n::t("error.content_required")));
+        return Err(anyhow!(i18n::prompt_t("error.content_required")));
     }
     let user_id = context.user_id.trim();
     if user_id.is_empty() {
-        return Err(anyhow!(i18n::t("error.user_id_required")));
+        return Err(anyhow!(i18n::prompt_t("error.user_id_required")));
     }
     let mut record = context
         .storage
         .get_chat_session(user_id, &session_id)?
-        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+        .ok_or_else(|| anyhow!(i18n::prompt_t("error.session_not_found")))?;
     let agent_record = load_agent_record(
         context.storage.as_ref(),
         user_id,
@@ -459,10 +459,10 @@ pub(crate) async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> R
             None,
             None,
             None,
-            Some(i18n::t("tool.subagent.background_next_step")),
+            Some(i18n::prompt_t("tool.subagent.background_next_step")),
         ));
     }
-    let summary = i18n::t("monitor.summary.subagent_wait");
+    let summary = i18n::prompt_t("monitor.summary.subagent_wait");
     let wait_payload = json!({
         "stage": "subagent_wait",
         "summary": summary,
@@ -488,7 +488,7 @@ pub(crate) async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> R
                 if let Some(emitter) = context.event_emitter.as_ref() {
                     emitter.emit("progress", json!({
                         "stage": "subagent_wait",
-                        "summary": i18n::t("monitor.summary.subagent_wait"),
+                        "summary": i18n::prompt_t("monitor.summary.subagent_wait"),
                         "run_id": run_id,
                         "child_session_id": child_session_id.clone(),
                         "elapsed_s": start_wait.elapsed().as_secs_f64()

@@ -53,7 +53,7 @@ pub fn default_tool_candidates() -> Vec<String> {
                     continue;
                 }
                 let name = if crate::tools::is_browser_tool_name(&spec.name) {
-                    crate::tools::BROWSER_GROUP_NAME.to_string()
+                    crate::tools::BROWSER_GROUP_NAME_ALIAS.to_string()
                 } else {
                     spec.name
                 };
@@ -217,7 +217,7 @@ mod tests {
         );
         let selected = default_tool_names(&allowed);
         for name in [
-            "浏览器",
+            "browser",
             "文本编辑",
             "计划面板",
             "问询面板",
@@ -300,7 +300,7 @@ mod tests {
             let skills = crate::skills::SkillRegistry::default();
             let allowed = crate::tools::collect_available_tool_names(&config, &skills, None);
             let selected = default_tool_names(&allowed);
-            for name in ["浏览器", "文本编辑", "计划面板", "问询面板"] {
+            for name in ["browser", "文本编辑", "计划面板", "问询面板"] {
                 assert!(
                     selected.iter().any(|selected| selected == name),
                     "{mode}: missing {name}"

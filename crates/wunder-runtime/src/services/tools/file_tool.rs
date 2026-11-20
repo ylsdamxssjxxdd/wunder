@@ -207,7 +207,7 @@ pub(crate) fn list_files_inner(
     let root = resolve_tool_path(workspace, user_id, path, extra_roots)?;
     if !root.exists() {
         return Ok(build_failed_tool_result(
-            i18n::t("tool.list.path_not_found"),
+            i18n::prompt_t("tool.list.path_not_found"),
             json!({ "path": path }),
             ToolErrorMeta::new(
                 "TOOL_LIST_PATH_NOT_FOUND",
@@ -436,8 +436,8 @@ impl ReadSpecParseError {
         ]);
         Self {
             code: "TOOL_READ_INVALID_RANGE",
-            message: i18n::t_with_params("tool.read.invalid_reversed_range", &params),
-            hint: Some(i18n::t("tool.read.invalid_reversed_range_hint")),
+            message: i18n::prompt_t_with_params("tool.read.invalid_reversed_range", &params),
+            hint: Some(i18n::prompt_t("tool.read.invalid_reversed_range_hint")),
             data: json!({
                 "kind": "reversed_line_range",
                 "start_line": start,
@@ -453,8 +453,8 @@ impl ReadSpecParseError {
         ]);
         Self {
             code: "TOOL_READ_TOO_MANY_FILES",
-            message: i18n::t_with_params("tool.read.too_many_files", &params),
-            hint: Some(i18n::t("tool.read.too_many_files_hint")),
+            message: i18n::prompt_t_with_params("tool.read.too_many_files", &params),
+            hint: Some(i18n::prompt_t("tool.read.too_many_files_hint")),
             data: json!({
                 "kind": "too_many_files",
                 "count": count,
@@ -512,7 +512,7 @@ pub(crate) fn parse_read_file_specs(
     }
 
     if specs.is_empty() {
-        return Err(ReadSpecParseError::invalid_args(i18n::t(
+        return Err(ReadSpecParseError::invalid_args(i18n::prompt_t(
             "tool.read.no_path",
         )));
     }
@@ -1843,7 +1843,7 @@ pub(crate) fn read_files_inner(
             );
         }
         if !target.exists() {
-            let message = i18n::t("tool.read.not_found");
+            let message = i18n::prompt_t("tool.read.not_found");
             outputs.push(format!(">>> {}\n{}", raw_path, message));
             failures.push(ReadFailure {
                 kind: ReadFailureKind::NotFound,
@@ -1997,12 +1997,12 @@ pub(crate) fn read_files_inner(
                 }
                 let mut file_output = Vec::new();
                 if source_truncated_by_size {
-                    file_output.push(i18n::t("tool.read.truncated_prefix"));
+                    file_output.push(i18n::prompt_t("tool.read.truncated_prefix"));
                 }
                 let show_range_headers = effective_ranges.len() > 1;
                 for (start, end) in effective_ranges {
                     if lines.is_empty() {
-                        file_output.push(i18n::t("tool.read.empty_file"));
+                        file_output.push(i18n::prompt_t("tool.read.empty_file"));
                         continue;
                     }
                     if start > lines.len() {
@@ -2012,7 +2012,7 @@ pub(crate) fn read_files_inner(
                                 ("end".to_string(), end.to_string()),
                                 ("loaded".to_string(), lines.len().to_string()),
                             ]);
-                            file_output.push(i18n::t_with_params(
+                            file_output.push(i18n::prompt_t_with_params(
                                 "tool.read.range_out_of_truncated_excerpt",
                                 &params,
                             ));
@@ -2023,7 +2023,7 @@ pub(crate) fn read_files_inner(
                                 ("total".to_string(), lines.len().to_string()),
                             ]);
                             file_output
-                                .push(i18n::t_with_params("tool.read.range_out_of_file", &params));
+                                .push(i18n::prompt_t_with_params("tool.read.range_out_of_file", &params));
                         }
                         continue;
                     }
@@ -2042,7 +2042,7 @@ pub(crate) fn read_files_inner(
                             ("end".to_string(), end.to_string()),
                             ("loaded".to_string(), lines.len().to_string()),
                         ]);
-                        file_output.push(i18n::t_with_params(
+                        file_output.push(i18n::prompt_t_with_params(
                             "tool.read.range_out_of_truncated_excerpt",
                             &params,
                         ));
@@ -2108,10 +2108,10 @@ pub(crate) fn read_files_inner(
                 }
                 let mut parts = Vec::new();
                 if source_truncated_by_size {
-                    parts.push(i18n::t("tool.read.truncated_prefix"));
+                    parts.push(i18n::prompt_t("tool.read.truncated_prefix"));
                 }
                 if selected.is_empty() {
-                    parts.push(i18n::t("tool.read.empty_file"));
+                    parts.push(i18n::prompt_t("tool.read.empty_file"));
                 } else {
                     let formatted = selected
                         .into_iter()
@@ -2145,10 +2145,10 @@ pub(crate) fn read_files_inner(
                 }
                 let mut parts = Vec::new();
                 if source_truncated_by_size {
-                    parts.push(i18n::t("tool.read.truncated_prefix"));
+                    parts.push(i18n::prompt_t("tool.read.truncated_prefix"));
                 }
                 if selected.is_empty() {
-                    parts.push(i18n::t("tool.read.empty_file"));
+                    parts.push(i18n::prompt_t("tool.read.empty_file"));
                 } else {
                     parts.push(
                         selected
@@ -2175,7 +2175,7 @@ pub(crate) fn read_files_inner(
         summaries.push(summary);
     }
     let mut result = if outputs.is_empty() {
-        i18n::t("tool.read.empty_result")
+        i18n::prompt_t("tool.read.empty_result")
     } else {
         outputs.join("\n\n")
     };
@@ -2205,9 +2205,9 @@ pub(crate) fn read_files_inner(
     let next_line = read_next_line(&summaries);
     let continuation_hint = if continuation_required {
         Some(if repeated_paging {
-            i18n::t("tool.read.continuation_hint_repeated")
+            i18n::prompt_t("tool.read.continuation_hint_repeated")
         } else {
-            i18n::t("tool.read.continuation_hint")
+            i18n::prompt_t("tool.read.continuation_hint")
         })
     } else {
         None
@@ -2231,7 +2231,7 @@ pub(crate) fn read_files_inner(
             .iter()
             .map(compact_read_file_summary_for_model)
             .collect::<Vec<_>>(),
-        "patch_usage_hint": i18n::t("tool.read.patch_usage_hint"),
+        "patch_usage_hint": i18n::prompt_t("tool.read.patch_usage_hint"),
         "dry_run": dry_run,
         "requested_files": requested_files,
         "processed_files": processed_files,
@@ -2262,7 +2262,7 @@ pub(crate) fn read_files_inner(
         let error = failure_files
             .first()
             .map(summarize_read_failure_for_model)
-            .unwrap_or_else(|| i18n::t("tool.read.empty_result"));
+            .unwrap_or_else(|| i18n::prompt_t("tool.read.empty_result"));
         return Ok(build_failed_tool_result(
             error,
             build_read_failure_data(&failure_files),

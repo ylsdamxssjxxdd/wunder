@@ -247,7 +247,6 @@ async fn wunder_tools(
     let user_id = params.user_id.as_deref().unwrap_or("").trim();
     let config = state.config_store.get().await;
     let skills_snapshot = state.skills.read().await.clone();
-    let language = i18n::get_language().to_lowercase();
 
     // 与运行时、用户工具目录和保存过滤共用可用性规则，包含独立开关与下架工具。
     let enabled_tools = collect_enabled_tool_names_for_catalog(&config, &skills_snapshot, None);
@@ -274,17 +273,14 @@ async fn wunder_tools(
         if crate::tools::is_browser_tool_name(&spec.name) {
             if !browser_summarized {
                 browser_summarized = true;
-                builtin_tools.push(crate::tools::browser_tool_summary_spec(&language));
+                builtin_tools.push(crate::tools::browser_tool_summary_spec());
             }
             continue;
         }
-        let english_alias = if language.starts_with("en") {
-            canonical_aliases
-                .get(&spec.name)
-                .and_then(|aliases| select_english_alias(&spec.name, aliases))
-        } else {
-            None
-        };
+        // 工具面统一英文：模型与用户清单都看到英文别名。
+        let english_alias = canonical_aliases
+            .get(&spec.name)
+            .and_then(|aliases| select_english_alias(&spec.name, aliases));
         if let Some(alias) = english_alias {
             builtin_tools.push(ToolSpec {
                 name: alias,

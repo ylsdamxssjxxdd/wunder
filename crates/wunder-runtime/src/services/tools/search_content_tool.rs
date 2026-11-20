@@ -347,7 +347,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
     };
     if !root.exists() {
         return Ok(build_failed_tool_result(
-            i18n::t("tool.search.path_not_found"),
+            i18n::prompt_t("tool.search.path_not_found"),
             json!({ "path": params.path }),
             ToolErrorMeta::new(
                 "TOOL_SEARCH_PATH_NOT_FOUND",
@@ -613,7 +613,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
 fn parse_search_params(args: &Value) -> Result<SearchParams> {
     let (query, query_source) = parse_search_query(args);
     if query.is_empty() {
-        return Err(anyhow!(i18n::t("tool.search.empty")));
+        return Err(anyhow!(i18n::prompt_t("tool.search.empty")));
     }
 
     let path = args
@@ -1268,7 +1268,7 @@ fn build_query_matcher(query: &str, query_mode: QueryMode, case_sensitive: bool)
         .unicode(true)
         .build()
         .map_err(|err| match query_mode {
-            QueryMode::Regex => anyhow!(i18n::t_with_params(
+            QueryMode::Regex => anyhow!(i18n::prompt_t_with_params(
                 "tool.search.invalid_regex",
                 &HashMap::from([("detail".to_string(), err.to_string())]),
             )),

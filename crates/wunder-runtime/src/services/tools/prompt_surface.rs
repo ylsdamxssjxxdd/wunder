@@ -130,7 +130,6 @@ fn minify_schema_map(value: &Value, keep_descriptions: bool) -> Value {
 struct SurfaceRule {
     tool: &'static str,
     brief_en: &'static str,
-    brief_zh: &'static str,
     drop_actions: &'static [&'static str],
     drop_fields: &'static [&'static str],
 }
@@ -142,84 +141,72 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     SurfaceRule {
         tool: "计划面板",
         brief_en: "Progress ledger for multi-step work. Shape: {\"plan\":[{\"step\":\"a\",\"status\":\"in_progress\"}]}; each step = step, status (pending/in_progress/completed) and optional explanation. Full replace, one in_progress max. Re-call with the full list after each finished step, and once more when all are completed so the panel checks off.",
-        brief_zh: "多步任务的进度台账。只有一种写法：{\"plan\":[{\"step\":\"甲\",\"status\":\"in_progress\"}]}，每步带 step + status（仅 pending / in_progress / completed），可选 explanation。全量替换、同时只能一个 in_progress。每完成一步立刻带完整清单再调一次；全部做完时再调一次并标 completed，面板才会打钩停下。",
         drop_actions: &[],
         drop_fields: &[],
     },
     SurfaceRule {
         tool: "问询面板",
         brief_en: "Ask all decision questions in one panel call, then end the turn; include options and mark a recommendation when useful.",
-        brief_zh: "一次调用问完全部决策问题并结束本轮；可带选项并标注推荐项。",
         drop_actions: &[],
         drop_fields: &[],
     },
     SurfaceRule {
         tool: "定时任务",
         brief_en: "Manage scheduled jobs. add needs message + schedule_text (natural language or cron); others use job_id. session=main injects into the bound thread, isolated starts a child thread; enabled toggles a job; run is async (queued = accepted, not finished).",
-        brief_zh: "管理定时任务：add 需 message + schedule_text（中文/英文自然语言或 cron），其余动作用 job_id；session=main 注入绑定线程、isolated 新建子线程，enabled 控制开关；run 是异步的（queued 仅表示已接收，不要轮询等结果）。",
         drop_actions: &["get", "status"],
         drop_fields: &["schedule"],
     },
     SurfaceRule {
         tool: "记忆管理",
         brief_en: "Manage long-term memory: the prompt lists only id/title indexes, so list/search for memory_id then get for full detail; add/update/remove by id. For add/update, title is the index title, content the durable detail.",
-        brief_zh: "管理长期记忆：系统提示只有 id/标题索引，先 list/search 找 memory_id 再 get 读全文；add/update/remove 按 id 操作，title 是索引标题、content 是完整持久内容。",
         drop_actions: &["clear"],
         drop_fields: &["memory_time", "related_memory_id", "order"],
     },
     SurfaceRule {
         tool: "执行命令",
         brief_en: "Run a shell command. content is the command; optional workdir and yield_time_ms (default 10000). If still running, the result carries command_session_id and seq; continue with command_session instead of restarting.",
-        brief_zh: "在工作目录执行命令：content 为命令，可选 workdir、yield_time_ms（默认 10000）。仍在运行时返回 command_session_id 与当前 seq，随后用命令会话继续读取或输入，不要重跑。",
         drop_actions: &[],
         drop_fields: &["description", "dry_run"],
     },
     SurfaceRule {
         tool: "命令会话",
         brief_en: "Continue a running command. command_session_id comes from execute_command. Empty chars polls new output, non-empty writes stdin. Both wait up to yield_time_ms (default 1000, max 30000) and return status plus new output; after_seq resumes from a seq, wait_for=exit blocks until exit. Reuse the id until exit_code appears. chars=\\u0003 interrupts, \\u0004 is EOF.",
-        brief_zh: "继续运行中的命令：command_session_id 来自执行命令。chars 为空读取新增输出，非空写入 stdin；两者都在 yield_time_ms（默认 1000，最大 30000）内等待并返回状态与新增输出；after_seq 从已知 seq 续读，wait_for=exit 等到进程退出。复用同一 id 直到拿到 exit_code。chars=\\u0003 中断，\\u0004 关闭 stdin。",
         drop_actions: &[],
         drop_fields: &[],
     },
     SurfaceRule {
         tool: "列出文件",
         brief_en: "List a directory, directories first; top_level_only skips recursion, max_depth sets depth, cursor/limit page large results.",
-        brief_zh: "列目录：默认目录优先；top_level_only 只看顶层，max_depth 控制深度，cursor/limit 分页。",
         drop_actions: &[],
         drop_fields: &[],
     },
     SurfaceRule {
         tool: "文件名匹配",
         brief_en: "Match file names with a glob pattern under path; 32 paths per page, pass offset=next_offset when has_more.",
-        brief_zh: "按 glob 模式匹配 path 下的文件名；每页至多 32 个，has_more 为真时用 offset=next_offset 翻页。",
         drop_actions: &[],
         drop_fields: &[],
     },
     SurfaceRule {
         tool: "搜索内容",
         brief_en: "Ripgrep-style search: query (literal|regex via query_mode) or pattern. Narrow with path/glob/include, subtract with exclude. total_matches is the true count; page with offset=next_offset, not by raising max_matches. context_before/after apply to every hit, context_matches=N to the top N only; search_binary=true for binary files.",
-        brief_zh: "按 query（query_mode=literal|regex）或 pattern 检索内容；path/glob/include 收窄，exclude 排除。total_matches 是真实命中总数，续页用 offset=next_offset。context_before/after 给所有命中带上下文，context_matches=N 只给前 N 个。搜二进制需 search_binary=true。",
         drop_actions: &[],
         drop_fields: &["timeout_ms"],
     },
     SurfaceRule {
         tool: "读取文件",
         brief_en: "Read UTF-8 text files. path required (also a tool-result: handle). Files use 1-based start_line/end_line (limit = first N lines); handles use 0-based byte offset/limit and next_offset, never mix. mode=outline|indentation|slice, pattern for matches. Default <=500 lines/16KiB; continue via has_more/next_line. Text only; use the image tool for images.",
-        brief_zh: "读取 UTF-8 文本：path 必填（也接受 tool-result: 句柄）；文件用 1 起始的 start_line/end_line（limit 读前 N 行），句柄用 0 起始的字节 offset/limit 并按 next_offset 续读，二者不可混用；mode=outline|indentation|slice，pattern 检索；默认 ≤500 行/16KiB，按 has_more/next_line 续读。仅文本文件，图片用读图工具。",
         drop_actions: &[],
         drop_fields: &["output_budget_bytes"],
     },
     SurfaceRule {
         tool: "读图工具",
         brief_en: "Read a local image/GIF/video. Default view auto-fits (long side <=2048px); >2x reduction makes small text unreliable. crop=x,y,w,h is left/top/WIDTH/HEIGHT, not corners; crop_xyxy=x1,y1,x2,y2 for corners (never both). scale for detail; stats adds region numbers, stats_only omits the image; frame_rate extracts frames. Re-read only if pixels are needed.",
-        brief_zh: "按 path 把本地图片/GIF/视频送入视觉。默认视图自动压到长边 ≤2048px，大幅缩小后小字与 1px 细线不可靠。crop=x,y,w,h 是左上角+宽高，不是对角坐标；对角坐标用 crop_xyxy=x1,y1,x2,y2，二者不可同传。stats 附带区域数值，stats_only 只要数值。视频用 frame_rate 抽帧；需要再看像素时才重读。",
         drop_actions: &[],
         drop_fields: &[],
     },
     SurfaceRule {
         tool: "语音生成",
         brief_en: "Synthesize speech from text with voice/speed; path sets the output file, reference_path clones a voice. For multi-segment output keep the configured voice: omit voice/reference_path unless the user asks for another voice.",
-        brief_zh: "按 text 合成语音，voice/speed 控制音色语速，path 指定输出文件，reference_path 复刻音色。多段语音用同一音色时不要传 voice/reference_path，沿用配置里固定的音色。",
         drop_actions: &[],
         drop_fields: &[
             "instructions",
@@ -232,7 +219,6 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     SurfaceRule {
         tool: "声转文",
         brief_en: "Transcribe an audio file at path to text; language and model_name are optional.",
-        brief_zh: "将 path 指向的音频转写为文本；language、model_name 可选。",
         drop_actions: &[],
         drop_fields: &[
             "content_type",
@@ -250,7 +236,6 @@ const SURFACE_RULES: &[SurfaceRule] = &[
         // strength 等调参项不进 brief：默认值由模型配置给，模型自己设只会带来
         // 无谓的试错（参数写错还被上游拒），见 drop_fields。
         brief_en: "Generate/edit into path. Edits: input_paths (array, first = primary; input_path deprecated). size WxH: /16, short >= 32, <= model limit (default 1024x1024); omit size for HD. mask_path: white = repaint, black = keep, same size as source. output_format must match suffix. seed omitted = auto + echoed. Existing path needs overwrite:true. Prefer for retouching.",
-        brief_zh: "生成或修图写入 path。改图用 input_paths（数组，首张为主图；input_path 已弃用），prompt 只写改动。size 宽x高：须为 16 的倍数、短边≥32、不超模型上限（默认 1024x1024）；高清化不要传 size。mask_path：白=重绘、黑=保留，须与主图同尺寸。output_format 须与后缀一致。seed 留空会自动生成并回显。path 已存在需 overwrite:true。修图优先用它。",
         drop_actions: &[],
         drop_fields: &[
             "guidance_scale",
@@ -265,7 +250,6 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     SurfaceRule {
         tool: "视频生成",
         brief_en: "Generate a video from prompt into path; optional seconds, size, fps, seed and negative_prompt.",
-        brief_zh: "按 prompt 生成视频写入 path；可选 seconds、size、fps、seed、negative_prompt。",
         drop_actions: &[],
         drop_fields: &[
             "boundary_ratio",
@@ -280,28 +264,24 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     SurfaceRule {
         tool: "技能调用",
         brief_en: "Load a mounted skill by name before other tools when a skill matches; the default action returns SKILL.md plus its resource index, path/cursor/line_limit for bounded reads.",
-        brief_zh: "任务命中技能时须先按 name 调用本工具；默认返回 SKILL.md 与资源索引，path/cursor/line_limit 用于分段读取。",
         drop_actions: &["manifest"],
         drop_fields: &["bytes_limit", "manifest_cursor", "section"],
     },
     SurfaceRule {
         tool: "写入文件",
         brief_en: "Create or fully replace a UTF-8 file with path + content; an empty content clears the file. dry_run previews the write.",
-        brief_zh: "用 path + content 新建或整体覆盖 UTF-8 文件；content 为空即清空，dry_run 只预演。",
         drop_actions: &[],
         drop_fields: &[],
     },
     SurfaceRule {
         tool: "文本编辑",
         brief_en: "Edit UTF-8 files. str_replace (default): file_path + old_string + new_string (exact single match unless replace_all); create: file_text; insert: insert_line; view: view_range; range replace: start_line + end_line + new_string; dry_run previews.",
-        brief_zh: "编辑 UTF-8 文件：默认 str_replace 需 file_path + old_string + new_string（精确唯一匹配，replace_all 可放宽）；create 需 file_text；insert 需 insert_line；view 需 view_range；dry_run 预演。",
         drop_actions: &[],
         drop_fields: &["input"],
     },
     SurfaceRule {
         tool: "子智能体控制",
         brief_en: "spawn async by default: returns accepted + session_id/run_id, then auto-wakes you on completion — continue or end the turn; never poll/sleep/schedule a wait. run_in_background=false only when this turn needs the result. task must be self-contained; the child can't see this thread, so use context_summary/fork_turns. Send independent spawns in one message. run_timeout_seconds caps the child only; accepted ≠ finished.",
-        brief_zh: "spawn 默认后台：返回 accepted 与 session_id/run_id，完成自动唤醒——继续别的或结束本轮，不要轮询、sleep 或定时任务；只有本轮需要结果才 run_in_background=false。task 要自成一体，子线程看不到本线程，缺失背景用 context_summary/fork_turns。多个独立任务在同一条消息里发多个 spawn。run_timeout_seconds 只限制子任务；accepted 不等于完成。",
         drop_actions: &["interrupt", "resume"],
         drop_fields: &[
             "announce_persist_history",
@@ -320,28 +300,24 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     SurfaceRule {
         tool: "会话线程控制",
         brief_en: "List, inspect, create, switch or archive task threads. Most actions take session_id; create takes title/parent_session_id.",
-        brief_zh: "列出、查看、创建、切换或归档任务线程；多数动作用 session_id，create 用 title/parent_session_id。",
         drop_actions: &["back", "restore", "update_title"],
         drop_fields: &[],
     },
     SurfaceRule {
         tool: "网页搜索",
         brief_en: "Search the public web with 1-4 independent queries; returns URLs, titles and snippets. Narrow with site and count.",
-        brief_zh: "用 1-4 条独立 queries 搜索公网，返回链接、标题与摘要；site、count 可收窄结果。",
         drop_actions: &[],
         drop_fields: &["query", "sites", "sources", "categories", "scrape_results"],
     },
     SurfaceRule {
         tool: "网页抓取",
         brief_en: "Fetch one public URL and extract its main content (markdown|text). Use browser navigate for login, forms or clicks.",
-        brief_zh: "抓取单个公开 URL 正文（markdown|text）；登录、表单、点击请改用 browser 的 navigate。",
         drop_actions: &[],
         drop_fields: &[],
     },
     SurfaceRule {
         tool: "桌面控制",
         brief_en: "Drive this desktop. Pointer actions take bbox=[x1,y1,x2,y2]; type_text without bbox types into the focused control (newlines become Enter); press_key/scroll/wait take only their own field. Verify the returned screenshot before retrying.",
-        brief_zh: "控制本地桌面：指针动作传 bbox=[x1,y1,x2,y2]；type_text 可省略 bbox 直接输入当前焦点；press_key/scroll/wait 只带各自参数；重试同一动作前先核对返回的截图。",
         drop_actions: &[
             "middle_click",
             "left_hold",
@@ -358,21 +334,18 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     SurfaceRule {
         tool: "手机控制",
         brief_en: "Drive this Android phone: screenshot/ui_tree to inspect, tap/long_press/swipe (bbox = screenshot pixels, size = normalized_width/normalized_height), type_text, press_key, open_app/open_url/open_settings, list_apps/device_info/clipboard/wait. Touch, text and screenshots need the accessibility service; check accessibility_connected, then verify each frame.",
-        brief_zh: "操作并观察 Android 手机：screenshot/ui_tree 观察，tap/long_press/swipe 触摸（bbox 用返回截图的像素坐标），type_text 输入，press_key 系统键，open_app/open_url/open_settings 打开应用/链接/设置。动作都在 schema 里；触摸、输入和截图需无障碍服务，先看 accessibility_connected，动作后核对截图。",
         drop_actions: &[],
         drop_fields: &[],
     },
     SurfaceRule {
         tool: "goal",
         brief_en: "Track the task goal. get reads it; edit/pause/resume/complete/blocked need goal_id + revision from get. Only the user starts a goal; never create one.",
-        brief_zh: "跟踪当前任务目标：get 读取，edit/pause/resume/complete/blocked 需 get 返回的 goal_id + revision。目标只能由用户发起，模型不得创建。",
         drop_actions: &[],
         drop_fields: &[],
     },
     SurfaceRule {
         tool: "browser",
         brief_en: "Built-in browser: navigate -> observe_refs -> click/type/select/press -> observe_text/screenshot, re-observe after changes. Target by ref, selector, text; type overwrites; select needs value; press needs key; timeout_ms on element actions and waits, wait_ms only applies to wait; tabs_* manage tabs by target_id. navigate path previews a workspace file; scroll takes delta_x/delta_y; console reads console output.",
-        brief_zh: "浏览器：navigate→observe_refs→交互→observe_text/screenshot，变化后重新 observe。元素用 ref/selector/文字定位；type 覆盖写入，select 传 value，press 传 key；元素动作与 wait 可传 timeout_ms，wait_ms 仅 wait；tabs_* 用 target_id 管标签；navigate 可传 path 预览工作区文件，scroll 传 delta_x/delta_y，console 读标签输出。",
         drop_actions: &["hover", "drag"],
         drop_fields: &[
             // `drag` 不在模型面上，配套的起止目标与坐标字段一并收掉，
@@ -403,7 +376,7 @@ fn rule_for(name: &str) -> Option<&'static SurfaceRule> {
 /// Produce the tool definition the model sees. The returned spec is a strict
 /// subset of the authoritative one: no new keys, no changed types, no removed
 /// required parameters.
-pub fn prompt_tool_spec(spec: &ToolSpec, language: &str) -> ToolSpec {
+pub fn prompt_tool_spec(spec: &ToolSpec) -> ToolSpec {
     let rule = rule_for(&spec.name);
     // Built-in tools have hand-written briefs that carry the essential prose;
     // MCP and user-defined tools have no such fallback, so keep their field
@@ -418,14 +391,9 @@ pub fn prompt_tool_spec(spec: &ToolSpec, language: &str) -> ToolSpec {
         }
     }
     tidy_schema(&mut schema);
+    // 工具说明只维护英文一份：模型面文案不随界面语言切换。
     let description = rule
-        .and_then(|rule| {
-            if language.to_ascii_lowercase().starts_with("zh") {
-                (!rule.brief_zh.is_empty()).then_some(rule.brief_zh)
-            } else {
-                (!rule.brief_en.is_empty()).then_some(rule.brief_en)
-            }
-        })
+        .and_then(|rule| (!rule.brief_en.is_empty()).then_some(rule.brief_en))
         .map(str::to_string)
         .unwrap_or_else(|| spec.description.clone());
     ToolSpec {
@@ -586,9 +554,6 @@ mod tests {
     fn plan_brief_carries_the_update_discipline() {
         let rule = rule_for("计划面板").expect("plan rule");
         // 工具面是模型唯一必读的位置：何时建、何时更新、收尾要求都要在这里。
-        for needle in ["多步", "in_progress", "全量替换", "completed", "打钩"] {
-            assert!(rule.brief_zh.contains(needle), "zh brief missing {needle}");
-        }
         for needle in [
             "multi-step",
             "in_progress",
@@ -599,22 +564,12 @@ mod tests {
             assert!(rule.brief_en.contains(needle), "en brief missing {needle}");
         }
         // 只宣传一种写法：旧的 current 形态不许再出现，否则模型又会混着用。
-        assert!(!rule.brief_zh.contains("current"));
         assert!(!rule.brief_en.contains("current"));
     }
 
     #[test]
     fn subagent_brief_leads_with_background_and_briefing_rules() {
         let rule = rule_for("子智能体控制").expect("subagent rule");
-        for needle in [
-            "默认后台",
-            "自动唤醒",
-            "轮询",
-            "run_in_background=false",
-            "context_summary",
-        ] {
-            assert!(rule.brief_zh.contains(needle), "zh brief missing {needle}");
-        }
         for needle in [
             "async by default",
             "auto-wakes",
@@ -625,11 +580,11 @@ mod tests {
         ] {
             assert!(rule.brief_en.contains(needle), "en brief missing {needle}");
         }
-        let spec = crate::services::tools::catalog::builtin_tool_specs_with_language("zh-CN")
+        let spec = crate::services::tools::catalog::builtin_tool_specs()
             .into_iter()
             .find(|spec| spec.name == "子智能体控制")
             .expect("subagent spec");
-        let projected = prompt_tool_spec(&spec, "zh-CN");
+        let projected = prompt_tool_spec(&spec);
         let props = projected.input_schema["properties"]
             .as_object()
             .expect("subagent properties");
@@ -642,11 +597,11 @@ mod tests {
 
     #[test]
     fn plan_surface_exposes_one_shape_and_status_enum() {
-        let spec = crate::services::tools::catalog::builtin_tool_specs_with_language("zh-CN")
+        let spec = crate::services::tools::catalog::builtin_tool_specs()
             .into_iter()
             .find(|spec| spec.name == "计划面板")
             .expect("plan spec");
-        let projected = prompt_tool_spec(&spec, "zh-CN");
+        let projected = prompt_tool_spec(&spec);
         // 只有一种形态：current 不再出现在模型看到的 schema 里。
         assert!(projected.input_schema["properties"]
             .get("current")
@@ -666,12 +621,12 @@ mod tests {
 
     #[test]
     fn image_surface_keeps_edit_entry_points_visible() {
-        let spec = crate::services::tools::catalog::builtin_tool_specs_with_language("zh-CN")
+        let spec = crate::services::tools::catalog::builtin_tool_specs()
             .into_iter()
             .find(|spec| spec.name == "图像生成")
             .expect("image spec");
-        for language in ["zh-CN", "en-US"] {
-            let projected = prompt_tool_spec(&spec, language);
+        {
+            let projected = prompt_tool_spec(&spec);
             let props = projected.input_schema["properties"]
                 .as_object()
                 .expect("image properties");
@@ -685,28 +640,17 @@ mod tests {
                 "size",
                 "output_format",
             ] {
-                assert!(
-                    props.contains_key(field),
-                    "{language}: {field} should stay visible to the model"
-                );
+                assert!(props.contains_key(field), "{field} should stay visible to the model");
             }
             // strength 是调参项：默认值由模型配置给，不再暴露给模型自己填。
             assert!(
                 !props.contains_key("strength"),
-                "{language}: strength should stay out of the model-facing schema"
+                "strength should stay out of the model-facing schema"
             );
             assert!(projected.description.contains("input_path"));
-            assert!(projected.description.contains(if language == "zh-CN" {
-                "修图"
-            } else {
-                "retouch"
-            }));
+            assert!(projected.description.contains("retouch"));
             // 高清化必须被描述成“保持原尺寸”，否则模型会传超大 size 去放大图片。
-            assert!(projected.description.contains(if language == "zh-CN" {
-                "不要传 size"
-            } else {
-                "omit size"
-            }));
+            assert!(projected.description.contains("omit size"));
         }
     }
 
@@ -751,7 +695,7 @@ mod tests {
                 "additionalProperties": false
             }),
         };
-        let projected = prompt_tool_spec(&spec, "en-US");
+        let projected = prompt_tool_spec(&spec);
         assert_eq!(
             projected.input_schema["properties"]["action"]["enum"],
             json!(["navigate", "click", "select"])
@@ -777,7 +721,7 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == "browser")
             .expect("browser spec");
-        let projected = prompt_tool_spec(&spec, "en-US");
+        let projected = prompt_tool_spec(&spec);
         let properties = projected.input_schema["properties"]
             .as_object()
             .expect("browser properties");
@@ -800,21 +744,10 @@ mod tests {
                 rule.tool
             );
             assert!(
-                !rule.brief_zh.is_empty(),
-                "{} lacks a Chinese brief",
-                rule.tool
-            );
-            assert!(
                 rule.brief_en.chars().count() <= 420,
                 "{} English brief grew to {} chars",
                 rule.tool,
                 rule.brief_en.chars().count()
-            );
-            assert!(
-                rule.brief_zh.chars().count() <= 260,
-                "{} Chinese brief grew to {} chars",
-                rule.tool,
-                rule.brief_zh.chars().count()
             );
         }
     }
@@ -833,7 +766,7 @@ mod tests {
                 "required": ["query"]
             }),
         };
-        let projected = prompt_tool_spec(&spec, "en-US");
+        let projected = prompt_tool_spec(&spec);
         assert_eq!(
             projected.input_schema["properties"]["query"]["description"],
             json!("what to look for")
@@ -843,49 +776,48 @@ mod tests {
 
     #[test]
     fn projection_never_adds_required_fields_or_types() {
-        for language in ["zh-CN", "en-US"] {
-            let specs = crate::tools::catalog::builtin_tool_specs_with_language(language);
-            for spec in specs {
-                let projected = prompt_tool_spec(&spec, language);
-                let original_required: HashSet<String> = spec.input_schema["required"]
-                    .as_array()
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .map(str::to_string)
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let projected_required: HashSet<String> = projected.input_schema["required"]
-                    .as_array()
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .map(str::to_string)
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                assert!(
-                    projected_required.is_subset(&original_required),
-                    "{} introduced a required field in {language}",
-                    spec.name
-                );
-                let original_props: HashSet<String> = spec.input_schema["properties"]
-                    .as_object()
-                    .map(|map| map.keys().cloned().collect())
-                    .unwrap_or_default();
-                let projected_props: HashSet<String> = projected.input_schema["properties"]
-                    .as_object()
-                    .map(|map| map.keys().cloned().collect())
-                    .unwrap_or_default();
-                assert!(
-                    projected_props.is_subset(&original_props),
-                    "{} introduced a property in {language}",
-                    spec.name
-                );
-            }
+        // 英文是模型面唯一的语言，投影只在这一套 schema 上校验不变量。
+        let specs = crate::tools::catalog::builtin_tool_specs_with_language("en-US");
+        for spec in specs {
+            let projected = prompt_tool_spec(&spec);
+            let original_required: HashSet<String> = spec.input_schema["required"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let projected_required: HashSet<String> = projected.input_schema["required"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            assert!(
+                projected_required.is_subset(&original_required),
+                "{} introduced a required field",
+                spec.name
+            );
+            let original_props: HashSet<String> = spec.input_schema["properties"]
+                .as_object()
+                .map(|map| map.keys().cloned().collect())
+                .unwrap_or_default();
+            let projected_props: HashSet<String> = projected.input_schema["properties"]
+                .as_object()
+                .map(|map| map.keys().cloned().collect())
+                .unwrap_or_default();
+            assert!(
+                projected_props.is_subset(&original_props),
+                "{} introduced a property",
+                spec.name
+            );
         }
     }
 }

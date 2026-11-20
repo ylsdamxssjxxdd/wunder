@@ -4,7 +4,7 @@
 use crate::core::blocking;
 use crate::services::tools::command_notify::{
     parse_pending_background, pending_background_is_stale, CommandCompletion, CommandNotifier,
-    PENDING_BACKGROUND_PREFIX,
+    PendingBackgroundCommand, PENDING_BACKGROUND_PREFIX,
 };
 use crate::services::tools::command_sessions::{
     CommandProcessHandle, CommandSessionLaunchMode, CommandSessionStartSpec, CommandSessionTracker,
@@ -126,7 +126,14 @@ pub async fn settle_restarted_activity(state: Arc<AppState>) -> Result<usize> {
 
 /// 恢复上一进程遗留的后台命令：沙盒会话仍在远端运行时重新挂 observer，
 /// 本地或已不可达的会话以「失联」通知结算一次。
-pub async fn recover_background_commands(state: Arc<AppState>) -> Result<usize> {
+///
+/// `instance_dir` 是本地实例存活文件目录；记录带有仍存活实例的归属时必须
+/// 跳过——桌面版与命令行共用同一 `WUNDER_HOME`，命令行启动不能把桌面版正在
+/// 跟踪的后台命令当成重启遗留结算掉。
+pub async fn recover_background_commands(
+    state: Arc<AppState>,
+    instance_dir: Option<std::path::PathBuf>,
+) -> Result<usize> {
     let storage = state.storage.clone();
     let prefix = PENDING_BACKGROUND_PREFIX.to_string();
     let records = blocking::run_db("startup.background_commands.list", move || {
@@ -147,6 +154,11 @@ pub async fn recover_background_commands(state: Arc<AppState>) -> Result<usize> 
         };
         if pending_background_is_stale(&record, now) {
             delete_pending_command(state.storage.clone(), key).await;
+            continue;
+        }
+        // 归属实例的存活文件证明它还在跑：原进程的 broker 仍在跟踪这条命令，
+        // 这里删除记录会吞掉真正的完成通知，并在线程上触发一次假唤醒。
+        if background_owned_elsewhere(&record, instance_dir.as_deref()) {
             continue;
         }
         let broker = state.control.command_sessions.clone();
@@ -221,6 +233,25 @@ pub async fn recover_background_commands(state: Arc<AppState>) -> Result<usize> 
     Ok(recovered)
 }
 
+/// 记录是否属于另一个仍存活的本地实例。
+///
+/// 只有存活文件明确证明锁仍被持有才算“别人还在跑”；旧记录没有归属信息、
+/// 文件缺失（正常退出会删除）或无权限时都按可恢复处理，避免记录被搁置到
+/// 过期。服务端没有本地实例目录，保持原有恢复行为。
+fn background_owned_elsewhere(
+    record: &PendingBackgroundCommand,
+    instance_dir: Option<&std::path::Path>,
+) -> bool {
+    let owner = record.owner_instance_id.trim();
+    if owner.is_empty() {
+        return false;
+    }
+    let Some(dir) = instance_dir else {
+        return false;
+    };
+    crate::instance_liveness::is_instance_alive(dir, owner) == Some(true)
+}
+
 async fn delete_pending_command(storage: Arc<dyn StorageBackend>, key: String) {
     let _ = blocking::run_db("startup.background_commands.delete", move || {
         storage.delete_meta_prefix(&key)
@@ -261,4 +292,53 @@ async fn fresh_running_task(state: &AppState, session: &str) -> bool {
     })
     .await
     .unwrap_or(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instance_liveness::InstanceGuard;
+
+    fn pending_record(owner: &str) -> PendingBackgroundCommand {
+        PendingBackgroundCommand {
+            user_id: "fixture-user".to_string(),
+            session_id: "fixture-session".to_string(),
+            workspace_id: "fixture-workspace".to_string(),
+            command_session_id: "fixture-command".to_string(),
+            command: "sleep 60".to_string(),
+            cwd: "/workspace".to_string(),
+            mode: "local".to_string(),
+            started_at: 1_000.0,
+            language: "zh-CN".to_string(),
+            owner_instance_id: owner.to_string(),
+        }
+    }
+
+    #[test]
+    fn recovery_skips_records_owned_by_a_live_local_instance() {
+        let dir = tempfile::tempdir().unwrap();
+        let guard = InstanceGuard::claim(dir.path(), "fixture-owner").unwrap();
+        assert!(
+            background_owned_elsewhere(&pending_record("fixture-owner"), Some(dir.path())),
+            "the owner is still running; its command records are not orphans"
+        );
+        drop(guard);
+        assert!(
+            !background_owned_elsewhere(&pending_record("fixture-owner"), Some(dir.path())),
+            "an exited owner leaves its records recoverable"
+        );
+        assert!(!background_owned_elsewhere(
+            &pending_record("missing-instance"),
+            Some(dir.path())
+        ));
+        // Legacy records and server-side recovery keep the old behaviour.
+        assert!(!background_owned_elsewhere(
+            &pending_record(""),
+            Some(dir.path())
+        ));
+        assert!(!background_owned_elsewhere(
+            &pending_record("fixture-owner"),
+            None
+        ));
+    }
 }

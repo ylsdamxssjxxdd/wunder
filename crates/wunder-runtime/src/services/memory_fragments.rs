@@ -839,9 +839,9 @@ impl MemoryFragmentStore {
         if !meta.trim().is_empty() {
             meta_lines.push(meta);
         }
-        meta_lines.push(i18n::t("memory.prompt_meta.index_hint"));
+        meta_lines.push(i18n::prompt_t("memory.prompt_meta.index_hint"));
         if total_available > injected_count || injected_count == 0 {
-            meta_lines.push(i18n::t("memory.prompt_meta.more_hint"));
+            meta_lines.push(i18n::prompt_t("memory.prompt_meta.more_hint"));
         }
         let lines = hits
             .iter()
@@ -858,7 +858,7 @@ impl MemoryFragmentStore {
             .collect::<Vec<_>>();
         meta_lines.extend(lines);
         let lines = meta_lines;
-        format!("{}\n{}", i18n::t("memory.block_prefix"), lines.join("\n"))
+        format!("{}\n{}", i18n::prompt_t("memory.block_prefix"), lines.join("\n"))
     }
 
     fn load_active_fragments_for_prompt(

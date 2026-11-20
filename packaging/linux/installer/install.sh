@@ -20,8 +20,19 @@ DESKTOP_ENTRY=1
 DESKTOP_ICON=1
 
 die() {
+  # 进度行还开着时先把光标移到行首下一行，免得错误信息粘在进度条后面。
+  if command -v progress_done >/dev/null 2>&1; then
+    progress_done
+  fi
   echo "$*" >&2
   exit 1
+}
+
+# 安装过程中的提示先攒着，等进度条收尾后再统一输出，避免打断进度行。
+WARNINGS=""
+warn() {
+  WARNINGS="${WARNINGS}$*
+"
 }
 
 usage() {
@@ -117,7 +128,8 @@ if [ "$PROGRESS_ON" -eq 1 ] && [ -t 2 ]; then
 else
   PROGRESS_LIVE=0
 fi
-PROGRESS_LAST_TICK=""
+PROGRESS_LAST_TICK=${WUNDER_PROGRESS_LAST_TICK:-}
+PROGRESS_LAST_LABEL=""
 PROGRESS_OPEN=0
 
 progress_bar() {
@@ -145,8 +157,9 @@ progress_draw() {
     PROGRESS_OPEN=1
   else
     tick=$((percent / 10))
-    if [ "$tick" != "$PROGRESS_LAST_TICK" ]; then
+    if [ "$tick" != "$PROGRESS_LAST_TICK" ] || [ "$label" != "$PROGRESS_LAST_LABEL" ]; then
       PROGRESS_LAST_TICK=$tick
+      PROGRESS_LAST_LABEL=$label
       printf '  [%s] %3d%%  %s\n' "$(progress_bar 24 "$percent")" "$percent" "$label" >&2
     fi
   fi
@@ -166,18 +179,21 @@ progress_done() {
   fi
 }
 
-# 按当前阶段已落盘字节推进；du 不可用时静默跳过，不影响安装。
+# 按当前阶段已落盘字节推进；start/end 是该阶段在安装区间内的起止百分比。
+# du 不可用时静默跳过，不影响安装。
 progress_watch() {
-  offset=$1
-  label=$2
-  total=$3
-  target=$4
+  start=$1
+  end=$2
+  label=$3
+  total=$4
+  target=$5
+  live_dir=$6
   while [ ! -f "$target" ]; do
-    used=$(du -sb --apparent-size "$5" 2>/dev/null | cut -f1)
+    used=$(du -sb --apparent-size "$live_dir" 2>/dev/null | cut -f1)
     used=${used:-0}
     [ "$used" -gt "$total" ] && used=$total
     if [ "$total" -gt 0 ]; then
-      progress_stage $((offset + used * (100 - offset) / total)) "$label"
+      progress_stage $((start + used * (end - start) / total)) "$label"
     fi
     sleep 1
   done
@@ -278,10 +294,10 @@ for existing in "$HOME_DIR/app/desktop" "$HOME_DIR/bin/wunder-cli"; do
 done
 
 # 已有安装直接原地升级：只替换程序文件与本次组件目录，用户数据不参与。
-# 版本与架构已由开场画面上报，这里只说明装到哪。
-printf '\n安装到 %s\n' "$HOME_DIR"
+# 安装目录与是否升级只在最终摘要里说明，过程中只留一条进度。
+IS_UPGRADE=0
 if [ -f "$HOME_DIR/bin/install-manifest.txt" ]; then
-  printf '检测到已有安装，升级程序文件与组件目录（配置、会话、工作区保留）。\n'
+  IS_UPGRADE=1
 fi
 mkdir -p "$HOME_DIR/bin" "$HOME_DIR/opt"
 
@@ -312,7 +328,7 @@ mkdir -p "$HOME_DIR/app/desktop"
 desktop_bytes=$(wc -c < "$PAYLOAD_DIR/wunder-desktop.tar.gz" | tr -d ' ')
 desktop_bytes=${desktop_bytes:-0}
 if [ "$PROGRESS_ON" -eq 1 ]; then
-  progress_watch 10 "安装桌面版（$(human_size "$desktop_bytes")）" "$desktop_bytes" \
+  progress_watch 10 40 "安装桌面版（$(human_size "$desktop_bytes")）" "$desktop_bytes" \
     "$PAYLOAD_DIR/../.desktop-done" "$HOME_DIR/app/desktop" &
   DESKTOP_WATCH_PID=$!
 fi
@@ -359,7 +375,7 @@ link_command() {
       ln -sf -- "$target" "$link" || LINKS_READY=0
     fi
   elif [ -e "$link" ]; then
-    echo "提示：$link 已存在且不是符号链接，未覆盖；请自行将 $target 加入 PATH。" >&2
+    warn "提示：$link 已存在且不是符号链接，未覆盖；请自行将 $target 加入 PATH。"
     LINKS_READY=0
   else
     ln -s -- "$target" "$link" || LINKS_READY=0
@@ -392,11 +408,11 @@ if mkdir -p "$LOCAL_BIN" 2>/dev/null; then
   link_command desktop "$HOME_DIR/bin/wunder-desktop"
   if [ "$LINKS_READY" -eq 1 ] && ! ensure_local_bin_path; then
     LINKS_READY=0
-    echo "提示：请将 $LOCAL_BIN 加入 PATH 后重新打开终端。" >&2
+    warn "提示：请将 $LOCAL_BIN 加入 PATH 后重新打开终端。"
   fi
 else
   LINKS_READY=0
-  echo "提示：无法创建 $LOCAL_BIN；请把 $HOME_DIR/bin 加入 PATH。" >&2
+  warn "提示：无法创建 $LOCAL_BIN；请把 $HOME_DIR/bin 加入 PATH。"
 fi
 
 if [ -f "$PAYLOAD_DIR/eva01-head.png" ]; then
@@ -417,7 +433,7 @@ if [ "$count" -gt 0 ]; then
   done < "$SELECTED_FILE"
   progress_stage 45 "安装补充组件（$(human_size "$total_components")）"
   if [ "$PROGRESS_ON" -eq 1 ]; then
-    progress_watch 45 "安装补充组件（$(human_size "$total_components")）" "$total_components" \
+    progress_watch 45 98 "安装补充组件（$(human_size "$total_components")）" "$total_components" \
       "$PAYLOAD_DIR/../.supplement-done" "$HOME_DIR/opt" &
     SUPPLEMENT_WATCH_PID=$!
   fi
@@ -478,7 +494,7 @@ if [ "$DESKTOP_ENTRY" -eq 1 ] || [ "$DESKTOP_ICON" -eq 1 ]; then
     entry_dir="$data_home/applications"
     desktop_entry_path="$entry_dir/wunder.desktop"
     if ! write_wunder_desktop_file "$desktop_entry_path" 0644; then
-      echo "提示：无法创建应用菜单项：$desktop_entry_path" >&2
+      warn "提示：无法创建应用菜单项：$desktop_entry_path"
       desktop_entry_path=""
     fi
   fi
@@ -491,7 +507,7 @@ if [ "$DESKTOP_ENTRY" -eq 1 ] || [ "$DESKTOP_ICON" -eq 1 ]; then
         gio set "$desktop_icon_path" metadata::trusted true >/dev/null 2>&1 || true
       fi
     else
-      echo "提示：无法在桌面创建启动图标：$desktop_icon_path" >&2
+      warn "提示：无法在桌面创建启动图标：$desktop_icon_path"
       desktop_icon_path=""
     fi
   fi
@@ -510,26 +526,19 @@ progress_done
 
 printf '\n完成。\n\n'
 printf '  版本   %s · linux-%s\n' "$VERSION" "$ARCH"
-printf '  桌面版     %s\n' "$HOME_DIR/bin/wunder-desktop"
-printf '  命令行   %s\n' "$HOME_DIR/bin/wunder-cli"
+if [ "$IS_UPGRADE" -eq 1 ]; then
+  printf '  目录   %s（升级，配置、会话、工作区已保留）\n' "$HOME_DIR"
+else
+  printf '  目录   %s\n' "$HOME_DIR"
+fi
+printf '  桌面版 %s\n' "$HOME_DIR/bin/wunder-desktop"
+printf '  命令行 %s\n' "$HOME_DIR/bin/wunder-cli"
 if [ "$count" -gt 0 ]; then
   printf '  组件   %s\n' "$components_csv"
 else
   printf '  组件   未安装（--components 为空）\n'
 fi
-if [ "$LINKS_READY" -eq 1 ]; then
-  printf '  命令   wunder-desktop、wunder-cli、desktop（新开终端生效）\n'
-else
-  printf '  命令   %s/bin 未加入 PATH\n' "$HOME_DIR"
-fi
-if [ -n "$desktop_entry_path" ] || [ -n "$desktop_icon_path" ]; then
-  entries=""
-  if [ -n "$desktop_entry_path" ]; then
-    entries="应用菜单"
-  fi
-  if [ -n "$desktop_icon_path" ]; then
-    entries="${entries:+$entries + }桌面图标"
-  fi
-  printf '  入口   %s已创建\n' "$entries"
-fi
 printf '  卸载   %s\n' "$HOME_DIR/uninstall.sh"
+if [ -n "$WARNINGS" ]; then
+  printf '\n%s' "$WARNINGS" >&2
+fi

@@ -63,7 +63,7 @@ pub(crate) async fn execute_plan_tool(context: &ToolContext<'_>, args: &Value) -
     };
     if request.steps.is_empty() {
         return Ok(
-            PlanArgError::shape(i18n::t("tool.plan.plan_required"), json!({ "keys": [] }))
+            PlanArgError::shape(i18n::prompt_t("tool.plan.plan_required"), json!({ "keys": [] }))
                 .with_code("TOOL_PLAN_EMPTY")
                 .into_tool_result(),
         );
@@ -473,7 +473,7 @@ fn plan_shape_error(args: &Value) -> PlanArgError {
         },
     );
     PlanArgError::shape(
-        i18n::t_with_params("tool.plan.invalid_shape", &params),
+        i18n::prompt_t_with_params("tool.plan.invalid_shape", &params),
         json!({ "keys": keys, "expected": PLAN_SHAPE_EXAMPLE }),
     )
 }
@@ -484,7 +484,7 @@ fn unparsable_wrapper(broken: &PlanJsonBroken) -> PlanArgError {
     params.insert("error".to_string(), broken.error.clone());
     params.insert("snippet".to_string(), broken.snippet.clone());
     PlanArgError::shape(
-        i18n::t_with_params("tool.plan.unparsable_wrapper", &params),
+        i18n::prompt_t_with_params("tool.plan.unparsable_wrapper", &params),
         json!({
             "field": broken.wrapper,
             "parse_error": broken.error,
@@ -493,7 +493,7 @@ fn unparsable_wrapper(broken: &PlanJsonBroken) -> PlanArgError {
         }),
     )
     .with_code("TOOL_PLAN_INVALID_JSON")
-    .with_hint(i18n::t("tool.plan.example_hint"))
+    .with_hint(i18n::prompt_t("tool.plan.example_hint"))
 }
 
 fn unknown_field(field: &str, allowed: &[&str]) -> PlanArgError {
@@ -501,7 +501,7 @@ fn unknown_field(field: &str, allowed: &[&str]) -> PlanArgError {
     params.insert("field".to_string(), field.to_string());
     params.insert("allowed".to_string(), allowed.join(", "));
     PlanArgError::shape(
-        i18n::t_with_params("tool.plan.unknown_field", &params),
+        i18n::prompt_t_with_params("tool.plan.unknown_field", &params),
         json!({
             "field": field,
             "allowed": allowed,
@@ -509,7 +509,7 @@ fn unknown_field(field: &str, allowed: &[&str]) -> PlanArgError {
         }),
     )
     .with_code("TOOL_PLAN_UNKNOWN_FIELD")
-    .with_hint(i18n::t("tool.plan.example_hint"))
+    .with_hint(i18n::prompt_t("tool.plan.example_hint"))
 }
 
 fn unknown_status(field: &str, received: &str) -> PlanArgError {
@@ -517,7 +517,7 @@ fn unknown_status(field: &str, received: &str) -> PlanArgError {
     params.insert("field".to_string(), field.to_string());
     params.insert("received".to_string(), received.to_string());
     PlanArgError::shape(
-        i18n::t_with_params("tool.plan.unknown_status", &params),
+        i18n::prompt_t_with_params("tool.plan.unknown_status", &params),
         json!({
             "field": field,
             "received": received,
@@ -532,7 +532,7 @@ fn multiple_in_progress(fields: &[String]) -> PlanArgError {
     let mut params = HashMap::new();
     params.insert("fields".to_string(), fields.join(", "));
     PlanArgError::shape(
-        i18n::t_with_params("tool.plan.multiple_in_progress", &params),
+        i18n::prompt_t_with_params("tool.plan.multiple_in_progress", &params),
         json!({ "fields": fields, "allowed": "at most one in_progress" }),
     )
     .with_code("TOOL_PLAN_CONFLICT")
@@ -542,7 +542,7 @@ fn list_conflict(fields: &[&str]) -> PlanArgError {
     let mut params = HashMap::new();
     params.insert("fields".to_string(), fields.join(", "));
     PlanArgError::shape(
-        i18n::t_with_params("tool.plan.list_conflict", &params),
+        i18n::prompt_t_with_params("tool.plan.list_conflict", &params),
         json!({ "fields": fields, "allowed": ["plan"] }),
     )
     .with_code("TOOL_PLAN_CONFLICT")
@@ -552,7 +552,7 @@ fn item_text_required(field: &str) -> PlanArgError {
     let mut params = HashMap::new();
     params.insert("field".to_string(), field.to_string());
     PlanArgError::shape(
-        i18n::t_with_params("tool.plan.item_text_required", &params),
+        i18n::prompt_t_with_params("tool.plan.item_text_required", &params),
         json!({ "field": field, "example": PLAN_SHAPE_EXAMPLE }),
     )
     .with_code("TOOL_PLAN_INVALID_ARGS")
@@ -570,7 +570,7 @@ impl PlanProgress {
         let mut params = HashMap::new();
         params.insert("total".to_string(), self.total.to_string());
         if self.done >= self.total {
-            return i18n::t_with_params("tool.plan.updated_all", &params);
+            return i18n::prompt_t_with_params("tool.plan.updated_all", &params);
         }
         params.insert("done".to_string(), self.done.to_string());
         params.insert(
@@ -581,7 +581,7 @@ impl PlanProgress {
             "next".to_string(),
             self.next.clone().unwrap_or_else(|| "—".to_string()),
         );
-        i18n::t_with_params("tool.plan.updated", &params)
+        i18n::prompt_t_with_params("tool.plan.updated", &params)
     }
 
     /// 还没做完时的下一次提醒。放在回执里，模型下结论前一定看得到。
@@ -590,9 +590,9 @@ impl PlanProgress {
             return None;
         }
         if self.current.is_none() {
-            return Some(i18n::t("tool.plan.missing_in_progress"));
+            return Some(i18n::prompt_t("tool.plan.missing_in_progress"));
         }
-        Some(i18n::t("tool.plan.keep_updating"))
+        Some(i18n::prompt_t("tool.plan.keep_updating"))
     }
 }
 
@@ -825,7 +825,7 @@ fn normalize_question_panel_questions(args: &Value) -> Result<QuestionPanelParse
             .trim()
             .to_string();
         let question = if question.is_empty() {
-            i18n::t("tool.question_panel.default_question")
+            i18n::prompt_t("tool.question_panel.default_question")
         } else {
             question
         };
@@ -1078,7 +1078,7 @@ const QUESTION_PANEL_SHAPE_HINT: &str = "questions 数组，每项含 question �
 
 fn question_panel_shape_error_with(details: Vec<String>) -> anyhow::Error {
     // 文案自带句号，先剥掉再补，避免出现「选项。。」这种双句号。
-    let mut message = i18n::t("tool.question_panel.options_required")
+    let mut message = i18n::prompt_t("tool.question_panel.options_required")
         .trim()
         .trim_end_matches(|c| c == '。' || c == '.')
         .to_string();

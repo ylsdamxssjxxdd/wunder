@@ -30,14 +30,32 @@
 
       <div v-if="file.rows.length" class="patch-diff-body">
         <div class="patch-diff-table-head">{{ t('chat.timeline.patch.sectionTitle') }}</div>
-        <div
-          v-for="row in file.rows"
-          :key="row.key"
-          :class="['patch-diff-row', `is-${row.kind}`]"
-        >
-          <span class="patch-diff-line-no">{{ row.lineNo }}</span>
-          <span class="patch-diff-sign" aria-hidden="true">{{ row.sign }}</span>
-          <span class="patch-diff-code">{{ row.code }}</span>
+        <!-- 一次写入可能带 200 行 diff：行区给定高视口自己滚，而不是把整条
+             时间线拉成几屏高。原生滚动条被全局隐藏，这里自绘一条细滚条，
+             让「还有内容」看得见。 -->
+        <div class="patch-diff-viewport">
+          <div
+            class="patch-diff-lines"
+            :ref="(el) => bindLines(file.key, el)"
+            @scroll="syncThumb(file.key)"
+          >
+            <div
+              v-for="row in file.rows"
+              :key="row.key"
+              :class="['patch-diff-row', `is-${row.kind}`]"
+            >
+              <span class="patch-diff-line-no">{{ row.lineNo }}</span>
+              <span class="patch-diff-sign" aria-hidden="true">{{ row.sign }}</span>
+              <span class="patch-diff-code">{{ row.code }}</span>
+            </div>
+          </div>
+          <div v-if="thumbOf(file.key).visible" class="patch-diff-scroll" aria-hidden="true">
+            <div
+              class="patch-diff-scroll-thumb"
+              :style="thumbStyle(file.key)"
+              @pointerdown="startThumbDrag($event, file.key)"
+            ></div>
+          </div>
         </div>
         <button
           v-if="file.hiddenLines > 0"
@@ -62,7 +80,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onUpdated, ref } from 'vue';
 
 import { useI18n } from '@/i18n';
 import { requestWorkspaceReveal } from '@/views/messenger/workspace/workspaceChatReference';
@@ -278,6 +296,97 @@ const expandFile = (key: string, hiddenLines: number): void => {
 const revealPath = (path: string): void => {
   requestWorkspaceReveal(path);
 };
+
+/**
+ * 自绘细滚条：云端前端全局隐藏了原生滚动条（styles/base.css），
+ * diff 行区限高后必须自己给出「还有内容」的提示，否则看起来像被裁掉。
+ * 只在真的溢出时出现，位置随滚动更新，可按住拖动。
+ */
+type ThumbState = { visible: boolean; height: number; offset: number };
+
+const EMPTY_THUMB: ThumbState = { visible: false, height: 0, offset: 0 };
+
+const lineShells = new Map<string, HTMLElement>();
+const thumbs = ref<Record<string, ThumbState>>({});
+
+const thumbOf = (key: string): ThumbState => thumbs.value[key] || EMPTY_THUMB;
+
+const thumbStyle = (key: string): Record<string, string> => {
+  const thumb = thumbOf(key);
+  if (!thumb.visible) return {};
+  return {
+    height: thumb.height + 'px',
+    transform: 'translateY(' + thumb.offset + 'px)'
+  };
+};
+
+const syncThumb = (key: string): void => {
+  const shell = lineShells.get(key);
+  if (!shell) return;
+  const viewport = shell.clientHeight;
+  const total = shell.scrollHeight;
+  let next = EMPTY_THUMB;
+  if (viewport > 0 && total > viewport + 1) {
+    const height = Math.max(20, Math.round((viewport * viewport) / total));
+    const maxTop = Math.max(0, viewport - height);
+    const scrollable = Math.max(1, total - viewport);
+    const progress = Math.min(1, Math.max(0, shell.scrollTop / scrollable));
+    next = { visible: true, height, offset: Math.round(progress * maxTop) };
+  }
+  const current = thumbOf(key);
+  if (
+    current.visible === next.visible &&
+    current.height === next.height &&
+    current.offset === next.offset
+  ) {
+    return;
+  }
+  thumbs.value = { ...thumbs.value, [key]: next };
+};
+
+const syncAllThumbs = (): void => {
+  lineShells.forEach((_shell, key) => syncThumb(key));
+};
+
+/** 行数随流式输出增长时重算滚条；等值比较保证不会自激。 */
+onUpdated(syncAllThumbs);
+
+const bindLines = (key: string, el: unknown): void => {
+  if (el instanceof HTMLElement) {
+    lineShells.set(key, el);
+    syncThumb(key);
+    return;
+  }
+  lineShells.delete(key);
+  if (thumbs.value[key]) {
+    const rest = { ...thumbs.value };
+    delete rest[key];
+    thumbs.value = rest;
+  }
+};
+
+const startThumbDrag = (event: PointerEvent, key: string): void => {
+  const shell = lineShells.get(key);
+  if (!shell) return;
+  event.preventDefault();
+  const thumbHeight = thumbOf(key).height || 20;
+  const span = Math.max(1, shell.clientHeight - thumbHeight);
+  const top = shell.getBoundingClientRect().top;
+  const move = (pointer: PointerEvent) => {
+    const ratio = Math.min(1, Math.max(0, (pointer.clientY - top - thumbHeight / 2) / span));
+    shell.scrollTop = ratio * (shell.scrollHeight - shell.clientHeight);
+    syncThumb(key);
+  };
+  const stop = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', stop);
+    window.removeEventListener('pointercancel', stop);
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', stop);
+  window.addEventListener('pointercancel', stop);
+  move(event);
+};
 </script>
 
 <style scoped>
@@ -385,6 +494,42 @@ const revealPath = (path: string): void => {
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+/* diff 行区的固定视口：约 16 行，超出部分内部滚动。卡片头部与
+   「显示更多」留在视口外，长 diff 不会把整条时间线撑成几屏。 */
+.patch-diff-viewport {
+  position: relative;
+  min-width: 0;
+}
+
+.patch-diff-lines {
+  max-height: 320px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+/* 自绘细滚条（原生滚动条被全局隐藏，见 styles/base.css）。 */
+.patch-diff-scroll {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  bottom: 3px;
+  width: 6px;
+  pointer-events: none;
+}
+
+.patch-diff-scroll-thumb {
+  width: 6px;
+  border-radius: 999px;
+  background: #d8d5d0;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.patch-diff-scroll-thumb:hover {
+  background: #c2beb9;
 }
 
 .patch-diff-table-head {

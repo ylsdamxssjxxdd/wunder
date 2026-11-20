@@ -2139,9 +2139,9 @@ impl Orchestrator {
     }
 
     pub(super) fn build_compaction_user_content(&self, messages: &[Value]) -> String {
-        let separator = i18n::t("memory.summary.role.separator");
-        let user_label = i18n::t("memory.summary.role.user");
-        let assistant_label = i18n::t("memory.summary.role.assistant");
+        let separator = i18n::prompt_t("memory.summary.role.separator");
+        let user_label = i18n::prompt_t("memory.summary.role.user");
+        let assistant_label = i18n::prompt_t("memory.summary.role.assistant");
         let mut lines: Vec<String> = Vec::new();
         for message in messages {
             let Some(obj) = message.as_object() else {

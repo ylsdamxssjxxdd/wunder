@@ -137,7 +137,7 @@ watch_extract() {
     used=$(du -sb --apparent-size "$TMP_DIR" 2>/dev/null | cut -f1)
     used=${used:-0}
     draw "$(stage_percent 0 "$PAYLOAD_WEIGHT" "$used" "$TOTAL_BYTES")" \
-      "解压安装包 $(human_size "$used") / $(human_size "$TOTAL_BYTES")"
+      "解压安装包（$(human_size "$TOTAL_BYTES")）"
     sleep 1
   done
 }
@@ -146,7 +146,8 @@ watch_extract() {
 # __WUNDER_BANNER__
 wunder_banner || true
 
-echo "正在解压安装包…"
+# 解压与安装复用同一条进度行：这里只画到载荷占比，不换行，
+# 由 install.sh 接过去继续原地推进，全程只有一行进度。
 if [ "$WUNDER_PROGRESS" -eq 1 ]; then
   watch_extract &
   WATCH_PID=$!
@@ -163,8 +164,7 @@ if [ -n "${WATCH_PID:-}" ]; then
   WATCH_PID=""
 fi
 if [ "$WUNDER_PROGRESS" -eq 1 ]; then
-  draw "$PAYLOAD_WEIGHT" "解压安装包 $(human_size "$TOTAL_BYTES") / $(human_size "$TOTAL_BYTES")"
-  finish_progress
+  draw "$PAYLOAD_WEIGHT" "解压安装包（$(human_size "$TOTAL_BYTES")）"
 fi
 
 WUNDER_PAYLOAD_DIR="$TMP_DIR/payload"
@@ -172,6 +172,7 @@ export WUNDER_PAYLOAD_DIR
 export WUNDER_PROGRESS_BASE="$PAYLOAD_WEIGHT"
 export WUNDER_PROGRESS_WEIGHT=$((100 - PAYLOAD_WEIGHT))
 export WUNDER_PROGRESS_LIVE="$LIVE"
+export WUNDER_PROGRESS_LAST_TICK="$LAST_TICK"
 sh "$TMP_DIR/payload/install.sh" "$@"
 exit 0
 

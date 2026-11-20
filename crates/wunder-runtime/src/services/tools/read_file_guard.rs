@@ -32,14 +32,14 @@ pub(crate) fn read_text_file_with_limit(
     let sample = &buffer[..sample_len];
     if let Some(mime_type) = detect_binary_image_mime(path, sample) {
         return Ok(ReadFileGuardResult::Omitted(BinaryFileNotice {
-            message: i18n::t("tool.read.binary_image_use_read_image"),
+            message: i18n::prompt_t("tool.read.binary_image_use_read_image"),
             kind: "image",
             mime_type: Some(mime_type.to_string()),
         }));
     }
     if looks_like_binary(sample) {
         return Ok(ReadFileGuardResult::Omitted(BinaryFileNotice {
-            message: i18n::t("tool.read.binary_omitted"),
+            message: i18n::prompt_t("tool.read.binary_omitted"),
             kind: "binary",
             mime_type: None,
         }));

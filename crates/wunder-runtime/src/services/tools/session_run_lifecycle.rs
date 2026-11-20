@@ -144,15 +144,15 @@ pub(crate) fn prepare_child_session(
 ) -> Result<PreparedChildSession> {
     let cleaned_task = task.trim();
     if cleaned_task.is_empty() {
-        return Err(anyhow!(i18n::t("error.content_required")));
+        return Err(anyhow!(i18n::prompt_t("error.content_required")));
     }
     let user_id = context.user_id.trim();
     if user_id.is_empty() {
-        return Err(anyhow!(i18n::t("error.user_id_required")));
+        return Err(anyhow!(i18n::prompt_t("error.user_id_required")));
     }
     let cleaned_parent_session_id = parent_session_id.trim();
     if cleaned_parent_session_id.is_empty() {
-        return Err(anyhow!(i18n::t("error.session_not_found")));
+        return Err(anyhow!(i18n::prompt_t("error.session_not_found")));
     }
 
     if matches!(tool_mode, ChildSessionToolMode::InheritParentSession) {
@@ -213,7 +213,7 @@ pub(crate) fn prepare_child_session(
         resolve_effective_agent_model_name(context.config, child_agent_record.as_ref())
     });
     let agent_prompt = {
-        let child_note = i18n::t("tool.subagent.child_system_note");
+        let child_note = i18n::prompt_t("tool.subagent.child_system_note");
         match child_agent_record
             .as_ref()
             .map(|record| record.system_prompt.trim().to_string())
@@ -429,12 +429,12 @@ pub(crate) async fn spawn_session_run(
     let orchestrator = context
         .orchestrator
         .clone()
-        .ok_or_else(|| anyhow!(i18n::t("error.internal_error")))?;
+        .ok_or_else(|| anyhow!(i18n::prompt_t("error.internal_error")))?;
     let session_id = request
         .session_id
         .clone()
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+        .ok_or_else(|| anyhow!(i18n::prompt_t("error.session_not_found")))?;
     let user_id = request.user_id.clone();
     // Admission precedes the first await so a concurrent stop cannot miss queued runs.
     let child_run = context

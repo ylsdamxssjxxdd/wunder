@@ -6,7 +6,7 @@
     top="clamp(10px, 4vh, 36px)"
     append-to-body
     :show-close="false"
-    :close-on-click-modal="false"
+    :close-on-click-modal="!dirty"
     destroy-on-close
     @update:model-value="handleVisibleChange"
   >

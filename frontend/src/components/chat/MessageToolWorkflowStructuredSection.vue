@@ -165,6 +165,14 @@ defineProps<{
   word-break: break-word;
 }
 
+/* 单行正文也可能是一整段文件内容（写入 / 读取结果）：限高内部滚动，
+   避免一个条目把时间线拉长。 */
+.tool-workflow-structured-row-body {
+  max-height: 240px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
 .tool-workflow-structured-row.is-mono .tool-workflow-structured-row-title,
 .tool-workflow-structured-row.is-mono .tool-workflow-structured-row-body,
 .tool-workflow-structured-footer {

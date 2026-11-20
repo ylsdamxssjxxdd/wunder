@@ -639,21 +639,13 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             description: format!(
                 "{} {}",
                 t("tool.spec.read.description"),
-                if language.to_ascii_lowercase().starts_with("zh") {
-                    "也可将工具返回的 result_handle 原值作为 path 读取当前任务线程保存的完整结果（tool-result: 前缀）。普通文件使用从 1 开始的 start_line/end_line；保存结果使用从 0 开始的 UTF-8 字节 offset 和 limit，二者不能混用。保存结果支持 query 字面搜索；按返回的 next_offset 继续读取。"
-                } else {
-                    "To inspect a complete saved tool result, pass its original result_handle as path (tool-result: prefix, current task thread only). Files use 1-based start_line/end_line; saved results use 0-based UTF-8 byte offset and limit; do not combine them. Saved results support literal query search. Continue with the returned next_offset."
-                }
+                "To inspect a complete saved tool result, pass its original result_handle as path (tool-result: prefix, current task thread only). Files use 1-based start_line/end_line; saved results use 0-based UTF-8 byte offset and limit; do not combine them. Saved results support literal query search. Continue with the returned next_offset."
             ),
             input_schema: super::schema::object(vec![
                 super::schema::string("path").desc(format!(
                     "{} {}",
                     t("tool.spec.read.args.path"),
-                    if language.to_ascii_lowercase().starts_with("zh") {
-                        "也接受当前任务线程的 tool-result: 结果句柄；句柄必须完整原样传入。"
-                    } else {
-                        "Also accepts a tool-result: handle from the current task thread; pass the complete original handle unchanged."
-                    }
+                    "Also accepts a tool-result: handle from the current task thread; pass the complete original handle unchanged."
                 )),
                 super::schema::integer("start_line")
                     .desc(t("tool.spec.read.args.start_line"))
@@ -662,80 +654,44 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .desc(t("tool.spec.read.args.end_line"))
                     .optional(),
                 super::schema::string("mode")
-                    .desc(if language.to_ascii_lowercase().starts_with("zh") {
-                        "读取模式：slice 默认按范围返回裸行；indentation 按 start_line 读取缩进代码块；outline 只返回 Markdown 标题和常见代码声明及源行号，用于先定位再读取。"
-                    } else {
-                        "Read mode: slice returns raw lines by range (default); indentation reads the indentation block at start_line; outline returns Markdown headings and common code declarations with source line numbers for targeted follow-up reads."
-                    })
+                    .desc("Read mode: slice returns raw lines by range (default); indentation reads the indentation block at start_line; outline returns Markdown headings and common code declarations with source line numbers for targeted follow-up reads.")
                     .enums(vec!["slice", "indentation", "outline"])
                     .default_value(json!("slice"))
                     .optional(),
                 super::schema::string("pattern")
-                    .desc(if language.to_ascii_lowercase().starts_with("zh") {
-                        "仅 slice 模式：在文件内按 regex 定位并直接返回命中前后文，不能与行范围混用；默认最多 16 处命中、总计 500 行。固定字符串匹配请设 query_mode=literal。"
-                    } else {
-                        "Slice mode only: locate regex matches in this file and return their surrounding lines in one call; cannot be combined with line ranges. Returns at most 16 matches and 500 lines by default. Use query_mode=literal for fixed-string matching."
-                    })
+                    .desc("Slice mode only: locate regex matches in this file and return their surrounding lines in one call; cannot be combined with line ranges. Returns at most 16 matches and 500 lines by default. Use query_mode=literal for fixed-string matching.")
                     .min_len(1)
                     .max_len(512)
                     .optional(),
                 super::schema::string("query_mode")
-                    .desc(if language.to_ascii_lowercase().starts_with("zh") {
-                        "pattern 的匹配方式：regex（默认）或 literal。"
-                    } else {
-                        "Matching mode for pattern: regex (default) or literal."
-                    })
+                    .desc("Matching mode for pattern: regex (default) or literal.")
                     .enums(vec!["regex", "literal"])
                     .optional(),
                 super::schema::boolean("case_sensitive")
-                    .desc(if language.to_ascii_lowercase().starts_with("zh") {
-                        "pattern 是否区分大小写，默认 false。"
-                    } else {
-                        "Whether pattern matching is case-sensitive; default false."
-                    })
+                    .desc("Whether pattern matching is case-sensitive; default false.")
                     .optional(),
                 super::schema::integer("context")
-                    .desc(if language.to_ascii_lowercase().starts_with("zh") {
-                        "pattern 每处命中前后各返回多少行，默认 3，范围 0..500；重叠上下文自动合并，单次总计最多 500 行。"
-                    } else {
-                        "Lines returned before and after each pattern match, default 3, range 0..500; overlapping context is merged and capped at 500 lines per call."
-                    })
+                    .desc("Lines returned before and after each pattern match, default 3, range 0..500; overlapping context is merged and capped at 500 lines per call.")
                     .min(0)
                     .max(500)
                     .optional(),
                 super::schema::integer("output_budget_bytes")
-                    .desc(if language.to_ascii_lowercase().starts_with("zh") {
-                        "普通文件单次返回字节预算，默认 16384，范围 1024..2097152；超出时明确标记截断，请用 pattern 或更窄范围续读。"
-                    } else {
-                        "Byte budget for ordinary file output, default 16384, range 1024..2097152. Overflow is explicitly marked; continue with pattern or a narrower range."
-                    })
+                    .desc("Byte budget for ordinary file output, default 16384, range 1024..2097152. Overflow is explicitly marked; continue with pattern or a narrower range.")
                     .min(1024)
                     .max(2097152)
                     .default_value(json!(16384))
                     .optional(),
                 super::schema::integer("offset")
-                    .desc(if language.to_ascii_lowercase().starts_with("zh") {
-                        "普通文件为从 1 开始的行偏移；tool-result: 句柄为从 0 开始的 UTF-8 字节偏移，续读使用 next_offset。"
-                    } else {
-                        "For files, a 1-based line offset; for tool-result: handles, a zero-based UTF-8 byte offset. Continue saved results with next_offset."
-                    })
+                    .desc("For files, a 1-based line offset; for tool-result: handles, a zero-based UTF-8 byte offset. Continue saved results with next_offset.")
                     .min(0)
                     .optional(),
                 super::schema::integer("limit")
-                    .desc(if language.to_ascii_lowercase().starts_with("zh") {
-                        "普通文件为返回行数，可单独使用：省略 start_line/offset 时等价于读取前 limit 行，默认且最大 500；tool-result: 句柄为字节预算，默认 8192、最大 16384。"
-                    } else {
-                        "For files, the line count; it works on its own, so without start_line/offset it means 'read the first limit lines' (default and maximum 500). For tool-result: handles, the byte budget (default 8192, maximum 16384)."
-                    })
+                    .desc("For files, the line count; it works on its own, so without start_line/offset it means 'read the first limit lines' (default and maximum 500). For tool-result: handles, the byte budget (default 8192, maximum 16384).")
                     .min(1)
                     .max(16384)
                     .optional(),
                 super::schema::string("query")
-                    .desc(if language.to_ascii_lowercase().starts_with("zh") {
-                        "仅用于 tool-result: 句柄：非空字面搜索词（不解释为正则），最多 512 个 UTF-8 字节，从 offset 搜索并返回限量匹配片段。"
-                    } else {
-                        "For tool-result: handles only: non-empty literal search text (not a regex), at most 512 UTF-8 bytes. Search from offset and return bounded matching excerpts."
-                    })
+                    .desc("For tool-result: handles only: non-empty literal search text (not a regex), at most 512 UTF-8 bytes. Search from offset and return bounded matching excerpts.")
                     .min_len(1)
                     .max_len(512)
                     .optional(),
@@ -1262,7 +1218,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
 }
 
 pub fn builtin_tool_specs() -> Vec<ToolSpec> {
-    let language = i18n::get_language();
+    let language = i18n::prompt_language().to_string();
     builtin_tool_specs_with_language(&language)
 }
 
@@ -1802,7 +1758,7 @@ fn current_tool_spec(
         .iter()
         .find(|base| base.enabled && base.name.trim() == tool_name)
     {
-        return Some(knowledge_tool_spec(base, tool_name, &i18n::get_language()));
+        return Some(knowledge_tool_spec(base, tool_name, i18n::prompt_language()));
     }
 
     let canonical = resolve_tool_name(tool_name);
@@ -2270,7 +2226,7 @@ pub fn collect_prompt_tool_specs(
     allowed_names: &HashSet<String>,
     user_tool_bindings: Option<&UserToolBindings>,
 ) -> Vec<ToolSpec> {
-    let language = i18n::get_language();
+    let language = i18n::prompt_language().to_string();
     collect_prompt_tool_specs_with_language(
         config,
         skills,
@@ -2498,11 +2454,12 @@ mod tests {
     /// either the system prompt's tool block or the API `tools` parameter.
     #[test]
     fn tool_spec_prompt_budget_report() {
-        for language in ["zh-CN", "en-US"] {
+        // 模型面统一英文，预算只按英文目录核算。
+        for language in ["en-US"] {
             let authoritative = builtin_tool_specs_with_language(language);
             let specs: Vec<_> = authoritative
                 .iter()
-                .map(|spec| crate::tools::prompt_tool_spec(spec, language))
+                .map(|spec| crate::tools::prompt_tool_spec(spec))
                 .collect();
             let mut rows: Vec<(usize, String, usize, usize)> = specs
                 .iter()
@@ -2636,7 +2593,7 @@ mod tests {
                 super::current_executable_tool_input_schema(&config, &skills, None, name)
                     .unwrap_or_else(|| panic!("missing executable schema for {name}"));
             let canonical = resolve_tool_name(name);
-            let expected = builtin_tool_specs_with_language(&crate::i18n::get_language())
+            let expected = builtin_tool_specs_with_language(crate::i18n::prompt_language())
                 .into_iter()
                 .find(|spec| spec.name == canonical)
                 .unwrap_or_else(|| panic!("missing builtin schema for {canonical}"))
@@ -3371,12 +3328,17 @@ mod tests {
 
     #[test]
     fn subagent_control_schema_is_flat_and_drops_swarm_surface() {
-        let spec = builtin_tool_specs_with_language("zh-CN")
+        let spec = crate::tools::builtin_tool_specs()
             .into_iter()
             .find(|spec| spec.name == "子智能体控制")
             .expect("subagent_control spec");
-        assert!(spec.description.contains("run_in_background"));
-        assert!(spec.description.contains("自动唤醒"));
+        // 工具定义固定英文：即使请求中文，模型面同样是英文描述。
+        assert!(
+            spec.description.contains("spawn"),
+            "subagent description lost the spawn contract: {}",
+            spec.description
+        );
+        assert!(spec.description.contains("accepted"));
         let schema = &spec.input_schema;
         assert!(schema["oneOf"].is_null());
         assert_eq!(schema["additionalProperties"].as_bool(), Some(false));

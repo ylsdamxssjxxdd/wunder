@@ -908,7 +908,7 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     }
     let parent_session_id = context.session_id.trim().to_string();
     if parent_session_id.is_empty() {
-        return Err(anyhow!(i18n::t("error.session_not_found")));
+        return Err(anyhow!(i18n::prompt_t("error.session_not_found")));
     }
 
     // Validate every context before dispatching any worker; failure cannot hide a partial batch.

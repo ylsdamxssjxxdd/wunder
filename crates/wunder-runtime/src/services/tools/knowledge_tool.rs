@@ -19,18 +19,18 @@ pub(crate) async fn execute_user_knowledge_tool(
     args: &Value,
 ) -> Result<Value> {
     let Some(query) = resolve_query_text(args) else {
-        return Err(anyhow!(i18n::t("error.knowledge_query_required")));
+        return Err(anyhow!(i18n::prompt_t("error.knowledge_query_required")));
     };
     let store = context
         .user_tool_store
-        .ok_or_else(|| anyhow!(i18n::t("error.knowledge_base_not_found")))?;
+        .ok_or_else(|| anyhow!(i18n::prompt_t("error.knowledge_base_not_found")))?;
     let payload = store.load_user_tools(&alias.owner_id);
     let base_info = payload
         .knowledge_bases
         .iter()
         .find(|base| base.name == alias.target)
         .cloned()
-        .ok_or_else(|| anyhow!(i18n::t("error.knowledge_base_not_found")))?;
+        .ok_or_else(|| anyhow!(i18n::prompt_t("error.knowledge_base_not_found")))?;
     let base_type = normalize_knowledge_base_type(base_info.base_type.as_deref());
     let root = store
         .resolve_knowledge_base_root_with_type(&alias.owner_id, &base_info.name, base_type, false)
@@ -75,7 +75,7 @@ pub(crate) async fn execute_knowledge_tool(
     args: &Value,
 ) -> Result<Value> {
     let Some(query) = resolve_query_text(args) else {
-        return Err(anyhow!(i18n::t("error.knowledge_query_required")));
+        return Err(anyhow!(i18n::prompt_t("error.knowledge_query_required")));
     };
     if base.is_vector() {
         return execute_vector_knowledge(context, base, None, args).await;
@@ -155,7 +155,7 @@ async fn execute_ragflow_knowledge(
     } else if !query.is_empty() {
         vec![query.clone()]
     } else {
-        return Err(anyhow!(i18n::t("error.knowledge_query_required")));
+        return Err(anyhow!(i18n::prompt_t("error.knowledge_query_required")));
     };
     ragflow_knowledge::ensure_ragflow_base_config(base)?;
     let top_k = extract_limit(args).unwrap_or_else(|| ragflow_knowledge::resolve_top_k(base));
@@ -259,7 +259,7 @@ async fn execute_vector_knowledge(
     } else if !query.is_empty() {
         vec![query.clone()]
     } else {
-        return Err(anyhow!(i18n::t("error.knowledge_query_required")));
+        return Err(anyhow!(i18n::prompt_t("error.knowledge_query_required")));
     };
     vector_knowledge::ensure_vector_base_type(base)?;
     let embedding_name = base

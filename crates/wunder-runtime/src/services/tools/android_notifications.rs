@@ -149,15 +149,15 @@ impl NotificationsArgs {
 fn parse_notifications_args(args: &Value) -> Result<NotificationsArgs> {
     let obj = args
         .as_object()
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.android_notifications.invalid_args")))?;
+        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.android_notifications.invalid_args")))?;
     let action_raw = obj
         .get("action")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.android_notifications.action_required")))?;
+        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.android_notifications.action_required")))?;
     let action = NotificationsAction::from_raw(action_raw)
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.android_notifications.unknown_action")))?;
+        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.android_notifications.unknown_action")))?;
     let limit = obj
         .get("limit")
         .and_then(Value::as_u64)
@@ -170,7 +170,7 @@ fn parse_notifications_args(args: &Value) -> Result<NotificationsArgs> {
         .filter(|value| !value.is_empty())
         .map(|value| value.chars().take(MAX_KEY_CHARS).collect::<String>());
     if action == NotificationsAction::Dismiss && key.is_none() {
-        return Err(anyhow!(crate::i18n::t(
+        return Err(anyhow!(crate::i18n::prompt_t(
             "tool.android_notifications.key_required"
         )));
     }
@@ -180,7 +180,7 @@ fn parse_notifications_args(args: &Value) -> Result<NotificationsArgs> {
 pub async fn tool_android_notifications(_context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload = parse_notifications_args(args)?;
     let host = android_notifications_host()
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.android_notifications.disabled")))?;
+        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.android_notifications.disabled")))?;
     execute_with_host(host, payload).await
 }
 
@@ -257,7 +257,7 @@ async fn execute_with_host(
             }
         }
     } else {
-        let fallback = crate::i18n::t("tool.android_notifications.action_failed");
+        let fallback = crate::i18n::prompt_t("tool.android_notifications.action_failed");
         output["message"] = json!(localize_notifications_message(
             code,
             message.as_deref(),
@@ -274,7 +274,7 @@ async fn execute_with_host(
         output["message"]
             .as_str()
             .map(ToString::to_string)
-            .unwrap_or_else(|| crate::i18n::t("tool.android_notifications.action_failed"))
+            .unwrap_or_else(|| crate::i18n::prompt_t("tool.android_notifications.action_failed"))
     };
     Ok(build_model_tool_success(
         TOOL_ANDROID_NOTIFICATIONS_ALIAS,
@@ -304,7 +304,7 @@ fn bounded_string(value: Option<&Value>, max_chars: usize) -> String {
 
 fn notifications_summary(action: NotificationsAction, data: &Value) -> String {
     match action {
-        NotificationsAction::List => crate::i18n::t_with_params(
+        NotificationsAction::List => crate::i18n::prompt_t_with_params(
             "tool.android_notifications.summary_list",
             &HashMap::from([
                 (
@@ -324,7 +324,7 @@ fn notifications_summary(action: NotificationsAction, data: &Value) -> String {
             ]),
         ),
         NotificationsAction::Dismiss => {
-            crate::i18n::t("tool.android_notifications.summary_dismiss")
+            crate::i18n::prompt_t("tool.android_notifications.summary_dismiss")
         }
         NotificationsAction::Status => {
             let key = if data
@@ -336,7 +336,7 @@ fn notifications_summary(action: NotificationsAction, data: &Value) -> String {
             } else {
                 "tool.android_notifications.summary_status_off"
             };
-            crate::i18n::t(key)
+            crate::i18n::prompt_t(key)
         }
     }
 }
@@ -353,7 +353,7 @@ fn localize_notifications_message(
         _ => None,
     };
     if let Some(key) = key {
-        let localized = crate::i18n::t(key);
+        let localized = crate::i18n::prompt_t(key);
         if localized != key {
             return localized;
         }

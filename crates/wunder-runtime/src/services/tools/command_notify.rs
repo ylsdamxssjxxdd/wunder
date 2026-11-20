@@ -42,6 +42,9 @@ pub(crate) struct PendingBackgroundCommand {
     pub mode: String,
     pub started_at: f64,
     pub language: String,
+    /// 写入该记录的进程实例；空值是旧版本记录，无法判活。
+    #[serde(default)]
+    pub owner_instance_id: String,
 }
 
 pub(crate) fn parse_pending_background(value: &str) -> Option<PendingBackgroundCommand> {
@@ -155,7 +158,7 @@ impl CommandNotifier {
             broker: Arc::clone(broker),
             user_id: context.user_id.to_string(),
             session_id: context.session_id.to_string(),
-            language: i18n::get_language(),
+            language: i18n::prompt_language().to_string(),
         }))
     }
 
@@ -199,6 +202,9 @@ impl CommandNotifier {
             mode: mode.to_string(),
             started_at,
             language: self.language.clone(),
+            owner_instance_id: crate::instance_liveness::current_instance()
+                .unwrap_or_default()
+                .to_string(),
         };
         if let Err(err) = persist_pending_command(self.storage.clone(), &record).await {
             warn!(
@@ -554,6 +560,7 @@ mod tests {
             mode: "sandbox".to_string(),
             started_at: 1_000.0,
             language: "zh-CN".to_string(),
+            owner_instance_id: "fixture-instance".to_string(),
         };
         persist_pending_command(storage.clone(), &record)
             .await

@@ -807,7 +807,7 @@ async fn launch_command_session_inner(request: SandboxToolRequest) -> Value {
         .trim()
         .to_string();
     if content.is_empty() {
-        return json!({"ok": false, "error": i18n::t("tool.exec.command_required")});
+        return json!({"ok": false, "error": i18n::prompt_t("tool.exec.command_required")});
     }
     let workdir = args.get("workdir").and_then(Value::as_str).unwrap_or("");
     let container_root = if request.container_root.trim().is_empty() {
@@ -841,7 +841,7 @@ async fn launch_command_session_inner(request: SandboxToolRequest) -> Value {
         },
     ) {
         Ok(path) if path.is_dir() => path,
-        Ok(_) => return json!({"ok": false, "error": i18n::t("tool.exec.workdir_not_dir")}),
+        Ok(_) => return json!({"ok": false, "error": i18n::prompt_t("tool.exec.workdir_not_dir")}),
         Err(error) => return json!({"ok": false, "error": error}),
     };
     let allow_all = context.allow_commands.contains("*");
@@ -873,7 +873,7 @@ async fn launch_command_session_inner(request: SandboxToolRequest) -> Value {
             .iter()
             .any(|allowed| command_text.to_lowercase().starts_with(allowed))
     {
-        return json!({"ok": false, "error": i18n::t("tool.exec.not_allowed")});
+        return json!({"ok": false, "error": i18n::prompt_t("tool.exec.not_allowed")});
     }
     let timeout_s = apply_time_budget_secs(
         parse_timeout_secs(args.get("timeout_s")).unwrap_or(DEFAULT_COMMAND_TIMEOUT_S),
@@ -1138,7 +1138,7 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
                     None,
                 ),
             ),
-            error: i18n::t("tool.exec.command_required"),
+            error: i18n::prompt_t("tool.exec.command_required"),
         };
     }
 
@@ -1181,7 +1181,7 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
                     None,
                 ),
             ),
-            error: i18n::t("tool.exec.workdir_not_found"),
+            error: i18n::prompt_t("tool.exec.workdir_not_found"),
         };
     }
     if !cwd.is_dir() {
@@ -1196,7 +1196,7 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
                     None,
                 ),
             ),
-            error: i18n::t("tool.exec.workdir_not_dir"),
+            error: i18n::prompt_t("tool.exec.workdir_not_dir"),
         };
     }
 
@@ -1288,7 +1288,7 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
                             None,
                         ),
                     ),
-                    error: i18n::t("tool.exec.not_allowed"),
+                    error: i18n::prompt_t("tool.exec.not_allowed"),
                 };
             }
         }
@@ -1403,7 +1403,7 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
             if let Some(last) = results.last_mut().and_then(Value::as_object_mut) {
                 last.insert(
                     "exit_note".to_string(),
-                    json!(i18n::t("tool.exec.non_zero_exit_note")),
+                    json!(i18n::prompt_t("tool.exec.non_zero_exit_note")),
                 );
             }
         }
@@ -1455,7 +1455,7 @@ async fn execute_command_streaming(
                     None,
                 ),
             ),
-            error: i18n::t("tool.exec.command_required"),
+            error: i18n::prompt_t("tool.exec.command_required"),
         };
     }
 
@@ -1498,7 +1498,7 @@ async fn execute_command_streaming(
                     None,
                 ),
             ),
-            error: i18n::t("tool.exec.workdir_not_found"),
+            error: i18n::prompt_t("tool.exec.workdir_not_found"),
         };
     }
     if !cwd.is_dir() {
@@ -1513,7 +1513,7 @@ async fn execute_command_streaming(
                     None,
                 ),
             ),
-            error: i18n::t("tool.exec.workdir_not_dir"),
+            error: i18n::prompt_t("tool.exec.workdir_not_dir"),
         };
     }
 
@@ -1605,7 +1605,7 @@ async fn execute_command_streaming(
                             None,
                         ),
                     ),
-                    error: i18n::t("tool.exec.not_allowed"),
+                    error: i18n::prompt_t("tool.exec.not_allowed"),
                 };
             }
         }
@@ -1763,7 +1763,7 @@ async fn execute_command_streaming(
             if let Some(last) = results.last_mut().and_then(Value::as_object_mut) {
                 last.insert(
                     "exit_note".to_string(),
-                    json!(i18n::t("tool.exec.non_zero_exit_note")),
+                    json!(i18n::prompt_t("tool.exec.non_zero_exit_note")),
                 );
             }
         }
