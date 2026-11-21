@@ -116,6 +116,115 @@ pub fn default_tool_names(allowed: &HashSet<String>) -> Vec<String> {
     selected
 }
 
+/// 桌面版一次性迁移：早期默认画像或历史保存可能没有「桌面控制」，
+/// 已存在的默认智能体会一直缺这个核心能力。这里只补一次；marker 写入后
+/// 用户后续手动取消不会被重新加回。
+pub fn migrate_local_default_agent_desktop_control(
+    store: &crate::user_store::UserStore,
+    user_id: &str,
+) -> anyhow::Result<()> {
+    let user_id = user_id.trim();
+    let marker = format!("default_agent_desktop_control_migration_v1:{user_id}");
+    if store.get_meta(&marker)?.as_deref() == Some("1") {
+        return Ok(());
+    }
+    let canonical = crate::tools::resolve_tool_name("桌面控制");
+    let meta_key = crate::services::default_agent_protocol::default_agent_meta_key(user_id);
+    // 还没有任何默认智能体状态时不写 marker：之后从旧备份导入的智能体
+    // 仍能在下一次启动时被修复。
+    let mut inspected = false;
+    if let Some(raw) = store.get_meta(&meta_key)? {
+        inspected = true;
+        if let Ok(mut config) = serde_json::from_str::<
+            crate::services::default_agent_protocol::DefaultAgentConfig,
+        >(raw.trim())
+        {
+            if ensure_desktop_control_selected(
+                &mut config.tool_names,
+                &mut config.declared_tool_names,
+                &mut config.ability_items,
+                &canonical,
+            ) {
+                config.updated_at = now_ts();
+                store.set_meta(&meta_key, &serde_json::to_string(&config)?)?;
+            }
+        }
+    }
+    if let Some(mut record) = store.get_user_agent(user_id, "__default__")? {
+        inspected = true;
+        if ensure_desktop_control_selected(
+            &mut record.tool_names,
+            &mut record.declared_tool_names,
+            &mut record.ability_items,
+            &canonical,
+        ) {
+            record.updated_at = now_ts();
+            store.upsert_user_agent(&record)?;
+        }
+    }
+    if inspected {
+        store.set_meta(&marker, "1")?;
+    }
+    Ok(())
+}
+
+fn now_ts() -> f64 {
+    chrono::Utc::now().timestamp_millis() as f64 / 1000.0
+}
+
+fn contains_canonical_tool(names: &[String], canonical: &str) -> bool {
+    names
+        .iter()
+        .any(|name| crate::tools::resolve_tool_name(name.trim()) == canonical)
+}
+
+fn ensure_desktop_control_selected(
+    tool_names: &mut Vec<String>,
+    declared_tool_names: &mut Vec<String>,
+    ability_items: &mut Vec<crate::schemas::AbilityDescriptor>,
+    canonical: &str,
+) -> bool {
+    use crate::schemas::{AbilityDescriptor, AbilityGroupKey, AbilityKind, AbilitySourceKey};
+
+    // 能力项存在时运行时会以它为准，只补 tool_names 不会进入线程工具面。
+    let mut changed = false;
+    if !contains_canonical_tool(tool_names, canonical) {
+        tool_names.push(canonical.to_string());
+        changed = true;
+    }
+    if !declared_tool_names.is_empty() && !contains_canonical_tool(declared_tool_names, canonical) {
+        declared_tool_names.push(canonical.to_string());
+        changed = true;
+    }
+    if let Some(item) = ability_items
+        .iter_mut()
+        .find(|item| crate::tools::resolve_tool_name(item.runtime_name.trim()) == canonical)
+    {
+        if !item.selected || !item.available {
+            item.selected = true;
+            item.available = true;
+            changed = true;
+        }
+    } else if !ability_items.is_empty() {
+        ability_items.push(AbilityDescriptor {
+            id: format!("builtin:{canonical}"),
+            name: canonical.to_string(),
+            runtime_name: canonical.to_string(),
+            display_name: canonical.to_string(),
+            description: String::new(),
+            input_schema: serde_json::Value::Null,
+            group: AbilityGroupKey::Builtin,
+            source: AbilitySourceKey::Builtin,
+            kind: AbilityKind::Tool,
+            owner_id: None,
+            available: true,
+            selected: true,
+        });
+        changed = true;
+    }
+    changed
+}
+
 /// 已有默认智能体补齐首次可用的内置工具；记住已处理集合，保留后续手动取消。
 pub(crate) fn initialize_default_builtin_tools(
     store: &crate::user_store::UserStore,
@@ -269,6 +378,139 @@ mod tests {
         config.tools.web.fetch.enabled = false;
         let allowed = crate::tools::collect_available_tool_names(&config, &skills, None);
         assert!(!allowed.contains("网页抓取"));
+    }
+
+    #[test]
+    fn desktop_control_migration_backfills_missing_tool_once() {
+        use crate::schemas::{AbilityDescriptor, AbilityGroupKey, AbilityKind, AbilitySourceKey};
+
+        assert!(contains_canonical_tool(
+            &["desktop_control".to_string()],
+            "桌面控制"
+        ));
+        let mut tool_names = vec!["读取文件".to_string()];
+        let mut declared = vec!["读取文件".to_string()];
+        let mut items = vec![AbilityDescriptor {
+            id: "builtin:读取文件".to_string(),
+            name: "读取文件".to_string(),
+            runtime_name: "读取文件".to_string(),
+            display_name: "读取文件".to_string(),
+            description: String::new(),
+            input_schema: serde_json::Value::Null,
+            group: AbilityGroupKey::Builtin,
+            source: AbilitySourceKey::Builtin,
+            kind: AbilityKind::Tool,
+            owner_id: None,
+            available: true,
+            selected: true,
+        }];
+        assert!(ensure_desktop_control_selected(
+            &mut tool_names,
+            &mut declared,
+            &mut items,
+            "桌面控制"
+        ));
+        assert!(tool_names.iter().any(|name| name == "桌面控制"));
+        assert!(declared.iter().any(|name| name == "桌面控制"));
+        assert!(items.iter().any(|item| item.runtime_name == "桌面控制"));
+        assert!(!ensure_desktop_control_selected(
+            &mut tool_names,
+            &mut declared,
+            &mut items,
+            "桌面控制"
+        ));
+    }
+
+    #[cfg(feature = "sqlite-storage")]
+    #[test]
+    fn migration_repairs_existing_default_agent_meta_once() {
+        use crate::schemas::{AbilityDescriptor, AbilityGroupKey, AbilityKind, AbilitySourceKey};
+        use crate::services::default_agent_protocol::{default_agent_meta_key, DefaultAgentConfig};
+
+        let directory = tempfile::tempdir().expect("temp dir");
+        let storage = std::sync::Arc::new(crate::storage::SqliteStorage::new(
+            directory
+                .path()
+                .join("state.db")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let store = crate::user_store::UserStore::new(storage);
+        let key = default_agent_meta_key("local_user");
+        let config = DefaultAgentConfig {
+            name: "默认智能体".to_string(),
+            tool_names: vec!["读取文件".to_string()],
+            declared_tool_names: vec!["读取文件".to_string()],
+            ability_items: vec![AbilityDescriptor {
+                id: "builtin:读取文件".to_string(),
+                name: "读取文件".to_string(),
+                runtime_name: "读取文件".to_string(),
+                display_name: "读取文件".to_string(),
+                description: String::new(),
+                input_schema: serde_json::Value::Null,
+                group: AbilityGroupKey::Builtin,
+                source: AbilitySourceKey::Builtin,
+                kind: AbilityKind::Tool,
+                owner_id: None,
+                available: true,
+                selected: true,
+            }],
+            updated_at: 1.0,
+            ..Default::default()
+        };
+        store
+            .set_meta(&key, &serde_json::to_string(&config).expect("serialize"))
+            .expect("seed meta");
+
+        migrate_local_default_agent_desktop_control(&store, "local_user").expect("migrate");
+
+        let repaired: DefaultAgentConfig =
+            serde_json::from_str(&store.get_meta(&key).expect("read meta").expect("meta"))
+                .expect("parse meta");
+        assert!(repaired.tool_names.iter().any(|name| name == "桌面控制"));
+        assert!(repaired
+            .declared_tool_names
+            .iter()
+            .any(|name| name == "桌面控制"));
+        assert!(repaired
+            .ability_items
+            .iter()
+            .any(|item| item.runtime_name == "桌面控制" && item.selected));
+        assert!(repaired.updated_at > 1.0);
+
+        // 用户之后手动取消，迁移不能把它重新加回。
+        let mut cleared = repaired;
+        cleared.tool_names.retain(|name| name != "桌面控制");
+        cleared
+            .declared_tool_names
+            .retain(|name| name != "桌面控制");
+        cleared
+            .ability_items
+            .retain(|item| item.runtime_name != "桌面控制");
+        store
+            .set_meta(&key, &serde_json::to_string(&cleared).expect("serialize"))
+            .expect("persist cleared");
+        migrate_local_default_agent_desktop_control(&store, "local_user").expect("migrate again");
+        let kept: DefaultAgentConfig =
+            serde_json::from_str(&store.get_meta(&key).expect("read meta").expect("meta"))
+                .expect("parse meta");
+        assert!(!kept.tool_names.iter().any(|name| name == "桌面控制"));
+    }
+
+    #[cfg(feature = "desktop-control")]
+    #[test]
+    fn desktop_defaults_select_desktop_control() {
+        let mut config = Config::default();
+        config.server.mode = "desktop".to_string();
+        config.tools.desktop_control.enabled = true;
+        let skills = crate::skills::SkillRegistry::default();
+        let allowed = crate::tools::collect_available_tool_names(&config, &skills, None);
+        assert!(allowed.contains("桌面控制"), "desktop control not allowed");
+        assert!(
+            default_tool_names(&allowed).contains(&"桌面控制".to_string()),
+            "desktop control not selected by default; candidates: {:?}",
+            default_tool_candidates()
+        );
     }
 
     #[test]

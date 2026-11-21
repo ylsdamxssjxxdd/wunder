@@ -15,7 +15,7 @@ import { MobileTool, MobileToolGroup, MobileToolResource, MobileToolFile, Mobile
 import { MobileCronJob, MobileCronDraft, MobileCronRun, MobileMemory, MobileMemoryDraft, MobileDevice } from "automation_model.slint";
 import { MobileChannelAccount, MobileChannelCatalog, MobileChannelBinding, MobileChannelLog, MobileChannelDraft } from "channel_model.slint";
 import { MobileSession, MobileBackup, MobilePermission } from "session_model.slint";
-import { ListView, ScrollView } from "std-widgets.slint";
+import { ListView, ScrollView, Spinner } from "std-widgets.slint";
 
 component SheetHeader inherits Rectangle {
     in property <string> title;
@@ -4428,6 +4428,8 @@ component ModelEditorPage inherits Rectangle {
     in property <length> inset-bottom: 0px;
     in property <bool> is-new: true;
     in property <bool> is-default: false;
+    // 落库请求已发出：禁用保存/删除并显示转圈，避免连点排队反复写配置。
+    in property <bool> saving: false;
     in property <string> original-key: "";
     in property <string> error: "";
     in property <string> probe: "";
@@ -4470,13 +4472,18 @@ component ModelEditorPage inherits Rectangle {
             subtitle: root.is-new ? I18n.st_model_new_hint : root.editor-subtitle();
             inset-top: root.inset-top;
             back() => { root.back(); }
+            if root.saving : Rectangle {
+                width: 18px;
+                height: 18px;
+                Spinner { width: 18px; height: 18px; }
+            }
             Action {
                 width: 76px;
                 show-label: true;
                 icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/save.svg");
                 label: I18n.common_save;
                 primary: true;
-                enabled: root.draft.key != "" && root.draft.model != "";
+                enabled: !root.saving && root.draft.key != "" && root.draft.model != "";
                 clicked => { root.save(root.draft, root.secret); }
             }
             if !root.is-new : Action {
@@ -4484,6 +4491,7 @@ component ModelEditorPage inherits Rectangle {
                 icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/trash.svg");
                 label: I18n.common_delete;
                 danger: true;
+                enabled: !root.saving;
                 clicked => { root.ask-delete(); }
             }
         }
@@ -4528,7 +4536,7 @@ component ModelEditorPage inherits Rectangle {
                         note: root.is-default ? "当前已是默认模型" : "保存后新任务默认使用该模型";
                         ThemeSwitch {
                             checked <=> root.draft.is-default;
-                            enabled: !root.is-default;
+                            enabled: !root.is-default && !root.saving;
                             checked-color: Theme.gold;
                             checked-hover-color: Theme.gold-deep;
                         }
@@ -5373,6 +5381,8 @@ export component MobileSettings inherits Rectangle {
     in property <bool> editor-open: false;
     in property <bool> editor-new: false;
     in property <bool> editor-default: false;
+    // 落库期间禁用保存/删除并转圈：每次保存都会改写配置文件，连点会排队。
+    in property <bool> editor-saving: false;
     in property <string> editor-key: "";
     in property <string> editor-error: "";
     in property <string> editor-probe: "";
@@ -6011,6 +6021,7 @@ export component MobileSettings inherits Rectangle {
             inset-bottom: root.inset-bottom;
             is-new: root.editor-new;
             is-default: root.editor-default;
+            saving: root.editor-saving;
             original-key: root.editor-key;
             error: root.editor-error;
             probe: root.editor-probe;

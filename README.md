@@ -72,7 +72,7 @@ wunder 是一个泛用型人工智能操作系统：**wunder = 模型 + 拘束�
 
 模型看到的工具规范名大多为中文，另配英文别名，由 `resolve_tool_name` 归一（`crates/wunder-runtime/src/services/tools/catalog.rs`）。MCP 工具（`server@tool`）、技能名、知识库名与用户工具别名按配置动态注册，不在下表之列。
 
-| 工具（规范名） | 英文别名 | 简介 | 分类 |
+| 工具 | 英文别名 | 简介 | 分类 |
 | :--- | :--- | :--- | :--- |
 | 计划面板 | `update_plan` | 向前端推送结构化的任务计划面板 | 收尾与前端协同 |
 | 问询面板 | `question_panel` | 弹出结构化选项，向用户提问并等待选择 | 收尾与前端协同 |

@@ -3,12 +3,37 @@
 //! after `update_agent_settings` a fresh `default_agent` must still report
 //! them on the built-in `__default__` agent.
 
+use std::sync::{Mutex, MutexGuard};
+
 use wunder_desktop::{args::DesktopArgs, NativeDesktop};
 
-fn start_isolated() -> Result<NativeDesktop, Box<dyn std::error::Error>> {
+/// 隔离运行时：WUNDER_HOME 决定配置、数据库与工作区的真实位置，`--temp-root`
+/// 只管临时文件。锁保证同进程内的测试串行切换 WUNDER_HOME，避免任一测试
+/// 读写到开发者的真实 ~/.wunder 状态。
+static ISOLATION: Mutex<()> = Mutex::new(());
+
+struct IsolatedRuntime {
+    // 字段按声明顺序析构：先关运行时，再放锁，避免下一个测试在旧运行时
+    // 收尾期间改写 WUNDER_HOME。
+    runtime: NativeDesktop,
+    _lock: MutexGuard<'static, ()>,
+}
+
+impl std::ops::Deref for IsolatedRuntime {
+    type Target = NativeDesktop;
+
+    fn deref(&self) -> &Self::Target {
+        &self.runtime
+    }
+}
+
+fn start_isolated() -> Result<IsolatedRuntime, Box<dyn std::error::Error>> {
+    let lock = ISOLATION.lock().unwrap_or_else(|error| error.into_inner());
     let directory = tempfile::tempdir()?;
-    let config = directory.path().join("runtime/config");
+    let home = directory.path().join("home");
+    let config = home.join("config");
     std::fs::create_dir_all(&config)?;
+    std::env::set_var("WUNDER_HOME", &home);
     std::fs::write(config.join("wunder.yaml"), "{}\n")?;
     let settings = serde_json::json!({
         "workspace_root": "", "desktop_token": "", "updated_at": 0,
@@ -23,10 +48,13 @@ fn start_isolated() -> Result<NativeDesktop, Box<dyn std::error::Error>> {
         serde_json::to_vec(&settings)?,
     )?;
     let mut args = DesktopArgs::native_defaults();
-    args.temp_root = Some(directory.path().join("runtime").canonicalize()?);
+    args.temp_root = Some(directory.path().join("runtime"));
     args.workspace = Some(directory.path().join("workspace"));
     std::mem::forget(directory);
-    Ok(NativeDesktop::start_with_args(args)?)
+    Ok(IsolatedRuntime {
+        runtime: NativeDesktop::start_with_args(args)?,
+        _lock: lock,
+    })
 }
 
 fn save_tools(runtime: &NativeDesktop, tool_names: Vec<String>) -> wunder_desktop::AgentRecord {
@@ -72,6 +100,23 @@ fn tool_selection_persists_for_default_agent() {
         missing.is_empty(),
         "tools lost after save: {missing:?}\nlisted: {names:?}\npersisted: {:?}",
         persisted.tool_names
+    );
+}
+
+#[test]
+fn desktop_control_is_listed_and_enabled_by_default() {
+    let runtime = start_isolated().expect("isolated runtime");
+    let tools = runtime.list_tools().expect("tools");
+    assert!(
+        tools.iter().any(|tool| tool.name == "桌面控制"),
+        "desktop control missing from the builtin catalog: {:?}",
+        tools.iter().map(|tool| tool.name.as_str()).collect::<Vec<_>>()
+    );
+    let agent = runtime.default_agent().expect("default agent");
+    assert!(
+        agent.tool_names.iter().any(|name| name == "桌面控制"),
+        "desktop control is not selected by default: {:?}",
+        agent.tool_names
     );
 }
 

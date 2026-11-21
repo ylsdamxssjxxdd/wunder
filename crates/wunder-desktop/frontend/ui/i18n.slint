@@ -23,6 +23,10 @@ export global I18n {
     out property <string> ag_workdir_container: zh ? "工作目录容器" : "Working directory container";
     out property <string> ag_container_prefix: zh ? "容器 #" : "Container #";
     out property <string> ag_permission_mode: zh ? "权限模式" : "Permission mode";
+    out property <string> ag_permission_note: zh ? "执行命令、写入文件与桌面控制是否需要确认" : "Whether commands, file writes and desktop control need confirmation";
+    out property <string> ag_permission_suggest: zh ? "建议（每步确认）" : "Suggest (confirm each step)";
+    out property <string> ag_permission_auto_edit: zh ? "自动编辑（命令需确认）" : "Auto edit (confirm commands)";
+    out property <string> ag_permission_full_auto: zh ? "全自动" : "Full auto";
     out property <string> ag_unsaved_title: zh ? "未保存的修改" : "Unsaved changes";
     out property <string> ag_unsaved_confirm: zh ? "当前智能体设置有未保存的修改，确认离开并放弃吗？" : "Agent settings have unsaved changes. Leave and discard them?";
     out property <string> ag_unsaved_hint: zh ? "有未保存的修改" : "Unsaved changes";
@@ -1273,6 +1277,16 @@ export global I18n {
     out property <string> inquiry_submit_blocked: zh ? "请先回答任一问题" : "Answer at least one question";
     out property <string> inquiry_use_recommended: zh ? "使用推荐" : "Use the recommended";
     public pure function inquiry_question_progress(position: string) -> string { return zh ? "第 " + position + " 题" : "Question " + position + ""; }
+    out property <string> ap_title: zh ? "需要授权" : "Approval required";
+    out property <string> ap_kind_exec: zh ? "执行命令" : "Run command";
+    out property <string> ap_kind_patch: zh ? "修改文件" : "Modify file";
+    out property <string> ap_kind_control: zh ? "控制桌面" : "Control desktop";
+    out property <string> ap_kind_action: zh ? "工具操作" : "Tool action";
+    out property <string> ap_note: zh ? "当前权限模式要求确认这一步。" : "The current permission mode requires your confirmation.";
+    public pure function ap_pending_more(count: string) -> string { return zh ? "另有 " + count + " 项待处理" : "" + count + " more pending"; }
+    out property <string> ap_deny: zh ? "拒绝" : "Deny";
+    out property <string> ap_allow_once: zh ? "仅本次允许" : "Allow once";
+    out property <string> ap_allow_session: zh ? "本会话允许" : "Allow for session";
     out property <string> stc_data: zh ? "数据与恢复" : "Data & recovery";
     out property <string> st_data_backup_title: zh ? "本地备份" : "Local backup";
     out property <string> st_data_backup_note: zh ? "打包 config 与本地数据库（含 WAL），不包含工作区文件。" : "Packs config and the local databases (WAL included). Workspace files are not included.";

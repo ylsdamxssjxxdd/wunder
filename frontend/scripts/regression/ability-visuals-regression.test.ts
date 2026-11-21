@@ -96,4 +96,21 @@ test('glob tool uses the folder tree icon across canonical and runtime names', (
       tone: 'file'
     });
   }
+  assert.deepEqual(resolveAbilityVisual({ name: '文件名通配匹配', kind: 'tool' }), {
+    icon: 'fa-folder-tree',
+    tone: 'file'
+  });
+});
+
+test('web fetch keeps the globe even when its description mentions browser', () => {
+  const description =
+    '抓取单个公开网页 URL 并提取正文。登录、注册、填表或点击等交互任务直接使用 browser 的 action=navigate，不先抓取页面。';
+  assert.deepEqual(resolveAbilityVisual({ name: '网页抓取', description, kind: 'tool' }), {
+    icon: 'fa-globe',
+    tone: 'search'
+  });
+  assert.deepEqual(resolveAbilityVisual({ name: '浏览器', description, kind: 'tool' }), {
+    icon: 'fa-window-maximize',
+    tone: 'search'
+  });
 });

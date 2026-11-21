@@ -123,12 +123,13 @@ impl AgentSaveDraft {
 }
 
 /// The runtime's approval-mode vocabulary. Anything else is normalised to the
-/// default instead of being persisted as an unusable value.
+/// engine default (`full_auto`, matching `ApprovalMode::from_raw`) instead of
+/// being persisted as an unusable value.
 fn normalize_approval_mode(raw: &str) -> String {
     match raw.trim().to_ascii_lowercase().as_str() {
-        "full_auto" | "full-auto" => "full_auto".to_string(),
+        "suggest" => "suggest".to_string(),
         "auto_edit" | "auto-edit" => "auto_edit".to_string(),
-        _ => "suggest".to_string(),
+        _ => "full_auto".to_string(),
     }
 }
 
@@ -460,8 +461,9 @@ mod tests {
         assert_eq!(normalize_approval_mode("full_auto"), "full_auto");
         assert_eq!(normalize_approval_mode("FULL-AUTO"), "full_auto");
         assert_eq!(normalize_approval_mode("auto_edit"), "auto_edit");
-        assert_eq!(normalize_approval_mode(""), "suggest");
-        assert_eq!(normalize_approval_mode("乱填"), "suggest");
+        assert_eq!(normalize_approval_mode("suggest"), "suggest");
+        assert_eq!(normalize_approval_mode(""), "full_auto");
+        assert_eq!(normalize_approval_mode("乱填"), "full_auto");
     }
 
     #[test]

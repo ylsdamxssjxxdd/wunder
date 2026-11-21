@@ -961,6 +961,80 @@ export component InquiryPanel inherits Rectangle {
     }
 }
 
+// §ApprovalPanel: the gate card above the composer. The runtime has stopped
+// on a tool call and is waiting for this answer; the card keeps the same width
+// and rhythm as 问询面板 so a waiting turn reads as one kind of pause. The
+// summary already names the tool and its target (the runtime built it), so the
+// card adds no raw argument payload.
+export component ApprovalPanel inherits Rectangle {
+    // "exec" / "patch" / "control"; an unknown kind falls back to a neutral
+    // action label rather than an empty badge.
+    in property <string> kind;
+    in property <string> summary;
+    in property <int> pending: 0;
+    callback decide(string);
+
+    function kind-label() -> string {
+        return root.kind == "exec" ? I18n.ap_kind_exec
+            : root.kind == "patch" ? I18n.ap_kind_patch
+            : root.kind == "control" ? I18n.ap_kind_control
+            : I18n.ap_kind_action;
+    }
+
+    height: 10px + card.height + 12px;
+    card := Rectangle {
+        width: parent.width;
+        x: 0; y: 10px;
+        height: body.preferred-height + 26px;
+        border-radius: 14px; background: Theme.surface;
+        border-width: 1px; border-color: #0F172A1A;
+        drop-shadow-color: #0F172A12; drop-shadow-blur: 18px; drop-shadow-offset-y: 6px;
+        clip: true;
+        body := VerticalLayout {
+            padding-left: 18px; padding-right: 14px;
+            padding-top: 14px; padding-bottom: 12px;
+            spacing: 7px;
+            HorizontalLayout {
+                height: max(22px, head.preferred-height);
+                spacing: 10px;
+                head := Text {
+                    horizontal-stretch: 1;
+                    text: I18n.ap_title;
+                    color: Theme.text; font-size: 15px; font-weight: 700;
+                    vertical-alignment: center; overflow: elide;
+                }
+                Text {
+                    height: 22px;
+                    text: root.kind-label();
+                    color: Theme.accent-ink; font-size: Theme.font-xs; font-weight: 600;
+                    vertical-alignment: center;
+                }
+            }
+            Text {
+                text: root.summary;
+                color: Theme.text-secondary; font-size: Theme.font-sm;
+                wrap: word-wrap;
+            }
+            Text {
+                text: I18n.ap_note;
+                color: Theme.muted; font-size: Theme.font-xs;
+                wrap: word-wrap;
+            }
+            if root.pending > 0 : Text {
+                text: I18n.ap_pending_more(root.pending);
+                color: Theme.muted; font-size: Theme.font-xs;
+            }
+            HorizontalLayout {
+                height: 34px; spacing: 8px;
+                Action { width: 84px; label: I18n.ap_deny; show-label: true; danger: true; clicked => { root.decide("deny"); } }
+                Rectangle { horizontal-stretch: 1; }
+                Action { width: 110px; label: I18n.ap_allow_once; show-label: true; selected: true; clicked => { root.decide("once"); } }
+                Action { width: 122px; label: I18n.ap_allow_session; show-label: true; primary: true; clicked => { root.decide("session"); } }
+            }
+        }
+    }
+}
+
 // §8.1b goal banner: one row above the composer once a session has a goal.
 // It shows the objective, the accumulated active time and three controls;
 // editing swaps the row for an inline input and Enter re-submits the goal.

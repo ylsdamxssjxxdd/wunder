@@ -23,7 +23,7 @@ use wunder_server::user_store::UserStore;
 pub const DESKTOP_DEFAULT_USER_ID: &str = "local_user";
 const BUILTIN_SKILLS_ROOT_ENV: &str = "WUNDER_BUILTIN_SKILLS_ROOT";
 const ADMIN_CUSTOM_SKILLS_ROOT_ENV: &str = "WUNDER_ADMIN_CUSTOM_SKILLS_ROOT";
-const DESKTOP_APPROVAL_MODE_MIGRATION_VERSION: &str = "full_auto_v1";
+const DESKTOP_APPROVAL_MODE_MIGRATION_VERSION: &str = "full_auto_v2";
 const DESKTOP_WORKSPACE_IDENTITY_MIGRATION_VERSION: &str = "path_identity_v1";
 /// Orphan threads (rows with no workspace) were re-bound by walking the whole
 /// session table on every launch. The walk is a one-time repair, so it now
@@ -461,6 +461,13 @@ impl DesktopRuntime {
         );
 
         step_start = Instant::now();
+        // 桌面控制是桌面版的默认能力；旧版默认画像没有它，已有默认智能体
+        // 需要一次性补回（marker 保证只补一次）。
+        #[cfg(all(feature = "desktop-control", any(windows, target_os = "linux")))]
+        wunder_server::default_tool_profile::migrate_local_default_agent_desktop_control(
+            &state.user_store,
+            &user_id,
+        )?;
         migrate_desktop_local_agent_approval_modes(state.as_ref(), &user_id)?;
         log_startup_segment(
             startup_enabled,
@@ -2386,9 +2393,19 @@ fn migrate_desktop_local_agent_approval_modes(state: &AppState, user_id: &str) -
         return Ok(());
     }
 
+    // v1 treated only empty/auto_edit as legacy defaults. Desktop had no
+    // permission selector, so any `suggest` on disk was likewise a fallback
+    // the shell wrote, never a deliberate choice: v2 folds it into full_auto
+    // as well. A mode picked in the (now visible) selector survives, because
+    // this marker has already been set.
     for mut record in state.user_store.list_user_agents(user_id)? {
         let normalized = record.approval_mode.trim().to_ascii_lowercase();
-        if !(normalized.is_empty() || normalized == "auto_edit" || normalized == "auto-edit") {
+        if !(normalized.is_empty()
+            || matches!(
+                normalized.as_str(),
+                "auto_edit" | "auto-edit" | "suggest"
+            ))
+        {
             continue;
         }
         record.approval_mode = "full_auto".to_string();
@@ -2408,7 +2425,8 @@ fn migrate_desktop_local_agent_approval_modes(state: &AppState, user_id: &str) -
                 .to_ascii_lowercase();
             let legacy_mode = approval_mode.is_empty()
                 || approval_mode == "auto_edit"
-                || approval_mode == "auto-edit";
+                || approval_mode == "auto-edit"
+                || approval_mode == "suggest";
             if let (true, Some(object)) = (legacy_mode, payload.as_object_mut()) {
                 object.insert(
                     "approval_mode".to_string(),

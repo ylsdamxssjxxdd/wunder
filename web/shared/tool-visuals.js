@@ -44,6 +44,8 @@ const TOOL_NAME_ICON_OVERRIDES = {
   "编辑": "fa-file-pen",
   "str_replace_editor": "fa-file-pen",
   "文件名匹配": "fa-folder-tree",
+  "文件名通配匹配": "fa-folder-tree",
+  "file glob match": "fa-folder-tree",
   "glob": "fa-folder-tree",
   "glob_files": "fa-folder-tree"
 };
@@ -53,6 +55,14 @@ const resolveToolNameIconOverride = (input) => {
   const name = normalizeText(rawName);
   if (!name) return "";
   return TOOL_NAME_ICON_OVERRIDES[name] || "";
+};
+
+const buildNameText = (input) => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return "";
+  return [input.name, input.runtimeName]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .join(" ");
 };
 
 const buildSearchText = (input) => {
@@ -96,6 +106,17 @@ export const resolveToolIconClass = (input) => {
   if (text === "wunder@doc2md" || text.endsWith("@wunder@doc2md")) return "fa-file-lines";
   const nameIcon = resolveToolNameIconOverride(input);
   if (nameIcon) return nameIcon;
+  // 名称优先：网页抓取的描述里会提到 browser，若先按整段文本匹配会被
+  // 浏览器规则抢走图标。只有名称没有任何规则命中时才回退到描述。
+  const nameText = normalizeText(buildNameText(input));
+  const normalizedNameText = normalizeMatchKey(nameText);
+  if (nameText) {
+    for (const rule of TOOL_ICON_RULES) {
+      if (rule.keywords.some((keyword) => matchesKeyword(nameText, normalizedNameText, keyword))) {
+        return rule.icon;
+      }
+    }
+  }
   for (const rule of TOOL_ICON_RULES) {
     if (rule.keywords.some((keyword) => matchesKeyword(text, normalizedText, keyword))) {
       return rule.icon;

@@ -191,6 +191,48 @@ fn renaming_keeps_the_builtin_agent_on_the_model() {
     );
 }
 
+/// 回归：线程钉住某个模型后该模型被删除，钉住记录必须一并清掉；否则手机
+/// 主页的模型选项会一直显示一个配置里已经不存在的名字。
+#[test]
+fn deleting_a_model_clears_thread_pins() {
+    let _serial = serial();
+    let runtime = start_isolated().expect("isolated runtime");
+    runtime
+        .save_model(create("pinned-model"))
+        .expect("create model");
+    runtime
+        .save_model(create("spare-model"))
+        .expect("create spare model");
+    runtime
+        .set_default_model("spare-model")
+        .expect("make spare default");
+    let session = runtime.create_session(None).expect("create session");
+    runtime
+        .set_session_model(&session.id, "pinned-model")
+        .expect("pin model");
+
+    runtime
+        .delete_model("pinned-model")
+        .expect("delete pinned model");
+
+    assert_eq!(
+        runtime
+            .get_session_info(&session.id)
+            .expect("reload session")
+            .session_model_name,
+        None,
+        "thread pin must not outlive the deleted model"
+    );
+    let settings = runtime.get_desktop_settings().expect("reload settings");
+    assert!(
+        settings
+            .models
+            .iter()
+            .any(|model| model.key == "spare-model" && model.is_default),
+        "the surviving default stays in place"
+    );
+}
+
 /// 回归：删除智能体所指的模型后，投影不能继续返回已消失的键；它应与新的
 /// 默认模型一致。
 #[test]

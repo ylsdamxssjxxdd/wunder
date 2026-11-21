@@ -12,7 +12,7 @@ import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThrea
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
 export { ToastState }
 import { ProcessEntry } from "theme.slint";
-import { Composer, GoalBanner, InquiryPanel, ModelSetupBanner, StatusDock } from "composer.slint";
+import { ApprovalPanel, Composer, GoalBanner, InquiryPanel, ModelSetupBanner, StatusDock } from "composer.slint";
 import { TimelineView } from "timeline.slint";
 import { ChatSplitWorkspace } from "chat_split.slint";
 import { TextMenu, TextMenuState } from "text_menu.slint";
@@ -283,6 +283,19 @@ export component MainWindow inherits Window {
     callback inquiry-use-recommended(int);
     callback inquiry-page-move(int);
     callback inquiry-expanded-toggle();
+    // ---- tool approval card (above the composer) ----
+    // The engine is waiting on this gate; Rust owns the queue and only the
+    // active thread's oldest request is published here.
+    in-out property <bool> approval-visible: false;
+    in-out property <string> approval-session;
+    in-out property <string> approval-id;
+    // "exec" / "patch" / "control"; the card maps it to a localized label.
+    in-out property <string> approval-kind;
+    in-out property <string> approval-summary;
+    // Requests waiting behind the visible one, so the reader knows a decision
+    // does not end the queue.
+    in-out property <int> approval-pending: 0;
+    callback approval-decide(string);
     // Fraction and hover preview of every user turn for the right-edge ruler.
     in-out property <[TurnMark]> turn-marks: [];
     in-out property <bool> connected: false;
@@ -1090,7 +1103,7 @@ export component MainWindow inherits Window {
     in-out property <string> selected-agent-icon-config;
     in-out property <[string]> selected-agent-tool-names: [];
     in-out property <[string]> selected-agent-preset-questions: [];
-    in-out property <string> selected-agent-approval-mode: "suggest";
+    in-out property <string> selected-agent-approval-mode: "full_auto";
     in-out property <bool> selected-agent-preview-skill: false;
     in-out property <bool> selected-agent-silent: false;
     in-out property <bool> selected-agent-prefer-mother: false;
@@ -1531,6 +1544,12 @@ export component MainWindow inherits Window {
                                 save(text) => { root.goal-save(text); }
                                 pause-toggle => { root.goal-pause-toggle(); }
                                 clear => { root.goal-clear(); }
+                            }
+                            if root.approval-visible && root.approval-session == root.active-session-id : ApprovalPanel {
+                                kind: root.approval-kind;
+                                summary: root.approval-summary;
+                                pending: root.approval-pending;
+                                decide(decision) => { root.approval-decide(decision); }
                             }
                             if root.inquiry-visible && root.inquiry-session == root.active-session-id : InquiryPanel {
                                 questions: root.inquiry-questions;
@@ -2014,6 +2033,7 @@ export component MainWindow inherits Window {
         selected-agent-name <=> root.selected-agent-name;
         selected-agent-description <=> root.selected-agent-description;
         selected-agent-system-prompt <=> root.selected-agent-system-prompt;
+        selected-agent-approval-mode <=> root.selected-agent-approval-mode;
         selected-agent-preset-questions <=> root.selected-agent-preset-questions;
         expert-tool-groups: root.expert-tool-groups;
         expert-tool-keyword <=> root.expert-tool-keyword;

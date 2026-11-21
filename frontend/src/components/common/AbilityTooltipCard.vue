@@ -2,7 +2,7 @@
   <div class="ability-tooltip-card" :class="toneClass">
     <div class="ability-tooltip-card__hero">
       <AbilityIconBadge
-        :name="name"
+        :name="visualName"
         :description="description"
         :hint="hint"
         :kind="kind"
@@ -32,6 +32,8 @@ import AbilityIconBadge from './AbilityIconBadge.vue';
 const props = withDefaults(
   defineProps<{
     name?: string;
+    /** 规范工具名：标题可本地化，图标仍按稳定身份解析。 */
+    toolName?: string;
     description?: string;
     hint?: string;
     kind?: string;
@@ -42,6 +44,7 @@ const props = withDefaults(
   }>(),
   {
     name: '',
+    toolName: '',
     description: '',
     hint: '',
     kind: 'tool',
@@ -54,9 +57,11 @@ const props = withDefaults(
 
 const { t } = useI18n();
 
+const visualName = computed(() => String(props.toolName || '').trim() || props.name);
+
 const visual = computed(() =>
   resolveAbilityVisual({
-    name: props.name,
+    name: visualName.value,
     description: props.description,
     hint: props.hint,
     kind: props.kind,

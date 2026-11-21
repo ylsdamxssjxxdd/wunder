@@ -712,6 +712,16 @@ impl NativeDesktop {
             )
             .to_string();
             self.point_default_agent_at(&promoted, Some(key));
+            // Threads that pinned the removed model would otherwise keep its
+            // key forever: the pin degrades at turn time but the composer and
+            // every other host keep projecting a model the config lost.
+            if let Err(error) = self
+                .state()
+                .workspace
+                .clear_session_model_overrides(self.user_id(), key)
+            {
+                tracing::warn!(%error, "model delete could not clear session pins");
+            }
         }
         Ok(settings)
     }
@@ -905,6 +915,19 @@ impl NativeDesktop {
             .lock()
             .map_err(|_| anyhow!("配置锁不可用"))?;
         let mut old_settings = load_desktop_settings(&self.desktop.settings_path)?;
+        let tool_paths = |settings: &crate::runtime::DesktopSettings| {
+            (
+                settings.python_path.clone(),
+                settings.git_path.clone(),
+                settings.rg_path.clone(),
+                settings.ffmpeg_path.clone(),
+                settings.browser_path.clone(),
+                settings.node_path.clone(),
+                settings.bash_path.clone(),
+                settings.shell_path.clone(),
+            )
+        };
+        let previous_tools = tool_paths(&old_settings);
         let old_config = self.runtime.block_on(self.state().config_store.get());
         let mut config = old_config.clone();
         edit(&mut config, &mut old_settings)?;
@@ -941,7 +964,13 @@ impl NativeDesktop {
         let persisted = load_desktop_settings(&self.desktop.settings_path).unwrap_or_default();
         // Apply new tool paths to running processes now, not only after the
         // next launch (e.g. browser/shell picks in the local runtime tab).
-        crate::runtime::refresh_runtime_tool_env(&persisted, &self.desktop.app_dir);
+        // Only a path change needs the republish: the call also drops the
+        // cached node/bash probes, and projecting the settings then spawns
+        // those interpreters again — model or language saves used to pay
+        // that bill for nothing.
+        if previous_tools != tool_paths(&persisted) {
+            crate::runtime::refresh_runtime_tool_env(&persisted, &self.desktop.app_dir);
+        }
         Ok(self.ordered_project(
             &config,
             lan,

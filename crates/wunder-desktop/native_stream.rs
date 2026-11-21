@@ -3,7 +3,7 @@ use super::{NativeChatInput, ThreadLeaseHeartbeat};
 use anyhow::{anyhow, Result};
 use futures::{FutureExt, StreamExt};
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::{runtime::Runtime, sync::mpsc};
 use tokio_util::sync::CancellationToken;
 use wunder_server::{
@@ -70,6 +70,8 @@ pub(super) fn start(
     input: NativeChatInput,
     lease_proof: Value,
     heartbeat: ThreadLeaseHeartbeat,
+    approvals: Arc<super::approvals::NativeApprovals>,
+    accepts_approvals: bool,
 ) -> NativeStream {
     let (output, receiver) = mpsc::channel(CAPACITY);
     let cancel = CancellationToken::new();
@@ -83,10 +85,18 @@ pub(super) fn start(
         // sender was dropped, the subscriber saw a closed channel, and the
         // turn ended with neither a reply nor an error. Convert it into a
         // visible failure instead of silence.
-        let result =
-            std::panic::AssertUnwindSafe(run(state, user, input, lease_proof, &output, &token))
-                .catch_unwind()
-                .await;
+        let result = std::panic::AssertUnwindSafe(run(
+            state,
+            user,
+            input,
+            lease_proof,
+            &output,
+            &token,
+            &approvals,
+            accepts_approvals,
+        ))
+        .catch_unwind()
+        .await;
         match result {
             Ok(Ok(())) => {
                 let _ = output.send(NativeChatEvent::Finished).await;
@@ -130,6 +140,8 @@ async fn run(
     lease_proof: Value,
     output: &mpsc::Sender<NativeChatEvent>,
     cancel: &CancellationToken,
+    approvals: &super::approvals::NativeApprovals,
+    accepts_approvals: bool,
 ) -> Result<()> {
     let store = state.user_store.clone();
     let owner = user_id.clone();
@@ -164,6 +176,22 @@ async fn run(
         input.inquiry_turn_id,
     )
     .await?;
+    // The gate may ask the window to approve a tool call. The channel belongs
+    // to this turn; every request it parks is either answered by the approval
+    // panel or dropped (denied) when the turn ends.
+    let (approval_tx, mut approval_rx) = wunder_server::approval::new_channel();
+    if accepts_approvals {
+        request.approval_tx = Some(approval_tx);
+    } else {
+        drop(approval_tx);
+    }
+    // Without an approval channel the gate keeps its deny-only behavior; the
+    // receiver above then closes immediately and its select branch retires.
+    let parked_approvals = Arc::new(Mutex::new(Vec::<String>::new()));
+    let _approval_guard = ParkedApprovals {
+        hub: approvals,
+        ids: parked_approvals.clone(),
+    };
     request.config_overrides.get_or_insert_with(|| json!({}))["__local_open_lease"] = lease_proof;
     // 本地形态的输入框消息是「现在就说」：线程停在问询面板上时，运行时不得
     // 把它排进队列（面板正是这句话要回答的东西）。
@@ -209,12 +237,58 @@ async fn run(
     let mut display_args: std::collections::VecDeque<(String, Value)> =
         std::collections::VecDeque::new();
     let mut ledger = TailLedger::default();
+    let mut approval_closed = false;
+    let mut output_closed = false;
     loop {
         tokio::select! {
             biased;
             _ = cancel.cancelled(), if !stopped => {
                 cancel_chat(&state, &user_id, &session).await?;
                 stopped = true;
+            }
+            _ = output.closed(), if !output_closed => {
+                // The window is gone, so no card can be answered. Release
+                // every wait this turn already parked as a denial instead of
+                // leaving the gate blocked on a subscriber that will never
+                // return.
+                output_closed = true;
+                deny_parked(approvals, &parked_approvals, &session);
+            }
+            request = approval_rx.recv(), if !approval_closed => {
+                match request {
+                    Some(request) => {
+                        if output_closed || output.is_closed() {
+                            let _ = request.respond_to.send(
+                                wunder_server::approval::ApprovalResponse::Deny,
+                            );
+                            continue;
+                        }
+                        let approval_id = request.id.clone();
+                        if let Some(frame) = approvals.register(&session, request) {
+                            if let Ok(mut ids) = parked_approvals.lock() {
+                                ids.push(approval_id.clone());
+                            }
+                            // Registration is what lets the card be answered,
+                            // so it always precedes the frame. The frame is
+                            // sent without dropping into the stream's frame
+                            // budget: one gate is one card, not content.
+                            let delivered = output
+                                .send(NativeChatEvent::Event(
+                                    json!({"event":"approval_request","data":frame}),
+                                ))
+                                .await
+                                .is_ok();
+                            if !delivered {
+                                let _ = approvals.decide(
+                                    &session,
+                                    &approval_id,
+                                    wunder_server::approval::ApprovalResponse::Deny,
+                                );
+                            }
+                        }
+                    }
+                    None => approval_closed = true,
+                }
             }
             item = stream.next() => {
                 let Some(Ok(event)) = item else { break };
@@ -232,6 +306,11 @@ async fn run(
                     if ledger.tail_is_redundant(&event.data) {
                         continue;
                     }
+                } else if event.event == "approval_request" {
+                    // The branch above already parked the response handle and
+                    // forwarded its own frame; this engine copy would paint a
+                    // second card that cannot be answered.
+                    continue;
                 } else if is_transport_duplicate(&event.event) {
                     continue;
                 } else {
@@ -512,6 +591,42 @@ fn is_transport_duplicate(event: &str) -> bool {
         event,
         "thread_item_tail" | "thread_process_item" | "thread_change"
     )
+}
+
+/// Answer every wait a turn parked with a denial. Used when its window closes:
+/// the runtime gate then settles the tool call instead of holding the turn.
+fn deny_parked(
+    hub: &super::approvals::NativeApprovals,
+    ids: &Arc<Mutex<Vec<String>>>,
+    session: &str,
+) {
+    let ids = ids.lock().map(|ids| ids.clone()).unwrap_or_default();
+    for approval_id in ids {
+        let _ = hub.decide(
+            session,
+            &approval_id,
+            wunder_server::approval::ApprovalResponse::Deny,
+        );
+    }
+}
+
+/// Drops every approval handle a turn parked when the turn ends. The gate
+/// reads the closed response channel as a denial, which is the correct outcome
+/// for a turn nobody can answer any more (cancel, failure or window close).
+struct ParkedApprovals<'a> {
+    hub: &'a super::approvals::NativeApprovals,
+    ids: Arc<Mutex<Vec<String>>>,
+}
+
+impl Drop for ParkedApprovals<'_> {
+    fn drop(&mut self) {
+        let ids = self
+            .ids
+            .lock()
+            .map(|ids| ids.clone())
+            .unwrap_or_default();
+        self.hub.forget(&ids);
+    }
 }
 
 #[cfg(test)]

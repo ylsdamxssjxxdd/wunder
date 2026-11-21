@@ -114,6 +114,7 @@
                           <el-checkbox :value="option.value">
                             <AgentToolOptionLabel
                               :label="option.label"
+                              :tool-name="option.value"
                               :description="option.description"
                               :hint="option.hint"
                               :group-key="group.key"
@@ -372,6 +373,7 @@
           <div class="messenger-tool-detail-popup" :style="detailPopupStyle" @mousedown.stop>
             <AbilityTooltipCard
               :name="detailOption.option.label"
+              :tool-name="detailOption.option.value"
               :description="detailOption.option.description"
               :hint="detailOption.option.hint"
               :kind="detailOption.kind"

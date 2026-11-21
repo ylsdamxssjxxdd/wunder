@@ -543,6 +543,7 @@ export component MobileWindow inherits Window {
     in property <bool> editor-open: false;
     in property <bool> editor-new: false;
     in property <bool> editor-default: false;
+    in property <bool> editor-saving: false;
     in property <string> editor-key: "";
     in-out property <ModelCard> editor-draft;
     in-out property <string> editor-secret: "";
@@ -1948,6 +1949,7 @@ export component MobileWindow inherits Window {
         editor-open: root.editor-open;
         editor-new: root.editor-new;
         editor-default: root.editor-default;
+        editor-saving: root.editor-saving;
         editor-key: root.editor-key;
         draft <=> root.editor-draft;
         secret <=> root.editor-secret;

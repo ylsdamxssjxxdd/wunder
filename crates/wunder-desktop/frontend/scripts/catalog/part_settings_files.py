@@ -374,6 +374,17 @@ ENTRIES = [
     ("inquiry_submit_blocked", "请先回答任一问题", "Answer at least one question"),
     ("inquiry_use_recommended", "使用推荐", "Use the recommended"),
     ("inquiry_question_progress", "第 {} 题", "Question {}", ["position"]),
+    # ---- tool approval card ----
+    ("ap_title", "需要授权", "Approval required"),
+    ("ap_kind_exec", "执行命令", "Run command"),
+    ("ap_kind_patch", "修改文件", "Modify file"),
+    ("ap_kind_control", "控制桌面", "Control desktop"),
+    ("ap_kind_action", "工具操作", "Tool action"),
+    ("ap_note", "当前权限模式要求确认这一步。", "The current permission mode requires your confirmation."),
+    ("ap_pending_more", "另有 {} 项待处理", "{} more pending", ["count"]),
+    ("ap_deny", "拒绝", "Deny"),
+    ("ap_allow_once", "仅本次允许", "Allow once"),
+    ("ap_allow_session", "本会话允许", "Allow for session"),
 
     # ---- 数据与恢复 (§ settings tab 16) ----
     ("stc_data", "数据与恢复", "Data & recovery"),

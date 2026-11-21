@@ -105,6 +105,26 @@
   "en": "Permission mode"
  },
  {
+  "key": "ag_permission_note",
+  "zh": "执行命令、写入文件与桌面控制是否需要确认",
+  "en": "Whether commands, file writes and desktop control need confirmation"
+ },
+ {
+  "key": "ag_permission_suggest",
+  "zh": "建议（每步确认）",
+  "en": "Suggest (confirm each step)"
+ },
+ {
+  "key": "ag_permission_auto_edit",
+  "zh": "自动编辑（命令需确认）",
+  "en": "Auto edit (confirm commands)"
+ },
+ {
+  "key": "ag_permission_full_auto",
+  "zh": "全自动",
+  "en": "Full auto"
+ },
+ {
   "key": "ag_unsaved_title",
   "zh": "未保存的修改",
   "en": "Unsaved changes"
@@ -6401,6 +6421,59 @@
   "params": [
    "position"
   ]
+ },
+ {
+  "key": "ap_title",
+  "zh": "需要授权",
+  "en": "Approval required"
+ },
+ {
+  "key": "ap_kind_exec",
+  "zh": "执行命令",
+  "en": "Run command"
+ },
+ {
+  "key": "ap_kind_patch",
+  "zh": "修改文件",
+  "en": "Modify file"
+ },
+ {
+  "key": "ap_kind_control",
+  "zh": "控制桌面",
+  "en": "Control desktop"
+ },
+ {
+  "key": "ap_kind_action",
+  "zh": "工具操作",
+  "en": "Tool action"
+ },
+ {
+  "key": "ap_note",
+  "zh": "当前权限模式要求确认这一步。",
+  "en": "The current permission mode requires your confirmation."
+ },
+ {
+  "key": "ap_pending_more",
+  "zh": "另有 {} 项待处理",
+  "en": "{} more pending",
+  "params": [
+   "count"
+  ]
+ },
+ {
+  "key": "ap_deny",
+  "zh": "拒绝",
+  "en": "Deny"
+ },
+ {
+  "key": "ap_allow_once",
+  "zh": "仅本次允许",
+  "en": "Allow once"
+ },
+ {
+  "key": "ap_allow_session",
+  "zh": "本会话允许",
+  "en": "Allow for session"
  },
  {
   "key": "stc_data",

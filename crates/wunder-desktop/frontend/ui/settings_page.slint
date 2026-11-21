@@ -905,12 +905,16 @@ export component SettingsPage inherits Rectangle {
     // ---- built-in agent editor (§9.3 分类 4) ----
     // The personal build owns exactly one agent, so this category is a single
     // form. Its field set matches 云端版's agent panel: name, greeting, extra
-    // prompt, tool selection and preset questions. Model, permission mode and
-    // the three behaviour switches have no web counterpart, so the record's
-    // values round-trip untouched through the shell projection instead.
+    // prompt, tool selection and preset questions. Permission mode is local to
+    // this window: the engine reads it on every turn, so changing it here
+    // shapes the next turn of every thread. The three behaviour switches have
+    // no web counterpart and round-trip untouched through the projection.
     in-out property <string> selected-agent-name;
     in-out property <string> selected-agent-description;
     in-out property <string> selected-agent-system-prompt;
+    // "suggest" / "auto_edit" / "full_auto"; the runtime gate reads it on
+    // every turn. The shell owns the record, this page only edits it.
+    in-out property <string> selected-agent-approval-mode: "full_auto";
     // Preset questions live on the agent record and stay two-way bound: the
     // Rust projection owns the list, the rows only add and remove entries.
     in-out property <[string]> selected-agent-preset-questions;
@@ -957,6 +961,7 @@ export component SettingsPage inherits Rectangle {
     changed selected-agent-name => { root.refresh-agent-dirty(); root.queue-agent-save(); }
     changed selected-agent-description => { root.refresh-agent-dirty(); root.queue-agent-save(); }
     changed selected-agent-system-prompt => { root.refresh-agent-dirty(); root.queue-agent-save(); }
+    changed selected-agent-approval-mode => { root.refresh-agent-dirty(); root.queue-agent-save(); }
     changed expert-tool-keyword => { root.search-expert-tools(); }
     callback open-info(string, string);
 
@@ -1870,6 +1875,23 @@ export component SettingsPage inherits Rectangle {
                                         background: transparent; border-width: 0px;
                                         scroll-view-padding: 10px;
                                         selection-background-color: Theme.accent-ink; selection-foreground-color: white;
+                                    }
+                                }
+                            }
+                            // Permission mode: the runtime gate reads it on
+                            // every turn. Full auto is the default; the other
+                            // two pause the turn with an in-chat approval card.
+                            SettingsCard {
+                                SettingRow { label: I18n.ag_permission_mode; note: I18n.ag_permission_note; last: true;
+                                    ComboBox {
+                                        width: 168px; height: 38px;
+                                        model: [I18n.ag_permission_suggest, I18n.ag_permission_auto_edit, I18n.ag_permission_full_auto];
+                                        current-index: root.selected-agent-approval-mode == "suggest" ? 0
+                                            : root.selected-agent-approval-mode == "auto_edit" ? 1 : 2;
+                                        selected(_) => {
+                                            root.selected-agent-approval-mode = self.current-index == 0 ? "suggest"
+                                                : self.current-index == 1 ? "auto_edit" : "full_auto";
+                                        }
                                     }
                                 }
                             }

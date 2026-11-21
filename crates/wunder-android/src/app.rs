@@ -3641,6 +3641,7 @@ fn start_tick(
                 ui.set_editor_error(editor.error.as_str().into());
                 ui.set_editor_probe(editor.probe_message.as_str().into());
                 ui.set_editor_probing(editor.probing);
+                ui.set_editor_saving(editor.saving);
                 if !editor_was_open {
                     // Seed exactly once per opening. Later revisions carry a
                     // save error or a probe result and must never overwrite
@@ -3653,6 +3654,7 @@ fn start_tick(
                 editor_was_open = true;
             } else {
                 ui.set_editor_open(false);
+                ui.set_editor_saving(false);
                 editor_was_open = false;
             }
             last_editor = state.editor_rev;

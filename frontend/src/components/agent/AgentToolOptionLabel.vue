@@ -1,7 +1,7 @@
 <template>
   <div class="agent-tool-option-label" :title="titleText">
     <AbilityIconBadge
-      :name="labelText"
+      :name="visualName"
       :description="descriptionText"
       :hint="hintText"
       :kind="abilityKind"
@@ -27,12 +27,15 @@ import AbilityIconBadge from '@/components/common/AbilityIconBadge.vue';
 const props = withDefaults(
   defineProps<{
     label?: string;
+    /** 规范工具名：标题按界面语言本地化，图标仍按稳定身份解析。 */
+    toolName?: string;
     description?: string;
     hint?: string;
     groupKey?: string;
   }>(),
   {
     label: '',
+    toolName: '',
     description: '',
     hint: '',
     groupKey: ''
@@ -42,6 +45,7 @@ const props = withDefaults(
 const { t } = useI18n();
 
 const labelText = computed(() => String(props.label || '').trim());
+const visualName = computed(() => String(props.toolName || '').trim() || labelText.value);
 const descriptionText = computed(() => String(props.description || '').trim());
 const hintText = computed(() => String(props.hint || '').trim());
 const abilityKind = computed<'tool' | 'skill'>(() =>

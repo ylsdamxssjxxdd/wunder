@@ -73,7 +73,7 @@ One agent can own multiple independent task threads at the same time; scheduling
 
 Canonical tool names are mostly Chinese (what the model sees), each with English aliases normalized via `resolve_tool_name` (`crates/wunder-runtime/src/services/tools/catalog.rs`). MCP tools (`server@tool`), skill names, knowledge-base names, and user-tool aliases are registered dynamically and are not listed here.
 
-| Tool (canonical) | English alias | Description | Category |
+| Tool | English alias | Description | Category |
 | :--- | :--- | :--- | :--- |
 | 计划面板 | `update_plan` | Push a structured task plan panel to the frontend | Wrap-up & frontend |
 | 问询面板 | `question_panel` | Show structured options, ask the user, and wait for a choice | Wrap-up & frontend |

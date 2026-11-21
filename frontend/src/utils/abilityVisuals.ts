@@ -119,6 +119,8 @@ const NAME_ICON_OVERRIDES: Record<string, AbilityVisualMeta> = {
   '编辑': { icon: 'fa-file-pen', tone: 'file' },
   str_replace_editor: { icon: 'fa-file-pen', tone: 'file' },
   '文件名匹配': { icon: 'fa-folder-tree', tone: 'file' },
+  '文件名通配匹配': { icon: 'fa-folder-tree', tone: 'file' },
+  'file glob match': { icon: 'fa-folder-tree', tone: 'file' },
   glob: { icon: 'fa-folder-tree', tone: 'file' },
   glob_files: { icon: 'fa-folder-tree', tone: 'file' }
 };
@@ -223,25 +225,13 @@ const resolveContextualDefaultIcon = (input: AbilityVisualInput, tone: AbilityVi
   return resolveDefaultIcon(tone);
 };
 
-const findAbilityRule = (input: AbilityVisualInput): AbilityRule | null => {
-  const text = [
-    cleanText(input.name),
-    cleanText(input.description),
-    cleanText(input.hint),
-    cleanText(input.group),
-    cleanText(input.source)
-  ]
-    .filter(Boolean)
-    .join(' ');
-
+const matchRule = (text: string, rules: AbilityRule[]): AbilityRule | null => {
   if (!text) {
     return null;
   }
-
   const lowerText = text.toLowerCase();
   const normalizedText = normalizeMatchKey(text);
-
-  for (const rule of ABILITY_RULES) {
+  for (const rule of rules) {
     for (const keyword of rule.keywords) {
       const lowerKeyword = keyword.toLowerCase();
       if (lowerText.includes(lowerKeyword)) {
@@ -253,8 +243,29 @@ const findAbilityRule = (input: AbilityVisualInput): AbilityRule | null => {
       }
     }
   }
-
   return null;
+};
+
+const findAbilityRule = (input: AbilityVisualInput): AbilityRule | null => {
+  // 名称优先：网页抓取的描述里会提到 browser，若先按整段文本匹配会被
+  // 浏览器规则抢走图标。只有名称没有任何规则命中时才回退到描述。
+  const nameRule = matchRule(
+    [cleanText(input.name), cleanText(input.runtimeName)].filter(Boolean).join(' '),
+    ABILITY_RULES
+  );
+  if (nameRule) {
+    return nameRule;
+  }
+  const text = [
+    cleanText(input.name),
+    cleanText(input.description),
+    cleanText(input.hint),
+    cleanText(input.group),
+    cleanText(input.source)
+  ]
+    .filter(Boolean)
+    .join(' ');
+  return matchRule(text, ABILITY_RULES);
 };
 
 export const resolveToolIconClass = (input: AbilityVisualInput | string): string =>

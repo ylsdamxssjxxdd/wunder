@@ -740,6 +740,7 @@ pub struct ModelEditor {
     pub error: String,
     pub probe_message: String,
     pub probing: bool,
+    pub saving: bool,
 }
 
 /// Phone projection of the tool manager. `browse_*` only describes the
@@ -1148,6 +1149,10 @@ pub struct Shared {
     pub workspace: String,
     pub model_name: String,
     pub model_key: String,
+    /// True when the active thread explicitly picked `model_key`. An unpinned
+    /// thread follows the conversational default, so a default change or a
+    /// deleted model must move the composer label with it.
+    pub model_pinned: bool,
     pub send_key: String,
     pub generating: bool,
     pub stopping: bool,
@@ -1786,12 +1791,14 @@ fn run(
             }
             Command::SelectModel(key) => {
                 let session = shared.lock().unwrap().session_id.clone();
+                let pinned = !key.trim().is_empty();
                 match desktop.set_session_model(&session, &key) {
                     Ok(()) => {
                         {
                             let mut state = shared.lock().unwrap();
                             state.model_key = key.clone();
                             state.model_name = key;
+                            state.model_pinned = pinned;
                             state.touch();
                         }
                         // The new model may have a different context window;
@@ -2423,46 +2430,59 @@ fn run(
                 }
             }
             Command::SaveModel { card, secret } => {
-                let original_key = shared
-                    .lock()
-                    .ok()
-                    .and_then(|state| {
-                        state
-                            .editor
-                            .as_ref()
-                            .map(|editor| editor.original_key.clone())
-                    })
-                    .unwrap_or_default();
+                // Every save rewrites the config file under a process lock.
+                // Mark the editor busy for the whole write so the UI disables
+                // the save button and shows progress until this lands.
+                let original_key = if let Ok(mut state) = shared.lock() {
+                    let original_key = state
+                        .editor
+                        .as_ref()
+                        .map(|editor| editor.original_key.clone())
+                        .unwrap_or_default();
+                    if let Some(editor) = state.editor.as_mut() {
+                        editor.saving = true;
+                        editor.error.clear();
+                    }
+                    state.editor_rev = state.editor_rev.wrapping_add(1);
+                    state.touch();
+                    original_key
+                } else {
+                    String::new()
+                };
                 let edit = model_edit(&card, &secret, &original_key);
+                let renamed = (!original_key.is_empty() && original_key != card.key.as_str())
+                    .then_some((original_key.as_str(), card.key.as_str()));
                 match desktop.save_model(edit) {
-                    Ok(_) => {
-                        // The switch in the editor is applied in the same save
-                        // instead of forcing a second visit to the model row.
-                        let default_error = if card.is_default {
-                            desktop
-                                .set_default_model(card.key.as_str())
-                                .err()
-                                .map(|error| format!("{error}"))
+                    Ok(mut settings) => {
+                        // The editor switch is applied in the same save, but
+                        // only when the seat actually moves. Re-asserting an
+                        // already-default model rewrote the config a second
+                        // time and made every ordinary save needlessly slow.
+                        let saved_default = settings
+                            .models
+                            .iter()
+                            .find(|model| model.key == card.key.as_str())
+                            .map(|model| model.is_default)
+                            .unwrap_or(false);
+                        let default_error = if card.is_default && !saved_default {
+                            match desktop.set_default_model(card.key.as_str()) {
+                                Ok(updated) => {
+                                    settings = updated;
+                                    None
+                                }
+                                Err(error) => Some(format!("{error}")),
+                            }
                         } else {
                             None
                         };
+                        let actual_default = settings
+                            .models
+                            .iter()
+                            .find(|model| model.key == card.key.as_str())
+                            .map(|model| model.is_default)
+                            .unwrap_or(false);
                         // Stay in the editor after saving: the user can keep
                         // tuning or set the default without losing the page.
-                        let actual_default = if card.is_default && default_error.is_none() {
-                            true
-                        } else {
-                            desktop
-                                .get_desktop_settings()
-                                .ok()
-                                .and_then(|settings| {
-                                    settings
-                                        .models
-                                        .iter()
-                                        .find(|model| model.key == card.key.as_str())
-                                        .map(|model| model.is_default)
-                                })
-                                .unwrap_or(false)
-                        };
                         {
                             let mut state = shared.lock().unwrap();
                             if let Some(editor) = state.editor.as_mut() {
@@ -2473,6 +2493,7 @@ fn run(
                                 editor.is_default = actual_default;
                                 editor.error.clear();
                                 editor.probing = false;
+                                editor.saving = false;
                             }
                             state.editor_rev = state.editor_rev.wrapping_add(1);
                             state.notify(match &default_error {
@@ -2486,16 +2507,19 @@ fn run(
                             });
                             state.touch();
                         }
-                        let active = shared.lock().unwrap().session_id.clone();
-                        refresh_sessions(&desktop, &shared, Some(&active));
+                        // The save only moved the model catalogue; the thread
+                        // and workspace lists are unrelated work that made the
+                        // save tap wait on the database.
+                        apply_model_settings(&settings, &shared, renamed);
                     }
                     Err(error) => {
                         if let Ok(mut state) = shared.lock() {
                             if let Some(editor) = state.editor.as_mut() {
                                 editor.error = format!("{error:#}");
-                                state.editor_rev = state.editor_rev.wrapping_add(1);
-                                state.touch();
+                                editor.saving = false;
                             }
+                            state.editor_rev = state.editor_rev.wrapping_add(1);
+                            state.touch();
                         }
                     }
                 }
@@ -2522,7 +2546,7 @@ fn run(
                 probe_model(desktop.clone(), shared.clone(), card, secret, original_key);
             }
             Command::DeleteModel(key) => match desktop.delete_model(&key) {
-                Ok(_) => {
+                Ok(settings) => {
                     if let Ok(mut state) = shared.lock() {
                         if state
                             .editor
@@ -2536,8 +2560,10 @@ fn run(
                         state.notify("模型已删除");
                         state.touch();
                     }
-                    let active = shared.lock().unwrap().session_id.clone();
-                    refresh_sessions(&desktop, &shared, Some(&active));
+                    // The returned catalogue already carries the promoted
+                    // default; rebuilding the thread/workspace lists here only
+                    // slowed the delete down.
+                    apply_model_settings(&settings, &shared, None);
                 }
                 Err(error) => notify(&shared, format!("删除模型失败：{error}")),
             },
@@ -3583,6 +3609,9 @@ fn select_session(
             .clone()
             .unwrap_or_default();
         state.model_name = state.model_key.clone();
+        // Without a pin the label follows the agent/default chain, which
+        // `refresh_sessions` below resolves.
+        state.model_pinned = !state.model_key.trim().is_empty();
         state.durable_rows = project_turns(&initial_turns);
         state.durable_turns = initial_turns.clone();
         // 目标随线程恢复；计时从 0 重新开始。
@@ -3982,6 +4011,76 @@ fn publish_durable(
     }
 }
 
+fn is_llm_card(model: &ModelCard) -> bool {
+    model.model_type.eq_ignore_ascii_case("llm")
+}
+
+/// Conversational default among the projected cards. Per-type defaults live in
+/// separate config slots, so the general `is_default` flag alone could pick an
+/// embedding/ASR entry the composer must never show.
+fn default_llm_key(models: &[ModelCard]) -> Option<String> {
+    models
+        .iter()
+        .find(|model| model.is_default && !model.disabled && is_llm_card(model))
+        .map(|model| model.key.to_string())
+}
+
+/// Keep the composer label in step with the catalogue. A thread that picked a
+/// model keeps it while the key still exists; an unpinned thread follows the
+/// conversational default, so the first real model taking the default seat and
+/// a deleted current model both land here. Renames move the same pin instead of
+/// sliding back to the default.
+fn reconcile_model_selection(
+    state: &mut Shared,
+    models: &[ModelCard],
+    renamed: Option<(&str, &str)>,
+) {
+    if let Some((old, new)) = renamed {
+        if state.model_key == old {
+            state.model_key = new.to_string();
+            state.model_name = new.to_string();
+        }
+    }
+    // A thread pin is only honoured for a conversational model; a key that
+    // survived as an embedding/ASR entry must slide back to the default.
+    let present = models.iter().any(|model| {
+        model.key == state.model_key && !model.disabled && is_llm_card(model)
+    });
+    if state.model_pinned && present {
+        return;
+    }
+    let next = default_llm_key(models).unwrap_or_default();
+    if state.model_key == next && state.model_name == next && !state.model_pinned {
+        return;
+    }
+    state.model_key = next.clone();
+    state.model_name = next;
+    state.model_pinned = false;
+    state.touch();
+}
+
+/// Apply a settings snapshot returned by a model save/delete. Those commands
+/// only move the model catalogue; re-reading every thread and workspace (the
+/// old `refresh_sessions` path) made a save tap wait on unrelated DB work.
+fn apply_model_settings(
+    settings: &wunder_desktop::DesktopSettings,
+    shared: &Arc<Mutex<Shared>>,
+    renamed: Option<(&str, &str)>,
+) {
+    let models = settings
+        .models
+        .iter()
+        .map(model_card)
+        .collect::<Vec<_>>();
+    let Ok(mut state) = shared.lock() else {
+        return;
+    };
+    reconcile_model_selection(&mut state, &models, renamed);
+    state.models = models;
+    state.models_rev = state.models_rev.wrapping_add(1);
+    state.touch();
+}
+
 fn refresh_sessions(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, active: Option<&str>) {
     // The drawer mirrors the desktop sidebar: one workspace at a time. Fall
     // back to the opened thread's workspace before the catalogue arrives.
@@ -4003,20 +4102,17 @@ fn refresh_sessions(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, active
     let sessions = session_cards(&list, active);
     let models = settings
         .as_ref()
-        .map(|settings| settings.models.iter().map(model_card).collect::<Vec<_>>())
-        .unwrap_or_default();
-    let default_model = settings.as_ref().and_then(|settings| {
-        settings
-            .models
-            .iter()
-            .find(|model| model.is_default && model.enabled)
-            .map(|model| (model.key.clone(), model.key.clone()))
-    });
+        .map(|settings| settings.models.iter().map(model_card).collect::<Vec<_>>());
     if let Ok(mut state) = shared.lock() {
         state.sessions = sessions;
         state.sessions_rev = state.sessions_rev.wrapping_add(1);
-        state.models = models;
-        state.models_rev = state.models_rev.wrapping_add(1);
+        if let Some(models) = models {
+            // A failed settings read must keep the last known catalogue: an
+            // empty replacement would blank the model chip and the list.
+            reconcile_model_selection(&mut state, &models, None);
+            state.models = models;
+            state.models_rev = state.models_rev.wrapping_add(1);
+        }
         if let Some(settings) = &settings {
             state.send_key = settings.send_key.clone();
             state.settings = SettingsView {
@@ -4028,12 +4124,6 @@ fn refresh_sessions(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, active
                 version: CURRENT_VERSION.into(),
             };
             state.settings_rev = state.settings_rev.wrapping_add(1);
-        }
-        if state.model_name.is_empty() {
-            if let Some((key, name)) = default_model {
-                state.model_key = key;
-                state.model_name = name;
-            }
         }
         state.touch();
     }
@@ -7584,6 +7674,7 @@ fn open_model_editor(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, key: 
                 error: String::new(),
                 probe_message: String::new(),
                 probing: false,
+                saving: false,
             }
         }
         None => ModelEditor {
@@ -7593,6 +7684,7 @@ fn open_model_editor(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, key: 
             error: String::new(),
             probe_message: String::new(),
             probing: false,
+            saving: false,
         },
     };
     if let Ok(mut state) = shared.lock() {
@@ -9072,6 +9164,89 @@ fn command_tail(output: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn model_card_fixture(key: &str, is_default: bool) -> ModelCard {
+        ModelCard {
+            key: key.into(),
+            model: key.into(),
+            model_type: "llm".into(),
+            is_default,
+            ..Default::default()
+        }
+    }
+
+    /// 删除当前模型后，输入框上的模型名必须立刻落到新的默认模型上，而不是
+    /// 继续显示配置里已经不存在的键。
+    #[test]
+    fn deleting_the_current_model_falls_back_to_the_default() {
+        let mut state = Shared::default();
+        state.model_key = "doomed".into();
+        state.model_name = "doomed".into();
+        state.model_pinned = true;
+        let models = vec![model_card_fixture("spare", true)];
+        reconcile_model_selection(&mut state, &models, None);
+        assert_eq!(state.model_key, "spare");
+        assert_eq!(state.model_name, "spare");
+        assert!(!state.model_pinned);
+    }
+
+    /// 没有手动钉住模型的线程跟随默认位：第一个真实模型接管默认位后，
+    /// 输入框上的名字也要跟着换。
+    #[test]
+    fn an_unpinned_thread_follows_a_new_default() {
+        let mut state = Shared::default();
+        state.model_key = "old-default".into();
+        state.model_name = "old-default".into();
+        let models = vec![
+            model_card_fixture("old-default", false),
+            model_card_fixture("new-default", true),
+        ];
+        reconcile_model_selection(&mut state, &models, None);
+        assert_eq!(state.model_key, "new-default");
+        assert_eq!(state.model_name, "new-default");
+    }
+
+    /// 改名不应把钉住该模型的线程甩回默认模型。
+    #[test]
+    fn a_rename_keeps_the_pinned_thread_on_the_same_entry() {
+        let mut state = Shared::default();
+        state.model_key = "old-key".into();
+        state.model_name = "old-key".into();
+        state.model_pinned = true;
+        let models = vec![
+            model_card_fixture("new-key", false),
+            model_card_fixture("spare", true),
+        ];
+        reconcile_model_selection(&mut state, &models, Some(("old-key", "new-key")));
+        assert_eq!(state.model_key, "new-key");
+        assert_eq!(state.model_name, "new-key");
+        assert!(state.model_pinned);
+    }
+
+    /// 非会话类型的默认位不能出现在输入框上。
+    #[test]
+    fn the_composer_default_is_the_conversational_slot() {
+        let mut embedding = model_card_fixture("embedding-model", true);
+        embedding.model_type = "embedding".into();
+        let models = vec![embedding, model_card_fixture("chat-model", true)];
+        assert_eq!(default_llm_key(&models).as_deref(), Some("chat-model"));
+    }
+
+    /// 线程钉住的模型被改成非会话类型后，运行时已不再采用这个钉住，输入框
+    /// 也不能继续显示它。
+    #[test]
+    fn a_pin_to_a_non_conversational_model_falls_back() {
+        let mut state = Shared::default();
+        state.model_key = "embedding-model".into();
+        state.model_name = "embedding-model".into();
+        state.model_pinned = true;
+        let mut embedding = model_card_fixture("embedding-model", false);
+        embedding.model_type = "embedding".into();
+        let models = vec![embedding, model_card_fixture("chat-model", true)];
+        reconcile_model_selection(&mut state, &models, None);
+        assert_eq!(state.model_key, "chat-model");
+        assert!(!state.model_pinned);
+    }
 
     #[test]
     fn the_greeting_follows_the_agent_description() {

@@ -2191,6 +2191,26 @@ impl WorkspaceManager {
         Ok(renamed)
     }
 
+    /// Drop every per-thread pin that named a model removed from the config.
+    /// The pins degrade to the default chain at turn time anyway; clearing
+    /// them here also lets every host stop labelling the thread with a model
+    /// the catalogue no longer has.
+    pub fn clear_session_model_overrides(&self, user_id: &str, model: &str) -> Result<usize> {
+        let model = model.trim();
+        if model.is_empty() {
+            return Ok(0);
+        }
+        let prefix = format!("session_model:{}:", self.safe_user_id(user_id));
+        let mut removed = 0usize;
+        for (key, value) in self.storage.list_meta_prefix(&prefix)? {
+            if value.trim() != model {
+                continue;
+            }
+            removed = removed.saturating_add(self.storage.delete_meta_prefix(&key)?);
+        }
+        Ok(removed)
+    }
+
     pub fn load_session_context_overflow(&self, user_id: &str, session_id: &str) -> bool {
         let key = self.session_context_overflow_key(user_id, session_id);
         let Ok(value) = self.storage.get_meta(&key) else {

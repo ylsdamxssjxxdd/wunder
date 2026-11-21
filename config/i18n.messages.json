@@ -3685,7 +3685,7 @@
   },
   "tool.title.文件名匹配": {
     "en-US": "File Glob Match",
-    "zh-CN": "文件名通配匹配"
+    "zh-CN": "文件名匹配"
   },
   "tool.desktop_control.followup_prompt_no_frame": {
     "en-US": "The desktop action was applied, but this observation could not capture a screenshot. Do not repeat the same action; call wait to see the current screen first.",

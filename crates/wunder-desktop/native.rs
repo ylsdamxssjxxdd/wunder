@@ -10,7 +10,7 @@ use bytes::Bytes;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -58,6 +58,8 @@ mod observer;
 mod queue;
 #[path = "native_stream.rs"]
 mod stream;
+#[path = "native_approvals.rs"]
+mod approvals;
 pub use crate::runtime::RuntimeToolStatus;
 pub use chat_turns::{NativeChatRound, NativeChatTurn, NativePlanStep, NativePlanView};
 pub use observer::{NativeThreadUpdate, NativeThreadWatch, NativeThreadWatchCancel};
@@ -517,6 +519,13 @@ pub struct NativeDesktop {
     /// Online self-update state machine (check / download / apply). The
     /// download worker shares the progress counter through this handle.
     update: Arc<Mutex<update::UpdateState>>,
+    /// Tool approvals waiting for this window's answer. Handles are scoped to
+    /// the turn that registered them and dropped when it settles.
+    approvals: Arc<approvals::NativeApprovals>,
+    /// Whether the attached UI renders the approval card. A facade without
+    /// one (the phone shell) must keep the engine's deny-only behavior rather
+    /// than leave a turn waiting for an answer nobody can give.
+    approval_ui: AtomicBool,
 }
 
 #[derive(Clone, Copy)]
@@ -972,6 +981,8 @@ impl NativeDesktop {
             lease_operations,
             lease_heartbeat,
             update: Arc::new(Mutex::new(update::UpdateState::new())),
+            approvals: Arc::new(approvals::NativeApprovals::default()),
+            approval_ui: AtomicBool::new(false),
         };
         // Rotation leftovers from a previous update must go before any UI
         // binding reads the update state; cheap local file operations only.
@@ -2274,7 +2285,40 @@ impl NativeDesktop {
             input,
             json!({"owner":self.instance_id,"token":token}),
             heartbeat,
+            self.approvals.clone(),
+            self.approval_ui.load(Ordering::Relaxed),
         ))
+    }
+
+    /// Claim that the attached window renders approval cards. The native
+    /// Slint shell calls this once after startup; without it, gated calls keep
+    /// the engine's deny-only behavior.
+    pub fn enable_tool_approvals(&self) {
+        self.approval_ui.store(true, Ordering::Relaxed);
+    }
+
+    /// Answer one parked tool approval of a local turn.
+    ///
+    /// `decision` is the UI vocabulary (`once` / `session` / `deny`); the
+    /// runtime gate owns what each answer means. An unknown id means the turn
+    /// already settled or was cancelled, which the window can treat as stale.
+    pub fn decide_chat_approval(
+        &self,
+        session_id: &str,
+        approval_id: &str,
+        decision: &str,
+    ) -> Result<()> {
+        let response = match decision.trim().to_ascii_lowercase().as_str() {
+            "once" | "approve_once" | "approve-once" => {
+                wunder_server::approval::ApprovalResponse::ApproveOnce
+            }
+            "session" | "approve_session" | "approve-session" => {
+                wunder_server::approval::ApprovalResponse::ApproveSession
+            }
+            "deny" | "reject" => wunder_server::approval::ApprovalResponse::Deny,
+            _ => return Err(anyhow!("未知的审批结果")),
+        };
+        self.approvals.decide(session_id, approval_id, response)
     }
 
     pub fn has_asr_model(&self) -> bool {

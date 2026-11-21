@@ -504,6 +504,45 @@ fn inquiry_from_payload(data: &Value) -> Option<InquiryState> {
     })
 }
 
+/// One tool call waiting for this window's decision. The engine owns the wait
+/// itself; the card only needs the identity and the sentence to render.
+#[derive(Clone, Default)]
+struct ApprovalState {
+    id: String,
+    kind: String,
+    summary: String,
+}
+
+/// A thread can only have a handful of gates open at once (parallel tool calls
+/// are bounded). Beyond this the oldest wait is denied so a stuck producer can
+/// never grow the card queue without bound.
+const MAX_PENDING_APPROVALS: usize = 8;
+
+fn approval_from_payload(data: &Value) -> Option<ApprovalState> {
+    let id = data["approval_id"].as_str()?.trim();
+    if id.is_empty() {
+        return None;
+    }
+    let summary = data["summary"].as_str().unwrap_or_default().trim();
+    Some(ApprovalState {
+        id: id.to_string(),
+        kind: data["kind"].as_str().unwrap_or_default().to_string(),
+        summary: compact_approval_summary(summary),
+    })
+}
+
+/// The runtime summary already names the tool and its target; cap it so a long
+/// shell command cannot push the composer off screen.
+fn compact_approval_summary(text: &str) -> String {
+    const MAX_CHARS: usize = 320;
+    if text.chars().count() <= MAX_CHARS {
+        return text.to_string();
+    }
+    let mut compact: String = text.chars().take(MAX_CHARS).collect();
+    compact.push('…');
+    compact
+}
+
 struct PendingSubmission {
     session: String,
     client_message_id: String,
@@ -616,6 +655,9 @@ struct State {
     /// Live 问询面板 per thread: the panel outlives the turn that published it,
     /// and an entry is dropped as soon as it is answered or dismissed.
     inquiries: std::collections::HashMap<String, InquiryState>,
+    /// Tool approvals per thread, in arrival order. The front of each queue is
+    /// the card the window shows; the rest wait for its answer.
+    approvals: std::collections::HashMap<String, VecDeque<ApprovalState>>,
     /// Bounded replay fence for answered panels. The map itself is bounded by
     /// the visible conversation list; keep only the most recent keys here.
     consumed_inquiries: std::collections::VecDeque<String>,
@@ -830,6 +872,9 @@ pub(crate) fn close_visible_thread(app: &MainWindow, session: &str) {
         // A closed thread's cached plan goes with it: nothing can reopen the
         // thread, so the entry would only outlive the row that owned it.
         state.plans.remove(session);
+        // Closing cancels the turn, so its parked gates are denied by the
+        // engine; a card left here could only point at a dead wait.
+        state.approvals.remove(session);
         if app.get_active_session_id() == session {
             // A closed thread's transcript must go, not stay frozen: the next
             // thread starts from its own reducer, and the empty key owns the
@@ -855,6 +900,7 @@ pub(crate) fn close_visible_thread(app: &MainWindow, session: &str) {
     app.set_goal_visible(false);
     app.set_goal_active(false);
     app.set_inquiry_visible(false);
+    app.set_approval_visible(false);
     app.set_queue_turns(ModelRc::default());
     app.set_queue_overflow(0);
     app.set_pending_attachments(ModelRc::default());
@@ -910,6 +956,9 @@ pub(crate) fn prepare_external_timeline(app: &MainWindow) {
         let local_id = app.get_active_session_id().to_string();
         crate::chat_split::release_live(app, &local_id);
         if !local_id.is_empty() {
+            // Dropping the local stream denies whatever gate is still parked;
+            // keeping the card would leave an answer that can no longer land.
+            state.approvals.remove(&local_id);
             if state.drafts.len() >= 100 {
                 state.drafts.clear();
             }
@@ -929,6 +978,7 @@ pub(crate) fn prepare_external_timeline(app: &MainWindow) {
         app.set_goal_visible(false);
         app.set_goal_active(false);
         app.set_inquiry_visible(false);
+        app.set_approval_visible(false);
         app.set_queue_turns(ModelRc::default());
         app.set_queue_overflow(0);
         app.set_pending_attachments(ModelRc::default());
@@ -1010,6 +1060,9 @@ impl Drop for Recording {
 }
 
 pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
+    // This window renders the approval card, so gated tool calls must wait for
+    // its answer instead of being denied outright.
+    desktop.enable_tool_approvals();
     app.set_connected(true);
     app.set_status("正在加载内嵌运行时…".into());
     // `MainWindow` deliberately starts in a loading state so its first native
@@ -1052,6 +1105,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         plans: std::collections::HashMap::new(),
         plan_view: None,
         inquiries: std::collections::HashMap::new(),
+        approvals: std::collections::HashMap::new(),
         consumed_inquiries: std::collections::VecDeque::new(),
         parked: VecDeque::new(),
         waiting_turns: Vec::new(),
@@ -1104,6 +1158,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     bind_goal(app, state.clone());
     bind_activity(app);
     bind_inquiry(app, state.clone());
+    bind_approval(app, state.clone());
     bind_queue(app, state.clone());
     start_goal_clock(app.as_weak());
     crate::thread_trajectory::install(app, desktop_preview.clone());
@@ -1684,6 +1739,7 @@ fn restore_thread_extras(
     }
     publish_idle_plan(app, state, session);
     publish_inquiry(app, session, state);
+    publish_approval(app, session, state);
 }
 
 fn bind_activity(app: &MainWindow) {
@@ -1731,6 +1787,67 @@ fn publish_inquiry(app: &MainWindow, session: &str, state: &State) {
     app.set_inquiry_expanded(panel.expanded);
     app.set_inquiry_ready(panel.has_answer());
     app.set_inquiry_questions(ModelRc::new(VecModel::from(rows)));
+}
+
+/// Publish the current thread's oldest pending gate. Like the inquiry card,
+/// an absent queue always means "hidden"; the thread id guards against a card
+/// outliving the selection it belonged to.
+fn publish_approval(app: &MainWindow, session: &str, state: &State) {
+    let queue = state.approvals.get(session);
+    let Some(current) = queue.and_then(|queue| queue.front()) else {
+        app.set_approval_visible(false);
+        app.set_approval_session(session.into());
+        app.set_approval_pending(0);
+        return;
+    };
+    app.set_approval_visible(true);
+    app.set_approval_session(session.into());
+    app.set_approval_id(current.id.as_str().into());
+    app.set_approval_kind(current.kind.as_str().into());
+    app.set_approval_summary(current.summary.as_str().into());
+    app.set_approval_pending(queue.map(|queue| queue.len() - 1).unwrap_or(0) as i32);
+}
+
+/// Answer the card currently showing. The Rust queue is the source of truth,
+/// so the id is read here rather than trusted from a Slint property that may
+/// still describe an earlier frame.
+fn bind_approval(app: &MainWindow, state: Rc<RefCell<State>>) {
+    let weak = app.as_weak();
+    app.on_approval_decide(move |decision| {
+        let Some(app) = weak.upgrade() else { return };
+        let session = app.get_active_session_id().to_string();
+        let pending = {
+            let current = state.borrow();
+            let Some(entry) = current
+                .approvals
+                .get(&session)
+                .and_then(|queue| queue.front())
+                .cloned()
+            else {
+                return;
+            };
+            (entry.id, current.desktop.clone())
+        };
+        let (approval_id, desktop) = pending;
+        let outcome = desktop.decide_chat_approval(&session, &approval_id, decision.as_str());
+        {
+            let mut current = state.borrow_mut();
+            if let Some(queue) = current.approvals.get_mut(&session) {
+                // A late frame may already have retired this id; only the row
+                // that is still on screen may be popped.
+                if queue.front().is_some_and(|entry| entry.id == approval_id) {
+                    queue.pop_front();
+                }
+                if queue.is_empty() {
+                    current.approvals.remove(&session);
+                }
+            }
+            publish_approval(&app, &session, &current);
+        }
+        if let Err(error) = outcome {
+            app.set_status(format!("审批未能送达：{error}").into());
+        }
+    });
 }
 
 fn inquiry_was_consumed(state: &State, key: &str) -> bool {
@@ -2307,6 +2424,7 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         // belongs to the thread that was asked, so switching shows that
         // thread's pending panel and hides any other one.
         publish_inquiry(&app, &id, &state.borrow());
+        publish_approval(&app, &id, &state.borrow());
         {
             let mut current = state.borrow_mut();
             // Navigation is independent from execution: the turn of the thread
@@ -5194,6 +5312,49 @@ fn drive_turn(
                 } else if visible && app.get_cloud_queue_position() >= 0 {
                     app.set_cloud_queue_position(-1);
                 }
+                // A gate request carries the id the engine parked for this
+                // turn. Queue it per thread and show only the oldest one; the
+                // runtime is already waiting, so this is the only chance to
+                // answer it.
+                if event["event"].as_str() == Some("approval_request") {
+                    if let Some(approval) = approval_from_payload(event_data(&event)) {
+                        let session = active.session.clone();
+                        let desktop = state.desktop.clone();
+                        let queue = state.approvals.entry(session.clone()).or_default();
+                        if !queue.iter().any(|entry| entry.id == approval.id) {
+                            while queue.len() >= MAX_PENDING_APPROVALS {
+                                let Some(stale) = queue.pop_front() else { break };
+                                let _ = desktop.decide_chat_approval(&session, &stale.id, "deny");
+                            }
+                            queue.push_back(approval);
+                        }
+                        if app.get_active_session_id() == session.as_str() {
+                            publish_approval(&app, &session, &state);
+                        }
+                    }
+                } else if matches!(
+                    event["event"].as_str(),
+                    Some("approval_result" | "approval_resolved")
+                ) {
+                    let approval_id = event_data(&event)["approval_id"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
+                    if !approval_id.is_empty() {
+                        let session = active.session.clone();
+                        let mut emptied = false;
+                        if let Some(queue) = state.approvals.get_mut(&session) {
+                            queue.retain(|entry| entry.id != approval_id);
+                            emptied = queue.is_empty();
+                        }
+                        if emptied {
+                            state.approvals.remove(&session);
+                        }
+                        if app.get_active_session_id() == session.as_str() {
+                            publish_approval(&app, &session, &state);
+                        }
+                    }
+                }
                 // The 问询面板 tool publishes its questions once and the
                 // turn ends right after, so the card is driven straight
                 // from this event rather than from the per-frame flush.
@@ -5320,6 +5481,12 @@ fn drive_turn(
         }
     }
     if done {
+        // The engine denies whatever this turn still had parked; the card
+        // must not outlive the wait it belonged to.
+        state.approvals.remove(&active.session);
+        if app.get_active_session_id() == active.session.as_str() {
+            publish_approval(app, &active.session, &state);
+        }
         if active.state() == "正在生成…" {
             active.set_state("输出已结束", Phase::Done);
         }
