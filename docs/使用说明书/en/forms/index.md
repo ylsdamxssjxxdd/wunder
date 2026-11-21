@@ -6,7 +6,7 @@ updated_at: 2026-11-14
 
 # wunder
 
-wunder = model + harness + runtime
+wunder = harness + runtime
 
 - **Harness**: the model's constraint layer — supplies tools and interfaces to the outside world, drives the model into action, and governs permissions and context.
 - **Runtime**: browser, shell, files, Python, documents — prebuilt and ready once installed.
