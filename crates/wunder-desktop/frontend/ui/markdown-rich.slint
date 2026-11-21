@@ -22,6 +22,10 @@ component ProseBlock inherits Rectangle {
     in property <MdBlock> block;
     in property <length> content-width;
     in property <length> font-size;
+    /// Leading multiplier over the face's natural line height. Paragraphs use
+    /// `Theme.prose-line`; headings keep 1 so a one-line heading does not gain
+    /// padding on both sides of a glyph that already fills its natural box.
+    in property <float> line-factor: 1.0;
     in property <color> foreground: Theme.text;
     callback link-clicked(string);
     callback context-menu(length, length, bool);
@@ -35,6 +39,7 @@ component ProseBlock inherits Rectangle {
         text: block.text;
         default-color: root.foreground;
         default-font-size: root.font-size;
+        line-height-factor: root.line-factor;
         link-color: Theme.link;
         link-clicked(url) => { root.link-clicked(url); }
         context-menu(x, y, selected) => { root.context-menu(x, y, selected); }
@@ -54,6 +59,12 @@ component ListItemBlock inherits Rectangle {
     // handling cannot do (the bullet is glued to the first line there).
     private property <length> indent: 2px + block.depth * 18px;
     private property <length> marker-width: 19px;
+    // Half of the leading the body gets on top of the bare font metrics: the
+    // first line's glyphs are pushed down by this much, so the bullet and the
+    // task box ride with them instead of sitting on the box's top edge.
+    // 0.68 is half of Microsoft YaHei's natural line-height ratio (1.36em); the
+    // phone's WenQuanYi is 1.17em, where being 1px high is invisible.
+    private property <length> lead-half: (Theme.prose-line - 1) * Theme.font-body * root.font-scale * 0.68;
 
     width: content-width;
     height: max(body.preferred-height, Theme.font-body * root.font-scale);
@@ -67,12 +78,15 @@ component ListItemBlock inherits Rectangle {
         text: block.marker;
         color: Theme.muted;
         font-size: Theme.font-body * root.font-scale;
+        // Same leading as the body: the bullet then lands on the first line's
+        // optical centre instead of its top.
+        line-height-factor: Theme.prose-line;
         font-family: Theme.font-ui;
     }
 
     if block.task > 0 : Rectangle {
         x: root.indent + 1px;
-        y: 3.5px;
+        y: 3.5px + root.lead-half;
         width: 12px;
         height: 12px;
         border-radius: 3px;
@@ -100,6 +114,7 @@ component ListItemBlock inherits Rectangle {
         text: block.text;
         default-color: Theme.text;
         default-font-size: Theme.font-body * root.font-scale;
+        line-height-factor: Theme.prose-line;
         link-color: Theme.link;
         link-clicked(url) => { root.link-clicked(url); }
         context-menu(x, y, selected) => { root.context-menu(x, y, selected); }
@@ -237,6 +252,10 @@ component TableGrid inherits VerticalLayout {
                     text: block.cells[r * columns + c].text;
                     default-color: r == 0 ? Theme.text : Theme.text-secondary;
                     default-font-size: Theme.font-body * root.font-scale - 1px;
+                    // A wrapped cell is body copy too; keeping it on the same
+                    // leading stops a two-line cell from reading denser than
+                    // the paragraph beside it.
+                    line-height-factor: Theme.prose-line;
                     link-color: Theme.link;
                     link-clicked(url) => { root.link-clicked(url); }
                     context-menu(x, y, selected) => { root.context-menu(x, y, selected); }
@@ -516,9 +535,12 @@ export component BlockView inherits Rectangle {
             block: block;
             content-width: inner;
             font-size: Theme.font-body * root.font-scale;
+            line-factor: Theme.prose-line;
             link-clicked(url) => { root.link-clicked(url); }
             context-menu(x, y, selected) => { root.context-menu(x, y, selected); }
         }
+        // Headings stay on the font's natural metrics: a heading glyph already
+        // fills its em box, and the web renderer leads them tighter than body.
         if block.kind == BlockKind.heading : ProseBlock {
             block: block;
             content-width: inner;

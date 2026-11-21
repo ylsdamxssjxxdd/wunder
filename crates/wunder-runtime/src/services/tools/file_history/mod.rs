@@ -68,7 +68,7 @@ const SWEEP_INTERVAL_SECS: u64 = 6 * 3600;
 /// 历史目录最多向下走几层（防止异常深的镜像路径拖垮回收）。
 const MAX_SWEEP_DEPTH: usize = 32;
 /// 工作区内的历史根目录（相对工作区根）。
-const HISTORY_DIR_REL: &str = "temp/.history";
+const HISTORY_DIR_REL: &str = crate::services::workspace_temp::FILE_HISTORY;
 /// 工作区外文件的快照放在这个子目录下。
 const EXTERNAL_DIR: &str = "_external";
 /// 外部路径压缩后的最大长度。

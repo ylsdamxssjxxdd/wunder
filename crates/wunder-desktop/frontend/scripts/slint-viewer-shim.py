@@ -48,15 +48,19 @@ SHIM_UI = OUT / "ui"
 # blocks by brace depth rather than applied file-wide.
 STYLED_TEXT_OPEN = re.compile(r"\bStyledText\s*\{")
 FORK_HANDLER = re.compile(r"^\s*context-menu\([^)]*\)\s*=>")
+# The fork also gives StyledText a `line-height-factor` (upstream only has it on
+# Text/TextInput/TextEdit). Previews keep the font's natural leading instead.
+FORK_PROPERTY = re.compile(r"^\s*line-height-factor\s*:")
 ASSET_REF = re.compile(r"\.\./assets/[^'\"\s)]+")
 
 
-def shim_sheet(text: str) -> tuple[str, int]:
+def shim_sheet(text: str) -> tuple[str, int, int]:
     lines = text.splitlines(keepends=True)
     out: list[str] = []
     depth = 0
     in_block = False
-    removed = 0
+    handlers = 0
+    properties = 0
     for line in lines:
         if not in_block and STYLED_TEXT_OPEN.search(line):
             in_block = True
@@ -66,19 +70,22 @@ def shim_sheet(text: str) -> tuple[str, int]:
         if in_block:
             depth += line.count("{") - line.count("}")
             if FORK_HANDLER.match(line):
-                removed += 1
+                handlers += 1
+            elif FORK_PROPERTY.match(line):
+                properties += 1
             else:
                 out.append(line)
             if depth <= 0:
                 in_block = False
             continue
         out.append(line)
-    return "".join(out), removed
+    return "".join(out), handlers, properties
 
 
 def build() -> int:
     SHIM_UI.mkdir(parents=True, exist_ok=True)
-    removed_total = 0
+    handlers_total = 0
+    properties_total = 0
     refs: set[str] = set()
     for source in sorted(UI.rglob("*.slint")):
         target = SHIM_UI / source.relative_to(UI)
@@ -86,8 +93,9 @@ def build() -> int:
         text = source.read_text(encoding="utf-8")
         refs.update(ASSET_REF.findall(text))
         if source.name == "markdown-rich.slint":
-            text, removed = shim_sheet(text)
-            removed_total += removed
+            text, handlers, properties = shim_sheet(text)
+            handlers_total += handlers
+            properties_total += properties
         # 3.8 的 Path.write_text 还没有 newline 参数，沿用 open 的写法。
         with target.open("w", encoding="utf-8", newline="") as handle:
             handle.write(text)
@@ -99,15 +107,21 @@ def build() -> int:
         target = OUT / "assets" / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
-    return removed_total
+    return handlers_total, properties_total
 
 
 def main() -> int:
-    removed = build()
+    removed, properties = build()
     if removed != 4:
         print(
             f"slint-viewer-shim: expected 4 fork-only handlers, removed {removed}; "
             "the compiler fork may have changed",
+            file=sys.stderr,
+        )
+    if properties == 0:
+        print(
+            "slint-viewer-shim: no fork-only StyledText properties were dropped; "
+            "the preview would then disagree with the app's leading",
             file=sys.stderr,
         )
     viewer = shutil.which("slint-viewer")

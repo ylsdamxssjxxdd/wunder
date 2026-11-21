@@ -1197,6 +1197,17 @@ fn build(l: &mut Loader) {
         in property <string> default-font-family;
         /// The default font size used to render the text, when no size is specified via markup. If unset (or zero), the value falls back to the enclosing `Window`'s `default-font-size`.
         in property <length> default-font-size;
+        /// The line height as a unitless factor (or a percentage: `150%` equals `1.5`) applied to
+        /// the font's natural line height (ascent + descent + line gap). The default of `1` keeps
+        /// the natural line height; larger values spread the lines apart, smaller values pull them
+        /// together, and `0` collapses them onto each other. Negative or non-numeric values behave
+        /// like `1`. Unlike CSS `line-height`, the factor is relative to the natural line height,
+        /// not the font size, and keyword or length values aren't supported.
+        ///
+        /// Fork-only: upstream `StyledText` has no leading control, which leaves block prose on
+        /// the bare font metrics. `Text`, `TextInput` and `TextEdit` already carry this property.
+        /// \default 1
+        in property <float> line-height-factor: 1;
         /// The horizontal alignment of the text.
         in property <TextHorizontalAlignment> horizontal-alignment;
         /// The color used for rendering links in the text.

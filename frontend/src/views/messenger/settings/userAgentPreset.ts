@@ -3,7 +3,7 @@
  *
  * 服务端已经交付 `customizable`（system_prompt / welcome / model_name /
  * reasoning_effort / tool_names / approval_mode）；前端此前只用了旧版 `/agents`
- * 列表，因此在设置页「智能体设置」分类里按需补一次只读读取。
+ * 列表，因此在设置页「智能体」分类里按需补一次只读读取。
  *
  * 降级：接口未交付（404/网络失败）或响应缺少 `customizable` 时，标记
  * `available = false`，面板按「全部可编辑」处理并在页面上说明，不伪造授权范围。

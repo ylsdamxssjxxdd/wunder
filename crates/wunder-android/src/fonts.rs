@@ -62,12 +62,39 @@ pub fn install() {
     let mut collection = slint::fontique_011::shared_collection();
     let dir = system_font_dir();
 
-    let cjk = system_cjk_families(&mut collection, &dir);
+    // 先按系统自己的字族链注册（`/system/etc/fonts.xml`）。原生应用和微信
+    // 用的就是这份：厂商把默认正文字体换成 MiSans / HarmonyOS Sans / OPPO
+    // Sans 这类更轻的字面时，界面必须跟着换；此前写死 Noto Sans CJK 会把这
+    // 些覆盖掉，中文看上去就比微信更黑更粗。
+    let mut latin: Vec<fontique::FamilyId> = Vec::new();
+    let mut cjk: Vec<fontique::FamilyId> = Vec::new();
+    if let Some(plan) = platform_font_plan(&dir) {
+        let latin_families = register_fonts(&mut collection, &dir.join(&plan.latin));
+        let cjk_families = if plan.cjk == plan.latin {
+            latin_families.clone()
+        } else {
+            register_fonts(&mut collection, &dir.join(&plan.cjk))
+        };
+        // A vendor file that turns out not to carry Han must not take over:
+        // keeping a Latin-only family as the Han fallback would blank the UI.
+        if covers_han(&mut collection, &cjk_families) {
+            log::info!("platform fonts: latin={} cjk={}", plan.latin, plan.cjk);
+            latin = latin_families;
+            cjk = ordered_by_script(&mut collection, cjk_families, "Hans");
+        }
+    }
+
+    // 读不到 fonts.xml（ROM 定制过头）时退回按文件名挑。
+    if cjk.is_empty() {
+        cjk = system_cjk_families(&mut collection, &dir);
+    }
     if cjk.is_empty() {
         log::warn!("no CJK font found under {}; text may not render", dir.display());
         return;
     }
-    let latin = register_first(&mut collection, &dir, SYSTEM_LATIN_FACES);
+    if latin.is_empty() {
+        latin = register_first(&mut collection, &dir, SYSTEM_LATIN_FACES).into_iter().collect();
+    }
     let emoji = register_first(&mut collection, &dir, SYSTEM_EMOJI_FACES);
 
     // 通用字族：拉丁在前、汉字在后，缺字时才落到 emoji。
@@ -111,6 +138,225 @@ pub fn install() {
 fn system_font_dir() -> PathBuf {
     let root = std::env::var("ANDROID_ROOT").unwrap_or_else(|_| "/system".to_owned());
     Path::new(&root).join("fonts")
+}
+
+/// The two files the shell needs to draw like every other app on the phone.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PlatformFonts {
+    /// The face the platform resolves `sans-serif` to (Latin and often Han).
+    latin: String,
+    /// The Han fallback the platform appends to that family. Equal to `latin`
+    /// when one file covers both scripts, as MiSans / HarmonyOS Sans do.
+    cjk: String,
+}
+
+/// Read the platform's own font families and pick the two files that carry the
+/// default prose face.
+///
+/// Android declares the resolution order in `/system/etc/fonts.xml`: the first
+/// `sans-serif` family is the default, and the `zh-Hans` (or unnamed fallback)
+/// families after it supply Han glyphs. Native text views — and therefore
+/// WeChat — draw exactly with that chain, so following it is what keeps the
+/// app's Chinese as light as the rest of the phone instead of forcing our
+/// preferred Noto face over the vendor's.
+fn platform_font_plan(dir: &Path) -> Option<PlatformFonts> {
+    let root = dir.parent()?;
+    for relative in ["etc/fonts.xml", "etc/fonts_base.xml"] {
+        let path = root.join(relative);
+        let Ok(xml) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if let Some(plan) = plan_from_xml(&xml) {
+            return Some(plan);
+        }
+    }
+    None
+}
+
+/// Pure half of [`platform_font_plan`], so the selection rules can be tested
+/// without a phone: document order, weight 400 / normal first, Han fallback
+/// after the Latin default.
+fn plan_from_xml(xml: &str) -> Option<PlatformFonts> {
+    let families = families_in(xml);
+    let latin_family = families
+        .iter()
+        .find(|family| family.name.to_ascii_lowercase().contains("sans-serif"))
+        .or_else(|| families.first())?;
+    let latin = latin_family.face()?.file.clone();
+
+    // The Han fallback must stay in the sans family: `fonts.xml` also lists a
+    // `serif`/`monospace` Han fallback, and a serif body would be a different
+    // product, not a different weight.
+    let by_language = families
+        .iter()
+        .filter(|family| family.lang.to_ascii_lowercase().contains("zh"))
+        .filter(|family| is_sans_fallback(family))
+        .find_map(|family| family.face().map(|face| face.file.clone()));
+    let by_name = families
+        .iter()
+        .filter(|family| is_sans_fallback(family))
+        .find_map(|family| {
+            let face = family.face()?;
+            (looks_like_cjk(&face.file) || looks_like_cjk(&family.name))
+                .then(|| face.file.clone())
+        });
+
+    Some(PlatformFonts {
+        latin: latin.clone(),
+        cjk: by_language.or(by_name).unwrap_or(latin),
+    })
+}
+
+#[derive(Debug)]
+struct FontFamily {
+    name: String,
+    lang: String,
+    faces: Vec<FontFace>,
+}
+
+#[derive(Debug)]
+struct FontFace {
+    file: String,
+    weight: u16,
+    style: String,
+}
+
+impl FontFamily {
+    /// The face the platform would use for body copy: weight 400, upright, and
+    /// otherwise the one closest to it. A family that only ships a heavy cut
+    /// must not be picked just because it is listed first.
+    fn face(&self) -> Option<&FontFace> {
+        self.faces.iter().min_by_key(|face| {
+            (
+                !face.style.eq_ignore_ascii_case("normal"),
+                face.weight.abs_diff(400),
+            )
+        })
+    }
+}
+
+fn families_in(xml: &str) -> Vec<FontFamily> {
+    let mut families = Vec::new();
+    let mut rest = xml;
+    while let Some(start) = tag_start(rest, "<family") {
+        rest = &rest[start..];
+        let Some(open_end) = rest.find('>') else { break };
+        let attrs = &rest["<family".len()..open_end];
+        let name = attribute(attrs, "name").unwrap_or_default();
+        let lang = attribute(attrs, "lang").unwrap_or_default();
+        let body = &rest[open_end + 1..];
+        let Some(close) = body.find("</family") else { break };
+        let faces = faces_in(&body[..close]);
+        if !faces.is_empty() {
+            families.push(FontFamily { name, lang, faces });
+        }
+        rest = &body[close..];
+    }
+    families
+}
+
+fn faces_in(body: &str) -> Vec<FontFace> {
+    let mut faces = Vec::new();
+    let mut rest = body;
+    while let Some(start) = tag_start(rest, "<font") {
+        rest = &rest[start..];
+        let Some(open_end) = rest.find('>') else { break };
+        let attrs = &rest["<font".len()..open_end];
+        let after = &rest[open_end + 1..];
+        let end = after.find('<').unwrap_or(after.len());
+        let file = after[..end].trim();
+        if !file.is_empty() {
+            let weight = attribute(attrs, "weight")
+                .and_then(|value| value.parse::<u16>().ok())
+                .unwrap_or(400);
+            let style = attribute(attrs, "style").unwrap_or_else(|| "normal".to_owned());
+            faces.push(FontFace {
+                file: file.to_owned(),
+                weight,
+                style,
+            });
+        }
+        rest = &after[end..];
+    }
+    faces
+}
+
+/// Byte offset of `tag`, but only when it is a real tag start: `<familyset`
+/// must not be mistaken for `<family`.
+fn tag_start(haystack: &str, tag: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(found) = haystack[from..].find(tag) {
+        let index = from + found;
+        let only_attrs_left = match haystack[index + tag.len()..].chars().next() {
+            Some('>') => true,
+            Some(c) => c.is_whitespace(),
+            None => false,
+        };
+        if only_attrs_left {
+            return Some(index);
+        }
+        from = index + tag.len();
+    }
+    None
+}
+
+fn attribute(attrs: &str, key: &str) -> Option<String> {
+    let mut from = 0;
+    while let Some(found) = attrs[from..].find(key) {
+        let index = from + found;
+        // Only a whole attribute name counts: `name` must not match `lang`.
+        let boundary = attrs[..index]
+            .chars()
+            .next_back()
+            .map_or(true, |c| !(c.is_alphanumeric() || c == '-' || c == '_'));
+        if boundary {
+            if let Some(rest) = attrs[index + key.len()..].trim_start().strip_prefix('=') {
+                let rest = rest.trim_start();
+                let quote = rest.chars().next().filter(|c| *c == '"' || *c == '\'');
+                if let Some(quote) = quote {
+                    let value = &rest[1..];
+                    if let Some(end) = value.find(quote) {
+                        return Some(value[..end].trim().to_owned());
+                    }
+                }
+            }
+        }
+        from = index + key.len();
+    }
+    None
+}
+
+/// Unnamed families are the platform's own fallbacks; named ones have to be a
+/// sans cut to stand in for body copy.
+fn is_sans_fallback(family: &FontFamily) -> bool {
+    let name = family.name.to_ascii_lowercase();
+    name.is_empty() || name.contains("sans")
+}
+
+fn looks_like_cjk(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    CJK_NAME_HINTS.iter().any(|hint| lower.contains(hint))
+        || ["misans", "harmony", "oppo", "vivo", "source-han", "sourcehan", "pingfang"]
+            .iter()
+            .any(|hint| lower.contains(hint))
+}
+
+/// Whether any of `families` actually has a glyph for Han, so the platform
+/// chain is proven usable before it replaces the built-in preference list.
+fn covers_han(collection: &mut fontique::Collection, families: &[fontique::FamilyId]) -> bool {
+    let mut cache = fontique::SourceCache::default();
+    let mut query = collection.query(&mut cache);
+    query.set_families(families.iter().copied());
+    let mut covers = false;
+    query.matches_with(|font| {
+        if font.charmap().is_some_and(|charmap| charmap.map('中').is_some()) {
+            covers = true;
+            fontique::QueryStatus::Stop
+        } else {
+            fontique::QueryStatus::Continue
+        }
+    });
+    covers
 }
 
 /// 注册系统 CJK 字体，返回按简体优先排好序的 family 列表。
@@ -244,5 +490,94 @@ fn family_rank(name: &str, script: &str) -> u8 {
         3
     } else {
         1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Stock Android: Roboto for Latin, an unnamed `zh-Hans` fallback for Han.
+    const AOSP: &str = r#"<familyset version="23">
+    <family name="sans-serif">
+        <font weight="400" style="normal">Roboto-Regular.ttf</font>
+        <font weight="700" style="normal">Roboto-Bold.ttf</font>
+    </family>
+    <family name="serif">
+        <font weight="400" style="normal">NotoSerif-Regular.ttf</font>
+    </family>
+    <alias name="sans-serif" to="Roboto" />
+    <family name="serif" lang="zh-Hans">
+        <font weight="400" style="normal">NotoSerifCJK-Regular.ttc</font>
+    </family>
+    <family lang="zh-Hans">
+        <font weight="400" style="normal">NotoSansCJK-Regular.ttc</font>
+    </family>
+</familyset>"#;
+
+    /// A vendor that replaced the whole default family with its own face.
+    const VENDOR: &str = r#"<familyset>
+    <family name="sans-serif">
+        <font weight="400" style="normal">MiSans-Regular.ttf</font>
+        <font weight="500" style="normal">MiSans-Medium.ttf</font>
+    </family>
+</familyset>"#;
+
+    const BOLD_ONLY: &str = r#"<familyset>
+    <family name="sans-serif">
+        <font weight="700" style="normal">Roboto-Bold.ttf</font>
+        <font weight="400" style="normal">Roboto-Regular.ttf</font>
+    </family>
+</familyset>"#;
+
+    #[test]
+    fn aosp_picks_roboto_then_the_sans_han_fallback() {
+        let plan = plan_from_xml(AOSP).expect("plan");
+        assert_eq!(plan.latin, "Roboto-Regular.ttf");
+        // Not the serif cut listed just above it.
+        assert_eq!(plan.cjk, "NotoSansCJK-Regular.ttc");
+    }
+
+    #[test]
+    fn a_single_vendor_face_serves_both_scripts() {
+        let plan = plan_from_xml(VENDOR).expect("plan");
+        assert_eq!(plan.latin, "MiSans-Regular.ttf");
+        assert_eq!(plan.cjk, "MiSans-Regular.ttf");
+    }
+
+    #[test]
+    fn weight_400_and_upright_wins_over_bold() {
+        let plan = plan_from_xml(BOLD_ONLY).expect("plan");
+        assert_eq!(plan.latin, "Roboto-Regular.ttf");
+        assert_eq!(plan.cjk, "Roboto-Regular.ttf");
+    }
+
+    #[test]
+    fn familyset_is_not_mistaken_for_a_family() {
+        let families = families_in(AOSP);
+        assert_eq!(families.len(), 4);
+        assert_eq!(families[0].name, "sans-serif");
+    }
+
+    #[test]
+    fn the_plan_reads_the_platform_config_next_to_the_font_directory() {
+        let root = std::env::temp_dir().join(format!("wunder-fonts-{}", std::process::id()));
+        let fonts = root.join("fonts");
+        std::fs::create_dir_all(&fonts).expect("fonts dir");
+        std::fs::create_dir_all(root.join("etc")).expect("etc dir");
+        std::fs::write(root.join("etc").join("fonts.xml"), AOSP).expect("fonts.xml");
+        let plan = platform_font_plan(&fonts).expect("plan from the fake system tree");
+        assert_eq!(plan.latin, "Roboto-Regular.ttf");
+        assert_eq!(plan.cjk, "NotoSansCJK-Regular.ttc");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn attributes_need_a_whole_name() {
+        let families = families_in(
+            r#"<family name="sans-serif" lang="zh-Hans"><font>X.ttf</font></family>"#,
+        );
+        assert_eq!(families[0].name, "sans-serif");
+        assert_eq!(families[0].lang, "zh-Hans");
     }
 }

@@ -28,7 +28,9 @@ pub const TOOL_TRANSCRIBE_SPEECH_ALIAS: &str = "transcribe_speech";
 pub const TOOL_GENERATE_IMAGE_ALIAS: &str = "generate_image";
 pub const TOOL_GENERATE_VIDEO_ALIAS: &str = "generate_video";
 
-const GENERATED_MEDIA_DIR: &str = "generated_media";
+/// 生成媒体也是运行时中间产物：默认落到工作区唯一的 `temp/` 下，
+/// 需要长期保留的交付物由调用方显式传 `path`。
+const GENERATED_MEDIA_DIR: &str = crate::services::workspace_temp::GENERATED_MEDIA;
 
 #[derive(Debug, Deserialize)]
 pub struct GenerateSpeechArgs {
@@ -1671,6 +1673,28 @@ mod tests {
         )
         .expect("target");
         assert_eq!(target.relative, "temp/out.png");
+        assert!(target.warning.is_none());
+    }
+
+    #[test]
+    fn default_generated_media_lands_under_workspace_temp() {
+        let (_temp, workspace) = workspace_fixture();
+        let target = resolve_media_target(
+            workspace.as_ref(),
+            "alice__c__1",
+            None,
+            "png",
+            "image",
+            false,
+            false,
+        )
+        .expect("default target");
+        assert!(
+            target.relative.starts_with("temp/generated_media/image_"),
+            "unexpected default path: {}",
+            target.relative
+        );
+        assert!(target.relative.ends_with(".png"), "{}", target.relative);
         assert!(target.warning.is_none());
     }
 

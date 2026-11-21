@@ -3,7 +3,8 @@
 
   python render.py <工程>                       全片 → <工程>/renders/raw.mp4（无声）
   python render.py <工程> --jobs 4              全片，按镜头切段、最多 4 路并行渲再无损拼起来（长片用这个）
-  python render.py <工程> --only 3              只重渲第 3 镜（也接受镜名 / 时间区间），再拼全部已完成分段
+  python render.py <工程> --only 3              只重渲第 3 镜（也接受镜名 / 时间区间），只写分段、不重拼全片
+  python render.py <工程> --only 3 7 --concat   渲完这几镜再拼一次（连着改几镜时最后拼一遍就够）
   python render.py <工程> --parts 0:12 12:30    不用 SHOTS 时手动指定分段边界
   python render.py <工程> --concat              把 renders/_parts/_part*.mp4 拼成 raw.mp4（默认保留分段）
   python render.py <工程> --clean-parts         拼接成功后删掉分段（默认保留，方便下次只重渲脏镜头）
@@ -18,7 +19,7 @@
   python render.py <工程> --clip 0 12 [名字]    只渲一段 → renders/<名字或_clip>.mp4（成功写 .done）
   python render.py <工程> --clips 0:12 20:30    一次渲多段并自动拼 → renders/clips.mp4
   python render.py <工程> --preview 8.2 10.6    低码率预览片段 → renders/preview_*.mp4
-  python render.py <工程> --events              导出音效事件表 → audio/events.json（给 audio.py）
+  python render.py <工程> --events              导出音效事件表 → audio/events.json（逐帧跑代码、不出像素、带进度）
   python render.py <工程> --det [样本数]        确定性自检：失败报差异区域、元素名、可疑全局写入
   python render.py <工程> --lint                静态+运行时自检：END/FPS、字体、音效、meta、分镜表、Math.random 等
   python render.py <工程> --storyboard          核对 storyboard.md 的时间列与 film.js 的 SHOTS 是否逐镜对得上
@@ -47,7 +48,7 @@ Linux 与安卓文泉驿/Noto）或 /usr/share/fonts/wunder（云端）；要固
 辉光漫进字幕带不算越界，手写 ctx 画的东西仍会被查出来。fr.g({clip}) 的包围盒按裁剪后的可见范围算。
 flat（B 寓言）整幅场景都在前景层，默认跳过像素检查，包围盒只查 fr.mark 命名的装置。
 """
-import hashlib, http.server, io, json, math, os, random, re, subprocess, sys, tempfile, threading, time
+import errno, hashlib, http.server, io, json, math, os, random, re, subprocess, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -62,31 +63,124 @@ KNOWN_SFX = {"tick", "soft", "chord", "bloom", "rise", "thud", "tock", "stamp", 
 SUB_RE = re.compile(r"字幕|sub(?:title)?|caption", re.I)
 
 _RENDER_LOCK_HANDLE = None
+LOCK_NO_KERNEL = {getattr(errno, name) for name in ("ENOLCK", "EOPNOTSUPP", "ENOTSUP", "EINVAL") if hasattr(errno, name)}
+
+def _lock_kernel(handle):
+    """对锁文件加内核锁（进程一死由系统释放，不会留下“假占用”）。"""
+    if os.name == "nt":
+        import msvcrt
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+def _lock_owner(lock_path):
+    """锁文件里记的主人：{pid, started, cmd}；旧版留下的空文件读出来是 {}。"""
+    try:
+        data = json.loads(lock_path.read_text(encoding="utf-8") or "{}")
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+def _flock_holder(lock_path):
+    """锁里没写主人时问内核：F_GETLK 会告诉我拿着这把锁的 PID。取不到就返回 None。"""
+    if os.name == "nt":
+        return None
+    try:
+        import fcntl, struct
+        with open(lock_path, "a+b") as f:
+            req = struct.pack("hhqqi", fcntl.F_WRLCK, 0, 0, 0, 0)
+            res = fcntl.fcntl(f.fileno(), fcntl.F_GETLK, req)
+            kind, _, _, _, pid = struct.unpack("hhqqi", res)
+            return None if kind == fcntl.F_UNLCK else int(pid) or None
+    except Exception:
+        return None
+
+def _pid_alive(pid):
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        if os.name == "nt":
+            import ctypes
+            k32 = ctypes.windll.kernel32
+            handle = k32.OpenProcess(0x1000, False, pid)      # PROCESS_QUERY_LIMITED_INFORMATION
+            if not handle:
+                return False
+            code = ctypes.c_ulong()
+            ok = k32.GetExitCodeProcess(handle, ctypes.byref(code))
+            k32.CloseHandle(handle)
+            return bool(ok) and code.value == 259             # STILL_ACTIVE
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except Exception:
+        return True          # 查不清就当它活着：宁可让用户确认，也不两个进程抢同一段
+    return True
+
+def _claim_lock(handle):
+    payload = {"pid": os.getpid(), "started": time.strftime("%Y-%m-%d %H:%M:%S"), "cmd": " ".join(sys.argv)[:200]}
+    try:
+        handle.seek(0)
+        handle.truncate()
+        handle.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+        handle.flush()
+    except OSError:
+        pass
 
 def ensure_render_lock(proj):
     """同一工程同时只允许一个进程使用浏览器/写 renders/（渲染和检查都算）。
-    锁随进程退出由系统释放，所以异常中断不会留下“假占用”；并行渲染的子进程
-    通过环境变量识别父进程已持锁，不再重复加锁。"""
+
+    锁文件里写着 PID 与启动时间，进程一死内核锁自动释放；如果文件是上次被 kill
+    留下的（旧版空文件、或文件系统不支持内核锁），查一下 PID/内核锁的主人，
+    人已经不在就直接接管 —— 不用再手工 rm renders/.render.lock。
+    并行渲染的子进程通过环境变量识别父进程已持锁，不再重复加锁。"""
     global _RENDER_LOCK_HANDLE
     if _RENDER_LOCK_HANDLE is not None or os.environ.get("WUNDER_RENDER_LOCK") == "held":
         return
     lock_path = Path(proj) / "renders/.render.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    handle = open(lock_path, "a+b")
-    try:
-        if os.name == "nt":
-            import msvcrt
-            handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        handle.close()
-        sys.exit("另一个渲染/检查进程正在使用这个工程（renders/.render.lock 被占用）。"
-                 "等它结束，或确认没有渲染进程后再试；不要和它同时写同一段。")
-    _RENDER_LOCK_HANDLE = handle
-    os.environ["WUNDER_RENDER_LOCK"] = "held"
+    for attempt in range(3):
+        handle = open(lock_path, "a+b")
+        try:
+            _lock_kernel(handle)
+        except OSError as error:
+            handle.close()
+            if getattr(error, "errno", None) in LOCK_NO_KERNEL:      # 网络盘/容器里没有 flock：退化成看 PID
+                handle = open(lock_path, "a+b")
+                owner = _lock_owner(lock_path)
+                pid = owner.get("pid")
+                if pid and _pid_alive(pid):
+                    handle.close()
+                    sys.exit(f"另一个渲染/检查进程（PID {pid}，{owner.get('started', '时间未知')} 启动）"
+                             "正在使用这个工程（renders/.render.lock）。等它结束再试。")
+                _claim_lock(handle)
+                _RENDER_LOCK_HANDLE = handle
+                os.environ["WUNDER_RENDER_LOCK"] = "held"
+                return
+            owner = _lock_owner(lock_path)
+            pid = owner.get("pid") or _flock_holder(lock_path)
+            if pid and _pid_alive(pid):
+                sys.exit(f"另一个渲染/检查进程（PID {pid}，{owner.get('started', '时间未知')} 启动）"
+                         "正在使用这个工程（renders/.render.lock）。等它结束再试；"
+                         "不要和它同时写同一段。")
+            if pid:
+                print(f"  锁文件的主人（PID {pid}）已经不在了，接管 renders/.render.lock", flush=True)
+            elif attempt == 0:
+                print("  锁文件没有主人（像是上次被强制中断留下的），重试接管", flush=True)
+            time.sleep(.3)
+            continue
+        _claim_lock(handle)
+        _RENDER_LOCK_HANDLE = handle
+        os.environ["WUNDER_RENDER_LOCK"] = "held"
+        return
+    sys.exit(f"renders/.render.lock 一直被占用，但查不到活着的进程。确认没有渲染在跑后删掉它：\n  rm \"{lock_path}\"")
 
 def temp_output(out):
     """先写隐藏临时文件再原子改名：产物路径上永远不会出现半个 mp4。
@@ -440,13 +534,16 @@ USAGE_REQUIRES = {
 
 # ---------- 进度与视频信息 ----------
 class Progress:
-    def __init__(self, total, label="render"):
+    def __init__(self, total, label="render", interval=None):
         self.total = max(1, int(total)); self.n = 0; self.t0 = time.time(); self.last = 0.0
         self.label = label; self.tty = sys.stdout.isatty()
+        # interval：非 tty 下多少秒最多打一行。检查/事件扫描用 1–2 秒，长任务也能看见还在动。
+        self.interval = interval
     def step(self, n):
         self.n = n
         now = time.time()
-        if n < self.total and now - self.last < (0.25 if self.tty else 10.0):
+        gap = self.interval if self.interval is not None else (0.25 if self.tty else 10.0)
+        if n < self.total and now - self.last < gap:
             return
         self.last = now
         elapsed = now - self.t0
@@ -571,6 +668,64 @@ def project_hash(proj):
     h = hashlib.sha1()
     for p in project_sources(proj):
         h.update(p.name.encode("utf-8")); h.update(b"\0"); h.update(p.read_bytes()); h.update(b"\0")
+    return h.hexdigest()
+
+# ---------- 音效事件表指纹 ----------
+# 续渲用整份源码指纹（画面动一个字就该重渲那一段）；事件表不能这么算：
+# 挪一道光的起点和“什么时候响什么”无关，不该逼着重扫全片。
+# 这里只把决定音效时间的东西算进去：sfx 代码与声明、META，以及 SUBS/SHOTS 里的时间数字。
+EVENT_BLOCKS = (("sfx", "text"), ("META", "text"), ("SUBS", "nums"), ("SHOTS", "nums"))
+
+def _bracket_blocks(text, name):
+    """取出 name 后面紧跟的那个括号块（`const SUBS = [...]`、`sfx: [[…]]`、`META = {…}`）。
+    只做括号配平、不做语法分析：够覆盖分镜时间和音效声明，又不会把整份源码算进指纹。"""
+    out = []
+    for match in re.finditer(r"(?<![\w$.])%s(?![\w$])" % re.escape(name), text, re.I):
+        i, limit = match.end(), min(len(text), match.end() + 600)
+        while i < limit and text[i] not in "[{(":
+            i += 1
+        if i >= limit:
+            continue
+        depth, j, quote = 0, i, ""
+        while j < len(text):
+            ch = text[j]
+            if quote:
+                if ch == "\\":
+                    j += 2
+                    continue
+                if ch == quote:
+                    quote = ""
+            elif ch in "'\"`":
+                quote = ch
+            elif ch in "[{(":
+                depth += 1
+            elif ch in "]})":
+                depth -= 1
+                if depth <= 0:
+                    j += 1
+                    break
+            j += 1
+        out.append(text[i:j])
+    return out
+
+def event_source_digest(proj):
+    """音效事件表的指纹：只算“什么时候响什么”，改画面不该让它失效。
+
+    覆盖：含 sfx 的源码行、sfx/META 声明块、SUBS/SHOTS 里的时间数字。
+    移动一道光、换个颜色不动它；改台词时间、加减音效、改 meta 才动。
+    纯文本扫描，不需要浏览器——audio.py 校验时几乎不花时间。"""
+    h = hashlib.sha1()
+    for path in project_sources(proj):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        h.update(path.name.encode("utf-8")); h.update(b"\0")
+        for name, mode in EVENT_BLOCKS:
+            for block in _bracket_blocks(text, name):
+                piece = " ".join(re.findall(r"-?\d+(?:\.\d+)?", block)) if mode == "nums" else block
+                h.update(name.encode("utf-8")); h.update(b"\1")
+                h.update(piece.encode("utf-8")); h.update(b"\1")
+        for line in text.splitlines():
+            if re.search(r"\bsfx\b", line, re.I):
+                h.update(line.strip().encode("utf-8")); h.update(b"\n")
     return h.hexdigest()
 
 def done_marker(part):
@@ -901,11 +1056,18 @@ def concat_parts(proj, parts, out, keep=True):
     print("done", out)
     print_video(out)
 
+def part_ready(entry):
+    """一段是否可以直接用：文件在、非空、有 .done，且区间与当前镜头表一致。"""
+    part = entry["path"]
+    return (part.exists() and part.stat().st_size > 0
+            and done_marker(part).exists() and marker_range_ok(part, entry))
+
 def frames_parallel(proj, out, jobs, crf=14.0, preset="medium", keep=True, fresh=False,
-                    only=None, segments=None):
+                    only=None, segments=None, join=False):
     """把全片按镜头（或 --parts / 等分）切成段，最多 jobs 个进程同时渲，再无损拼接。
     每段由子进程自己写 .done 标记（内容是工程源码指纹），父进程被杀时已渲完的段仍然有效。
-    --only 只重渲指定镜号/名字/时间，再用全部已完成分段重新拼接；分段默认保留，--clean-parts 才删。"""
+    --only 只重渲指定镜号/名字/时间，只写分段、默认不重拼全片（加 --concat 表示渲完顺带拼一次）；
+    分段默认保留，--clean-parts 才删。"""
     ensure_render_lock(proj)
     meta = project_meta(proj)
     end, fps = meta["end"], meta["fps"]
@@ -945,7 +1107,7 @@ def frames_parallel(proj, out, jobs, crf=14.0, preset="medium", keep=True, fresh
             continue
         pending.append(entry)
     if selected is not None and not pending:
-        print("--only 选中的分段已全部完成，直接拼接")
+        print("--only 选中的分段本来就是最新的，不再重渲")
 
     def render_one(entry):
         log = entry["path"].with_suffix(".log")
@@ -986,17 +1148,29 @@ def frames_parallel(proj, out, jobs, crf=14.0, preset="medium", keep=True, fresh
         sys.exit(f"{len(failures)} 段未完成。已完成的分段保留在 {proj / 'renders/_parts'}；"
                  f"修好后重跑 --jobs {jobs}（默认续渲），或直接 --concat。")
 
-    if selected is not None:
-        missing = [entry["path"].name for entry in entries
-                   if not (entry["path"].exists() and entry["path"].stat().st_size > 0
-                           and done_marker(entry["path"]).exists()
-                           and marker_range_ok(entry["path"], entry))]
-        if missing:
-            sys.exit("--only 已重渲，但其余分段还不完整，暂不拼接：" + "、".join(missing) +
-                     f"\n  先跑：python engine/render.py \"{proj}\" --jobs {jobs}")
-        concat_existing(proj, name=None, keep=keep, force=False)
-    else:
+    if selected is None:
         concat_parts(proj, [entry["path"] for entry in entries], out, keep)
+        return
+    # --only：默认只把分段写完就收工。把 51 段重拼成 raw.mp4 是纯等待，
+    # 连着重渲四镜就白等四遍；攒够了一次 --concat 就行。
+    ready = [entry for entry in entries if part_ready(entry)]
+    missing = [entry for entry in entries if not part_ready(entry)]
+    if not join:
+        print(f"--only 只更新了分段，没有重拼全片（{len(ready)}/{len(entries)} 段就绪）")
+        if missing:
+            names = "、".join(f'{e["index"] + 1}·{e["name"]}' for e in missing[:8])
+            print(f"  还缺 {len(missing)} 段：" + names + ("…" if len(missing) > 8 else "")
+                  + "（补渲：--jobs <N>）")
+        print(f"  要出成片：python engine/render.py \"{proj}\" --concat")
+        raw = proj / "renders/raw.mp4"
+        if raw.exists():
+            print("  注意：renders/raw.mp4 现在比新分段旧；--concat 之后才是最新成片。")
+        return
+    if missing:
+        sys.exit("--only 已重渲，但其余分段还不完整，暂不拼接：" +
+                 "、".join(e["path"].name for e in missing) +
+                 f"\n  先跑：python engine/render.py \"{proj}\" --jobs {jobs}")
+    concat_existing(proj, name=None, keep=keep, force=False)
 
 def concat_existing(proj, name=None, keep=True, force=False):
     manifest = read_manifest(proj)
@@ -1087,15 +1261,63 @@ def web(proj, name=None, crf=None, kb=None):
     print_video(out)
 
 # ---------- 音效事件 ----------
+def collect_events(pg, label="events"):
+    """逐帧跑 draw() 收集 fr.sfx()，分块调用以便打印进度。
+
+    全片每一帧都要过：film.js 常把音效放在“一帧宽”的时间窗里（t >= 5.7 && t < 5.734），
+    抽样会漏声。像素没人要，vk.js 用扫描上下文只跑代码路径（实测比真画快 30–150×），
+    所以要的是“有没有”而不是“好不好看”。返回 (事件表, 扫描说明)。"""
+    total = int(pg.evaluate("Math.floor(END * FPS) + 1"))
+    pg.evaluate("() => window.__vkEventsBegin()")
+    prog = Progress(total, label, interval=2.0)
+    step, done, retried, stall = max(1, total // 50), 0, False, 0
+    try:
+        while done < total:
+            before = done
+            try:
+                done = int(pg.evaluate("(n) => window.__vkEventsStep(n)", step))
+            except Exception as error:      # draw() 自己抛错：给一句人话，不要甩 traceback
+                sys.exit("音效扫描失败：draw() 在中途抛错。\n" + str(error).strip()[:800])
+            if done <= before:
+                stall += 1
+                if stall > 50:
+                    sys.exit("音效扫描没有进展：draw() 里可能有死循环或一直在抛错")
+            else:
+                stall = 0
+            if done < before and not retried:
+                retried = True
+                print("  扫描中途出错，退回真画布从头重扫（结果一致，只是慢）", flush=True)
+            prog.step(done)
+            raise_if_error(pg, "events()")
+    finally:
+        prog.close()
+    return pg.evaluate("() => window.__vkEventsEnd()"), {
+        "total": total, "fallback": pg.evaluate("window.__vkScanFallback || null")}
+
 def events(proj):
+    """导出 audio/events.json：逐帧跑 draw() 收集 fr.sfx()，不出像素，并打印进度。"""
     (proj / "audio").mkdir(exist_ok=True)
+    print("events: 载入页面…", flush=True)
     def go(pg):
-        ev = pg.evaluate("events()"); m = pg.evaluate("({end: END, fps: FPS, meta: META})")
+        m = pg.evaluate("({end: END, fps: FPS, meta: META, shots: SHOTS || null, subs: SUBS || null})")
+        print(f"events: 扫描 {int(m['end'] * m['fps']) + 1} 帧（逐帧跑 draw()，保证不漏一帧宽的音效窗）…",
+              flush=True)
+        ev, scan = collect_events(pg, "events")
         data = {"end": m["end"], "fps": m["fps"], "meta": m["meta"], "events": ev,
-                "source_hash": project_hash(proj),
+                "events_hash": event_source_digest(proj),
+                "timeline": {"end": m["end"], "fps": m["fps"], "shots": m["shots"], "subs": m["subs"]},
+                "scan": "canvas" if scan.get("fallback") else "fast",
+                "source_hash": project_hash(proj),      # 整份源码，仅供排查用
                 "source_files": [p.name for p in project_sources(proj)]}
-        json.dump(data, open(proj / "audio/events.json", "w", encoding="utf-8"), ensure_ascii=False)
-        print("events:", len(ev), "source:", data["source_hash"][:10])
+        if scan.get("fallback"):
+            print("  注意：扫描退回真画布（" + str(scan["fallback"])[:80] + "）", file=sys.stderr)
+        out = proj / "audio/events.json"
+        tmp = out.with_name("events.json.tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, out)
+        print("events:", len(ev), "条 →", out)
+        print("  音效指纹", data["events_hash"][:10],
+              "（只算 sfx 代码与 SUBS/SHOTS 时间；改画面不会让它失效）")
     with_page(proj, go)
 
 # ---------- 分镜表 ----------
@@ -1514,19 +1736,27 @@ def det(proj, n=12):
     with_page(proj, go)
 
 def lint(proj):
+    print("lint: 载入页面…", flush=True)
     def go(pg):
         info = pg.evaluate("""() => {
-          let ev = [], err = null;
-          try { ev = events(); } catch (e) { err = String(e); }
           const c = document.getElementById('stage');
           return { end: window.END, fps: window.FPS, meta: window.META || {},
                    missing: window.VK_MISSING_FONTS || [], images: window.VK_MISSING_IMAGES || [],
-                   events: ev, events_error: err,
                    stage: c ? [c.width, c.height] : null,
-                   shots: window.SHOTS || null, subs: window.SUBS || null };
+                   shots: window.SHOTS || null,
+                   subs: window.SUBS || null };
         }""")
+        # 音效扫描占绝大多数时间：分块跑并打进度，别再让终端一声不响几分钟。
+        try:
+            info["events"], _ = collect_events(pg, "lint · 音效扫描")
+            info["events_error"] = None
+        except SystemExit as error:
+            info["events"], info["events_error"] = [], (error.code if isinstance(error.code, str) else "events() 执行失败")
+        except Exception as error:      # 页面抛什么错都记进报告，不要只留一个 traceback
+            info["events"], info["events_error"] = [], str(error)
         return info
     info = with_page(proj, go)
+    print("lint: 汇总…", flush=True)
     errors, warnings = [], []
     end, fps = info.get("end"), info.get("fps")
     if not isinstance(end, (int, float)) or end <= 0: errors.append("END 未定义或不是正数")
@@ -1951,7 +2181,7 @@ def main(a):
         check_overlap(proj, interval_of("--overlap", 1.0, 2.0), fast=fast)
     elif "--web" in a:
         web(proj, flag_value(a, "--web"), kb=as_int(flag_value(a, "--kb"), "--kb", None))
-    elif "--concat" in a:
+    elif "--concat" in a and not ({"--only", "--parts", "--jobs"} & set(a)):
         concat_existing(proj, flag_value(a, "--concat"), keep, force="--force" in a)
     elif "--serve" in a:
         try:
@@ -2016,7 +2246,8 @@ def main(a):
             only = tokens
         segments = parse_clip_specs(flag_args(a, "--parts")) if "--parts" in a else None
         jobs = as_int(flag_value(a, "--jobs"), "--jobs", min(4, max(1, os.cpu_count() or 4)))
-        frames_parallel(proj, proj / "renders/raw.mp4", jobs, crf, preset, keep, fresh, only, segments)
+        frames_parallel(proj, proj / "renders/raw.mp4", jobs, crf, preset, keep, fresh, only, segments,
+                        join="--concat" in a)
     else:
         frames(proj, proj / "renders/raw.mp4", crf=crf, preset=preset)
 

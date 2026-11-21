@@ -1139,7 +1139,13 @@ async fn persist_screenshot_to_user_container(
         .filter(|value| !value.trim().is_empty())
         .map(|value| value.to_string())
         .unwrap_or_else(|| format!("desktop_shot_{}.png", Uuid::new_v4().simple()));
-    let relative = format!("desktop_control/{safe_session}/{filename}");
+    // 工作区里只留一份可回看的帧，且和其它运行时中间产物一样收在 temp/ 下，
+    // 不在用户工作区根上长出一个 desktop_control/。
+    let relative = crate::services::workspace_temp::session_file(
+        "desktop_control",
+        &safe_session,
+        &filename,
+    );
     let dest = match context.workspace.resolve_path(&workspace_id, &relative) {
         Ok(path) => path,
         Err(err) => {

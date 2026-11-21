@@ -557,7 +557,11 @@ fn resolve_temp_root(temp_root: Option<&Path>, wunder_home: &Path) -> Result<Pat
                 }
             })
             .map(Ok)
-            .unwrap_or_else(|| Ok(wunder_home.to_path_buf())),
+            // Ephemeral artifacts (browser frames, desktop screenshots,
+            // temp-dir downloads) belong under `<WUNDER_HOME>/temp`, the same
+            // layout the CLI uses. Falling back to WUNDER_HOME itself grew
+            // `desktop_control/` and `temp_dir/` next to durable state.
+            .unwrap_or_else(|| Ok(wunder_home.join("temp"))),
     }
 }
 
@@ -741,7 +745,78 @@ fn ensure_runtime_dirs(state_root: &Path, temp_root: &Path) -> Result<()> {
     ] {
         fs::create_dir_all(dir)?;
     }
+    migrate_legacy_temp_dirs(state_root, temp_root);
     Ok(())
+}
+
+/// Older desktop builds used `WUNDER_HOME` itself as the ephemeral root, so
+/// `sessions/`, `desktop_control/` and `temp_dir/` grew next to durable state.
+/// Merge those leftovers into `<WUNDER_HOME>/temp` instead of leaving two
+/// scratch layouts on disk. Only runs for the default temp root; when both
+/// copies exist, the newer one wins.
+fn migrate_legacy_temp_dirs(state_root: &Path, temp_root: &Path) {
+    if temp_root != state_root.join("temp") {
+        return;
+    }
+    for name in ["sessions", "desktop_control", "temp_dir"] {
+        let legacy = state_root.join(name);
+        if !legacy.is_dir() {
+            continue;
+        }
+        let target = temp_root.join(name);
+        if fs::create_dir_all(&target).is_err() {
+            continue;
+        }
+        merge_legacy_tree(&legacy, &target);
+        if fs::read_dir(&legacy)
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(false)
+        {
+            let _ = fs::remove_dir(&legacy);
+        }
+    }
+}
+
+/// Recursively merge `legacy` into `target`. Existing destination files win
+/// only when they are at least as new; an older duplicate is replaced so the
+/// migration never loses the latest scratch copy.
+fn merge_legacy_tree(legacy: &Path, target: &Path) {
+    let Ok(entries) = fs::read_dir(legacy) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let source = entry.path();
+        let destination = target.join(entry.file_name());
+        let is_dir = entry
+            .file_type()
+            .map(|kind| kind.is_dir())
+            .unwrap_or(false);
+        if is_dir {
+            if fs::create_dir_all(&destination).is_ok() {
+                merge_legacy_tree(&source, &destination);
+                let _ = fs::remove_dir(&source);
+            }
+            continue;
+        }
+        if !destination.exists() {
+            let _ = fs::rename(&source, &destination);
+            continue;
+        }
+        if file_is_newer(&source, &destination) {
+            let _ = fs::remove_file(&destination);
+            let _ = fs::rename(&source, &destination);
+        } else {
+            let _ = fs::remove_file(&source);
+        }
+    }
+}
+
+fn file_is_newer(source: &Path, destination: &Path) -> bool {
+    let modified = |path: &Path| fs::metadata(path).and_then(|meta| meta.modified());
+    match (modified(source), modified(destination)) {
+        (Ok(source), Ok(destination)) => source > destination,
+        _ => false,
+    }
 }
 
 pub(crate) fn load_desktop_settings(path: &Path) -> Result<DesktopSettings> {
@@ -2507,6 +2582,66 @@ mod tests {
         for raw in ["", "   ", "C", "C.UTF-8", "POSIX"] {
             assert_eq!(language_from_locale(raw), None, "{raw}");
         }
+    }
+
+    #[test]
+    fn default_temp_root_lives_under_wunder_home_temp() {
+        let home = PathBuf::from("/tmp/wunder-home");
+        assert_eq!(
+            resolve_temp_root(None, &home).expect("default temp root"),
+            home.join("temp")
+        );
+    }
+
+    #[test]
+    fn legacy_temp_dirs_merge_into_the_temp_root() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-desktop-temp-migrate-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let home = root.join("home");
+        let temp = home.join("temp");
+        fs::create_dir_all(home.join("desktop_control/session-a")).expect("legacy dir");
+        fs::write(home.join("desktop_control/session-a/shot.png"), b"old").expect("legacy file");
+        fs::write(home.join("desktop_control/only-legacy.png"), b"old").expect("legacy file");
+        fs::create_dir_all(home.join("sessions")).expect("legacy sessions");
+        fs::write(home.join("sessions/keep.json"), b"{}").expect("legacy session");
+        fs::create_dir_all(temp.join("desktop_control/session-a")).expect("temp dir");
+        fs::write(temp.join("desktop_control/session-a/shot.png"), b"new").expect("temp file");
+
+        migrate_legacy_temp_dirs(&home, &temp);
+
+        // The newer destination copy wins; only missing files move.
+        assert_eq!(
+            fs::read(temp.join("desktop_control/session-a/shot.png")).expect("read"),
+            b"new"
+        );
+        assert!(temp.join("desktop_control/only-legacy.png").is_file());
+        assert!(temp.join("sessions/keep.json").is_file());
+        assert!(!home.join("desktop_control").exists());
+        assert!(!home.join("sessions").exists());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn explicit_temp_root_is_not_migrated() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-desktop-temp-explicit-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let home = root.join("home");
+        let temp = root.join("scratch");
+        fs::create_dir_all(home.join("desktop_control")).expect("legacy dir");
+        fs::write(home.join("desktop_control/shot.png"), b"old").expect("legacy file");
+        fs::create_dir_all(&temp).expect("temp dir");
+
+        migrate_legacy_temp_dirs(&home, &temp);
+
+        assert!(home.join("desktop_control/shot.png").is_file());
+        assert!(!temp.join("desktop_control").exists());
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -1418,7 +1418,7 @@ wunder 是一个**泛用型人工智能操作系统**（wunder = 模型 + 拘束
 - 入参（JSON）：
   - `user_id`：目标工作区所属用户（可选，默认 `admin`）
   - `container_id`：工作区容器编号（可选，默认 `0`）
-  - `path`：保存相对路径（可选；不传时自动写入 `generated_media/`）
+  - `path`：保存相对路径（可选；不传时自动写入 `temp/generated_media/`）
   - `text`：待合成文本
   - `model_name`：文转声模型配置名称（可选）
   - `voice`：音色（可选）

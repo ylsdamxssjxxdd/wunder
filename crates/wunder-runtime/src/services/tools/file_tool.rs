@@ -9,7 +9,7 @@ use super::{
     command_options::parse_dry_run,
     execute_in_sandbox, read_file_guard, read_image_tool, read_indentation, read_outline,
     recover_tool_args_value, resolve_tool_path, roots_allow_any_path,
-    tool_error::{build_failed_tool_result, ToolErrorMeta},
+    tool_error::{build_failed_tool_result, history_placeholder_failure, ToolErrorMeta},
     touch_lsp_file, ToolContext, DEFAULT_LIST_DEPTH, DEFAULT_LIST_PAGE_LIMIT,
     DEFAULT_READ_OUTPUT_BUDGET_BYTES, DEFAULT_START_LINE_WINDOW, MAX_LIST_ITEMS, MAX_RANGE_SPAN,
     MAX_READ_BUDGET_FILES, MAX_READ_BYTES, MAX_READ_LINES, MAX_READ_OUTPUT_BUDGET_BYTES,
@@ -2635,6 +2635,11 @@ pub(crate) fn validate_write_file_args(args: &Value) -> Option<Value> {
 
 pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let args = recover_tool_args_value(args);
+    // 历史投影占位符不是正文：分发层已拦一次，这里再拦一次，覆盖沙箱与
+    // 内部直接调用，保证任何入口都不会把占位文字写进文件。
+    if let Some(failure) = history_placeholder_failure("写入文件", &args) {
+        return Ok(failure);
+    }
     // Validate required input before sandbox dispatch or filesystem resolution.
     // Missing content must never be interpreted as an intentional empty write.
     if let Some(failure) = validate_write_file_args(&args) {

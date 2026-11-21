@@ -107,7 +107,7 @@ pub fn playwright_tool_specs() -> Vec<ToolSpec> {
         "m": {"type":"integer","minimum":1,"maximum":120000},
         "h": {"type":"integer","minimum":1,"maximum":40000},
         "n": {"type":"integer","minimum":0,"maximum":120000},
-        "p": {"type":"string","minLength":1,"description":"Workspace-relative output path."},
+        "p": {"type":"string","minLength":1,"description":"Workspace-relative path: for screenshot it names the output file (omit to use temp/browser/screenshots/browser_shot_<n>.<ext>); for navigate it is the workspace page to preview."},
         "f": {"type":"boolean"},
         "r": {"type":"string","minLength":1,"description":"Element ref from action=observe_refs."},
         "s": {"type":"string","minLength":1,"description":"CSS selector when no ref is available."},

@@ -315,7 +315,7 @@ const props = defineProps({
     type: String,
     default: ''
   },
-  // 语音录音与审批选择目前没有输入区入口（审批在智能体设置里配置），
+  // 语音录音与审批选择目前没有输入区入口（审批在设置页「智能体」里配置），
   // 契约保留：`voiceRecording`/`voiceTranscribing` 仍驱动转写提示与发送快照，
   // `approvalMode` 仍随消息上送。
   voiceSupported: {

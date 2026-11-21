@@ -17,7 +17,7 @@ use super::{
     build_model_tool_success,
     command_options::parse_dry_run,
     execute_in_sandbox, resolve_tool_path,
-    tool_error::{build_failed_tool_result, ToolErrorMeta},
+    tool_error::{build_failed_tool_result, history_placeholder_failure, ToolErrorMeta},
     touch_lsp_file, ToolContext,
 };
 use super::{edit_batch, edit_match, edit_recovery, file_history, write_receipt};
@@ -241,6 +241,10 @@ pub(crate) fn validate_edit_args(args: &Value) -> Option<Value> {
 /// 先归一化别名与校验类型，再将互斥的补丁、子命令、字面替换分派。
 /// `command=str_replace` 与省略 command 共用同一替换实现。
 pub(crate) async fn text_edit(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    // 历史投影占位符不是正文：分发层之外（沙箱、内部直接调用）也必须拦住。
+    if let Some(failure) = history_placeholder_failure(TOOL_EDIT, args) {
+        return Ok(failure);
+    }
     let args = match super::edit_args::normalize_edit_args(args) {
         Ok(args) => args,
         Err(failure) => return Ok(failure),

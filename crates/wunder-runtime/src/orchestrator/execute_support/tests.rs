@@ -1346,7 +1346,7 @@ fn omitted_inline_image_placeholders_are_detected_in_request_messages() {
 #[test]
 fn assistant_history_snapshot_projects_model_copy_but_keeps_full_arguments() {
     let allowed = HashSet::from([resolve_tool_name("write_file")]);
-    let body = "z".repeat(crate::services::history::HISTORY_TOOL_ARGS_MAX_STRING_CHARS + 200);
+    let body = "z".repeat(crate::services::history::HISTORY_WRITE_TOOL_ARGS_MAX_STRING_CHARS + 200);
     let payload = json!([{
         "id": "call_write",
         "type": "function",

@@ -49,6 +49,36 @@ pub(crate) fn build_failed_tool_result(
     })
 }
 
+/// 写/执行类工具的统一占位符守卫：命中即失败，且不产生任何副作用。
+///
+/// 分发层与具体工具入口共用这一份实现，保证「写入文件」「文本编辑」
+/// 「执行命令」对同一类参数给出同样的拒绝口径，不会一个拒绝、一个照样落盘。
+pub(crate) fn history_placeholder_failure(tool: &str, args: &Value) -> Option<Value> {
+    if !crate::services::history::contains_history_elision(args) {
+        return None;
+    }
+    Some(build_failed_tool_result(
+        format!(
+            "{tool}: the arguments contain a history placeholder, not real content; nothing was written or executed."
+        ),
+        json!({
+            "tool": tool,
+            "history_placeholder": true,
+            "notice": "The original arguments are already persisted. Do not resend the placeholder; read the file or rebuild the content, then issue a fresh call."
+        }),
+        ToolErrorMeta::new(
+            "TOOL_ARG_HISTORY_PLACEHOLDER",
+            Some(
+                "Placeholders are model-history projection artifacts, never valid tool arguments. Read the file or search it for the exact text before editing."
+                    .to_string(),
+            ),
+            false,
+            None,
+        ),
+        false,
+    ))
+}
+
 pub(crate) fn tool_timeout_meta(code: &str) -> ToolErrorMeta {
     ToolErrorMeta::new(
         code,

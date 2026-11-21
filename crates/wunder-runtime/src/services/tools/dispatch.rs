@@ -9,7 +9,6 @@ use super::panel_tools;
 use super::schedule_task_tool;
 use super::search_content_tool::search_content;
 use super::skill_call;
-use super::tool_error::{build_failed_tool_result, ToolErrorMeta};
 use super::{
     android_notifications, android_screen, browser_tool, desktop_control, phone_control,
     read_image_tool, web_fetch_tool, web_search_tool,
@@ -137,27 +136,5 @@ fn history_placeholder_failure(canonical: &str, args: &Value) -> Option<Value> {
     if !matches!(canonical, "写入文件" | "文本编辑" | "执行命令" | "命令会话") {
         return None;
     }
-    if !crate::services::history::contains_history_elision(args) {
-        return None;
-    }
-    Some(build_failed_tool_result(
-        format!(
-            "{canonical}: the arguments contain a history placeholder, not real content; nothing was written or executed."
-        ),
-        serde_json::json!({
-            "tool": canonical,
-            "history_placeholder": true,
-            "notice": "The original arguments are already persisted. Do not resend the placeholder; read the file or rebuild the content, then issue a fresh call."
-        }),
-        ToolErrorMeta::new(
-            "TOOL_ARG_HISTORY_PLACEHOLDER",
-            Some(
-                "Placeholders are model-history projection artifacts, never valid tool arguments. Read the file or search it for the exact text before editing."
-                    .to_string(),
-            ),
-            false,
-            None,
-        ),
-        false,
-    ))
+    super::tool_error::history_placeholder_failure(canonical, args)
 }

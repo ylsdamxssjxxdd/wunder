@@ -149,6 +149,19 @@ export global Theme {
     // streaming plain text) but not to a settled answer — most visible on the
     // phone, where the answer is nearly the whole screen.
     out property <length> font-body: 14px * font-scale;
+    // Leading for body copy, as a multiple of the face's *natural* line height.
+    //
+    // Slint's `line-height-factor` multiplies the font's ascent+descent, not the
+    // font size, and the faces in play disagree on that ratio: Microsoft YaHei
+    // (Windows, the bundled desktop face) is ~1.36em, WenQuanYi Micro Hei (the
+    // Android rootfs face) is ~1.17em. At the default of 1 the answer body
+    // inherits those bare metrics, which is what made a wrapped paragraph read
+    // cramped. 1.25 puts the desktop body at ~1.7em — the 云端版 renders
+    // `.markdown-body` at 1.65 — and still keeps the phone near Material's 1.5.
+    //
+    // Headings deliberately do not use it: at 23px their natural 1.36em is
+    // already looser than the web's 1.25 heading leading.
+    out property <float> prose-line: 1.25;
     out property <length> font-code: 12.5px * font-scale;
     out property <length> font-h1: 23px * font-scale;
     out property <length> font-h2: 19px * font-scale;

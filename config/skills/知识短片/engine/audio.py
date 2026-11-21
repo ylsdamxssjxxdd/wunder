@@ -3,10 +3,12 @@
   python audio.py <工程目录>                       # 读 audio/events.json → audio/score.wav → renders/final.mp4
   python audio.py <工程目录> --bgm 曲子.mp3 [-8]   # 用现成配乐垫底（默认 -8 dB），事件音照样叠上去
   python audio.py <工程目录> --wav-only            # 只出 wav，不合成
-  python audio.py <工程目录> --refresh-events      # film.js 改过后先自动重导 events.json，再合成
+  python audio.py <工程目录> --refresh-events      # 强制重导 events.json，再合成
+  python audio.py <工程目录> --reuse-events        # 跳过校验，直接用现有 events.json（会警告）
 
-audio.py 会核对 events.json 里的源码指纹与当前 film.js/layout 等文件：
-不一致就拒绝合成，避免改了台词忘导事件表导致音画错位（--refresh-events 可自动重导）。
+audio.py 会核对 events.json 里的音效指纹——只算 sfx 代码/声明、META、SUBS/SHOTS 的时间数字：
+改画面、调颜色不会让它失效；真改了时间轴就自动重导（逐帧跑代码、不出像素，几秒），
+不再因为“挪了一道光”拒绝合成或罚你重扫全片。--reuse-events 可跳过校验直接用旧表。
 
 事件表由 render.py --events 导出：film.js 里每个 fr.sfx(时刻, 名字, 参数) 就是一条。
 声音的写法学自参考片（C 家族）：
@@ -183,29 +185,43 @@ def load_events(proj):
         sys.exit(f"{path} 不是有效 JSON（{error}）；重跑 render.py --events 覆盖它。")
 
 def check_events_source(proj, a):
-    """events.json 必须和当前工程源码一致，否则音效会落在旧台词的位置上。"""
+    """events.json 必须和“什么时候响什么”一致，否则音效会落在旧台词的位置上。
+
+    指纹只算 sfx 相关的东西（sfx 代码/声明、META、SUBS/SHOTS 的时间数字）：
+    改画面、调颜色不会让它失效，也就不会为了挪一道光重扫全片。
+    真的改了时间轴就自动重导（逐帧跑代码、不出像素，几秒）；--reuse-events 可直接用旧表。"""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from render import project_hash
+    from render import event_source_digest
     path = proj / "audio/events.json"
+    reuse = "--reuse-events" in a
+    force = "--refresh-events" in a
     if not path.is_file():
-        if "--refresh-events" not in a:
-            sys.exit("还没有音效事件表 audio/events.json。\n"
-                     f"  先运行：python engine/render.py \"{proj}\" --events\n"
-                     "  或加 --refresh-events 让 audio.py 自动重导。")
+        if reuse:
+            sys.exit("还没有音效事件表 audio/events.json，没有旧表可复用。\n"
+                     f"  先运行：python engine/render.py \"{proj}\" --events")
+        print("音效事件表还不存在，先导出（只跑代码，几秒）…", flush=True)
         reimport_events(proj)
     spec = load_events(proj)
-    current = project_hash(proj)
-    recorded = spec.get("source_hash")
-    if recorded and recorded != current:
-        if "--refresh-events" not in a:
-            sys.exit("音效事件表与当前工程不一致（film.js / layout 等已改动）。\n"
-                     f"  先运行：python engine/render.py \"{proj}\" --events\n"
-                     "  或直接加 --refresh-events 让 audio.py 自动重导。")
+    current = event_source_digest(proj)
+    recorded = spec.get("events_hash")
+    if not recorded:
+        if reuse:
+            print("提示：events.json 是旧格式（没有音效指纹），按 --reuse-events 直接使用。", file=sys.stderr)
+        else:
+            print("提示：events.json 是旧格式（没有音效指纹），重导一次（几秒）…", file=sys.stderr)
+            reimport_events(proj)
+            spec = load_events(proj)
+    elif recorded != current:
+        if reuse:
+            print("注意：--reuse-events 跳过了事件表校验；音效时间可能和当前画面差半拍。", file=sys.stderr)
+        else:
+            print("音效时间轴或音效代码改过了（SUBS/SHOTS/sfx/META 有变动），自动重导事件表（几秒）…", flush=True)
+            reimport_events(proj)
+            spec = load_events(proj)
+    elif force:
+        print("--refresh-events：指纹虽然一致，也重导一次。", flush=True)
         reimport_events(proj)
         spec = load_events(proj)
-        recorded = spec.get("source_hash")
-    if not recorded:
-        print("提示：events.json 没有源码指纹（旧版格式）；建议重跑 render.py --events。", file=sys.stderr)
     end = float(spec.get("end") or 0)
     known = {"tick", "soft", "chord", "bloom", "rise", "thud", "tock", "stamp", "shimmer", "hush"}
     for event in spec.get("events") or []:
@@ -223,7 +239,7 @@ def cli_flags(argv):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from render import HELP_TOKENS, print_help, reject_flags
     if any(tok in HELP_TOKENS for tok in argv): print_help(0, __doc__)
-    reject_flags(argv, known={"--bgm", "--wav-only", "--refresh-events"}, scan=False)
+    reject_flags(argv, known={"--bgm", "--wav-only", "--refresh-events", "--reuse-events"}, scan=False)
     if not argv: print_help(0, __doc__)
 
 
@@ -243,6 +259,12 @@ if __name__ == "__main__":
         sys.exit("还没有 renders/raw.mp4（无声全片），无法合成声音。\n"
                  f"  先渲全片：python engine/render.py \"{proj}\"\n"
                  f"  长片用：  python engine/render.py \"{proj}\" --jobs 4")
+    if not wav_only:      # --only 默认不重拼全片：分段比 raw 新，说明声音会配在旧画面上
+        newest = max((p.stat().st_mtime for p in (proj / "renders/_parts").glob("_part*.mp4")), default=0)
+        if newest > raw.stat().st_mtime + 1:
+            print("注意：renders/raw.mp4 比最新分段旧（改过镜头但还没拼片）。\n"
+                  f"  先跑：python engine/render.py \"{proj}\" --concat\n"
+                  "  否则这段声音会配在旧画面上。", file=sys.stderr)
     x = synth(spec, bgm=bool(bgm)); pk = np.abs(x).max() or 1; x = x / pk * 10 ** (-3 / 20)
     wav = proj / "audio/score.wav"; write_wav(wav, x); print("score:", wav, f"{len(x) / SR:.1f}s", len(spec["events"]), "events")
     if wav_only: sys.exit()

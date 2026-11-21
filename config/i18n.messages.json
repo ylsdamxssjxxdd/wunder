@@ -2964,8 +2964,8 @@
     "zh-CN": "要合成的文本内容。"
   },
   "tool.spec.generate_speech.args.path": {
-    "en-US": "Optional workspace-relative output path. Empty means auto-generate under generated_media/.",
-    "zh-CN": "可选，工作区相对输出路径；留空则自动生成到 generated_media/。"
+    "en-US": "Optional workspace-relative output path. Empty means auto-generate under temp/generated_media/.",
+    "zh-CN": "可选，工作区相对输出路径；留空则自动生成到 temp/generated_media/。"
   },
   "tool.spec.generate_speech.args.model_name": {
     "en-US": "Optional TTS model config name. Empty uses the default TTS model.",
@@ -3052,8 +3052,8 @@
     "zh-CN": "提示词。文生图时描述目标画面；编辑或修图时只描述要改动的内容，例如“把背景换成夜景”“去掉右下角的路人”，不要重新描述整张图。"
   },
   "tool.spec.generate_image.args.path": {
-    "en-US": "Optional output path inside the workspace; empty auto-generates under generated_media/. Existing files are not overwritten unless you pass overwrite:true; a directory target, a path outside the workspace, or a path equal to an input image is rejected. workspace_relative_path in the reply is always a normalized workspace-relative path.",
-    "zh-CN": "可选，工作区内的输出路径；留空自动生成到 generated_media/。已存在的文件默认不覆盖（需显式传 overwrite:true）；指向目录、落到工作区之外、与输入图同路径都会被拒绝。回执里的 workspace_relative_path 永远是归一化的相对路径。"
+    "en-US": "Optional output path inside the workspace; empty auto-generates under temp/generated_media/. Existing files are not overwritten unless you pass overwrite:true; a directory target, a path outside the workspace, or a path equal to an input image is rejected. workspace_relative_path in the reply is always a normalized workspace-relative path.",
+    "zh-CN": "可选，工作区内的输出路径；留空自动生成到 temp/generated_media/。已存在的文件默认不覆盖（需显式传 overwrite:true）；指向目录、落到工作区之外、与输入图同路径都会被拒绝。回执里的 workspace_relative_path 永远是归一化的相对路径。"
   },
   "tool.spec.generate_image.args.model_name": {
     "en-US": "Optional image model config name. Empty uses the default image model.",
@@ -3132,8 +3132,8 @@
     "zh-CN": "描述目标视频的提示词。"
   },
   "tool.spec.generate_video.args.path": {
-    "en-US": "Optional workspace-relative output path. Empty means auto-generate under generated_media/.",
-    "zh-CN": "可选，工作区相对输出路径；留空则自动生成到 generated_media/。"
+    "en-US": "Optional workspace-relative output path. Empty means auto-generate under temp/generated_media/.",
+    "zh-CN": "可选，工作区相对输出路径；留空则自动生成到 temp/generated_media/。"
   },
   "tool.spec.generate_video.args.model_name": {
     "en-US": "Optional video model config name. Empty uses the default video model.",

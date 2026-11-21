@@ -23,7 +23,8 @@ updated_at: 2026-11-14
 | --- | --- |
 | Root | the install root (`WUNDER_HOME`; `~/.wunder` by default, marked by `.wunder-home`) |
 | Workspace | `<root>/workspace` |
-| Desktop settings | `<temp>/config/desktop.settings.json` |
+| Temp directory | `<root>/temp` (override with `WUNDER_DESKTOP_TEMP_ROOT` or `--temp-root`) |
+| Desktop settings | `<root>/config/desktop.settings.json` |
 | Sessions and tool logs | local SQLite |
 
 Moving to another machine means copying the whole install root. On startup it scans the work tree (up to 4096 items) and restores tasks that never finished. "Local first" means data stays on your machine; it does not stop you from calling remote models or web pages.

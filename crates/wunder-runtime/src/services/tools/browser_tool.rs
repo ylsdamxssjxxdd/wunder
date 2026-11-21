@@ -23,7 +23,7 @@ use std::sync::OnceLock;
 /// 与 `temp/chat_media/` 同属运行时中间产物，不散落到工作区根上。
 /// 默认文件名是 `browser_shot_<序号>.<ext>`（按目录里的下一个序号），
 /// 调用方传 `path` 则完全由自己命名。
-const BROWSER_SCREENSHOT_DIR: &str = "temp/browser/screenshots";
+const BROWSER_SCREENSHOT_DIR: &str = crate::services::workspace_temp::BROWSER_SCREENSHOTS;
 const MAX_MODEL_SCREENSHOT_BYTES: usize = 8 * 1024 * 1024;
 const MODEL_SCREENSHOT_MAX_WIDTH: u32 = 1280;
 const MODEL_SCREENSHOT_MAX_HEIGHT: u32 = 2000;

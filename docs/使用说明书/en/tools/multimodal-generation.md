@@ -58,7 +58,8 @@ Video generation is issued in synchronous mode.
 The three generation tools write artifacts into the current workspace:
 
 - An explicit output path → write to that relative path; add an extension based on the response type when missing.
-- No output path → `generated_media/<type>_<UTC timestamp>.<ext>`, where the type prefix is `speech` / `image` / `video`.
+- No output path → `temp/generated_media/<type>_<UTC timestamp>.<ext>`, where the type prefix is `speech` / `image` / `video`.
+- The default is workspace scratch space; pass `path` explicitly (e.g. `deliverables/cover.png`) when the artifact must stay as a deliverable.
 - Default extensions: speech `wav`, image `png`, video `mp4`.
 - After writing, return the external presentation path and the workspace-relative path.
 

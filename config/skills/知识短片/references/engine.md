@@ -43,16 +43,18 @@ python engine/render.py <工程> --check-band --band-strict # 连 bloom/辉光�
 python engine/render.py <工程> --overlap                # 命名元素实际相交面积（可用 allow 放行）
 python engine/render.py <工程>                          # 全片 → renders/raw.mp4（无声）
 python engine/render.py <工程> --jobs 4                 # 按镜头切段，最多 4 路并行渲再无损拼接
-python engine/render.py <工程> --only 3                 # 只重渲第 3 镜，再拼全部已完成分段
+python engine/render.py <工程> --only 3                 # 只重渲第 3 镜，只写分段、不重拼全片
+python engine/render.py <工程> --only 3 7 --concat      # 渲完这几镜再拼一次（连改几镜时最后拼一遍）
 python engine/render.py <工程> --parts 0:12 12:30       # 没有 SHOTS 时手动指定分段边界
 python engine/render.py <工程> --concat                 # 拼接 renders/_parts/_part*.mp4（默认保留分段）
 python engine/render.py <工程> --clean-parts            # 拼接成功后删分段（默认保留）
 python engine/render.py <工程> --web                    # 发布转码 → renders/web.mp4（打印体积/码率）
 python engine/render.py --diff A.mp4 B.mp4              # 两版逐帧差分 → A_diff.jpg + 时刻表
 python engine/render.py <工程> --sheet 16 --from renders/final.mp4  # 从成片抽帧拼图（编码后检查）
-python engine/render.py <工程> --events                 # 导出音效事件表 → audio/events.json
+python engine/render.py <工程> --events                 # 导出音效事件表 → audio/events.json（逐帧跑代码，带进度）
 python engine/audio.py  <工程>                          # 合成声音 + 合片 → renders/final.mp4
-python engine/audio.py  <工程> --refresh-events         # 先自动重导事件表再合成
+python engine/audio.py  <工程> --refresh-events         # 强制重导事件表再合成
+python engine/audio.py  <工程> --reuse-events           # 跳过指纹校验，直接用旧事件表（会警告）
 python engine/audio.py  <工程> --bgm 曲子.mp3 -8        # 垫现成配乐（-8 dB），事件音照叠
 ```
 
@@ -61,7 +63,8 @@ python engine/audio.py  <工程> --bgm 曲子.mp3 -8        # 垫现成配乐（
 `--jobs` 每段由子进程自己写 `.done` 标记（工程源码指纹 + 分段区间），父进程被杀时已渲完的段仍然有效；
 默认续渲只跳过指纹一致且非空的分段，`--fresh` 强制全部重渲。分段、日志和 `.done` 都在 `renders/_parts/`（旧工程重跑时自动搬进去），
 `renders/` 根下只留成片；分段默认保留，方便改一镜只重渲一镜，合片成功后脚本会提示可加 `--clean-parts` 清理。
-`--only 3` / `--only 开场` / `--only 26.4:29.1` 只重渲选中段，其余分段保留并自动重拼；第一次用 `--only` 前先跑一次 `--jobs` 把全部分段铺出来。
+`--only 3` / `--only 开场` / `--only 26.4:29.1` 只重渲选中段、只写分段，默认**不**重拼全片——重拼 50 多段是纯等待，
+连改四镜就白等四遍；这一轮改完再 `--concat` 一次，或写成 `--only 3 7 --concat` 渲完顺带拼。第一次用 `--only` 前先跑一次 `--jobs` 把全部分段铺出来。
 `--jobs` 接受 `--jobs 4` 和 `--jobs=4`，不写时按 CPU 核数（最多 4）决定并发；日志里的「渲染 1/N 段」表示其余分段命中 `.done` 被复用，不是并行失效。
 film.js 的 SHOTS 时间窗允许重叠（交叉淡入淡出）；分段时按下一镜起点切分，每镜只保留自己的主区间，不会把重叠镜头合并成一个超长段，`--only 镜号/名字` 因此始终按镜生效。
 日志与临时文件放工程目录（`renders/_parts/_part*.log`），不要放 `/tmp`：容器重启会清空 `/tmp` 并终止后台进程，只有工程里的 `.done` 分段能续渲。
@@ -74,7 +77,8 @@ flat（B）整幅场景都在前景层，默认跳过像素检查；包围盒也
 越界时报告会写出差异 bbox 和附近的命名元素（没有名字就提示可能是手写 ctx/未 `fr.mark`）。
 阈值可用 `--band-diff`（像素差，默认 10）和 `--band-ratio`（面积占比，默认 0.2%）调；默认每 0.5 秒采样一次，
 `--fast` 改为 1 秒（`--overlap` 为 2 秒）。三个检查命令都和渲染共用 `renders/.render.lock`，开跑先打印采样计划与预计耗时，
-每完成约 1/5 打印已用/剩余，看到 ETA 不要重复启动或杀进程。
+每完成约 1/5 打印已用/剩余，看到 ETA 不要重复启动或杀进程。`--lint` / `--events` 开头会打印「扫描 N 帧」再按时间打进度：
+它们要逐帧跑 `draw()` 收集音效，但扫描不出像素，长片也是几秒；一行都不打印才是真的卡住了。
 
 渲染速度单路约每秒 3–6 帧（1080p，截 PNG），`--jobs 4` 四路真并行（按 CPU 核数和内存调，每路约 0.5–1 GB）。3 分钟的片子仍然要十几分钟——所以先看拼图，再渲片段，最后才渲全片。
 **看图不要靠猜，也别绕浏览器。** 截图/检查命令收尾会自动写 `review/index.html`：缩略图网格、按时间倒序、每 5 秒刷新；
@@ -89,7 +93,9 @@ ARM 服务器上单路截帧受单核性能限制，长片优先用 `--jobs`；�
 命令工具的前台等待到 `timeout_s` 时不会杀渲染，而是把它转入后台命令会话继续跑并返回 `command_session_id`；
 看到 `reason: timeout_escalated` 就先轮询会话（带回 `after_seq` 只取新输出），不要重跑。分段渲染中断后，已完成段带 `.done` 标记，
 重跑 `--jobs 4` 默认续渲，或 `--concat` 直接拼接。
-同一工程用 `renders/.render.lock` 做单实例互斥（渲染和检查都算），并行渲染只由父进程派生子进程；产物先写 `.*.tmp-<pid>` 再 `os.replace`，
+同一工程用 `renders/.render.lock` 做单实例互斥（渲染和检查都算），并行渲染只由父进程派生子进程；锁文件里写着
+PID、启动时间和命令，进程不在（或文件是上次被 kill 留下的空文件）就自动接管，不用手工 `rm`，只有主人还活着才报错；
+产物先写 `.*.tmp-<pid>` 再 `os.replace`，
 所以 `renders/raw.mp4`、`_parts/_part*.mp4`、`final.mp4`、`web.mp4` 只要存在就是完整文件。渲染中探测 mp4 会报
 `moov atom not found`，这是文件尚未收尾，不是损坏；判断完成只认同名 `.done`。
 依赖：Python 的 `playwright`（优先用补充包里的 Chrome，其次用 Playwright 自带 Chromium，最后退回系统 Chrome）、`numpy`、`Pillow`，以及 `ffmpeg`（补充包不带 `ffprobe`；读视频信息会自动退回 `ffmpeg -i` 解析，脚本不要再新增 ffprobe 硬依赖）。`audio.py` 只用 numpy，不需要 scipy。
@@ -255,7 +261,10 @@ function urn(fr, t) {
 | `type` | Courier Prime | 打字机文稿 |
 
 **声音事件** 推荐写在 `VK.film({ sfx: [[时刻, 名字, 参数], …] })` 里，和画面代码分开；
-也可以在 `draw` 里调 `fr.sfx(时刻, 名字, 参数)`。同一个（时刻，名字）只记一次；`render.py --events` 会把全片过一遍收集起来。
+也可以在 `draw` 里调 `fr.sfx(时刻, 名字, 参数)`。同一个（时刻，名字）只记一次；`render.py --events` 会把全片逐帧过一遍收集起来。
+逐帧是因为音效常放在“一帧宽”的时间窗里（`t >= 5.7 && t < 5.734`），抽样会漏声；扫描期 `fr.x` 是一个不出像素的上下文
+（几何、变换、字体度量照旧），比真画快 30–150×，长片几秒就能扫完，并且分块打印进度。某个镜头真去读像素时自动退回真画布重扫。
+事件表带 `events_hash`：只算 sfx 代码/声明、`META` 和 `SUBS`/`SHOTS` 的时间数字，改画面不会让它失效。
 名字：`tick`（一声嗒，`pitch` 选音高）`soft` `chord`（`root` 半音偏移）`bloom`（和弦 + 一口气）`rise`（上滑音，`dur`）
 `thud` `tock` `stamp` `shimmer` `hush`（之后彻底静音 `dur` 秒）。都有 `gain`。
 

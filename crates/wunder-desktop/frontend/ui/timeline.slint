@@ -268,6 +268,7 @@ component UserBubble inherits Rectangle {
                     // bubble's own preferred size is a binding loop.
                     if root.data.text != "" : TextInput {
                         text: root.data.text; color: Theme.text; font-size: Theme.font-lg;
+                        line-height-factor: Theme.prose-line;
                         read-only: true; wrap: word-wrap;
                     }
                     // Attachments are the one block kind a user message needs;
@@ -403,14 +404,22 @@ component BodyBlock inherits Rectangle {
     height: body-column.preferred-height;
     body-column := VerticalLayout {
         padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding;
-        padding-top: 6px; padding-bottom: 6px; spacing: 6px;
+        padding-top: 6px; padding-bottom: 6px;
+        // No layout spacing: every block already carries its own gap in
+        // `space-before` (computed in Rust from the previous block). A layout
+        // spacing here was added on top of it, and the +6px hit the tight runs
+        // hardest — a list item designed at 4px actually read at 10px, which is
+        // the "some lists look too airy" report.
+        spacing: 0px;
         // Streaming bodies publish plain text and are parsed into blocks once
-        // the turn settles; keep those deltas visible without a Markdown pass.
+        // the turn settles; keep those deltas visible without a Markdown pass,
+        // on the same leading so settled text does not jump.
         if root.data.blocks.length == 0 && root.data.text != "" : Text {
             width: 100%;
             text: root.data.text;
             color: Theme.text;
             font-size: Theme.font-md;
+            line-height-factor: Theme.prose-line;
             wrap: word-wrap;
         }
         for block in root.data.blocks : BlockView {
@@ -648,6 +657,7 @@ component FoldEntry inherits Rectangle {
                     if root.data.reasoning-blocks.length == 0 : TextInput {
                         text: root.data.detail; read-only: true; wrap: word-wrap;
                         color: Theme.muted; font-size: Theme.font-sm;
+                        line-height-factor: Theme.prose-line;
                     }
                     for block in root.data.reasoning-blocks : BlockView {
                         block: block;
@@ -702,6 +712,7 @@ component FoldEntry inherits Rectangle {
                         if root.data.reasoning-blocks.length == 0 : TextInput {
                             text: root.data.detail; read-only: true; wrap: word-wrap;
                             color: Theme.muted; font-size: Theme.font-sm;
+                            line-height-factor: Theme.prose-line;
                         }
                         for block in root.data.reasoning-blocks : BlockView {
                             block: block;

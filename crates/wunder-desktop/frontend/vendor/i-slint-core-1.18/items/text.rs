@@ -245,6 +245,10 @@ pub struct StyledTextItem {
     pub text: Property<crate::styled_text::StyledText>,
     pub default_color: Property<Brush>,
     pub default_font_size: Property<LogicalLength>,
+    /// Leading multiplier over the face's natural line height. Fork-only: upstream has no way to
+    /// space the lines of a `StyledText` block, which is why block prose used to sit on the bare
+    /// font metrics. Same contract as `Text::line_height_factor`.
+    pub line_height_factor: Property<f32>,
     pub default_font_family: Property<SharedString>,
     pub horizontal_alignment: Property<TextHorizontalAlignment>,
     pub vertical_alignment: Property<TextVerticalAlignment>,
@@ -602,7 +606,7 @@ impl HasFont for StyledTextItem {
             Default::default(),
             self.default_font_size(),
             Default::default(),
-            1.0,
+            self.line_height_factor(),
             Default::default(),
         )
     }

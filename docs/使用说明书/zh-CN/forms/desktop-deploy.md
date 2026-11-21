@@ -23,8 +23,8 @@ updated_at: 2026-11-14
 | --- | --- |
 | 根目录 | 安装根（`WUNDER_HOME`，默认 `~/.wunder`） |
 | 工作区 | `<根目录>/workspace` |
-| 临时目录 | `WUNDER_DESKTOP_TEMP_ROOT` |
-| 桌面设置 | `<temp>/config/desktop.settings.json` |
+| 临时目录 | `<根目录>/temp`（可用 `WUNDER_DESKTOP_TEMP_ROOT` 或 `--temp-root` 覆盖） |
+| 桌面设置 | `<根目录>/config/desktop.settings.json` |
 | 会话与工具日志 | 本地 SQLite |
 
 迁到新机器：复制整个安装根即可。启动时会扫描工作树（最多 4096 项），恢复上次没跑完的任务状态，并清理会话锁与残留任务。

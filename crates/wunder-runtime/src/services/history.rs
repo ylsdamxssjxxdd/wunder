@@ -539,6 +539,11 @@ fn extract_tool_calls_payload(item: &Value) -> Option<Value> {
 /// 模型把整段调用复制回来时，工具边界可以明确拒绝，而不会把占位文字当成正文写盘。
 /// 其它工具仍需保留头部帮助辨认内容，继续用“头 + 省略量”的投影。
 pub(crate) const HISTORY_TOOL_ARGS_MAX_STRING_CHARS: usize = 2_000;
+/// 写类工具（写入文件 / 文本编辑）的正文就是这一轮的交付物，模型下一轮
+/// 往往要基于它继续修改；卡在 2k 会让整文件写入在历史里消失，只能靠回读
+/// 或切成大量小补丁。这里把上限放到 64k 字符：常见的一次性整文件写入在
+/// 历史里保持完整，只有病态大负载才投影成哨兵。
+pub(crate) const HISTORY_WRITE_TOOL_ARGS_MAX_STRING_CHARS: usize = 65_536;
 pub(crate) const HISTORY_TOOL_ARGS_KEEP_HEAD_CHARS: usize = 320;
 const HISTORY_TOOL_ARGS_MAX_DEPTH: usize = 6;
 
@@ -627,7 +632,12 @@ fn elide_long_tool_argument_strings(value: &Value, depth: usize, write_tool: boo
     match value {
         Value::String(text) => {
             let chars = text.chars().count();
-            if chars <= HISTORY_TOOL_ARGS_MAX_STRING_CHARS {
+            let limit = if write_tool {
+                HISTORY_WRITE_TOOL_ARGS_MAX_STRING_CHARS
+            } else {
+                HISTORY_TOOL_ARGS_MAX_STRING_CHARS
+            };
+            if chars <= limit {
                 return value.clone();
             }
             if write_tool {
@@ -680,22 +690,85 @@ fn history_write_arg_elision_marker(chars: usize) -> Value {
     })
 }
 
-/// 参数里是否出现历史投影占位符（对象哨兵或旧版字符串标记）。
+/// 参数里是否出现历史投影占位符（对象哨兵、被序列化成字符串的哨兵，或旧版
+/// 字符串标记）。
 ///
 /// 工具边界用它拦住「模型把上一轮的历史调用原样发回」：占位符不是正文，
 /// 直接落盘会把文件写坏，直接执行则可能把半截脚本交给 shell。
+///
+/// `arguments` 在模型侧是 JSON 字符串，投影后的哨兵常常被模型整段复制成
+/// 字符串正文（`{"__wunder_history_elided__": 7620, "hint": "..."}`）；只认
+/// 对象键会漏掉这种形态，占位文字就会静默落盘。
 pub(crate) fn contains_history_elision(value: &Value) -> bool {
     match value {
         Value::Object(map) => {
-            map.contains_key(HISTORY_ELIDED_ARG_KEY) || map.values().any(contains_history_elision)
+            is_history_elision_object(map) || map.values().any(contains_history_elision)
         }
         Value::Array(items) => items.iter().any(contains_history_elision),
-        Value::String(text) => {
-            text.contains("…[wunder]")
-                && text.contains("characters of this argument were omitted from model history")
-        }
+        Value::String(text) => string_contains_history_elision(text),
         _ => false,
     }
+}
+
+/// 哨兵对象只由「省略字符数 + hint」组成。正文或文档里恰好出现这个键名
+/// （例如说明投影机制的资料、测试夹具）不应被误判成占位符。
+fn is_history_elision_object(map: &serde_json::Map<String, Value>) -> bool {
+    map.contains_key(HISTORY_ELIDED_ARG_KEY)
+        && map
+            .keys()
+            .all(|key| key == HISTORY_ELIDED_ARG_KEY || key == "hint")
+}
+
+fn string_contains_history_elision(text: &str) -> bool {
+    if contains_legacy_elision_marker(text) {
+        return true;
+    }
+    let trimmed = text.trim();
+    if !trimmed.contains(HISTORY_ELIDED_ARG_KEY) {
+        return false;
+    }
+    // 完整复制：整段就是哨兵本体，或整段是被投影过的参数对象。
+    if let Ok(parsed) = serde_json::from_str::<Value>(trimmed) {
+        if matches!(parsed, Value::Object(_) | Value::Array(_)) && contains_history_elision(&parsed)
+        {
+            return true;
+        }
+    }
+    // 截断/拼接后的残片：短、以对象开头、同时带着投影提示，仍按占位符处理。
+    trimmed.len() <= 1024
+        && trimmed.starts_with('{')
+        && trimmed.contains("Omitted from model history")
+}
+
+/// 旧版标记是一整句 `[wunder] <数字> characters of this argument were omitted ...`。
+/// 只在标记与数字紧邻、数字后面紧跟说明句时判定，避免把引用这些文字的
+/// 代码或文档当成占位符（它们通常把两段文字隔开很远）。
+///
+/// 旧版投影最多保留 320 字符头部，所以真正的占位符不会很长；超过 4 KiB 的
+/// 正文即使引用过整句标记，也是源码或文档，不是模型复制的历史参数。
+fn contains_legacy_elision_marker(text: &str) -> bool {
+    const TAG: &str = "[wunder]";
+    const PHRASE: &str = "characters of this argument were omitted from model history";
+    const MAX_MARKER_BYTES: usize = 4_096;
+    if text.len() > MAX_MARKER_BYTES {
+        return false;
+    }
+    let mut rest = text;
+    while let Some(index) = rest.find(TAG) {
+        let after = &rest[index + TAG.len()..];
+        let gap_len = after
+            .char_indices()
+            .take_while(|(_, ch)| ch.is_ascii_digit() || ch.is_whitespace())
+            .map(|(offset, ch)| offset + ch.len_utf8())
+            .last()
+            .unwrap_or(0);
+        let gap = &after[..gap_len];
+        if !gap.trim().is_empty() && after[gap_len..].starts_with(PHRASE) {
+            return true;
+        }
+        rest = after;
+    }
+    false
 }
 
 fn extract_tool_call_id(item: &Value) -> Option<String> {
@@ -1124,7 +1197,7 @@ mod tests {
 
     #[test]
     fn history_projection_replaces_oversized_write_argument_whole() {
-        let body = "x".repeat(HISTORY_TOOL_ARGS_MAX_STRING_CHARS + 500);
+        let body = "x".repeat(HISTORY_WRITE_TOOL_ARGS_MAX_STRING_CHARS + 500);
         let payload = json!([{
             "id": "call_1",
             "type": "function",
@@ -1157,7 +1230,7 @@ mod tests {
 
     #[test]
     fn history_projection_treats_localized_write_tool_names_whole() {
-        let body = "q".repeat(HISTORY_TOOL_ARGS_MAX_STRING_CHARS + 1);
+        let body = "q".repeat(HISTORY_WRITE_TOOL_ARGS_MAX_STRING_CHARS + 1);
         for (name, arguments) in [
             (
                 "写入文件",
@@ -1221,7 +1294,7 @@ mod tests {
 
     #[test]
     fn live_and_rebuilt_tool_call_projections_match_byte_for_byte() {
-        let body = "z".repeat(HISTORY_TOOL_ARGS_MAX_STRING_CHARS + 200);
+        let body = "z".repeat(HISTORY_WRITE_TOOL_ARGS_MAX_STRING_CHARS + 200);
         let calls = json!([{
             "id": "call_live",
             "type": "function",
@@ -1253,7 +1326,7 @@ mod tests {
 
     #[test]
     fn rebuilt_assistant_history_uses_projected_tool_arguments() {
-        let body = "y".repeat(HISTORY_TOOL_ARGS_MAX_STRING_CHARS + 10);
+        let body = "y".repeat(HISTORY_WRITE_TOOL_ARGS_MAX_STRING_CHARS + 10);
         let item = json!({
             "role": "assistant",
             "content": "",
@@ -1297,6 +1370,66 @@ mod tests {
         assert!(!contains_history_elision(
             &json!({ "path": "a.txt", "limit": 20 })
         ));
+    }
+
+    #[test]
+    fn history_projection_keeps_typical_large_write_intact() {
+        // 30 KB 级别的整文件写入不该在历史里消失，否则模型下一轮只能回读，
+        // 或者把本来一次能写完的内容切成大量小补丁。
+        let body = "const line = 1;\n".repeat(2_000);
+        let payload = json!([{
+            "id": "call_big",
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "arguments": json!({ "path": "film.js", "content": body }).to_string()
+            }
+        }]);
+        assert_eq!(project_tool_calls_for_history(&payload), payload);
+    }
+
+    #[test]
+    fn history_elision_marker_is_detected_after_string_serialization() {
+        let sentinel = json!({
+            HISTORY_ELIDED_ARG_KEY: 7_620,
+            "hint": HISTORY_ELIDED_ARG_HINT,
+        });
+        // 事故形态：模型把历史里的哨兵当成字符串正文发回。
+        assert!(contains_history_elision(&json!({
+            "path": "film.js",
+            "content": sentinel.to_string(),
+        })));
+        // 整段被投影过的参数被二次复制。
+        assert!(contains_history_elision(&json!({
+            "raw": json!({ "path": "film.js", "content": sentinel }).to_string(),
+        })));
+        // 截断的残片也要拦住，不能把半行 JSON 写进文件。
+        assert!(contains_history_elision(&json!({
+            "content": "{\"__wunder_history_elided__\": 7620, \"hint\": \"Omitted from model history",
+        })));
+    }
+
+    #[test]
+    fn history_elision_detection_keeps_documents_about_the_marker() {
+        // 文档/源码引用键名和提示文字，不是占位符。
+        assert!(!contains_history_elision(&json!({
+            "content": "The key is __wunder_history_elided__; see Omitted from model history for details.\n",
+        })));
+        // 业务对象里恰好有这个键，但还带其他字段，不是哨兵。
+        assert!(!contains_history_elision(&json!({
+            "content": { HISTORY_ELIDED_ARG_KEY: 1, "hint": "keep", "path": "a.js" },
+        })));
+        // 大文件里引用过旧版标记的整句（例如测试夹具），也不是占位符。
+        let tag = concat!("\u{2026}", "[wunder]");
+        let phrase = concat!(
+            "characters of this argument were omitted ",
+            "from model history"
+        );
+        let quoted = format!(
+            "let sample = \"{tag} 3811 {phrase}.\";\n{}",
+            "x".repeat(5_000)
+        );
+        assert!(!contains_history_elision(&json!({ "content": quoted })));
     }
 
     fn with_language<T>(language: &str, f: impl FnOnce() -> T) -> T {

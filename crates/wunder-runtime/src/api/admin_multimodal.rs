@@ -16,7 +16,9 @@ use std::sync::Arc;
 use tokio::fs;
 use uuid::Uuid;
 
-const GENERATED_MEDIA_DIR: &str = "generated_media";
+/// Admin multimodal probes are scratch output too: default under the
+/// workspace `temp/` root instead of growing `generated_media/` at the top.
+const GENERATED_MEDIA_DIR: &str = crate::services::workspace_temp::GENERATED_MEDIA;
 const DEFAULT_DEBUG_USER_ID: &str = "admin";
 const MAX_MULTIMODAL_UPLOAD_BYTES: usize = 128 * 1024 * 1024;
 

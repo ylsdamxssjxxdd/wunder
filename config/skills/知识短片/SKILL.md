@@ -21,11 +21,11 @@ description: >
 2. **片名卡用区间排。** 片名在 6–24 秒之间出现；用 `K.card(fr, t, { from, to, … })`，不要自己反推 `lt` 和淡出。
 3. **示意要写明。** 比例放大、虚构数值、夸张速度，屏上或台词里必须有一处写"示意"。
 4. **事实带出处。** 年份、人名、数字上屏；最后一屏是片名 + 文献，不放水印和署名。
-5. **声音走一条链。** `--events` → `audio.py`；改完台词必须重导事件表（`audio.py` 会校验，`--refresh-events` 可自动重导）。
+5. **声音走一条链。** `--events` → `audio.py`。事件表带音效指纹，只算 sfx 代码/声明、meta 和 `SUBS`/`SHOTS` 的时间数字：改画面、挪一道光不用重导；真改了台词时间，`audio.py` 会自动重导（几秒，`--reuse-events` 可跳过）。
 6. **不硬切。** 相邻镜头时间窗重叠半秒，各自乘 `ss` 淡入淡出；一镜只改一处。
 7. **先查再渲。** `--lint` → `--sheet`/`--stills` → `--check-safe`/`--overlap` → `--det` → 渲片段 → 全片。
 8. **长片可续。** 全片用 `--jobs 4`；中断后重跑同样的 `--jobs 4`（默认续渲）或 `--concat`，不要从头重渲；发布用 `--web` 转码。
-9. **单实例。** 同一工程同一时刻只允许一个进程使用浏览器或写 `renders/`，渲染和检查都算；脚本用 `renders/.render.lock` 互斥，重复启动会直接报错而不是两个进程抢 CPU 写同一段。产物先写隐藏临时文件再原子改名，`renders/*.mp4` 只要出现就是完整的；判断完成只认 `.done`，不要在渲染中拿 `ffprobe` 探测 mp4（会看到 `moov atom not found`，那不是产物损坏）。
+9. **单实例。** 同一工程同一时刻只允许一个进程使用浏览器或写 `renders/`，渲染和检查都算；脚本用 `renders/.render.lock` 互斥，锁里写着 PID 与启动时间，进程不在了就自动接管（不用手工 `rm`），活着才报错。产物先写隐藏临时文件再原子改名，`renders/*.mp4` 只要出现就是完整的；判断完成只认 `.done`，不要在渲染中拿 `ffprobe` 探测 mp4（会看到 `moov atom not found`，那不是产物损坏）。
 10. **日志留在工程里。** 渲染日志、PID 与临时文件放 `renders/` 或工程目录，不要写 `/tmp`：云端沙盒容器重启会清空 `/tmp` 并终止后台进程，工程目录里的 `.done` 分段才能续渲。
 
 ## 配图不是讲解
@@ -76,7 +76,8 @@ description: >
 - **对着 `references/visualization.md` 第八节的表逐条查**：主体够不够大、认不认得出、发不发白、小字压没压在东西上、字幕区干不干净、转场说不说得清。
 - **至少改两轮再给用户看。** 每一轮：把看到的毛病列出来 → 改 → 重截同样的时刻 → 确认改掉了、没改坏别的。还有毛病就接着改，不要带着自己都看得出的毛病交片。
 - **先算成本再决定改哪里。** 全片重渲很贵，但按镜头分段后改一镜只重渲一镜（`--only 镜号`，默认保留分段）；
-  先做 30 秒、先改最刺眼的那几处，不要因为“全片要跑很久”就放过明显的问题。
+  `--only` 只写分段、不重拼全片（重拼是纯等待，连改四镜就白等四遍），等这一轮都改完再 `--concat` 一次；
+  也可以 `--only 3 7 --concat` 一次渲几镜再拼。先做 30 秒、先改最刺眼的那几处，不要因为“全片要跑很久”就放过明显的问题。
 - **拿参考片当尺子。** 把自己的静帧和 `references/samples.md` 的合格/不合格样张并排看，再对照 `references/visualization.md` 第八节的表。差一截，就还没做完。
 - **交片时说实话。** 还不满意的地方、没做的东西、没完整看过的部分，直接列出来。
 
@@ -216,18 +217,19 @@ python engine/render.py <工程目录> --overlap          # 命名元素实际�
 python engine/render.py <工程目录> --check-safe --fast  # 检查类命令都可加 --fast：间隔翻倍、帧数减半，先粗查再精查
 python engine/render.py <工程目录> --det [样本数]     # 同一帧渲两次必须一样；失败报差异区域、元素名、可疑全局写入
 python engine/render.py <工程目录> --jobs 4           # 按镜头切段，最多 4 路真并行，再无损拼接
-python engine/render.py <工程目录> --only 3           # 只重渲第 3 镜，其余分段保留并自动重拼
+python engine/render.py <工程目录> --only 3           # 只重渲第 3 镜，只写分段，不重拼全片
+python engine/render.py <工程目录> --only 3 7 --concat # 渲完这几镜顺带拼一次（连着改几镜时最后拼一遍）
 python engine/render.py <工程目录> --concat           # 手动拼接全部分段
 python engine/render.py <工程目录> --sheet 16 --from renders/final.mp4  # 从成片抽帧拼图
 ```
 
-检查类命令和渲染共用 `renders/.render.lock`，两个检查不会同时抢 CPU；开跑会打印采样计划，每完成约 1/5 打印已用时间和预计剩余，看到 ETA 别急着杀进程。
+检查类命令和渲染共用 `renders/.render.lock`，两个检查不会同时抢 CPU；开跑会打印采样计划，每完成约 1/5 打印已用时间和预计剩余，看到 ETA 别急着杀进程。`--lint` 和 `--events` 要逐帧跑一遍 `draw()` 收集音效，以前是一声不响的几分钟——现在先打印帧数和进度（扫描只跑代码、不出像素，比真画快几十倍），看不到输出才是真卡住了。
 长片先 `--fast` 粗查，改完再用默认间隔精查一遍。拼图总览是 4×4；帧数超过 4 时另出 `review/sheet_g1.jpg` 等 2×2 大图，存疑时刻看大图或单帧，别在总览的小格上硬猜。
 
 **审片固定走 review 页。** `--sheet` / `--stills` / `--check-safe` / `--det` 收尾都会自动生成 `review/index.html`（缩略图网格，每 5 秒自动刷新）。`--serve` 会把它挂在 `http://127.0.0.1:8765/review/index.html`，浏览器打开一次就能持续看新图；不要再为看图手写 HTML，也不要依赖 file://。读图工具仍可直接打开单张 `review/*.png` / `*.jpg`（工具名就是 `read_image`，别写成 view_image / open_image）。
 
 分段默认放在 `renders/_parts/`（旧工程重跑时会自动搬进去），日志和 `.done` 跟着分段走，`renders/` 根下只留成片。改一镜只重渲一镜；确认不再迭代时加 `--clean-parts` 删掉分段。
-第一次全片用 `--jobs 4` 铺完；之后改哪一镜就 `--only 镜号/名字/时间区间`，不要整片重渲。
+第一次全片用 `--jobs 4` 铺完；之后改哪一镜就 `--only 镜号/名字/时间区间`，不要整片重渲；`--only` 只写分段，改完一轮再 `--concat` 拼一次（要渲完就拼：`--only 3 7 --concat`）。
 命名装置后，检查报告才会写出"船""量尺"这样的名字，否则只能报 `未命名 ellipse`；有意让两个装置相交时，用 allow 放行：
 
 ```js
@@ -245,7 +247,8 @@ python engine/render.py <工程目录> --web              # renders/web.mp4，10
 
 - **C**：`film.js` 里用 `VK.film({ sfx: [[时刻, 名字], …] })` 声明事件（每一下变化一声、推拉时的上滑音、落定时的低音、提问那一镜不出声），
   也可以在 `draw` 里 `fr.sfx(...)`；然后 `python engine/render.py <工程> --events && python engine/audio.py <工程>`。
-  改过台词或镜头时间后，`audio.py` 会拒绝旧事件表；加 `--refresh-events` 让它自动重导，或手动重跑 `--events`。
+  `--events` 逐帧跑 `draw()` 但不出像素，进度一行一行打，长片也就几秒；改画面不会让事件表失效，
+  只有改了 `SUBS`/`SHOTS` 的时间或 sfx 代码，`audio.py` 才会自动重导（`--reuse-events` 可跳过）。
 - **B**：用户给一首配乐，`python engine/audio.py <工程> --bgm 曲子.mp3 -8`。先量配乐的速度，把每段的开头对到小节线上，
   最大的那次揭晓对到配乐重新进入的那一拍。用户没给配乐就说明白：成片目前只有事件音，等配乐。
 - `audio.py` 只用 numpy（滤波器与混响都是频域实现），补充包不再需要 scipy。

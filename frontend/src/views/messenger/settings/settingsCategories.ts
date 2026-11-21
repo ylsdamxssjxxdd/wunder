@@ -124,7 +124,7 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
   agent: {
     icon: 'svg:bot',
     titleKey: 'messenger.settingsPage.cat.agent.title',
-    keywords: ['智能体', '提示词', '欢迎语', '审批', '行为', 'agent', 'prompt', 'approval']
+    keywords: ['智能体', '智能体设置', '提示词', '欢迎语', '审批', '行为', 'agent', 'prompt', 'approval']
   },
   companion: {
     icon: 'svg:paw-print',

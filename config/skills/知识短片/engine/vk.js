@@ -338,13 +338,61 @@ function stars(x, t, n, k) {
   x.restore();
 }
 
+/* ---------- 音效扫描用的“无像素”上下文 ----------
+ * events() 只需要把 draw() 的代码路径跑一遍、收集 fr.sfx(...)，像素一点用都没有。
+ * 真画到 1920×1080 上，一帧要几十毫秒（5000 帧的长片就是 8 分钟纯等待）；
+ * 换成下面这个只记变换、不出像素的上下文，几何、字体度量、代码分支全都照旧，
+ * 快两个数量级。万一某段代码依赖真实像素（自己 getImageData 读回来判断），
+ * 扫描时会抛错，eventsStep 会自动退回真画布从头重扫 —— 结果一样，只是慢。 */
+function scanContext() {
+  let m = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+  const stack = [], noop = () => {}, shade = () => ({ addColorStop: noop });
+  let mc = null;                                  // 量字宽用的是真上下文：排版和出帧一致
+  return {
+    canvas: { width: W, height: H },
+    globalAlpha: 1, globalCompositeOperation: 'source-over', filter: 'none',
+    fillStyle: '#000', strokeStyle: '#000', lineWidth: 1, lineCap: 'butt', lineJoin: 'miter',
+    miterLimit: 10, lineDashOffset: 0, font: '10px sans-serif', letterSpacing: '0px',
+    textAlign: 'start', textBaseline: 'alphabetic', direction: 'ltr',
+    imageSmoothingEnabled: true, imageSmoothingQuality: 'low',
+    shadowColor: 'rgba(0,0,0,0)', shadowBlur: 0, shadowOffsetX: 0, shadowOffsetY: 0,
+    save() { stack.push({ m: Object.assign({}, m), a: this.globalAlpha, op: this.globalCompositeOperation, filter: this.filter }); },
+    restore() { const s = stack.pop(); if (!s) return; m = s.m; this.globalAlpha = s.a; this.globalCompositeOperation = s.op; this.filter = s.filter; },
+    translate(x, y) { m.e += m.a * x + m.c * y; m.f += m.b * x + m.d * y; },
+    scale(x, y) { m.a *= x; m.b *= x; m.c *= y; m.d *= y; },
+    rotate(r) { const cs = Math.cos(r), sn = Math.sin(r), a = m.a, b = m.b, c = m.c, d = m.d; m.a = a * cs + c * sn; m.b = b * cs + d * sn; m.c = c * cs - a * sn; m.d = d * cs - b * sn; },
+    transform(a, b, c, d, e, f) { const na = m.a * a + m.c * b, nb = m.b * a + m.d * b, nc = m.a * c + m.c * d, nd = m.b * c + m.d * d; m.e += m.a * e + m.c * f; m.f += m.b * e + m.d * f; m.a = na; m.b = nb; m.c = nc; m.d = nd; },
+    setTransform(a, b, c, d, e, f) { m = (a && typeof a === 'object') ? { a: a.a, b: a.b, c: a.c, d: a.d, e: a.e, f: a.f } : { a, b, c, d, e, f }; },
+    resetTransform() { m = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }; },
+    getTransform() { return { a: m.a, b: m.b, c: m.c, d: m.d, e: m.e, f: m.f }; },
+    beginPath: noop, closePath: noop, moveTo: noop, lineTo: noop, bezierCurveTo: noop,
+    quadraticCurveTo: noop, arc: noop, arcTo: noop, ellipse: noop, rect: noop, roundRect: noop,
+    fill: noop, stroke: noop, clip: noop, fillRect: noop, strokeRect: noop, clearRect: noop,
+    fillText: noop, strokeText: noop, drawImage: noop, putImageData: noop,
+    isPointInPath: () => false, isPointInStroke: () => false,
+    setLineDash: noop, getLineDash: () => [],
+    measureText(str) {
+      if (!mc) mc = document.createElement('canvas').getContext('2d');
+      mc.font = this.font; if (mc.letterSpacing !== undefined) mc.letterSpacing = this.letterSpacing || '0px';
+      const w = mc.measureText(String(str)).width;
+      return { width: w, actualBoundingBoxLeft: 0, actualBoundingBoxRight: w, actualBoundingBoxAscent: 0, actualBoundingBoxDescent: 0 };
+    },
+    createLinearGradient: shade, createRadialGradient: shade, createConicGradient: shade, createPattern: shade,
+    createImageData(w, h) { return { width: w, height: h, data: new Uint8ClampedArray(Math.max(0, w | 0) * Math.max(0, h | 0) * 4) }; },
+    getImageData(x, y, w, h) { return this.createImageData(w, h); },
+  };
+}
+
 /* ---------- 影片 ---------- */
 function film(spec) {
   const cv = document.getElementById('stage'); cv.width = W; cv.height = H;
   const out = cv.getContext('2d');
   const mk = () => { const c = document.createElement('canvas'); c.width = W; c.height = H; return c; };
   const pool = [];
-  const F = { L: mk(), tmp: () => pool.pop() || mk(), untmp: c => pool.push(c), spec };
+  let scanning = false;                        // 扫描音效时层画布也只给空壳，不做像素
+  const scanCanvas = () => ({ width: W, height: H, getContext: () => scanCtx || (scanCtx = scanContext()) });
+  let scanCtx = null;
+  const F = { L: mk(), tmp: () => scanning ? scanCanvas() : (pool.pop() || mk()), untmp: c => { if (!scanning) pool.push(c); }, spec };
   const small = document.createElement('canvas'); small.width = W / 4; small.height = H / 4; const sx = small.getContext('2d');
   /* 胶片颗粒：几张预生成的噪声，按帧号轮换 */
   const grains = []; { const r = rng(20261006); for (let k = 0; k < 6; k++) { const c = document.createElement('canvas'); c.width = 480; c.height = 270; const gx = c.getContext('2d'), im = gx.createImageData(480, 270); for (let i = 0; i < im.data.length; i += 4) { const v = 128 + (r() - .5) * 2 * 110; im.data[i] = im.data[i + 1] = im.data[i + 2] = v; im.data[i + 3] = 255; } gx.putImageData(im, 0, 0); grains.push(c); } }
@@ -352,6 +400,7 @@ function film(spec) {
   const fps = spec.fps || 30;
   const SFX = [];           // 音效登记：可在 VK.film({ sfx: [[t, 名字, 参数], …] }) 里声明，也可在 scene 里 fr.sfx(...)
   let collecting = false;
+  let scan = null;          // 音效扫描的游标：{ i, total, fast, fallback }
   fr.sfx = (t, name, p) => { if (collecting) SFX.push([+t.toFixed(3), name, p || {}]); };
   fr.theme = spec.theme || 'night';
 
@@ -399,20 +448,59 @@ function film(spec) {
     try { seekInner(t, opts); }
     catch (error) { showError(error); }
   }
-  /* 音效事件表：把全片每帧过一遍，只收集、不出图 */
-  function events() {
+  /* 音效事件表：全片逐帧跑一遍 draw()，只收集 fr.sfx(...)，不出图。
+   * 必须逐帧：film.js 常把 fr.sfx 放进“一帧宽”的时间窗（t >= 5.7 && t < 5.734），
+   * 抽样会漏声。但像素没人要，所以默认走 scanContext（快两个数量级）；
+   * 代码真去读像素时自动退回真画布重扫，结果不变，只是慢。 */
+  function eventsBegin(opts) {
     SFX.length = 0;
     for (const e of Array.isArray(spec.sfx) ? spec.sfx : []) {
       if (Array.isArray(e) && e.length >= 2 && isFinite(+e[0])) SFX.push([+e[0], e[1], e[2] || {}]);
     }
-    collecting = true; const keep = F.L;
-    try {
-      for (let i = 0; i <= spec.dur * fps; i++) {
-        fr.t = i / fps; fr.frame = i; fr.x = keep.getContext('2d'); fr.look = { bgo: {} };
-        spec.draw(fr, i / fps);
+    collecting = true;
+    scanning = (opts && opts.mode) !== 'canvas';
+    scanCtx = null; G.__vkScanFallback = null;
+    scan = { i: 0, total: Math.floor(spec.dur * fps) + 1, fast: scanning, fallback: null };
+    return scan.total;
+  }
+  function scanFrame(i) {
+    fr.t = i / fps; fr.frame = i;
+    fr.x = scan.fast ? (scanCtx || (scanCtx = scanContext())) : F.L.getContext('2d');
+    fr.look = { bgo: {}, bloom: 0, grain: 0, post: null };   // 扫描期不合成，也没有底
+    fr.clips = []; fr.rec = null; fr.markName = ''; fr.markAllow = null; fr.solid = false;
+    spec.draw(fr, i / fps);
+  }
+  /* 分块扫描：render.py 每扫一块打一行进度，长片也看得见还在动。 */
+  function eventsStep(n) {
+    if (!scan) return 0;
+    while (scan.i < scan.total && n-- > 0) {
+      try { scanFrame(scan.i++); }
+      catch (error) {
+        if (!scan.fast) throw error;
+        scan.fallback = String((error && error.message) || error);
+        G.__vkScanFallback = scan.fallback;
+        scan.fast = false; scanning = false; scan.i = 0; SFX.length = 0;
+        for (const e of Array.isArray(spec.sfx) ? spec.sfx : []) {
+          if (Array.isArray(e) && e.length >= 2 && isFinite(+e[0])) SFX.push([+e[0], e[1], e[2] || {}]);
+        }
       }
-    } finally { collecting = false; }
-    const seen = new Set(), uniq = []; SFX.forEach(e => { const k = e[0] + e[1]; if (!seen.has(k)) { seen.add(k); uniq.push(e); } }); uniq.sort((a, b) => a[0] - b[0]); return uniq;
+    }
+    return scan.i;
+  }
+  function eventsEnd() {
+    collecting = false; scanning = false;
+    const fallback = scan && scan.fallback;
+    scan = null; scanCtx = null;
+    fr.x = F.L.getContext('2d');
+    const seen = new Set(), uniq = []; SFX.forEach(e => { const k = e[0] + e[1]; if (!seen.has(k)) { seen.add(k); uniq.push(e); } });
+    uniq.sort((a, b) => a[0] - b[0]);
+    if (fallback) G.__vkScanFallback = fallback;
+    return uniq;
+  }
+  function events() {
+    const total = eventsBegin();
+    eventsStep(total + 1);
+    return eventsEnd();
   }
   /* 某一帧的元素包围盒（给 --check-safe / --overlap / --mark 用）：
    * 同名 mark 合并成一个框（parts 保留逐图元的框），未命名的图元各自成条。 */
@@ -447,6 +535,8 @@ function film(spec) {
   }
 
   G.seek = seek; G.END = spec.dur; G.FPS = fps; G.events = events; G.recordFrame = recordFrame;
+  /* 分块扫描：render.py 用这三个跑 --events / --lint 并打印进度（events() 仍保留，一次扫完）。 */
+  G.__vkEventsBegin = eventsBegin; G.__vkEventsStep = eventsStep; G.__vkEventsEnd = eventsEnd;
   G.META = spec.meta || {}; G.SHOTS = spec.shots || null; G.SUBS = spec.subs || null;
   G.__vkState = { ready: false, t: 0, frame: 0, error: null, mode: 'still' };
   G.__vkBackground = background; G.__vkTheme = spec.theme || 'night';

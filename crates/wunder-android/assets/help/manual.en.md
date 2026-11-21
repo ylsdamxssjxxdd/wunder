@@ -67,7 +67,7 @@ The local AI workbench and the default entry point for individual users: it runs
 
 - **Two pages only**: Chat and Settings. Every other capability is a panel or dialog on demand, and does not change the two-column layout.
 - **Chat page**: the left column holds the task and thread tree, the working directory (local file tree, usage bar, cloud workspaces) and the settings entry; the right column holds the header (workspace / thread name), the timeline and the composer. With no thread selected the right side shows a welcome page.
-- **Settings, 11 categories**: General, Local runtime, Account, Models, Tool management, Agent settings, Companions, Scheduled tasks, Memory fragments, Channels, Archived threads. Help sits inside General; the category list is searchable.
+- **Settings, 11 categories**: General, Runtime, Account, Models, Tool management, Agent, Companions, Scheduled tasks, Memory fragments, Channels, Archived threads. Help sits inside General; the category list is searchable.
 - **Panels and dialogs**: interactive terminal, tool management (built-in / MCP / skills / knowledge base), companions, workspaces, working directory, thread trajectory, subagent details, channels, schedules, expert data, patch diff cards, screenshot overlay, tray and notifications, remote-command approval.
 
 <!-- topic id="forms-desktop-deploy" block="forms" title="Deployment" group="Desktop" keywords="Desktop Deployment,OS and installer" -->
@@ -201,7 +201,7 @@ The cloud AI workbench, delivered with the Server: once the Server is deployed, 
 *Cloud: the single-page app in a browser — left column, timeline and composer.*
 
 - **Three columns**: the left column holds new tasks, search, the workspace and thread tree, the working directory and the settings entry; the right column holds the chat header, timeline and composer; overlays carry file preview, online editing and companions.
-- **10 settings categories**: General, Account, Tool management, Agent settings, Companions, Scheduled tasks, Memory fragments, Channels, My devices, Archived threads. Tool management splits into built-in / MCP / skills / knowledge base; My devices is the device-interlink entry, and command approvals pop up inline in the timeline.
+- **10 settings categories**: General, Account, Tool management, Agent, Companions, Scheduled tasks, Memory fragments, Channels, My devices, Archived threads. Tool management splits into built-in / MCP / skills / knowledge base; My devices is the device-interlink entry, and command approvals pop up inline in the timeline.
 - **Composer**: message input (slash commands work too), attachments, send / stop, model switching, approval mode (suggest / auto-edit / full-auto, full-auto by default) and thinking level (grey follows the model; empty / half / full).
 - **Timeline**: each reply folds its thinking, tool batches and interim prints under "work process"; the latest turn is expanded by default. States are running / waiting (needs your input or approval) / done.
 - **Slash commands**: `/new`, `/stop`, `/compact`, `/help`, `/goal`.

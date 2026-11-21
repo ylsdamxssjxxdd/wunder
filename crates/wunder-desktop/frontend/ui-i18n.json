@@ -4745,8 +4745,8 @@
  },
  {
   "key": "st_subtitle",
-  "zh": "本地运行时、工作目录和模型配置",
-  "en": "Local runtime, working directory and models"
+  "zh": "运行时、工作目录和模型",
+  "en": "Runtime, working directory and models"
  },
  {
   "key": "st_items",
@@ -4765,13 +4765,13 @@
  },
  {
   "key": "st_tab_models",
-  "zh": "模型配置",
+  "zh": "模型",
   "en": "Models"
  },
  {
   "key": "st_tab_runtime",
-  "zh": "本地运行时",
-  "en": "Local runtime"
+  "zh": "运行时",
+  "en": "Runtime"
  },
  {
   "key": "st_tab_tools",
@@ -4820,7 +4820,7 @@
  },
  {
   "key": "stc_models",
-  "zh": "模型设置",
+  "zh": "模型",
   "en": "Models"
  },
  {
@@ -4850,7 +4850,7 @@
  },
  {
   "key": "stc_agent",
-  "zh": "智能体设置",
+  "zh": "智能体",
   "en": "Agent"
  },
  {

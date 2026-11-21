@@ -22,7 +22,10 @@ component ProcessEntryCard inherits Rectangle {
         spacing: 0px;
         if root.entry.kind == 1 : VerticalLayout {
             padding-left: 24px; padding-right: 24px;
-            padding-top: 6px; padding-bottom: 6px; spacing: 6px;
+            padding-top: 6px; padding-bottom: 6px;
+            // `space-before` on each block is the whole gap; a layout spacing
+            // here double-counted it (see timeline.slint).
+            spacing: 0px;
             for block in root.entry.blocks : BlockView {
                 block: block;
                 mobile: root.mobile;

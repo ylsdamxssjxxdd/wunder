@@ -894,6 +894,56 @@ async fn history_placeholders_are_rejected_before_any_write_or_exec() {
         "placeholder must never reach disk"
     );
 
+    // 事故形态：哨兵被序列化成字符串后原样发回，也必须拦下。
+    let serialized = invoke(
+        &fixture,
+        "write_file",
+        json!({
+            "path": "broken/serialized.txt",
+            "content": json!({
+                "__wunder_history_elided__": 7620,
+                "hint": "Omitted from model history; the argument was already applied."
+            }).to_string()
+        }),
+    )
+    .await;
+    assert_eq!(serialized["ok"], false, "{serialized}");
+    assert_eq!(
+        serialized["error_meta"]["code"],
+        json!("TOOL_ARG_HISTORY_PLACEHOLDER")
+    );
+    assert!(!fixture.workspace_path("broken/serialized.txt").exists());
+
+    // 同一形态在命令工具里也用同一口径拒绝，不再一个拒绝、一个照样执行。
+    let command_serialized = invoke(
+        &fixture,
+        "exec_command",
+        json!({
+            "command": json!({
+                "__wunder_history_elided__": 3268,
+                "hint": "Omitted from model history; the argument was already applied."
+            }).to_string()
+        }),
+    )
+    .await;
+    assert_eq!(command_serialized["ok"], false, "{command_serialized}");
+    assert_eq!(
+        command_serialized["error_meta"]["code"],
+        json!("TOOL_ARG_HISTORY_PLACEHOLDER")
+    );
+
+    // 正文里只是引用键名，不是哨兵对象：不能误拦正常写入。
+    let documented = invoke(
+        &fixture,
+        "write_file",
+        json!({
+            "path": "notes/marker-doc.txt",
+            "content": "history elision key: __wunder_history_elided__\n"
+        }),
+    )
+    .await;
+    assert_eq!(documented["ok"], true, "{documented}");
+
     // 旧版字符串标记（历史数据里仍可能存在）同样拦下。
     let legacy = invoke(
         &fixture,

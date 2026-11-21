@@ -52,6 +52,6 @@ The `wait` action reads desktop windows and screen state. Give a wait duration (
 
 - **Actions are real input injection with no rollback.** `left_hold` and `left_release` must be used in pairs, or the mouse state may be left dangling; `drag_drop` is press, smooth move, release.
 - Coordinates change with resolution; normalized coordinates only guarantee consistency between one observation and the action that follows it, so observe again after switching screens or changing resolution.
-- A screenshot is also saved to the user's container directory; a persistence failure only logs a warning and does not affect the result.
+- A screenshot is also copied into the user container at `temp/desktop_control/<session>/`; a persistence failure only logs a warning and does not affect the result.
 - The screenshot directory keeps frames by count, holding only the most recent few (3 by default), so temporary files do not pile up without bound.
 - Authorization follows least privilege: it needs an explicit user switch, it does not silently capture the screen in the background, and it does not expose system capabilities to a remote party.
