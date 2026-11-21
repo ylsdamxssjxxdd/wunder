@@ -861,10 +861,12 @@ fn fit_and_center_main_window(app: &MainWindow) {
 /// of the Microsoft YaHei the layout tokens were tuned on — so the transcript
 /// leading keeps working without retuning.
 ///
-/// DejaVu Sans is appended behind it as a pure glyph fallback. MiSans ships no
-/// glyph for `⚠ ⌘ ☑ ☐ ☁ ⊞ ⊟ ✦ ◉ ❖` (nor did the YaHei it replaces), and every
-/// one of those rendered as tofu. MiSans still wins every character both faces
-/// cover, Latin included, because the generic family list is ordered.
+/// DejaVu Sans and Noto Emoji are appended behind it as pure glyph fallbacks.
+/// MiSans ships no glyph for `⚠ ⌘ ☑ ☐ ☁ ⊞ ⊟ ✦ ◉ ❖` (nor did the YaHei it
+/// replaces), and no emoji at all; the software renderer can only rasterise
+/// outlines, so a colour emoji font would leave the emoji blank. MiSans still
+/// wins every character the chain covers, Latin included, because the generic
+/// family list is ordered.
 pub(crate) fn register_bundled_font() -> Result<(), Box<dyn std::error::Error>> {
     use slint::fontique_011::fontique;
 
@@ -872,19 +874,24 @@ pub(crate) fn register_bundled_font() -> Result<(), Box<dyn std::error::Error>> 
     startup_point("font_collection_ready");
     let text = bundled_font::misans();
     let symbols = bundled_font::dejavu();
+    let emoji = bundled_font::noto_emoji();
     startup_point("font_decompressed");
     let registered =
         collection.register_fonts(fontique::Blob::new(std::sync::Arc::new(text)), None);
-    // A missing symbol face is not fatal: the shell then keeps the pre-existing
+    // Missing fallbacks are not fatal: the shell then keeps the pre-existing
     // gaps instead of failing to start over a decorative glyph.
-    let fallback = collection.register_fonts(fontique::Blob::new(std::sync::Arc::new(symbols)), None);
+    let symbol_families =
+        collection.register_fonts(fontique::Blob::new(std::sync::Arc::new(symbols)), None);
+    let emoji_families =
+        collection.register_fonts(fontique::Blob::new(std::sync::Arc::new(emoji)), None);
     startup_point("font_registered");
     let families: Vec<_> = registered.iter().map(|(family, _)| *family).collect();
     if families.is_empty() {
         return Err("内嵌 MiSans 注册失败".into());
     }
     let mut chain = families.clone();
-    chain.extend(fallback.iter().map(|(family, _)| *family));
+    chain.extend(symbol_families.iter().map(|(family, _)| *family));
+    chain.extend(emoji_families.iter().map(|(family, _)| *family));
     for generic in [
         fontique::GenericFamily::SansSerif,
         fontique::GenericFamily::SystemUi,
@@ -892,6 +899,27 @@ pub(crate) fn register_bundled_font() -> Result<(), Box<dyn std::error::Error>> 
     ] {
         collection.set_generic_families(generic, chain.iter().copied());
     }
+    // Emoji are drawn, not substituted: naming the face for the emoji generic
+    // family is what stops a codepoint from falling through to a bitmap-only
+    // system font the software renderer cannot rasterise.
+    if !emoji_families.is_empty() {
+        collection.set_generic_families(
+            fontique::GenericFamily::Emoji,
+            emoji_families.iter().map(|(family, _)| *family),
+        );
+    }
+    // Text that names MiSans explicitly does not walk the generic list when a
+    // glyph is missing: parley asks the collection for the fallback families of
+    // the character's script instead. Symbols and emoji are Common script, so
+    // that is the list the two fallback faces have to join — otherwise a ⚠ or a
+    // 🎉 inside a message still draws as a blank cell even though the faces are
+    // registered.
+    let mut symbol_chain: Vec<_> = symbol_families.iter().map(|(family, _)| *family).collect();
+    symbol_chain.extend(emoji_families.iter().map(|(family, _)| *family));
+    collection.set_fallbacks(
+        fontique::FallbackKey::new(fontique::Script::from_str_unchecked("Zyyy"), None),
+        symbol_chain.iter().copied(),
+    );
     collection.append_fallbacks(
         fontique::FallbackKey::new(fontique::Script::from_str_unchecked("Hani"), None),
         families.iter().copied(),
@@ -903,6 +931,8 @@ mod bundled_font {
     static MISANS_LZ4: &[u8] =
         include_bytes!(concat!(env!("OUT_DIR"), "/MiSans-Regular.ttf.lz4"));
     static DEJAVU_LZ4: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/DejaVuSans.ttf.lz4"));
+    static NOTO_EMOJI_LZ4: &[u8] =
+        include_bytes!(concat!(env!("OUT_DIR"), "/NotoEmoji-Regular.ttf.lz4"));
 
     /// UI copy. Decompressed once, on the first call, and kept for the process
     /// lifetime because fontique borrows the bytes.
@@ -924,6 +954,17 @@ mod bundled_font {
             })
             .as_slice()
     }
+
+    /// Monochrome emoji face, same lifecycle as [`misans`].
+    pub fn noto_emoji() -> &'static [u8] {
+        static DECOMPRESSED: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+        DECOMPRESSED
+            .get_or_init(|| {
+                lz4_flex::decompress_size_prepended(NOTO_EMOJI_LZ4)
+                    .expect("内嵌 Noto Emoji 解压失败")
+            })
+            .as_slice()
+    }
 }
 
 #[cfg(test)]
@@ -933,7 +974,6 @@ mod bundled_font_tests {
     //! empty boxes. These assertions run against the real embedded blobs.
 
     use super::register_bundled_font;
-    use slint::fontique_011::fontique;
 
     #[test]
     fn bundled_faces_register_in_priority_order() {
@@ -944,22 +984,86 @@ mod bundled_font_tests {
         let symbols = collection
             .family_id("DejaVu Sans")
             .expect("DejaVu Sans family");
+        let emoji = collection
+            .family_id("Noto Emoji")
+            .expect("Noto Emoji family");
+        let chain = [text, symbols, emoji];
 
-        // Asking the chain for a symbol MiSans has no glyph for must reach the
-        // DejaVu face; that is the whole reason it is bundled.
+        // The two fallbacks exist for glyphs MiSans has none of: a warning sign
+        // DejaVu carries, and an emoji only the monochrome face draws. If either
+        // one stopped resolving, users would see blank cells mid-sentence.
+        for (label, ch) in [("⚠", '⚠'), ("🎉", '🎉'), ("🚀", '🚀')] {
+            assert!(
+                chain_covers(&mut collection, &chain, ch),
+                "{label} has no glyph in the bundled face chain"
+            );
+        }
+
+        // The path the shaper actually takes for text that names MiSans: the
+        // family stack is just MiSans, and a missing glyph is resolved through
+        // the fallback families of the character's script — Common, for both
+        // symbols and emoji. One test covers both paths because the shared font
+        // collection may only be initialised once per process.
+        for (label, ch) in [("⚠", '⚠'), ("⌘", '⌘'), ("☑", '☑'), ("🎉", '🎉'), ("🚀", '🚀')] {
+            assert!(
+                script_fallback_covers(&mut collection, text, ch),
+                "{label} is not reachable through the Common-script fallback"
+            );
+        }
+    }
+
+    fn script_fallback_covers(
+        collection: &mut slint::fontique_011::fontique::Collection,
+        family: slint::fontique_011::fontique::FamilyId,
+        target: char,
+    ) -> bool {
+        use slint::fontique_011::fontique;
+
         let mut cache = fontique::SourceCache::default();
         let mut query = collection.query(&mut cache);
-        query.set_families([text, symbols]);
+        query.set_families(core::iter::once(family));
+        query.set_fallbacks(fontique::FallbackKey::new(
+            fontique::Script::from_str_unchecked("Zyyy"),
+            None,
+        ));
         let mut covered = false;
         query.matches_with(|font| {
-            if font.charmap().is_some_and(|charmap| charmap.map('⚠').is_some()) {
+            if font
+                .charmap()
+                .is_some_and(|charmap| charmap.map(target).is_some())
+            {
                 covered = true;
                 fontique::QueryStatus::Stop
             } else {
                 fontique::QueryStatus::Continue
             }
         });
-        assert!(covered, "⚠ has no glyph in the bundled face chain");
+        covered
+    }
+
+    fn chain_covers(
+        collection: &mut slint::fontique_011::fontique::Collection,
+        families: &[slint::fontique_011::fontique::FamilyId],
+        target: char,
+    ) -> bool {
+        use slint::fontique_011::fontique;
+
+        let mut cache = fontique::SourceCache::default();
+        let mut query = collection.query(&mut cache);
+        query.set_families(families.iter().copied());
+        let mut covered = false;
+        query.matches_with(|font| {
+            if font
+                .charmap()
+                .is_some_and(|charmap| charmap.map(target).is_some())
+            {
+                covered = true;
+                fontique::QueryStatus::Stop
+            } else {
+                fontique::QueryStatus::Continue
+            }
+        });
+        covered
     }
 }
 

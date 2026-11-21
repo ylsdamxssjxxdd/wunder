@@ -1520,7 +1520,15 @@ impl Item for TextInput {
         size: LogicalSize,
     ) -> RenderingResult {
         crate::properties::evaluate_no_tracking(|| {
-            if self.has_focus() && self.text() != *backend.window().last_ime_text.borrow() {
+            // Same reason as `update_ime`: while the IME composes, `text` excludes the
+            // composition, so publishing it makes the Android backend rewrite the editable
+            // and destroy the composition under the user's eyes. Only the composed text is
+            // excluded here; a real edit made while composing shows up on commit.
+            let composing = cfg!(target_os = "android") && !self.preedit_text().is_empty();
+            if self.has_focus()
+                && !composing
+                && self.text() != *backend.window().last_ime_text.borrow()
+            {
                 let window_adapter = &backend.window().window_adapter();
                 if let Some(w) = window_adapter.internal(crate::InternalToken) {
                     w.input_method_request(InputMethodRequest::Update(
@@ -2005,6 +2013,16 @@ impl TextInput {
         self_rc: &ItemRc,
     ) {
         if self.read_only() || !self.has_focus() {
+            return;
+        }
+        // 组词期间不要把 `text` 回推给平台。Android 后端拿到 `text` 后会用它
+        // 重写输入连接里的 Editable，而 `text` 不含正处于组词状态的拼音/英文，
+        // 于是每次组词更新都会把 Editable 里的组合区整个抹掉：组合永远攒不
+        // 起来，只有提交（中文单字）那一下才落到正文，英文单词就一直「不落下」。
+        // 组词期间唯一的真相在输入法那边，撤销、光标都由它自己维护；提交时它
+        // 会把最终文本连同选区一起交回来，那次 `update_ime` 才需要同步。
+        #[cfg(target_os = "android")]
+        if !self.preedit_text().is_empty() {
             return;
         }
         if let Some(w) = window_adapter.internal(crate::InternalToken) {

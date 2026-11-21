@@ -11,7 +11,6 @@ use std::path::Path;
 use std::str::FromStr;
 use tokio::fs;
 use tracing::warn;
-use uuid::Uuid;
 
 const CHAT_ATTACHMENT_DIR: &str = "chat_attachments";
 const MAX_PERSIST_BYTES: usize = 10 * 1024 * 1024;
@@ -81,9 +80,9 @@ pub async fn persist_user_chat_attachments(
         {
             attachment.content_type = Some(mime_type.clone());
         }
-        let filename = build_attachment_filename(attachment.name.as_deref(), &mime_type);
-        let relative = format!("{base_dir}/{filename}");
-        let dest = match workspace.resolve_path(&workspace_id, &relative) {
+        let (stem, extension) =
+            attachment_stem_and_extension(attachment.name.as_deref(), &mime_type);
+        let directory = match workspace.resolve_path(&workspace_id, &base_dir) {
             Ok(path) => path,
             Err(err) => {
                 warn!(
@@ -93,22 +92,36 @@ pub async fn persist_user_chat_attachments(
                 continue;
             }
         };
-        if let Some(parent) = dest.parent() {
-            if let Err(err) = fs::create_dir_all(parent).await {
-                warn!(
-                    "chat attachment create dir failed: user_id={}, session_id={}, error={err}",
-                    user_id, session_id
-                );
-                continue;
-            }
-        }
-        if let Err(err) = fs::write(&dest, &bytes).await {
+        if let Err(err) = fs::create_dir_all(&directory).await {
             warn!(
-                "chat attachment persist failed: user_id={}, session_id={}, error={err}",
+                "chat attachment create dir failed: user_id={}, session_id={}, error={err}",
                 user_id, session_id
             );
             continue;
         }
+        let target_dir = directory.clone();
+        let written = crate::core::blocking::run_cpu(
+            "chat_attachment_persist",
+            move || -> Result<std::path::PathBuf> {
+                Ok(crate::services::workspace_temp::write_numbered_file(
+                    &target_dir,
+                    &stem,
+                    &extension,
+                    &bytes,
+                )?)
+            },
+        )
+        .await;
+        let dest = match written {
+            Ok(path) => path,
+            Err(err) => {
+                warn!(
+                    "chat attachment persist failed: user_id={}, session_id={}, error={err}",
+                    user_id, session_id
+                );
+                continue;
+            }
+        };
         let public_path = workspace.display_path(&workspace_id, &dest);
         attachment.public_path = Some(public_path);
     }
@@ -220,7 +233,7 @@ fn image_format_for_model_image(mime_type: &str) -> Option<ImageFormat> {
     }
 }
 
-fn build_attachment_filename(raw_name: Option<&str>, mime_type: &str) -> String {
+fn attachment_stem_and_extension(raw_name: Option<&str>, mime_type: &str) -> (String, String) {
     let fallback_stem = if mime_type.to_ascii_lowercase().starts_with("audio/") {
         "audio"
     } else {
@@ -233,15 +246,10 @@ fn build_attachment_filename(raw_name: Option<&str>, mime_type: &str) -> String 
         stem_raw.as_str()
     };
     let stem = sanitize_filename_stem(stem_source);
-    let mut ext = ext_raw.or_else(|| extension_from_mime(mime_type));
-    if ext.is_none() {
-        ext = Some("bin".to_string());
-    }
-    let suffix = Uuid::new_v4().simple().to_string();
-    format!(
-        "{stem}_{suffix}.{}",
-        ext.unwrap_or_else(|| "bin".to_string())
-    )
+    let extension = ext_raw
+        .or_else(|| extension_from_mime(mime_type))
+        .unwrap_or_else(|| "bin".to_string());
+    (stem, extension)
 }
 
 fn split_filename(name: &str) -> (String, Option<String>) {

@@ -17,14 +17,66 @@ pub fn save(
     }
     let directory = std::env::temp_dir().join("wunder-screenshots");
     std::fs::create_dir_all(&directory).map_err(|error| format!("无法创建图片目录：{error}"))?;
-    let name = format!("{name_prefix}-{}.png", timestamp());
-    std::fs::write(directory.join(&name), &png)
-        .map_err(|error| format!("无法保存图片：{error}"))?;
+    let prefix = name_prefix
+        .trim()
+        .trim_end_matches(|ch| ch == '-' || ch == '_');
+    let prefix = if prefix.is_empty() { "image" } else { prefix };
+    let (mut file, name) = create_numbered_file(&directory, prefix, "png")?;
+    std::io::Write::write_all(&mut file, &png).map_err(|error| format!("无法保存图片：{error}"))?;
+    drop(file);
     let data_url = format!(
         "data:image/png;base64,{}",
         base64::engine::general_purpose::STANDARD.encode(png)
     );
     Ok((name, data_url))
+}
+
+/// Create the next free `<prefix>_<n>.png` in the staging directory.
+///
+/// The composer shows this name and the runtime keeps it when the image is
+/// persisted, so a screenshot reads as `screenshot_1.png` instead of a
+/// millisecond timestamp the user cannot refer to later.
+fn create_numbered_file(
+    directory: &std::path::Path,
+    prefix: &str,
+    extension: &str,
+) -> Result<(std::fs::File, String), String> {
+    let mut index = next_index(directory, prefix);
+    for _ in 0..4096 {
+        let name = format!("{prefix}_{index}.{extension}");
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(directory.join(&name))
+        {
+            Ok(file) => return Ok((file, name)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                index = index.saturating_add(1);
+            }
+            Err(error) => return Err(format!("无法保存图片：{error}")),
+        }
+    }
+    Err("无法保存图片：没有可用的文件名".into())
+}
+
+fn next_index(directory: &std::path::Path, prefix: &str) -> u32 {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return 1;
+    };
+    let prefix = format!("{prefix}_");
+    let mut max = 0u32;
+    for entry in entries.flatten().take(4096) {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(rest) = name.strip_prefix(&prefix) else {
+            continue;
+        };
+        let stem = rest.split('.').next().unwrap_or(rest);
+        if let Ok(index) = stem.parse::<u32>() {
+            max = max.max(index);
+        }
+    }
+    max.saturating_add(1)
 }
 
 /// Append one image to the composer. Returns whether it was accepted; when the
@@ -73,11 +125,4 @@ pub fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, Strin
         .finish()
         .map_err(|error| format!("PNG 收尾失败：{error}"))?;
     Ok(bytes)
-}
-
-fn timestamp() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|value| value.as_millis())
-        .unwrap_or_default()
 }

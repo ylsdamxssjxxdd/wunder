@@ -23,4 +23,4 @@ The local AI workbench and the default entry point for individual users: it runs
 
 ## Fonts
 
-The interface sets its copy in MiSans, a free-for-commercial-use typeface from Xiaomi, with DejaVu Sans behind it for symbols MiSans does not carry. Both faces ship inside the executable, so the target machine needs no installed Chinese font, and any character both faces cover is drawn by MiSans. This keeps the desktop and Android Chinese typesetting identical, and keeps the glyphs independent of the system language setting.
+The interface sets its copy in MiSans, a free-for-commercial-use typeface from Xiaomi, with DejaVu Sans behind it for symbols MiSans does not carry and monochrome Noto Emoji for emoji (the desktop software renderer cannot rasterise colour emoji, so emoji are drawn in black and white). Both faces ship inside the executable, so the target machine needs no installed Chinese font, and any character both faces cover is drawn by MiSans. This keeps the desktop and Android Chinese typesetting identical, and keeps the glyphs independent of the system language setting.

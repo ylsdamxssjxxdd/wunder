@@ -858,7 +858,11 @@ impl MemoryFragmentStore {
             .collect::<Vec<_>>();
         meta_lines.extend(lines);
         let lines = meta_lines;
-        format!("{}\n{}", i18n::prompt_t("memory.block_prefix"), lines.join("\n"))
+        format!(
+            "{}\n{}",
+            i18n::prompt_t("memory.block_prefix"),
+            lines.join("\n")
+        )
     }
 
     fn load_active_fragments_for_prompt(

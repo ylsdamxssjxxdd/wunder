@@ -15,6 +15,7 @@ mod render;
 mod runtime;
 mod session_header;
 mod slash_command;
+mod terminal_geometry;
 mod terminal_title;
 mod tool_display;
 mod tool_presentation;
@@ -3689,6 +3690,38 @@ async fn handle_doctor(
                 "- config_exists: {}",
                 runtime.wunder_home.join("config/wunder.yaml").exists()
             )
+        }
+    );
+
+    // The welcome head is drawn for the terminal's real cell shape; a head that
+    // reads as squeezed is almost always this number being wrong, so report it
+    // instead of leaving it to guesswork.
+    let columns = crossterm::terminal::size().map_or(80, |(columns, _)| columns);
+    let avatar = match crate::empty_state_animation::avatar_geometry(
+        columns,
+        runtime.wunder_home.as_path(),
+    ) {
+        Some((aspect, width, rows)) => {
+            if is_zh {
+                format!("格子高宽比 {aspect:.2}，{columns} 列终端画 {width}×{rows} 格")
+            } else {
+                format!("cell aspect {aspect:.2}, head {width}x{rows} cells at {columns} columns")
+            }
+        }
+        None => {
+            if is_zh {
+                format!("{columns} 列终端太窄，只画标题文字")
+            } else {
+                format!("{columns} columns is too narrow for the head")
+            }
+        }
+    };
+    println!(
+        "{}",
+        if is_zh {
+            format!("- 欢迎头像: {avatar}")
+        } else {
+            format!("- welcome_avatar: {avatar}")
         }
     );
 

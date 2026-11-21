@@ -2170,8 +2170,14 @@ mod tests {
         assert_eq!(workspace_download_content_type("talk.opus"), "audio/ogg");
         assert_eq!(workspace_download_content_type("movie.mp4"), "video/mp4");
         assert_eq!(workspace_download_content_type("movie.webm"), "video/webm");
-        assert_eq!(workspace_download_content_type("movie.mov"), "video/quicktime");
-        assert_eq!(workspace_download_content_type("movie.mkv"), "video/x-matroska");
+        assert_eq!(
+            workspace_download_content_type("movie.mov"),
+            "video/quicktime"
+        );
+        assert_eq!(
+            workspace_download_content_type("movie.mkv"),
+            "video/x-matroska"
+        );
         assert_eq!(
             workspace_download_content_type("movie.avi"),
             "video/x-msvideo"

@@ -319,6 +319,12 @@ pub enum Command {
         description: String,
         system_prompt: String,
     },
+    SetAgentApprovalMode(String),
+    /// Answer a parked local tool approval: `once` / `session` / `deny`.
+    DecideChatApproval {
+        id: String,
+        decision: String,
+    },
     // ---- cron jobs ----------------------------------------------------
     RefreshCron,
     ToggleCron {
@@ -504,6 +510,20 @@ pub struct InquiryView {
     pub questions: Vec<InquiryQuestionView>,
     pub page: usize,
     pub expanded: bool,
+}
+
+/// One parked tool approval of a local turn.
+///
+/// 权限审批 in `suggest` / `auto_edit` stops the turn at the runtime gate until
+/// the window answers. The desktop renders an in-chat card; the phone answers
+/// through one dialog, and without it the turn would sit at「等待审批」forever.
+#[derive(Clone, Default)]
+pub struct ChatApprovalView {
+    pub id: String,
+    pub tool: String,
+    /// `exec` / `patch` / `control`, mapped to `I18n.ap_kind_*` by the shell.
+    pub kind: String,
+    pub summary: String,
 }
 
 impl InquiryView {
@@ -803,6 +823,9 @@ pub struct AgentView {
     pub system_prompt: String,
     pub tool_names: Vec<String>,
     pub preset_questions: Vec<String>,
+    /// `suggest` / `auto_edit` / `full_auto`; the runtime gate re-reads it on
+    /// every turn, exactly like 桌面版's 权限审批 setting.
+    pub approval_mode: String,
     pub groups: Vec<AgentToolGroupView>,
     pub tool_count: i32,
     pub search: String,
@@ -1089,6 +1112,9 @@ pub struct Shared {
     pub channel_qr: crate::channels::ChannelQrView,
     pub inquiry: Option<InquiryView>,
     pub inquiry_rev: u64,
+    /// Local tool approval waiting for this window (see `ChatApprovalView`).
+    pub chat_approval: Option<ChatApprovalView>,
+    pub chat_approval_rev: u64,
     /// 目标横幅与计划面板（输入带上沿）。
     pub goal: GoalView,
     pub goal_rev: u64,
@@ -2160,6 +2186,7 @@ fn run(
                     system_prompt,
                     tools,
                     questions,
+                    None,
                     "智能体设置已保存",
                 );
             }
@@ -2181,6 +2208,7 @@ fn run(
                     system_prompt,
                     tools,
                     questions,
+                    None,
                     "工具已更新",
                 );
             }
@@ -2210,6 +2238,7 @@ fn run(
                             system_prompt,
                             tools,
                             questions,
+                            None,
                             "工具已更新",
                         );
                     }
@@ -2235,6 +2264,7 @@ fn run(
                         system_prompt,
                         tools,
                         questions,
+                        None,
                         "预设问题已添加",
                     );
                 }
@@ -2255,8 +2285,22 @@ fn run(
                         system_prompt,
                         tools,
                         questions,
+                        None,
                         "预设问题已删除",
                     );
+                }
+            }
+            Command::SetAgentApprovalMode(mode) => {
+                set_agent_approval_mode(&desktop, &shared, &mode);
+            }
+            Command::DecideChatApproval { id, decision } => {
+                let session = shared
+                    .lock()
+                    .map(|state| state.session_id.clone())
+                    .unwrap_or_default();
+                match desktop.decide_chat_approval(&session, &id, &decision) {
+                    Ok(()) => clear_chat_approval(&shared, &session),
+                    Err(error) => notify(&shared, format!("审批未生效：{error}")),
                 }
             }
             // ---- cron jobs --------------------------------------------
@@ -2798,7 +2842,67 @@ fn apply_inquiry_event(shared: &Arc<Mutex<Shared>>, value: &Value, session: &str
     }
 }
 
-/// Read the Java snapshot into the shared view. `enabled` is derived from the
+/// Park a local tool approval so the phone can answer it.
+///
+/// The runtime emits `approval_request` and then blocks the turn until the
+/// response channel answers; the id is the only handle, so an empty or foreign
+/// request is dropped instead of parking a wait nothing can resolve.
+fn apply_chat_approval(shared: &Arc<Mutex<Shared>>, value: &Value, session: &str) {
+    let envelope = value.get("data").unwrap_or(value);
+    let data = envelope.get("data").unwrap_or(envelope);
+    let id = data
+        .get("approval_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if id.is_empty() {
+        return;
+    }
+    let view = ChatApprovalView {
+        id,
+        tool: data
+            .get("tool")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        kind: data
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        summary: data
+            .get("summary")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    };
+    let Ok(mut state) = shared.lock() else {
+        return;
+    };
+    if state.session_id != session {
+        return;
+    }
+    state.chat_approval = Some(view);
+    state.chat_approval_rev = state.chat_approval_rev.wrapping_add(1);
+    state.touch();
+}
+
+/// Drop a parked approval once it was answered or its turn settled, so a stale
+/// dialog cannot answer a request that no longer exists.
+fn clear_chat_approval(shared: &Arc<Mutex<Shared>>, session: &str) {
+    let Ok(mut state) = shared.lock() else {
+        return;
+    };
+    if state.session_id != session || state.chat_approval.is_none() {
+        return;
+    }
+    state.chat_approval = None;
+    state.chat_approval_rev = state.chat_approval_rev.wrapping_add(1);
+    state.touch();
+}
+
+/// Read the Android snapshot into the shared view. `enabled` is derived from the
 /// persisted shell path rather than a separate flag, so the toggle always
 /// reflects what the command tool would actually spawn.
 fn refresh_ubuntu(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
@@ -3584,6 +3688,11 @@ fn select_session(
     {
         let mut state = shared.lock().unwrap();
         state.session_id = snapshot.session.id.clone();
+        // 审批请求只属于它那一轮。换线程后旧卡片已经无法回答（请求挂在上一个
+        // 线程的通道上），留着只会挡住新线程的界面。
+        if state.chat_approval.take().is_some() {
+            state.chat_approval_rev = state.chat_approval_rev.wrapping_add(1);
+        }
         // 待上传文件属于某一条消息、某一个线程：换线程就不该再挂在新对话的
         // 输入框上，否则模型会被带去读上一个线程的文件。
         state.pending_uploads.clear();
@@ -4043,9 +4152,9 @@ fn reconcile_model_selection(
     }
     // A thread pin is only honoured for a conversational model; a key that
     // survived as an embedding/ASR entry must slide back to the default.
-    let present = models.iter().any(|model| {
-        model.key == state.model_key && !model.disabled && is_llm_card(model)
-    });
+    let present = models
+        .iter()
+        .any(|model| model.key == state.model_key && !model.disabled && is_llm_card(model));
     if state.model_pinned && present {
         return;
     }
@@ -4067,11 +4176,7 @@ fn apply_model_settings(
     shared: &Arc<Mutex<Shared>>,
     renamed: Option<(&str, &str)>,
 ) {
-    let models = settings
-        .models
-        .iter()
-        .map(model_card)
-        .collect::<Vec<_>>();
+    let models = settings.models.iter().map(model_card).collect::<Vec<_>>();
     let Ok(mut state) = shared.lock() else {
         return;
     };
@@ -4956,6 +5061,7 @@ fn refresh_agent(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
             system_prompt: agent.system_prompt.clone(),
             tool_names: agent.tool_names.clone(),
             preset_questions: preset_questions.clone(),
+            approval_mode: normalize_approval_mode(&agent.approval_mode).to_string(),
             groups,
             tool_count: agent.tool_names.len() as i32,
             search: query,
@@ -5010,6 +5116,10 @@ fn search_agent_tools(shared: &Arc<Mutex<Shared>>, query: &str) {
     }
 }
 
+/// Persist the fields the phone can edit and project the stored record back.
+///
+/// `approval_mode` is `None` for every edit that does not touch 权限审批, so
+/// toggling a tool or a preset question never silently resets the mode.
 fn persist_agent(
     desktop: &NativeDesktop,
     shared: &Arc<Mutex<Shared>>,
@@ -5017,6 +5127,7 @@ fn persist_agent(
     system_prompt: String,
     tool_names: Vec<String>,
     preset_questions: Vec<String>,
+    approval_mode: Option<String>,
     note: &str,
 ) {
     let current = match desktop.default_agent() {
@@ -5044,7 +5155,11 @@ fn persist_agent(
         icon,
         tool_names: dedup_text(tool_names, usize::MAX),
         preset_questions: dedup_text(preset_questions, 12),
-        approval_mode: current.approval_mode.clone(),
+        approval_mode: approval_mode
+            .as_deref()
+            .map(normalize_approval_mode)
+            .unwrap_or_else(|| normalize_approval_mode(&current.approval_mode))
+            .to_string(),
         preview_skill: current.preview_skill,
         silent: current.silent,
         prefer_mother: current.prefer_mother,
@@ -5064,6 +5179,7 @@ fn persist_agent(
                     system_prompt: updated.system_prompt.clone(),
                     tool_names: updated.tool_names.clone(),
                     preset_questions: preset_questions.clone(),
+                    approval_mode: normalize_approval_mode(&updated.approval_mode).to_string(),
                     groups,
                     tool_count: updated.tool_names.len() as i32,
                     search: query,
@@ -5081,6 +5197,58 @@ fn persist_agent(
         }
         Err(error) => notify(shared, format!("保存智能体设置失败：{error}")),
     }
+}
+
+/// `suggest` / `auto_edit` / `full_auto`; anything else falls back to full auto,
+/// which is the runtime's own default. Named after the stored `approval_mode` so
+/// the phone and 桌面版 read the same three values.
+fn normalize_approval_mode(raw: &str) -> &'static str {
+    match raw.trim() {
+        "suggest" => "suggest",
+        "auto_edit" => "auto_edit",
+        _ => "full_auto",
+    }
+}
+
+/// Toast text for a freshly chosen mode; the labels mirror `I18n.ag_permission_*`.
+fn approval_mode_note(mode: &str) -> &'static str {
+    match mode {
+        "suggest" => "权限审批：先征询再动手",
+        "auto_edit" => "权限审批：修改自动放行",
+        _ => "权限审批：完全自动",
+    }
+}
+
+/// Save 权限审批 for the default agent. The runtime gate re-reads the stored
+/// mode on every turn, so this is the only place the phone has to write.
+fn set_agent_approval_mode(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, mode: &str) {
+    let mode = normalize_approval_mode(mode);
+    let Some((description, system_prompt, tools, questions, stored)) =
+        shared.lock().ok().map(|state| {
+            (
+                state.agent.description.clone(),
+                state.agent.system_prompt.clone(),
+                state.agent.tool_names.clone(),
+                state.agent.preset_questions.clone(),
+                state.agent.approval_mode.clone(),
+            )
+        })
+    else {
+        return;
+    };
+    if stored == mode {
+        return;
+    }
+    persist_agent(
+        desktop,
+        shared,
+        description,
+        system_prompt,
+        tools,
+        questions,
+        Some(mode.to_string()),
+        approval_mode_note(mode),
+    );
 }
 
 // ---- cron jobs --------------------------------------------------------
@@ -6794,6 +6962,31 @@ fn unique_upload_name(existing: &std::collections::HashSet<String>, name: &str) 
         .and_then(|value| value.to_str())
         .map(|value| format!(".{value}"))
         .unwrap_or_default();
+    // A serial-named upload (`photo_1.jpg`, `screenshot_3.png`) continues the
+    // destination's numbering instead of becoming `photo_1 (2).jpg`: the
+    // camera starts each capture at 1, and the workspace is where they
+    // accumulate.
+    if let Some(base) = strip_upload_serial(stem) {
+        let head = format!("{base}_");
+        let mut max = 0u32;
+        for candidate in existing {
+            let Some(rest) = candidate.strip_prefix(head.as_str()) else {
+                continue;
+            };
+            let Some(serial) = rest.strip_suffix(extension.as_str()) else {
+                continue;
+            };
+            if let Ok(index) = serial.parse::<u32>() {
+                max = max.max(index);
+            }
+        }
+        for index in max.saturating_add(1)..max.saturating_add(1000) {
+            let candidate = format!("{base}_{index}{extension}");
+            if !existing.contains(&candidate) {
+                return candidate;
+            }
+        }
+    }
     for index in 2..1000 {
         let candidate = format!("{stem} ({index}){extension}");
         if !existing.contains(&candidate) {
@@ -6805,6 +6998,29 @@ fn unique_upload_name(existing: &std::collections::HashSet<String>, name: &str) 
         .map(|duration| duration.as_millis())
         .unwrap_or(0);
     format!("{stem}-{stamp}{extension}")
+}
+
+/// `photo_12` -> `photo`; `IMG_2026` stays whole because a camera's year is
+/// not one of our serials.
+fn strip_upload_serial(stem: &str) -> Option<&str> {
+    let (base, tail) = stem.rsplit_once('_')?;
+    if tail.is_empty() || !tail.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    let base = base.trim_end_matches('_');
+    if base.is_empty() {
+        return None;
+    }
+    let runtime_stem = ["screenshot", "clipboard", "photo", "image", "audio"]
+        .iter()
+        .any(|known| base.eq_ignore_ascii_case(known));
+    if !runtime_stem {
+        match tail.parse::<u32>() {
+            Ok(serial) if serial <= 999 => {}
+            _ => return None,
+        }
+    }
+    Some(base)
 }
 
 /// Resolve one workspace file and hand it to the Android save flow.
@@ -8246,6 +8462,12 @@ fn start_stream_with_id(
                         if matches!(raw.as_str(), "question_panel" | "question_panel_clear") {
                             apply_inquiry_event(&shared, &value, &session);
                         }
+                        if raw == "approval_request" {
+                            apply_chat_approval(&shared, &value, &session);
+                        }
+                        if raw == "turn_terminal" {
+                            clear_chat_approval(&shared, &session);
+                        }
                         if matches!(raw.as_str(), "context_usage" | "round_usage") {
                             apply_context_usage(
                                 &shared,
@@ -8276,6 +8498,7 @@ fn start_stream_with_id(
                                     | "native_execution_identity"
                                     | "native_execution_started"
                                     | "native_execution_status"
+                                    | "approval_request"
                                     | "turn_terminal"
                                     | "question_panel"
                                     | "question_panel_clear"
@@ -9818,6 +10041,45 @@ mod tests {
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].tools[0].name.as_str(), "weather");
         assert!(!filtered[0].all_selected);
+    }
+
+    #[test]
+    fn agent_settings_icons_come_from_tool_identity_not_descriptions() {
+        let tool = |name: &str, description: &str| ToolRecord {
+            name: name.into(),
+            title: name.into(),
+            description: description.into(),
+            category: "内置工具".into(),
+        };
+        // 旧实现按名称+描述匹配 read_image：读取文件与安卓屏幕的描述都会
+        // 提到 read_image，结果被劫持成眼睛；安卓通知当时没有规则可命中。
+        let catalog = vec![
+            tool(
+                "读取文件",
+                "读取工作区内的纯文本文件，图片请用 read_image 查看。",
+            ),
+            tool("读图工具", "读取本地图片、GIF 或视频帧。"),
+            tool("安卓屏幕", "截取手机屏幕；截图可用 read_image 查看。"),
+            tool("安卓通知", "读取并筛选手机通知栏消息。"),
+        ];
+        let groups = agent_groups(&catalog, &[], "", true);
+        let visual = |name: &str| {
+            groups[0]
+                .tools
+                .iter()
+                .find(|tool| tool.name == name)
+                .map(|tool| (tool.icon.to_string(), tool.tone.to_string()))
+        };
+        assert_eq!(
+            visual("读取文件"),
+            Some(("file-lines".into(), "file".into()))
+        );
+        assert_eq!(visual("读图工具"), Some(("eye".into(), "search".into())));
+        assert_eq!(
+            visual("安卓屏幕"),
+            Some(("display".into(), "general".into()))
+        );
+        assert_eq!(visual("安卓通知"), Some(("bell".into(), "general".into())));
     }
 
     #[test]

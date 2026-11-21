@@ -885,6 +885,7 @@ export component SettingsPage inherits Rectangle {
     in-out property <string> expert-date;
     in-out property <int> expert-archive-page: 0;
     in-out property <int> expert-archive-total: 0;
+    in-out property <int> expert-archive-pages: 0;
     in-out property <string> expert-query;
     in-out property <string> expert-category: "全部标签";
     in-out property <[string]> expert-categories: ["全部标签"];
@@ -1131,7 +1132,7 @@ export component SettingsPage inherits Rectangle {
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[12];
-                            icon: @image-url("../assets/icons/database.svg");
+                            icon: @image-url("../assets/icons/lc-database.svg");
                             title: I18n.stc_data;
                             selected: root.settings-tab == 16;
                             clicked => { root.settings-tab = 16; }
@@ -2222,6 +2223,30 @@ export component SettingsPage inherits Rectangle {
                                         x: 0px; y: 0px; width: max(0px, parent.width - 84px); height: parent.height;
                                         mouse-cursor: pointer;
                                         clicked => { root.open-expert-archive(archive.id); }
+                                    }
+                                }
+                                // 归档是一份历史清单，按最近归档倒序分页：页大小与页数都在引擎里算，
+                                // 界面只翻页，不一次铺开所有条目。
+                                if root.expert-archive-pages > 1 : HorizontalLayout {
+                                    height: 36px;
+                                    spacing: 8px;
+                                    Rectangle { horizontal-stretch: 1; }
+                                    Action {
+                                        width: 76px; show-label: true;
+                                        label: I18n.common_previous_page;
+                                        enabled: root.expert-archive-page > 0 && !root.expert-loading;
+                                        clicked => { root.expert-archive-page = root.expert-archive-page - 1; root.refresh-expert(); }
+                                    }
+                                    Text {
+                                        text: (root.expert-archive-page + 1) + " / " + root.expert-archive-pages;
+                                        color: Theme.muted; font-size: Theme.font-sm;
+                                        vertical-alignment: center;
+                                    }
+                                    Action {
+                                        width: 76px; show-label: true;
+                                        label: I18n.common_next_page;
+                                        enabled: root.expert-archive-page + 1 < root.expert-archive-pages && !root.expert-loading;
+                                        clicked => { root.expert-archive-page = root.expert-archive-page + 1; root.refresh-expert(); }
                                     }
                                 }
                             }

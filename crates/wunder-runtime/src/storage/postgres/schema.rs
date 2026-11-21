@@ -1312,6 +1312,14 @@ impl PostgresSchemaStorage for PostgresStorage {
                   ON workspaces (user_id, root_path);
                 CREATE INDEX IF NOT EXISTS idx_workspaces_user_sort
                   ON workspaces (user_id, sort_index);
+                -- 工作区绑定被移除后，归档线程仍要靠这份名字快照说明来源。
+                CREATE TABLE IF NOT EXISTS workspace_labels (
+                  workspace_id TEXT PRIMARY KEY,
+                  user_id TEXT NOT NULL,
+                  name TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_workspace_labels_user
+                  ON workspace_labels (user_id);
                 CREATE TABLE IF NOT EXISTS session_goals (
                   session_id TEXT PRIMARY KEY,
                   user_id TEXT NOT NULL,

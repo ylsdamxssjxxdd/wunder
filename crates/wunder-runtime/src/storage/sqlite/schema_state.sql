@@ -182,6 +182,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_workspaces_user_root
 CREATE INDEX IF NOT EXISTS idx_workspaces_user_sort
               ON workspaces (user_id, sort_index);
 
+-- 工作区绑定被移除后仍要能说清归档线程来自哪里：线程保留 workspace_id，
+-- 这里只留一份显示名快照，行本身不再回到侧栏。
+CREATE TABLE IF NOT EXISTS workspace_labels (
+              workspace_id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              name TEXT NOT NULL
+            );
+
+CREATE INDEX IF NOT EXISTS idx_workspace_labels_user
+              ON workspace_labels (user_id);
+
 CREATE TABLE IF NOT EXISTS user_world_conversations (
               conversation_id TEXT PRIMARY KEY,
               conversation_type TEXT NOT NULL,

@@ -11,7 +11,8 @@ import { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Convers
 export { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion }
 import { TimelineView } from "../../../crates/wunder-desktop/frontend/ui/timeline.slint";
 import { Composer, GoalBanner, InquiryPanel, ModelSetupBanner, StatusDock } from "../../../crates/wunder-desktop/frontend/ui/composer.slint";
-import { Action, FormField, ConfirmDialog } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
+import { Action, ConfirmDialog } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
+import { MobileFormField } from "form_field.slint";
 import { MobileSettings } from "settings.slint";
 import { MobileToast } from "toast.slint";
 import { EnvSetupPage } from "env_setup.slint";
@@ -582,6 +583,8 @@ export component MobileWindow inherits Window {
     in property <[MobileToolGroup]> settings-agent-groups: [];
     in-out property <string> settings-agent-search: "";
     in property <[string]> settings-agent-questions: [];
+    // 权限审批: the agent's approval mode, owned by the runtime gate.
+    in property <string> settings-agent-approval-mode: "full_auto";
 
     // ---- cron jobs ----------------------------------------------------
     in property <[MobileCronJob]> settings-cron-jobs: [];
@@ -643,6 +646,12 @@ export component MobileWindow inherits Window {
     in property <string> settings-approval-kind: "";
     in property <string> settings-approval-risk: "";
     in property <string> settings-approval-prompt: "";
+    // 本地工具审批（权限审批 = 建议 / 自动编辑）：运行时停在这一步等回答。
+    in property <bool> chat-approval-open: false;
+    in property <string> chat-approval-id: "";
+    in property <string> chat-approval-tool: "";
+    in property <string> chat-approval-kind: "";
+    in property <string> chat-approval-summary: "";
 
     // ---- channels ----------------------------------------------------
     in property <[MobileChannelAccount]> settings-channel-accounts: [];
@@ -789,6 +798,7 @@ export component MobileWindow inherits Window {
     callback toggle-agent-tool(string, bool, string, string);
     callback toggle-agent-tool-group(string, bool, string, string);
     callback add-agent-question(string, string, string);
+    callback set-agent-approval-mode(string);
     callback remove-agent-question(int, string, string);
     // 定时任务
     callback refresh-cron();
@@ -822,6 +832,15 @@ export component MobileWindow inherits Window {
     callback cloud-rename(string, string);
     callback cloud-archive(string);
     callback decide-approval(string, bool);
+    callback decide-chat-approval(string, string);
+
+    /// 审批类型标题：与桌面版 `ap_kind_*` 同一套词。
+    pure function chat-approval-kind-label() -> string {
+        return root.chat-approval-kind == "exec" ? I18n.ap_kind_exec
+            : root.chat-approval-kind == "patch" ? I18n.ap_kind_patch
+            : root.chat-approval-kind == "control" ? I18n.ap_kind_control
+            : I18n.ap_kind_action;
+    }
     // 渠道
     callback refresh-channels();
     callback select-channel-account(string);
@@ -1984,6 +2003,7 @@ export component MobileWindow inherits Window {
         agent-groups: root.settings-agent-groups;
         agent-search <=> root.settings-agent-search;
         agent-questions: root.settings-agent-questions;
+        agent-approval-mode: root.settings-agent-approval-mode;
         cron-jobs: root.settings-cron-jobs;
         cron-workspaces: root.settings-cron-workspaces;
         cron-runs: root.settings-cron-runs;
@@ -2100,6 +2120,7 @@ export component MobileWindow inherits Window {
         toggle-agent-tool(name, enabled, description, prompt) => { root.toggle-agent-tool(name, enabled, description, prompt); }
         toggle-agent-tool-group(category, select, description, prompt) => { root.toggle-agent-tool-group(category, select, description, prompt); }
         add-agent-question(question, description, prompt) => { root.add-agent-question(question, description, prompt); }
+        set-agent-approval-mode(mode) => { root.set-agent-approval-mode(mode); }
         remove-agent-question(index, description, prompt) => { root.remove-agent-question(index, description, prompt); }
         refresh-cron() => { root.refresh-cron(); }
         toggle-cron(id, enabled) => { root.toggle-cron(id, enabled); }
@@ -2386,6 +2407,21 @@ export component MobileWindow inherits Window {
                 }
             }
         }
+    }
+
+    // ---- local tool approval ---------------------------------------
+    // 权限审批选「建议 / 自动编辑」时，执行命令、写入文件与桌面控制会停在
+    // 运行时闸门上等回答；这张卡片就是回答入口。手机不做「本会话允许」：
+    // 触屏上一键放行整轮的风险大于便利。
+    if root.chat-approval-open : ConfirmDialog {
+        title: I18n.ap_title;
+        message: root.chat-approval-kind-label() + "\n\n"
+            + (root.chat-approval-summary == "" ? root.chat-approval-tool : root.chat-approval-summary)
+            + "\n\n" + I18n.ap_note;
+        confirm-label: I18n.ap_allow_once;
+        cancel-label: I18n.ap_deny;
+        confirmed => { root.decide-chat-approval(root.chat-approval-id, "once"); }
+        canceled => { root.decide-chat-approval(root.chat-approval-id, "deny"); }
     }
 
     // ---- remote approval -------------------------------------------
@@ -2860,7 +2896,7 @@ export component MobileWindow inherits Window {
                     font-weight: 700;
                     vertical-alignment: center;
                 }
-                FormField {
+                MobileFormField {
                     label: "会话名称";
                     placeholder: "输入新的会话名称";
                     auto-focus: true;
@@ -3204,7 +3240,7 @@ export component MobileWindow inherits Window {
                     font-weight: 700;
                     vertical-alignment: center;
                 }
-                FormField {
+                MobileFormField {
                     label: "文件名称";
                     placeholder: "输入新的名称";
                     auto-focus: true;

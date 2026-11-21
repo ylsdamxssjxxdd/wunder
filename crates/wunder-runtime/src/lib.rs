@@ -21,17 +21,19 @@ pub use services::tool_result_display;
 pub use services::tools::command_sessions::{CommandTaskDetail, CommandTaskView};
 // 写后语法校验的宿主探测结论：桌面版设置页要显示「当前生效的解释器」，
 // 与写入回执里的校验器标签同源，所以从引擎侧统一出口。
-pub use services::tools::write_syntax::{reset_hosts as reset_syntax_hosts, syntax_hosts, SyntaxHosts};
+pub use services::tools::write_syntax::{
+    reset_hosts as reset_syntax_hosts, syntax_hosts, SyntaxHosts,
+};
 pub mod storage;
 
 pub use api::{build_desktop_router, build_router};
 pub use channels::ChannelHub;
 pub use core::{
     approval, approval_registry, auth, blocking, bounded_queue, command_utils, config,
-    config_store, dpi, drawio_config, exec_policy, http_client, i18n, instance_liveness, local_assets,
-    local_bootstrap, logging, long_task, onlyoffice_config, path_utils, process_file_lock,
-    repo_assets, runtime_metrics, runtime_tuning, rustls_provider, schemas, shutdown,
-    startup_probe, state, token_utils,
+    config_store, dpi, drawio_config, exec_policy, http_client, i18n, instance_liveness,
+    local_assets, local_bootstrap, logging, long_task, onlyoffice_config, path_utils,
+    process_file_lock, repo_assets, runtime_metrics, runtime_tuning, rustls_provider, schemas,
+    shutdown, startup_probe, state, token_utils,
 };
 pub use lsp::LspManager;
 pub use ops::{benchmark, monitor, performance, startup, throughput};

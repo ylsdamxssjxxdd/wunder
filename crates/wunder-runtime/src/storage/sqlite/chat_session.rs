@@ -443,8 +443,16 @@ impl SqliteChatSessionStorage for SqliteStorage {
             conn.query_row(&total_sql, params_from_iter(total_params.iter()), |row| {
                 row.get(0)
             })?;
+        // The archive list is a history surface: the thread the user archived
+        // last belongs on top, and archiving stamps `updated_at`. Every other
+        // listing stays in creation order, which the thread tree depends on.
+        let order = if normalized_status == "archived" {
+            " ORDER BY updated_at DESC, created_at DESC, session_id DESC"
+        } else {
+            " ORDER BY created_at DESC, session_id DESC"
+        };
         let mut sql = format!(
-            "{} WHERE user_id = ?{agent_clause}{parent_clause}{status_clause} ORDER BY created_at DESC, session_id DESC",
+            "{} WHERE user_id = ?{agent_clause}{parent_clause}{status_clause}{order}",
             chat_session_select_sql()
         );
         let mut params_list: Vec<SqlValue> = vec![SqlValue::from(cleaned_user.to_string())];
@@ -1054,5 +1062,38 @@ mod child_directory_tests {
             .count_chat_sessions_by_day("u-activity", 0.0)
             .expect("unset window")
             .is_empty());
+    }
+
+    #[test]
+    fn archived_listing_orders_by_archive_time() {
+        let storage = build_storage();
+        let user = "u-archive-order";
+        // Older thread archived last: it belongs on top of the archive list.
+        let mut archived_late = session(user, "archived-late", None, 10.0);
+        archived_late.status = "archived".to_string();
+        archived_late.updated_at = 900.0;
+        storage.upsert_chat_session(&archived_late).expect("late");
+        // Newer thread archived first.
+        let mut archived_early = session(user, "archived-early", None, 800.0);
+        archived_early.status = "archived".to_string();
+        archived_early.updated_at = 100.0;
+        storage.upsert_chat_session(&archived_early).expect("early");
+        // Active threads never mix into the archive listing and keep the
+        // creation order the tree relies on.
+        storage
+            .upsert_chat_session(&session(user, "active-new", None, 700.0))
+            .expect("active");
+
+        let (rows, total) = storage
+            .list_chat_sessions_by_status(user, None, None, Some("archived"), 0, 10)
+            .expect("archived page");
+        assert_eq!(total, 2);
+        let ids: Vec<&str> = rows.iter().map(|row| row.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["archived-late", "archived-early"]);
+
+        let (active, _) = storage
+            .list_chat_sessions_by_status(user, None, None, Some("active"), 0, 10)
+            .expect("active page");
+        assert_eq!(active[0].session_id, "active-new");
     }
 }

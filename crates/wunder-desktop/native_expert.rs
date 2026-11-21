@@ -1,5 +1,5 @@
 //! Agent-scoped expert operations; no transport or UI dependencies.
-use super::{NativeDesktop, NativeSession};
+use super::NativeDesktop;
 use anyhow::{bail, Result};
 use wunder_server::agent_management;
 use wunder_server::memory_fragments::{
@@ -122,28 +122,37 @@ impl NativeDesktop {
         Ok(())
     }
 
-    pub fn expert_archives(&self, agent: &str, offset: i64) -> Result<(Vec<NativeSession>, i64)> {
+    /// One archive page. The archive view is a history surface, so it pages
+    /// instead of loading every archived thread: one page bounds both the
+    /// per-row stats reads and the number of Slint rows built at once.
+    pub fn expert_archives(&self, agent: &str, page: i64) -> Result<super::ArchivedThreadPage> {
+        const PAGE_SIZE: i64 = 30;
         self.ensure_expert_access(agent)?;
         let scope = if matches!(agent, "" | "default" | "__default__") {
             ""
         } else {
             agent
         };
+        let page = page.max(0);
         let (rows, total) = self.state().storage.list_chat_sessions_by_status(
             self.user_id(),
             Some(scope),
             None,
             Some("archived"),
-            offset.max(0),
-            50,
+            page * PAGE_SIZE,
+            PAGE_SIZE,
         )?;
         let workspaces = self.workspace_lookup();
-        Ok((
-            rows.into_iter()
-                .map(|row| self.session_with_stats(row, &workspaces, &self.live_work()))
-                .collect(),
+        let items = rows
+            .into_iter()
+            .map(|row| self.session_with_stats(row, &workspaces, &self.live_work()))
+            .collect();
+        Ok(super::ArchivedThreadPage {
+            items,
             total,
-        ))
+            page,
+            pages: (total + PAGE_SIZE - 1) / PAGE_SIZE,
+        })
     }
 
     pub fn expert_runtime(&self, agent: &str, date: Option<&str>) -> Result<serde_json::Value> {

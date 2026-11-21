@@ -160,13 +160,8 @@ pub async fn process_chat_media_upload(
     let filename = normalize_filename(upload.filename.as_str(), "media");
     let workspace_id = workspace.scoped_user_id_by_container(user_id, USER_PRIVATE_CONTAINER_ID);
     workspace.ensure_user_root(&workspace_id)?;
-    let source_path = persist_source_upload(
-        workspace,
-        &workspace_id,
-        filename.as_str(),
-        upload.bytes.as_slice(),
-    )
-    .await?;
+    let source_path =
+        persist_source_upload(workspace, &workspace_id, filename.as_str(), upload.bytes).await?;
     process_visual_media_path(
         workspace,
         config,
@@ -931,16 +926,43 @@ async fn persist_source_upload(
     workspace: &WorkspaceManager,
     workspace_id: &str,
     filename: &str,
-    bytes: &[u8],
+    bytes: Vec<u8>,
 ) -> Result<PathBuf> {
-    let source_root = format!("{CHAT_MEDIA_SOURCE_DIR}/{}", Uuid::new_v4().simple());
-    let relative = format!("{source_root}/{filename}");
-    let path = workspace.resolve_path(workspace_id, &relative)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).await?;
-    }
-    fs::write(&path, bytes).await?;
+    // Keep the upload's own stem (`photo`, `screenshot`, `voice`) and add the
+    // directory's next serial. A UUID directory around every upload hid the
+    // only readable part of the path; a numbered file stays directly
+    // referenceable by the model and by the user.
+    let directory = workspace.resolve_path(workspace_id, CHAT_MEDIA_SOURCE_DIR)?;
+    let (stem, extension) = source_stem_and_extension(filename);
+    let target_dir = directory;
+    let path =
+        crate::core::blocking::run_cpu("chat_media_source_persist", move || -> Result<PathBuf> {
+            Ok(crate::services::workspace_temp::write_numbered_file(
+                &target_dir,
+                &stem,
+                &extension,
+                &bytes,
+            )?)
+        })
+        .await?;
     Ok(path)
+}
+
+fn source_stem_and_extension(filename: &str) -> (String, String) {
+    let path = Path::new(filename);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("media");
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    (stem.to_string(), extension.to_string())
 }
 
 async fn persist_derived_root(
@@ -955,13 +977,21 @@ async fn persist_derived_root(
         .filter(|value| !value.is_empty())
         .unwrap_or("media");
     let safe_stem = crate::attachment::sanitize_filename_stem(stem);
-    let relative = format!(
-        "{CHAT_MEDIA_DERIVED_DIR}/{}_{}",
-        safe_stem,
-        Uuid::new_v4().simple()
-    );
-    let path = workspace.resolve_path(workspace_id, &relative)?;
-    fs::create_dir_all(&path).await?;
+    let base = crate::services::workspace_temp::without_trailing_serial(&safe_stem);
+    let base = if base.is_empty() { "media" } else { base };
+    let prefix = format!("{base}_");
+    let relative = CHAT_MEDIA_DERIVED_DIR;
+    let parent = workspace.resolve_path(workspace_id, relative)?;
+    // One directory per upload, but numbered (`screenshot_1/`, `photo_2/`)
+    // instead of a UUID: the frames inside stay grouped and the path can still
+    // be read out loud.
+    let path =
+        crate::core::blocking::run_cpu("chat_media_derived_dir", move || -> Result<PathBuf> {
+            Ok(crate::services::workspace_temp::create_sequenced_dir(
+                &parent, &prefix,
+            )?)
+        })
+        .await?;
     Ok(path)
 }
 

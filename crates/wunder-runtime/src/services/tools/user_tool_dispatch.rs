@@ -64,7 +64,9 @@ async fn execute_user_mcp_tool(
     let server_map = bindings.mcp_servers.get(&alias.owner_id);
     let server_config = server_map.and_then(|map| map.get(server_name));
     let Some(server_config) = server_config else {
-        return Err(anyhow!(i18n::prompt_t("tool.invoke.mcp_server_unavailable")));
+        return Err(anyhow!(i18n::prompt_t(
+            "tool.invoke.mcp_server_unavailable"
+        )));
     };
     if tool_name == mcp_pack::MCP_PACK_TOOL_NAME {
         let result = mcp_pack::execute(context.config, server_config, args)

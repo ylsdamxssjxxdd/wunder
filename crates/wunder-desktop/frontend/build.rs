@@ -22,10 +22,12 @@ fn main() {
     ] {
         println!("cargo:rerun-if-changed=assets/icons/{icon}");
     }
-    // Bundled faces: MiSans carries the UI copy, DejaVu Sans only supplies the
-    // symbols MiSans has no glyph for. Both are compressed into the executable
-    // so the shell never depends on fonts installed on the target machine.
-    for font in ["MiSans-Regular.ttf", "DejaVuSans.ttf"] {
+    // Bundled faces: MiSans carries the UI copy, DejaVu Sans supplies the
+    // symbols MiSans has no glyph for, Noto Emoji supplies the emoji (the
+    // software renderer can only draw outlines, so a colour emoji font would be
+    // useless here). All three are compressed into the executable so the shell
+    // never depends on fonts installed on the target machine.
+    for font in ["MiSans-Regular.ttf", "DejaVuSans.ttf", "NotoEmoji-Regular.ttf"] {
         println!("cargo:rerun-if-changed=assets/fonts/{font}");
     }
     // Window, tray and notification icons are embedded from these assets.
@@ -33,7 +35,7 @@ fn main() {
     println!("cargo:rerun-if-changed=assets/app-icon-32.png");
     println!("cargo:rerun-if-changed=assets/app-icon.rgba");
     let out_dir = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
-    for font in ["MiSans-Regular.ttf", "DejaVuSans.ttf"] {
+    for font in ["MiSans-Regular.ttf", "DejaVuSans.ttf", "NotoEmoji-Regular.ttf"] {
         let raw = std::fs::read(format!("assets/fonts/{font}"))
             .unwrap_or_else(|error| panic!("read bundled {font}: {error}"));
         let compressed = lz4_flex::compress_prepend_size(&raw);

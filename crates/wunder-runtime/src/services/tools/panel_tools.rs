@@ -62,11 +62,12 @@ pub(crate) async fn execute_plan_tool(context: &ToolContext<'_>, args: &Value) -
         Err(error) => return Ok(error.into_tool_result()),
     };
     if request.steps.is_empty() {
-        return Ok(
-            PlanArgError::shape(i18n::prompt_t("tool.plan.plan_required"), json!({ "keys": [] }))
-                .with_code("TOOL_PLAN_EMPTY")
-                .into_tool_result(),
-        );
+        return Ok(PlanArgError::shape(
+            i18n::prompt_t("tool.plan.plan_required"),
+            json!({ "keys": [] }),
+        )
+        .with_code("TOOL_PLAN_EMPTY")
+        .into_tool_result());
     }
     let normalized_plan = request.normalized_plan();
     let progress = plan_progress(&normalized_plan);

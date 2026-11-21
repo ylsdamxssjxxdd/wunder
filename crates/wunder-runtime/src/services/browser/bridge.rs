@@ -1509,7 +1509,6 @@ impl RemoteExchange {
             .ok_or_else(|| "Browser sandbox returned no readiness line".to_string())?;
         parse_ready_line(&line)
     }
-
 }
 
 impl RemoteExchange {
@@ -1538,7 +1537,6 @@ impl RemoteExchange {
         self.transport_failures = 0;
         self.ready()
     }
-
 }
 
 impl RemoteExchange {

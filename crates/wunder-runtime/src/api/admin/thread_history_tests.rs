@@ -203,7 +203,8 @@ async fn verify_admin_thread_details(dsn: Option<String>) {
     for path in [
         "/wunder/admin/monitor/sample-other/thread-log/items/sample-body",
         "/wunder/admin/monitor/sample-missing/thread-log/items/sample-body",
-    ] {        let response = app
+    ] {
+        let response = app
             .clone()
             .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
             .await

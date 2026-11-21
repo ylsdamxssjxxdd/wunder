@@ -171,8 +171,16 @@ public final class UbuntuRuntime {
                 }
                 // An app update installs it under a new /data/app path, so the
                 // symlinks into nativeLibraryDir must be rebuilt on every
-                // process start, not just on the first install.
-                linkTools(new File(app.getFilesDir(), "usr/bin"));
+                // process start, not just on the first install. A failed
+                // relink must not skip the wrapper rewrite below: a wrapper
+                // left over from a previous build no longer matches the
+                // engine's launch contract and turns every command into a
+                // silent no-op.
+                try {
+                    linkTools(new File(app.getFilesDir(), "usr/bin"));
+                } catch (Throwable error) {
+                    Log.w(TAG, "tool links failed; keeping the runtime unusable until repair", error);
+                }
                 writeWrapper();
                 if (!packsInstalled() || !browserPackInstalled()) {
                     // The rootfs survived an app update but a bundled pack was

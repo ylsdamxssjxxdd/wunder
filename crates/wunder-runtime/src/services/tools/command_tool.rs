@@ -223,7 +223,16 @@ fn heredoc_open(line: &str) -> Option<(String, bool)> {
     let feeds_program = before.contains('>')
         || matches!(
             head,
-            "cat" | "tee" | "python" | "python3" | "bash" | "sh" | "zsh" | "node" | "sqlite3" | "psql"
+            "cat"
+                | "tee"
+                | "python"
+                | "python3"
+                | "bash"
+                | "sh"
+                | "zsh"
+                | "node"
+                | "sqlite3"
+                | "psql"
         );
     if !feeds_program {
         return None;
@@ -1876,7 +1885,10 @@ pub(crate) async fn command_session_control(
                     .map_err(|error| anyhow!(error))?;
                 return Ok(build_failed_tool_result(
                     &i18n::prompt_t("tool.command_session.stdin_closed"),
-                    with_stdin_note(data, i18n::prompt_t("tool.command_session.stdin_closed_hint")),
+                    with_stdin_note(
+                        data,
+                        i18n::prompt_t("tool.command_session.stdin_closed_hint"),
+                    ),
                     ToolErrorMeta::new(
                         "TOOL_COMMAND_STDIN_CLOSED",
                         Some(i18n::prompt_t("tool.command_session.stdin_closed_hint")),

@@ -1,13 +1,15 @@
 // 安卓版's settings sheet: one full-screen surface with three pages — the phone's
 // settings index, the model catalogue and the model editor. The form language
-// and every control (FormField, Action, ThemeSwitch, ConfirmDialog) come from
-// 桌面版's shared UI, so the mobile sheet never grows a second visual vocabulary.
+// and every control (Action, ThemeSwitch, ConfirmDialog) come from 桌面版's
+// shared UI, so the mobile sheet never grows a second visual vocabulary;
+// MobileFormField is that same FormField with its touch branch switched on.
 
 import { Theme, ModelCard, MdBlock } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
 import { I18n } from "../../../crates/wunder-desktop/frontend/ui/i18n.slint";
 import { BlockView } from "../../../crates/wunder-desktop/frontend/ui/markdown-rich.slint";
 import { MobileHelpRow } from "help_model.slint";
-import { Action, FormField, ThemeSwitch, ConfirmDialog } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
+import { Action, ThemeSwitch, ConfirmDialog } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
+import { MobileFormField } from "form_field.slint";
 import { ModelPresets } from "../../../crates/wunder-desktop/frontend/ui/model_presets.slint";
 import { TextEditBase } from "../../../crates/wunder-desktop/frontend/ui/textedit-base.slint";
 import { ToolIcons } from "../../../crates/wunder-desktop/frontend/ui/tool_icons.slint";
@@ -79,7 +81,7 @@ component SheetCard inherits Rectangle {
     border-width: 1px;
     border-color: Theme.border;
     // 卡片内字段的行距。默认 0：靠 SettingRow 自己的上下留白和分隔线排成
-    // 表格；需要堆叠 FormField 的卡片传 12px，标题才不会贴着上一个控件。
+    // 表格；需要堆叠 MobileFormField 的卡片传 12px，标题才不会贴着上一个控件。
     in property <length> row-spacing: 0px;
     VerticalLayout {
         padding-left: 14px;
@@ -735,9 +737,9 @@ component ToolEditorSheet inherits Rectangle {
                 if root.kind == 1 : VerticalLayout {
                     spacing: 12px;
                     SheetCard {
-                        FormField { label: I18n.tm_name; placeholder: I18n.tm_unique_name_ph; text <=> root.mcp.name; }
-                        FormField { label: I18n.tm_display_name; placeholder: I18n.tm_display_name_ph; text <=> root.mcp.display-name; }
-                        FormField { label: I18n.tm_endpoint; placeholder: "http://127.0.0.1:9000/mcp"; text <=> root.mcp.endpoint; }
+                        MobileFormField { label: I18n.tm_name; placeholder: I18n.tm_unique_name_ph; text <=> root.mcp.name; }
+                        MobileFormField { label: I18n.tm_display_name; placeholder: I18n.tm_display_name_ph; text <=> root.mcp.display-name; }
+                        MobileFormField { label: I18n.tm_endpoint; placeholder: "http://127.0.0.1:9000/mcp"; text <=> root.mcp.endpoint; }
                         SettingRow {
                             label: I18n.tm_transport;
                             last: true;
@@ -756,7 +758,7 @@ component ToolEditorSheet inherits Rectangle {
                 if root.kind == 2 : VerticalLayout {
                     spacing: 12px;
                     SheetCard {
-                        FormField { label: I18n.tm_name; placeholder: I18n.tm_kb_name_ph; text <=> root.kb.name; read-only: !root.is-new; }
+                        MobileFormField { label: I18n.tm_name; placeholder: I18n.tm_kb_name_ph; text <=> root.kb.name; read-only: !root.is-new; }
                         SettingRow {
                             label: I18n.tm_type;
                             last: true;
@@ -769,13 +771,13 @@ component ToolEditorSheet inherits Rectangle {
                         MobileTextArea { label: I18n.tm_desc; placeholder: I18n.tm_desc_ph; area-height: 96px; text <=> root.kb.description; }
                     }
                     if root.kb.base-type == "vector" : SheetCard {
-                        FormField { label: I18n.tm_embedding_model; placeholder: I18n.tm_embedding_ph; text <=> root.kb.embedding-model; }
-                        FormField { label: I18n.tm_chunk_size; placeholder: I18n.tm_chunk_size_ph; text <=> root.kb.chunk-size; }
-                        FormField { label: I18n.tm_chunk_overlap; placeholder: I18n.tm_chunk_overlap_ph; text <=> root.kb.chunk-overlap; }
+                        MobileFormField { label: I18n.tm_embedding_model; placeholder: I18n.tm_embedding_ph; text <=> root.kb.embedding-model; }
+                        MobileFormField { label: I18n.tm_chunk_size; placeholder: I18n.tm_chunk_size_ph; text <=> root.kb.chunk-size; }
+                        MobileFormField { label: I18n.tm_chunk_overlap; placeholder: I18n.tm_chunk_overlap_ph; text <=> root.kb.chunk-overlap; }
                         Text { height: 30px; text: I18n.tm_kb_vector_tip; color: Theme.muted; font-size: Theme.font-2xs; wrap: word-wrap; }
                     }
                     if root.kb.base-type == "ragflow" : SheetCard {
-                        FormField { label: I18n.tm_dataset_id; placeholder: I18n.tm_dataset_ph; text <=> root.kb.dataset-id; }
+                        MobileFormField { label: I18n.tm_dataset_id; placeholder: I18n.tm_dataset_ph; text <=> root.kb.dataset-id; }
                         Text { height: 30px; text: I18n.tm_kb_ragflow_tip; color: Theme.muted; font-size: Theme.font-2xs; wrap: word-wrap; }
                     }
                     if root.kb.base-type == "literal" : SheetCard {
@@ -1151,7 +1153,7 @@ component ToolsPage inherits Rectangle {
                 padding: 14px;
                 spacing: 10px;
                 Text { height: 22px; text: I18n.tm_new_file; color: Theme.text; font-size: Theme.font-md; font-weight: 700; }
-                FormField { label: I18n.tm_name; placeholder: "notes.md"; text <=> root.new-file-name; auto-focus: true; }
+                MobileFormField { label: I18n.tm_name; placeholder: "notes.md"; text <=> root.new-file-name; auto-focus: true; }
                 HorizontalLayout {
                     spacing: 8px;
                     alignment: end;
@@ -1214,6 +1216,47 @@ component ToolsPage inherits Rectangle {
 
 // ---- built-in agent ---------------------------------------------------
 
+/// One selectable 权限审批 mode: 桌面版 renders the same three values in a
+/// ComboBox; on the phone a touch list keeps the whole set visible at once.
+component ApprovalOption inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected: false;
+    in property <bool> last: false;
+    callback picked();
+    height: 44px;
+    background: touch.has-hover ? Theme.hover : transparent;
+    touch := TouchArea {
+        clicked => { root.picked(); }
+    }
+    HorizontalLayout {
+        spacing: 10px;
+        cross-axis-alignment: center;
+        Text {
+            horizontal-stretch: 1;
+            text: root.label;
+            color: root.selected ? Theme.text : Theme.text-secondary;
+            font-size: Theme.font-sm;
+            font-weight: root.selected ? 600 : 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Image {
+            width: 16px;
+            height: 16px;
+            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/circle-check.svg");
+            colorize: Theme.accent-ink;
+            image-fit: contain;
+            visible: root.selected;
+        }
+    }
+    if !root.last : Rectangle {
+        y: parent.height - 1px;
+        width: parent.width;
+        height: 1px;
+        background: Theme.border;
+    }
+}
+
 component AgentPage inherits Rectangle {
     in property <length> inset-top: 0px;
     in property <length> inset-bottom: 0px;
@@ -1223,6 +1266,8 @@ component AgentPage inherits Rectangle {
     in property <[MobileToolGroup]> groups: [];
     in-out property <string> search;
     in property <[string]> questions: [];
+    /// 权限审批: `suggest` / `auto_edit` / `full_auto`, same values as 桌面版.
+    in property <string> approval-mode: "full_auto";
     callback back();
     callback refresh();
     callback search-tools(string);
@@ -1231,6 +1276,7 @@ component AgentPage inherits Rectangle {
     callback toggle-group(string, bool, string, string);
     callback add-question(string, string, string);
     callback remove-question(int, string, string);
+    callback set-approval-mode(string);
 
     private property <bool> dirty: false;
     private property <string> question-draft: "";
@@ -1283,8 +1329,8 @@ component AgentPage inherits Rectangle {
 
                 SheetCard {
                     CardTitle { title: "基本信息"; subtitle: "名称、问候语与额外提示词"; }
-                    FormField { label: I18n.stc_agent_name; text: root.agent-name; read-only: true; strong-label: true; }
-                    FormField {
+                    MobileFormField { label: I18n.stc_agent_name; text: root.agent-name; read-only: true; strong-label: true; }
+                    MobileFormField {
                         label: I18n.stc_agent_greeting;
                         placeholder: I18n.stc_agent_greeting_hint;
                         strong-label: true;
@@ -1448,6 +1494,29 @@ component AgentPage inherits Rectangle {
                         }
                     }
                 }
+
+                // 权限审批: the runtime gate re-reads it on every turn. Full auto
+                // is the default; the other two pause the turn with an in-chat
+                // approval card — same three values as 桌面版's ComboBox.
+                SheetCard {
+                    CardTitle { title: I18n.ag_permission_mode; subtitle: I18n.ag_permission_note; }
+                    ApprovalOption {
+                        label: I18n.ag_permission_suggest;
+                        selected: root.approval-mode == "suggest";
+                        picked => { root.set-approval-mode("suggest"); }
+                    }
+                    ApprovalOption {
+                        label: I18n.ag_permission_auto_edit;
+                        selected: root.approval-mode == "auto_edit";
+                        picked => { root.set-approval-mode("auto_edit"); }
+                    }
+                    ApprovalOption {
+                        label: I18n.ag_permission_full_auto;
+                        selected: root.approval-mode == "full_auto";
+                        last: true;
+                        picked => { root.set-approval-mode("full_auto"); }
+                    }
+                }
             }
         }
     }
@@ -1509,7 +1578,7 @@ component CronEditorSheet inherits Rectangle {
                 alignment: start;
 
                 SheetCard {
-                    FormField { label: "任务名称（可选）"; placeholder: "留空则取执行消息的前 40 字"; text <=> root.draft.name; }
+                    MobileFormField { label: "任务名称（可选）"; placeholder: "留空则取执行消息的前 40 字"; text <=> root.draft.name; }
                     MobileTextArea {
                         label: "执行消息";
                         placeholder: "到点后发给智能体的内容";
@@ -1527,12 +1596,12 @@ component CronEditorSheet inherits Rectangle {
                             picked => { root.open-picker(14, "触发方式", root.draft.schedule-kind); }
                         }
                     }
-                    if root.draft.schedule-kind == "at" : FormField {
+                    if root.draft.schedule-kind == "at" : MobileFormField {
                         label: "执行时间";
                         placeholder: "YYYY-MM-DD HH:MM";
                         text <=> root.draft.schedule-at;
                     }
-                    if root.draft.schedule-kind == "every" : FormField {
+                    if root.draft.schedule-kind == "every" : MobileFormField {
                         label: "间隔";
                         placeholder: "例如 30";
                         text <=> root.draft.every;
@@ -1545,12 +1614,12 @@ component CronEditorSheet inherits Rectangle {
                             picked => { root.open-picker(15, "间隔单位", root.draft.interval-unit); }
                         }
                     }
-                    if root.draft.schedule-kind == "cron" : FormField {
+                    if root.draft.schedule-kind == "cron" : MobileFormField {
                         label: "Cron 表达式";
                         placeholder: "例如 0 9 * * 1-5";
                         text <=> root.draft.cron-expr;
                     }
-                    if root.draft.schedule-kind == "cron" : FormField {
+                    if root.draft.schedule-kind == "cron" : MobileFormField {
                         label: "时区（可选）";
                         placeholder: "留空使用本机时区";
                         text <=> root.draft.timezone;
@@ -1948,8 +2017,8 @@ component MemoryEditorSheet inherits Rectangle {
                 spacing: 12px;
                 alignment: start;
                 SheetCard {
-                    FormField { label: "索引标题"; placeholder: "一句话概括这条记忆"; text <=> root.draft.title; }
-                    FormField { label: "标签"; placeholder: "例如 偏好 / 项目 / session_summary"; text <=> root.draft.category; }
+                    MobileFormField { label: "索引标题"; placeholder: "一句话概括这条记忆"; text <=> root.draft.title; }
+                    MobileFormField { label: "标签"; placeholder: "例如 偏好 / 项目 / session_summary"; text <=> root.draft.category; }
                     MobileTextArea {
                         label: "内容";
                         placeholder: "写下需要长期保留的事实、偏好或约定";
@@ -2257,9 +2326,9 @@ component AccountPage inherits Rectangle {
 
                 if !root.logged-in : SheetCard {
                     CardTitle { title: "登录云端"; subtitle: "登录后本机成为可被云端控制的设备，并可切换到云端会话。"; }
-                    FormField { label: "服务地址"; placeholder: "https://your-server"; text <=> root.server-draft; }
-                    FormField { label: "用户名"; placeholder: "用户名"; text <=> root.user-draft; }
-                    FormField { label: "密码"; placeholder: "密码"; secret: true; text <=> root.password-draft; }
+                    MobileFormField { label: "服务地址"; placeholder: "https://your-server"; text <=> root.server-draft; }
+                    MobileFormField { label: "用户名"; placeholder: "用户名"; text <=> root.user-draft; }
+                    MobileFormField { label: "密码"; placeholder: "密码"; secret: true; text <=> root.password-draft; }
                     Rectangle { height: 8px; }
                     Action {
                         width: 96px;
@@ -2420,7 +2489,7 @@ component ChannelEditorSheet inherits Rectangle {
                         last: true;
                         PickerField { text: root.channel-label(root.draft.channel); picked => { root.pick-channel(); } }
                     }
-                    FormField { label: "账号名称"; placeholder: "用于区分的名称"; text <=> root.draft.name; }
+                    MobileFormField { label: "账号名称"; placeholder: "用于区分的名称"; text <=> root.draft.name; }
                     SettingRow {
                         label: "启用";
                         last: true;
@@ -2428,8 +2497,8 @@ component ChannelEditorSheet inherits Rectangle {
                     }
                 }
                 if root.draft.channel == "feishu" : SheetCard {
-                    FormField { label: "App ID"; placeholder: "cli_xxx"; text <=> root.draft.app-id; }
-                    FormField { label: "App Secret"; placeholder: "已保存则留空"; secret: true; text <=> root.draft.app-secret; }
+                    MobileFormField { label: "App ID"; placeholder: "cli_xxx"; text <=> root.draft.app-id; }
+                    MobileFormField { label: "App Secret"; placeholder: "已保存则留空"; secret: true; text <=> root.draft.app-secret; }
                     SettingRow {
                         label: "接收群聊";
                         last: true;
@@ -2437,19 +2506,19 @@ component ChannelEditorSheet inherits Rectangle {
                     }
                 }
                 if root.draft.channel == "wechat" : SheetCard {
-                    FormField { label: "Corp ID"; placeholder: "企业 ID"; text <=> root.draft.corp-id; }
-                    FormField { label: "Agent ID"; placeholder: "应用 AgentId"; text <=> root.draft.wechat-agent-id; }
-                    FormField { label: "Secret"; placeholder: "已保存则留空"; secret: true; text <=> root.draft.wechat-secret; }
-                    FormField { label: "Token"; placeholder: "回调 Token"; text <=> root.draft.wechat-token; }
-                    FormField { label: "EncodingAESKey"; placeholder: "43 位 AES Key"; text <=> root.draft.wechat-aes-key; }
-                    FormField { label: "域名（可选）"; placeholder: "留空使用默认"; text <=> root.draft.domain; }
+                    MobileFormField { label: "Corp ID"; placeholder: "企业 ID"; text <=> root.draft.corp-id; }
+                    MobileFormField { label: "Agent ID"; placeholder: "应用 AgentId"; text <=> root.draft.wechat-agent-id; }
+                    MobileFormField { label: "Secret"; placeholder: "已保存则留空"; secret: true; text <=> root.draft.wechat-secret; }
+                    MobileFormField { label: "Token"; placeholder: "回调 Token"; text <=> root.draft.wechat-token; }
+                    MobileFormField { label: "EncodingAESKey"; placeholder: "43 位 AES Key"; text <=> root.draft.wechat-aes-key; }
+                    MobileFormField { label: "域名（可选）"; placeholder: "留空使用默认"; text <=> root.draft.domain; }
                 }
                 if root.draft.channel == "wechat_mp" : SheetCard {
-                    FormField { label: "App ID"; placeholder: "公众号 AppID"; text <=> root.draft.app-id; }
-                    FormField { label: "App Secret"; placeholder: "已保存则留空"; secret: true; text <=> root.draft.app-secret; }
-                    FormField { label: "Token"; placeholder: "回调 Token"; text <=> root.draft.wechat-mp-token; }
-                    FormField { label: "EncodingAESKey"; placeholder: "43 位 AES Key"; text <=> root.draft.wechat-mp-aes-key; }
-                    FormField { label: "原始 ID"; placeholder: "gh_xxx"; text <=> root.draft.original-id; }
+                    MobileFormField { label: "App ID"; placeholder: "公众号 AppID"; text <=> root.draft.app-id; }
+                    MobileFormField { label: "App Secret"; placeholder: "已保存则留空"; secret: true; text <=> root.draft.app-secret; }
+                    MobileFormField { label: "Token"; placeholder: "回调 Token"; text <=> root.draft.wechat-mp-token; }
+                    MobileFormField { label: "EncodingAESKey"; placeholder: "43 位 AES Key"; text <=> root.draft.wechat-mp-aes-key; }
+                    MobileFormField { label: "原始 ID"; placeholder: "gh_xxx"; text <=> root.draft.original-id; }
                 }
                 if root.draft.channel == "weixin" : SheetCard {
                     SettingRow {
@@ -2465,10 +2534,10 @@ component ChannelEditorSheet inherits Rectangle {
                             clicked => { root.start-qr(false); }
                         }
                     }
-                    FormField { label: "API Base"; placeholder: "留空使用默认"; text <=> root.draft.weixin-api-base; }
-                    FormField { label: "Bot Token"; placeholder: "已保存则留空"; secret: true; text <=> root.draft.weixin-bot-token; }
-                    FormField { label: "Bot ID"; placeholder: "ilink_bot_id"; text <=> root.draft.weixin-bot-id; }
-                    FormField { label: "User ID"; placeholder: "ilink_user_id"; text <=> root.draft.weixin-user-id; }
+                    MobileFormField { label: "API Base"; placeholder: "留空使用默认"; text <=> root.draft.weixin-api-base; }
+                    MobileFormField { label: "Bot Token"; placeholder: "已保存则留空"; secret: true; text <=> root.draft.weixin-bot-token; }
+                    MobileFormField { label: "Bot ID"; placeholder: "ilink_bot_id"; text <=> root.draft.weixin-bot-id; }
+                    MobileFormField { label: "User ID"; placeholder: "ilink_user_id"; text <=> root.draft.weixin-user-id; }
                 }
                 SheetCard {
                     MobileTextArea {
@@ -3037,7 +3106,7 @@ component SettingsHome inherits Rectangle {
                         clicked => { root.open-page(11); }
                     }
                     NavRow {
-                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/database.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-database.svg");
                         label: "数据与恢复";
                         detail: "本地备份、恢复与崩溃日志";
                         clicked => { root.open-page(15); }
@@ -4541,7 +4610,7 @@ component ModelEditorPage inherits Rectangle {
                             checked-hover-color: Theme.gold-deep;
                         }
                     }
-                    FormField {
+                    MobileFormField {
                         label: I18n.model_key_label;
                         placeholder: I18n.model_key_placeholder;
                         text <=> root.draft.key;
@@ -4560,17 +4629,17 @@ component ModelEditorPage inherits Rectangle {
                             picked => { root.open-picker(5, I18n.model_provider_label, root.draft.provider); }
                         }
                     }
-                    FormField {
+                    MobileFormField {
                         label: I18n.model_name_label;
                         placeholder: I18n.model_name_placeholder;
                         text <=> root.draft.model;
                     }
-                    FormField {
+                    MobileFormField {
                         label: I18n.model_base_url_label;
                         placeholder: I18n.model_base_url_placeholder;
                         text <=> root.draft.base-url;
                     }
-                    FormField {
+                    MobileFormField {
                         label: I18n.model_token_label;
                         placeholder: I18n.model_token_placeholder;
                         secret: true;
@@ -4580,12 +4649,12 @@ component ModelEditorPage inherits Rectangle {
                     // 不埋进高级设置（与桌面版、管理端一致）。
                     if root.draft.model-type == "image" : VerticalLayout {
                         spacing: 12px;
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_param_image_default_size;
                             placeholder: I18n.st_param_image_default_size_hint;
                             text <=> root.draft.image-default-size;
                         }
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_param_image_max_size;
                             placeholder: I18n.st_param_image_max_size_hint;
                             text <=> root.draft.image-max-size;
@@ -4595,7 +4664,7 @@ component ModelEditorPage inherits Rectangle {
                     // 图像/语音/视频模型没有窗口压缩与用量占比。
                     if root.draft.model-type == "llm" : VerticalLayout {
                         spacing: 12px;
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_param_max_context;
                             placeholder: I18n.st_param_context_hint;
                             text <=> root.draft.max-context;
@@ -4630,32 +4699,32 @@ component ModelEditorPage inherits Rectangle {
                     open <=> root.advanced-open;
                     if root.draft.model-type == "llm" : VerticalLayout {
                         spacing: 12px;
-                        FormField {
+                        MobileFormField {
                             label: "temperature";
                             placeholder: "0.7";
                             text <=> root.draft.temperature;
                         }
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_param_timeout;
                             placeholder: "120";
                             text <=> root.draft.timeout-s;
                         }
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_param_max_output;
                             placeholder: I18n.st_param_model_default;
                             text <=> root.draft.max-output;
                         }
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_param_thinking;
                             placeholder: I18n.st_param_model_default;
                             text <=> root.draft.thinking-token-budget;
                         }
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_param_max_rounds;
                             placeholder: "1000";
                             text <=> root.draft.max-rounds;
                         }
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_param_history_ratio;
                             placeholder: "0.9";
                             text <=> root.draft.history-compaction-ratio;
@@ -4703,7 +4772,7 @@ component ModelEditorPage inherits Rectangle {
                     }
                     if root.draft.model-type == "asr" : VerticalLayout {
                         spacing: 12px;
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_param_asr_language;
                             placeholder: I18n.st_param_asr_language_hint;
                             text <=> root.draft.asr-language;
@@ -4715,12 +4784,12 @@ component ModelEditorPage inherits Rectangle {
                                 picked => { root.open-picker(9, I18n.st_param_asr_format, root.draft.asr-response-format); }
                             }
                         }
-                        FormField {
+                        MobileFormField {
                             label: "temperature";
                             placeholder: "0 - 2";
                             text <=> root.draft.asr-temperature;
                         }
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_param_asr_prompt;
                             placeholder: I18n.st_param_model_default;
                             text <=> root.draft.asr-prompt;
@@ -4728,7 +4797,7 @@ component ModelEditorPage inherits Rectangle {
                     }
                     if root.draft.model-type == "tts" : VerticalLayout {
                         spacing: 12px;
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_param_tts_voice;
                             placeholder: I18n.st_param_model_default;
                             text <=> root.draft.tts-voice;
@@ -4740,12 +4809,12 @@ component ModelEditorPage inherits Rectangle {
                                 picked => { root.open-picker(10, I18n.st_param_tts_format, root.draft.tts-response-format); }
                             }
                         }
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_param_tts_speed;
                             placeholder: "0.25 - 4";
                             text <=> root.draft.tts-speed;
                         }
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_param_tts_instructions;
                             placeholder: I18n.st_param_model_default;
                             text <=> root.draft.tts-instructions;
@@ -4760,17 +4829,17 @@ component ModelEditorPage inherits Rectangle {
                                 picked => { root.open-picker(11, I18n.st_param_image_format, root.draft.image-output-format); }
                             }
                         }
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_param_image_steps;
                             placeholder: "1 - 200";
                             text <=> root.draft.image-steps;
                         }
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_param_image_guidance;
                             placeholder: "0 - 20";
                             text <=> root.draft.image-guidance-scale;
                         }
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_param_negative;
                             placeholder: I18n.st_param_model_default;
                             text <=> root.draft.image-negative-prompt;
@@ -4778,52 +4847,52 @@ component ModelEditorPage inherits Rectangle {
                     }
                     if root.draft.model-type == "video" : VerticalLayout {
                         spacing: 12px;
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_param_video_size;
                             placeholder: I18n.st_param_video_size_hint;
                             text <=> root.draft.video-size;
                         }
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_param_video_seconds;
                             placeholder: "≥ 0.5";
                             text <=> root.draft.video-seconds;
                         }
-                        FormField {
+                        MobileFormField {
                             label: "FPS";
                             placeholder: "≥ 1";
                             text <=> root.draft.video-fps;
                         }
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_model_video_frames;
                             placeholder: "≥ 1";
                             text <=> root.draft.video-num-frames;
                         }
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_param_image_steps;
                             placeholder: "1 - 200";
                             text <=> root.draft.video-steps;
                         }
-                        FormField {
+                        MobileFormField {
                             label: "guidance_scale";
                             placeholder: "0 - 20";
                             text <=> root.draft.video-guidance-scale;
                         }
-                        FormField {
+                        MobileFormField {
                             label: "guidance_scale_2";
                             placeholder: "0 - 20";
                             text <=> root.draft.video-guidance-scale-2;
                         }
-                        FormField {
+                        MobileFormField {
                             label: "boundary_ratio";
                             placeholder: "0 - 1";
                             text <=> root.draft.video-boundary-ratio;
                         }
-                        FormField {
+                        MobileFormField {
                             label: "flow_shift";
                             placeholder: "≥ 0";
                             text <=> root.draft.video-flow-shift;
                         }
-                        FormField {
+                        MobileFormField {
                             label: I18n.st_param_negative;
                             placeholder: I18n.st_param_model_default;
                             text <=> root.draft.video-negative-prompt;
@@ -5136,7 +5205,7 @@ component DataPage inherits Rectangle {
                             clicked => { root.restore-path = backup.path; }
                         }
                     }
-                    FormField {
+                    MobileFormField {
                         label: "或填写其它备份文件路径";
                         placeholder: "/storage/emulated/0/Download/wunder-backup-....zip";
                         text <=> root.restore-path;
@@ -5305,6 +5374,8 @@ export component MobileSettings inherits Rectangle {
     in property <[MobileToolGroup]> agent-groups: [];
     in-out property <string> agent-search: "";
     in property <[string]> agent-questions: [];
+    /// 权限审批: `suggest` / `auto_edit` / `full_auto`.
+    in property <string> agent-approval-mode: "full_auto";
 
     // Cron/memory projections.
     in property <[MobileCronJob]> cron-jobs: [];
@@ -5453,6 +5524,7 @@ export component MobileSettings inherits Rectangle {
     callback toggle-agent-tool-group(string, bool, string, string);
     callback add-agent-question(string, string, string);
     callback remove-agent-question(int, string, string);
+    callback set-agent-approval-mode(string);
     callback refresh-cron();
     callback toggle-cron(string, bool);
     callback delete-cron(string);
@@ -5879,6 +5951,7 @@ export component MobileSettings inherits Rectangle {
             groups: root.agent-groups;
             search <=> root.agent-search;
             questions: root.agent-questions;
+            approval-mode: root.agent-approval-mode;
             back() => { root.page = 0; }
             refresh() => { root.refresh-agent(); }
             search-tools(query) => { root.search-agent-tools(query); }
@@ -5887,6 +5960,7 @@ export component MobileSettings inherits Rectangle {
             toggle-group(category, select, description, prompt) => { root.toggle-agent-tool-group(category, select, description, prompt); }
             add-question(question, description, prompt) => { root.add-agent-question(question, description, prompt); }
             remove-question(index, description, prompt) => { root.remove-agent-question(index, description, prompt); }
+            set-approval-mode(mode) => { root.set-agent-approval-mode(mode); }
         }
 
         if root.page == 9 : CronPage {

@@ -3419,8 +3419,7 @@ mod tests {
 
         let finalized = finalize_stream_tool_calls(&acc).expect("tool calls should exist");
         assert_eq!(
-            finalized[0]["function"]["arguments"],
-            expected,
+            finalized[0]["function"]["arguments"], expected,
             "流式分片里的左花括号被吞掉了"
         );
     }

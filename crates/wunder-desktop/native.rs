@@ -203,6 +203,17 @@ pub struct NativeSession {
     pub draft: bool,
 }
 
+/// One bounded page of archived threads plus the paging envelope the settings
+/// page renders. `pages` is derived here so the UI never has to mirror the
+/// server-side page size.
+#[derive(Debug, Clone, Default)]
+pub struct ArchivedThreadPage {
+    pub items: Vec<NativeSession>,
+    pub total: i64,
+    pub page: i64,
+    pub pages: i64,
+}
+
 /// One bounded thread-open snapshot. `change_cursor` is the history page's
 /// transactional waterline, captured before reading its rows. A watcher can
 /// replay every later commit without a separate cursor read.
@@ -1581,13 +1592,35 @@ impl NativeDesktop {
     fn workspace_lookup(
         &self,
     ) -> std::collections::HashMap<String, wunder_server::storage::WorkspaceRecord> {
-        self.state()
-            .storage
-            .list_workspaces(self.user_id())
+        let storage = self.state().storage.as_ref();
+        let mut map: std::collections::HashMap<String, wunder_server::storage::WorkspaceRecord> =
+            storage
+                .list_workspaces(self.user_id())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|record| (record.workspace_id.clone(), record))
+                .collect();
+        // 工作区被删除（线程随之归档）后，线程仍带着原来的 workspace_id。
+        // 这些行再用一份名字快照补齐，归档列表才不必显示“未知工作区”。
+        for (workspace_id, name) in storage
+            .removed_workspace_names(self.user_id())
             .unwrap_or_default()
-            .into_iter()
-            .map(|record| (record.workspace_id.clone(), record))
-            .collect()
+        {
+            map.entry(workspace_id.clone()).or_insert_with(|| {
+                wunder_server::storage::WorkspaceRecord {
+                    workspace_id,
+                    user_id: self.user_id().to_string(),
+                    name,
+                    root_path: String::new(),
+                    icon: String::new(),
+                    color: String::new(),
+                    sort_index: 0,
+                    created_at: 0.0,
+                    updated_at: 0.0,
+                }
+            });
+        }
+        map
     }
 
     /// 一个用户当前仍在途的线程集合，一次读取覆盖一页目录。规则来自运行时，
@@ -2181,6 +2214,12 @@ impl NativeDesktop {
             .state
             .user_store
             .delete_chat_session(&self.desktop.user_id, session_id)?;
+        // 最后一个引用已删工作区的线程没了，名字快照也不必再留。
+        let _ = self
+            .desktop
+            .state
+            .storage
+            .purge_unused_workspace_names(&self.desktop.user_id);
         Ok(())
     }
 

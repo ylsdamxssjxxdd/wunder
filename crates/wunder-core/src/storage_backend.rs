@@ -1080,6 +1080,11 @@ pub trait ChatSessionStore {
         user_id: &str,
         parent_session_ids: &[String],
     ) -> Result<Vec<(String, i64)>>;
+    /// Threads filtered by status, one bounded page at a time.
+    ///
+    /// An `archived` listing is ordered by archive time (most recently archived
+    /// first) because it is a history surface; every other listing keeps
+    /// creation order, which the thread tree relies on.
     fn list_chat_sessions_by_status(
         &self,
         user_id: &str,
@@ -1167,6 +1172,28 @@ pub trait WorkspaceStore {
     /// Next sort index for inserting at the end of the sidebar.
     fn next_workspace_sort_index(&self, user_id: &str) -> Result<i64>;
     fn delete_workspace(&self, user_id: &str, workspace_id: &str) -> Result<i64>;
+    /// Remember the display name of a workspace binding that is being removed.
+    ///
+    /// Threads archived together with their workspace keep the `workspace_id`,
+    /// so the row is gone but the label is still the only thing that can say
+    /// where those threads came from. Backends that do not persist the label
+    /// leave the archive list unlabeled instead of failing the delete.
+    fn remember_workspace_name(&self, user_id: &str, workspace_id: &str, name: &str) -> Result<()> {
+        let _ = (user_id, workspace_id, name);
+        Ok(())
+    }
+    /// Names remembered for removed workspace bindings, keyed by workspace id.
+    /// Only labels that still own at least one thread are returned, so a label
+    /// disappears once its last thread is deleted.
+    fn removed_workspace_names(&self, user_id: &str) -> Result<HashMap<String, String>> {
+        let _ = user_id;
+        Ok(HashMap::new())
+    }
+    /// Drop remembered labels whose threads are all gone.
+    fn purge_unused_workspace_names(&self, user_id: &str) -> Result<()> {
+        let _ = user_id;
+        Ok(())
+    }
 }
 
 /// Session goal durable state: one row per session, mutated by CAS on revision.

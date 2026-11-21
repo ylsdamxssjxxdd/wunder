@@ -11,21 +11,26 @@
 //! The relief is sampled per *cell*, not per character: a cell is two pixels
 //! wide and two pixels tall, and how tall it is in real pixels depends on the
 //! terminal font. A cell is never square, so the art is fitted to the cell
-//! aspect the terminal reports: first `ws_xpixel`/`ws_ypixel`, then the reply to
-//! `CSI 14 t`/`CSI 18 t` (the only source VTE terminals give), and only when
-//! nothing answers to the aspect of a typical monospace font. Painting 1:1
-//! pixels into cells stretches the head vertically by that same factor, which
-//! reads as a head squeezed horizontally.
+//! aspect the terminal reports; `terminal_geometry` owns that measurement and
+//! the fallbacks (an explicit override, the last real measurement, then the
+//! font's usual ratio). Painting 1:1 pixels into cells stretches the head
+//! vertically by that same factor, which reads as a head squeezed horizontally.
 
 #[path = "welcome_logo_art.rs"]
 mod welcome_logo_art;
 
+use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
 
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
+
+use crate::terminal_geometry::{
+    behind_multiplexer, env_cell_aspect, probed_cell_aspect, terminal_cell_aspect,
+    CELL_ASPECT_RANGE, FALLBACK_CELL_ASPECT,
+};
 
 /// 启动时欢迎头像从块底升进画面：新行在底部出现，已有的行被顶上去，
 /// 整块高度不变，最先露出来的是头尖。
@@ -77,36 +82,6 @@ const MIN_COLUMNS: u16 = 24;
 const MIN_ROWS: u16 = 6;
 /// Luminance ramp used when the terminal refuses colour.
 const SHADE_RAMP: [char; 10] = [' ', '.', ':', '-', '=', '+', '*', '#', '%', '@'];
-/// Cell aspect assumed when neither a measurement nor an override is available.
-///
-/// A monospace cell is taller than it is wide, and by how much depends on the
-/// font: DejaVu Sans Mono is 1.93, Ubuntu Mono 2.00, Noto Sans Mono 2.27, and
-/// the Ubuntu/GNOME Terminal default (Ubuntu Sans Mono 13) is 2.10. Windows
-/// consoles use 8×16 or 9×18 raster cells, i.e. exactly 2.0, which is also the
-/// shape the pixel data was generated for.
-#[cfg(windows)]
-const FALLBACK_CELL_ASPECT: f32 = 2.0;
-#[cfg(not(windows))]
-const FALLBACK_CELL_ASPECT: f32 = 2.1;
-/// Plausibility window for a cell aspect. Terminals that report a stale pixel
-/// size (or a size from before a font change) fall back instead of painting a
-/// head distorted the other way.
-const CELL_ASPECT_RANGE: std::ops::RangeInclusive<f32> = 1.2..=4.0;
-/// Explicit override for terminals that cannot be measured, e.g. a font whose
-/// line height is unusual.
-const CELL_ASPECT_ENV: &str = "WUNDER_CLI_CELL_ASPECT";
-/// Queries answered by xterm-compatible terminals: the text area in pixels and
-/// the same area in cells. VTE answers both; it ignores `CSI 16 t`, which would
-/// have given the cell size directly.
-#[cfg(unix)]
-const CELL_SIZE_QUERY: &[u8] = b"\x1b[14t\x1b[18t";
-/// Total time the probe waits for those replies. A terminal answers within
-/// microseconds, so a silent one only costs the user this much at startup.
-#[cfg(unix)]
-const CELL_SIZE_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(120);
-/// Longest single wait inside the probe, so the loop re-checks the deadline.
-#[cfg(unix)]
-const CELL_SIZE_POLL_SLICE: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// Half-block rows for the welcome avatar, sized to the terminal width and to
 /// the cell aspect the terminal reports.
@@ -120,188 +95,96 @@ pub(crate) fn logo_lines_for_cell(columns: u16, cell_aspect: f32) -> Vec<Line<'s
     }
 }
 
-/// How many cell-heights one cell is, and therefore how the head has to be
-/// sampled to stay round on screen: an explicit override wins, then a measured
-/// pixel size, then the terminal's own answer about its cell size, then the
-/// font family's usual ratio.
-fn cell_aspect() -> f32 {
-    env_cell_aspect()
-        .or_else(terminal_cell_aspect)
-        .or_else(probed_cell_aspect)
-        .unwrap_or(FALLBACK_CELL_ASPECT)
-}
-
-/// Cell aspect as answered by the terminal itself, `None` on platforms that are
-/// not asked (Windows consoles never answer these queries).
-#[cfg(not(unix))]
-fn probed_cell_aspect() -> Option<f32> {
-    None
-}
-
-/// Ask the terminal for its text area in pixels (`CSI 14 t`) and in cells
-/// (`CSI 18 t`); their quotient is the real cell aspect.
+/// The cell shape the welcome head is painted for.
 ///
-/// This is the only way to learn the font geometry of a VTE-based terminal
-/// (GNOME Terminal, Tilix, Terminator): those answer `TIOCGWINSZ` with zero
-/// `ws_xpixel`/`ws_ypixel`, so the measurement above never fires and the head
-/// used to be painted for a 2.1 cell — on a 10×26 cell that is a fifth too
-/// tall, which reads as a head squeezed sideways. The replies are consumed from
-/// the raw input here; unrecognised escape sequences are ignored by the event
-/// loop if one ever arrives late.
-#[cfg(unix)]
-fn probed_cell_aspect() -> Option<f32> {
-    static PROBED: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
-    *PROBED.get_or_init(query_cell_aspect)
-}
-
-#[cfg(unix)]
-fn query_cell_aspect() -> Option<f32> {
-    use std::io::{IsTerminal, Read, Write};
-
-    // A piped or redirected run has no terminal to answer, and writing queries
-    // into someone's file would be worse than a slightly wrong head.
-    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
-        return None;
-    }
-    // `TERM=dumb` is a terminal that answers nothing by contract; waiting for it
-    // would only slow the first frame down.
-    if std::env::var("TERM").is_ok_and(|term| term.eq_ignore_ascii_case("dumb")) {
-        return None;
-    }
-    let mut stdout = std::io::stdout();
-    stdout.write_all(CELL_SIZE_QUERY).ok()?;
-    stdout.flush().ok()?;
-
-    let mut stdin = std::io::stdin();
-    let mut replies = Vec::with_capacity(48);
-    let deadline = std::time::Instant::now() + CELL_SIZE_PROBE_TIMEOUT;
-    while stdin_readable(deadline) {
-        let mut chunk = [0u8; 32];
-        match stdin.read(&mut chunk) {
-            Ok(0) | Err(_) => break,
-            Ok(read) => replies.extend_from_slice(&chunk[..read]),
+/// Precedence, and why: an explicit `WUNDER_CLI_CELL_ASPECT` always wins; then
+/// a measurement from the terminal in front of the user; then the last real
+/// measurement remembered from an earlier run, which is the only honest answer
+/// behind a multiplexer; and only then the font family's usual ratio. Every
+/// step after the first is about *not* silently painting the head for a cell
+/// shape nobody measured: that fallback is what a user reads as the head being
+/// squeezed.
+fn cell_aspect(home: &Path) -> f32 {
+    static RESOLVED: OnceLock<f32> = OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        if let Some(value) = env_cell_aspect() {
+            return value;
         }
-        if let Some(aspect) = cell_aspect_from_replies(&replies) {
-            return Some(aspect);
-        }
-    }
-    None
-}
-
-/// Waits for more bytes on `stdin`, never past `deadline`. Polling in slices
-/// keeps a terminal that answers only one of the two queries from stalling the
-/// whole probe.
-#[cfg(unix)]
-fn stdin_readable(deadline: std::time::Instant) -> bool {
-    use std::os::fd::AsRawFd;
-
-    let now = std::time::Instant::now();
-    if now >= deadline {
-        return false;
-    }
-    let slice = (deadline - now).min(CELL_SIZE_POLL_SLICE);
-    let mut fd = libc::pollfd {
-        fd: std::io::stdin().as_raw_fd(),
-        events: libc::POLLIN,
-        revents: 0,
-    };
-    // SAFETY: one valid `pollfd` for the borrowed stdin descriptor, and the
-    // timeout is a plain millisecond count.
-    let ready = unsafe { libc::poll(&mut fd, 1, slice.as_millis() as libc::c_int) };
-    ready > 0 && fd.revents & libc::POLLIN != 0
-}
-
-/// The two replies as the terminal sent them: `ESC [ 4 ; height ; width t` for
-/// the text area in pixels and `ESC [ 8 ; rows ; columns t` for the grid. Both
-/// are needed; a single one is not enough to know a cell's shape.
-#[cfg(any(unix, test))]
-#[cfg_attr(all(not(unix), test), allow(dead_code))]
-fn cell_aspect_from_replies(replies: &[u8]) -> Option<f32> {
-    let (mut pixels, mut cells) = (None, None);
-    for params in csi_reports(replies) {
-        match params.as_slice() {
-            [4, height, width] => pixels = Some((*height, *width)),
-            [8, rows, columns] => cells = Some((*rows, *columns)),
-            _ => {}
-        }
-    }
-    let (height, width) = pixels?;
-    let (rows, columns) = cells?;
-    measured_cell_aspect(columns, rows, width, height)
-}
-
-/// Every `ESC [ <params> t` in `replies`, as parsed parameters. Anything that
-/// is not such a report — including half-arrived ones — is skipped instead of
-/// guessed at.
-#[cfg(any(unix, test))]
-fn csi_reports(replies: &[u8]) -> Vec<Vec<u16>> {
-    let mut reports = Vec::new();
-    let mut index = 0;
-    while index + 2 < replies.len() {
-        if replies[index] != 0x1b || replies[index + 1] != b'[' {
-            index += 1;
-            continue;
-        }
-        let start = index + 2;
-        let mut end = start;
-        while end < replies.len() && (replies[end].is_ascii_digit() || replies[end] == b';') {
-            end += 1;
-        }
-        if end < replies.len() && replies[end] == b't' {
-            if let Some(params) = parse_report_parameters(&replies[start..end]) {
-                reports.push(params);
-            }
-            index = end + 1;
+        // A multiplexer only knows the client's *grid*. The pixel fields and the
+        // `CSI 14 t`/`18 t` reports it returns are its own default cell (tmux:
+        // 16×32) unless the client told it the real pixel size, and
+        // `terminal_cell_aspect` filters exactly that default out. Asking the
+        // multiplexer through the escape query only repeats the same answer, so
+        // the probe is skipped there.
+        let measured = if behind_multiplexer() {
+            terminal_cell_aspect()
         } else {
-            index = start;
+            terminal_cell_aspect().or_else(probed_cell_aspect)
+        };
+        if let Some(value) = measured {
+            remember_cell_aspect(home, value);
+            return value;
         }
-    }
-    reports
+        remembered_cell_aspect(home).unwrap_or(FALLBACK_CELL_ASPECT)
+    })
 }
 
-#[cfg(any(unix, test))]
-fn parse_report_parameters(raw: &[u8]) -> Option<Vec<u16>> {
-    let text = std::str::from_utf8(raw).ok()?;
-    text.split(';')
-        .map(|part| part.parse::<u16>().ok())
-        .collect()
+/// The geometry the welcome head is drawn at for a terminal of `columns`
+/// columns: the cell aspect actually used, the head's width in cells and its
+/// height in cells. `None` when the terminal is too narrow for the head.
+///
+/// `doctor` reports this so a head that looks wrong can be traced to the
+/// geometry instead of guessed at.
+pub(crate) fn avatar_geometry(columns: u16, home: &Path) -> Option<(f32, u16, u16)> {
+    let aspect = cell_aspect(home);
+    fit(columns, aspect).map(|(width, rows)| (aspect, width, rows))
 }
+
 
 /// `WUNDER_CLI_CELL_ASPECT` lets a terminal that reports nothing still get the
 /// geometry right; an implausible value is ignored rather than obeyed.
-fn env_cell_aspect() -> Option<f32> {
-    let raw = std::env::var(CELL_ASPECT_ENV).ok()?;
-    let value: f32 = raw.trim().parse().ok()?;
+
+/// Where the last *real* measurement is kept between runs.
+///
+/// A terminal multiplexer only knows the client's grid, never the font's shape:
+/// tmux answers both `TIOCGWINSZ` and `CSI 14 t`/`18 t` with a hard-coded 16×32
+/// cell, and a terminal that answers nothing at all has the same problem. In
+/// both cases the last measurement taken from a real terminal is the only
+/// honest geometry available, so it is remembered and reused instead of
+/// guessing the font's ratio again.
+const CELL_ASPECT_STATE_FILE: &str = "config/cli-terminal.json";
+
+/// The last cell shape measured from a terminal that could actually report it.
+///
+/// Read once per process; a malformed or implausible file is ignored rather than
+/// trusted, exactly like a malformed measurement.
+fn remembered_cell_aspect(home: &Path) -> Option<f32> {
+    let raw = std::fs::read_to_string(home.join(CELL_ASPECT_STATE_FILE)).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(raw.as_str()).ok()?;
+    let value = parsed.get("cell_aspect")?.as_f64()? as f32;
     CELL_ASPECT_RANGE.contains(&value).then_some(value)
 }
 
-#[cfg(not(windows))]
-fn terminal_cell_aspect() -> Option<f32> {
-    let size = crossterm::terminal::window_size().ok()?;
-    measured_cell_aspect(size.columns, size.rows, size.width, size.height)
-}
-
-/// Windows consoles answer `ws_xpixel`/`ws_ypixel` with zero, so the fallback
-/// is the rule there rather than a measurement.
-#[cfg(windows)]
-fn terminal_cell_aspect() -> Option<f32> {
-    None
-}
-
-/// Cell aspect from a window size, `None` when the numbers cannot be trusted.
-/// VTE-based terminals (GNOME Terminal, Tilix) report zeroes here, which is why
-/// the terminal query and the fallback matter as much as the measurement.
-/// Windows consoles never reach this path, only the tests do.
-#[cfg_attr(all(windows, not(test)), allow(dead_code))]
-fn measured_cell_aspect(columns: u16, rows: u16, width_px: u16, height_px: u16) -> Option<f32> {
-    if columns == 0 || rows == 0 || width_px == 0 || height_px == 0 {
-        return None;
+/// Remembers a measurement for the runs where the terminal cannot answer.
+///
+/// Best effort by design: a read-only home must not fail the startup path, and a
+/// stale file only has to be no worse than the font guess it replaces.
+fn remember_cell_aspect(home: &Path, aspect: f32) {
+    if remembered_cell_aspect(home).is_some_and(|known| (known - aspect).abs() < 0.01) {
+        return;
     }
-    let cell_width = f32::from(width_px) / f32::from(columns);
-    let cell_height = f32::from(height_px) / f32::from(rows);
-    let aspect = cell_height / cell_width;
-    CELL_ASPECT_RANGE.contains(&aspect).then_some(aspect)
+    let path = home.join(CELL_ASPECT_STATE_FILE);
+    if let Some(parent) = path.parent() {
+        if std::fs::create_dir_all(parent).is_err() {
+            return;
+        }
+    }
+    // Thousandths are finer than any measurement and keep the file readable.
+    let aspect = (aspect * 1000.0).round() / 1000.0;
+    let value = serde_json::json!({ "cell_aspect": aspect });
+    let _ = std::fs::write(path, format!("{value}\n"));
 }
+
 
 /// The welcome banner a fresh thread opens with, kept as a description rather
 /// than as painted rows: the transcript paints it at whatever width it has, so
@@ -316,14 +199,16 @@ pub(crate) struct Banner {
 }
 
 impl Banner {
-    /// The cell shape is measured once, at startup, so painting a frame never
-    /// has to ask the terminal for its pixel size again.
-    pub(crate) fn new(version: &str, workdir: &str, is_zh: bool) -> Self {
+    /// The cell shape is resolved once, at startup, so painting a frame never
+    /// has to ask the terminal for its pixel size again. `home` is where the
+    /// last real measurement is remembered for terminals and multiplexers that
+    /// cannot answer.
+    pub(crate) fn new(version: &str, workdir: &str, is_zh: bool, home: &Path) -> Self {
         Self {
             version: version.to_string(),
             workdir: workdir.to_string(),
             is_zh,
-            cell_aspect: cell_aspect(),
+            cell_aspect: cell_aspect(home),
         }
     }
 
@@ -595,47 +480,31 @@ mod tests {
         }
     }
 
+
+
+    /// A terminal or multiplexer that cannot answer still gets the shape the
+    /// last real measurement saw, instead of the font guess.
     #[test]
-    fn the_cell_aspect_comes_from_the_reported_pixel_size() {
-        // 80×24 cells in 800×480 pixels: 10 px wide, 20 px tall.
-        assert_eq!(measured_cell_aspect(80, 24, 800, 480), Some(2.0));
-        // A terminal that reports nothing, or a stale size, is not trusted.
-        assert_eq!(measured_cell_aspect(80, 24, 0, 0), None);
-        assert_eq!(measured_cell_aspect(0, 24, 800, 480), None);
-        assert_eq!(measured_cell_aspect(80, 24, 800, 40), None);
-        assert_eq!(measured_cell_aspect(80, 24, 800, 9600), None);
+    fn a_remembered_measurement_survives_the_runs_that_cannot_measure() {
+        let home = std::env::temp_dir().join(format!(
+            "wunder-cli-cell-aspect-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        assert_eq!(remembered_cell_aspect(&home), None, "nothing remembered yet");
+
+        remember_cell_aspect(&home, 2.6);
+        assert_eq!(remembered_cell_aspect(&home), Some(2.6));
+
+        // A file that cannot be trusted is ignored, not obeyed.
+        std::fs::write(home.join(CELL_ASPECT_STATE_FILE), "{\"cell_aspect\": 9.0}").ok();
+        assert_eq!(remembered_cell_aspect(&home), None);
+        std::fs::write(home.join(CELL_ASPECT_STATE_FILE), "not json").ok();
+        assert_eq!(remembered_cell_aspect(&home), None);
+        let _ = std::fs::remove_dir_all(&home);
     }
 
-    /// A VTE terminal (GNOME Terminal) answers `CSI 14 t` with its text area in
-    /// pixels and `CSI 18 t` with the same area in cells, while `TIOCGWINSZ`
-    /// keeps `ws_xpixel`/`ws_ypixel` at zero. These are the numbers a real
-    /// 80×24 window reported: 800×624 px, i.e. a 10×26 cell.
-    #[cfg(unix)]
-    const VTE_WINDOW_REPORT: &[u8] = b"\x1b[4;624;800t\x1b[8;24;80t";
-
-    #[cfg(unix)]
-    #[test]
-    fn the_terminal_itself_tells_the_cell_aspect_when_the_window_size_has_no_pixels()
-    {
-        // 26 / 10: a cell taller than any monospace font metric, which is why
-        // the 2.1 fallback painted the head with a fifth too many rows.
-        assert_eq!(cell_aspect_from_replies(VTE_WINDOW_REPORT), Some(2.6));
-        // A half-arrived reply is not a measurement; neither is a zero size nor
-        // an unrelated report.
-        assert_eq!(cell_aspect_from_replies(b"\x1b[4;624;800t"), None);
-        assert_eq!(cell_aspect_from_replies(b"\x1b[8;24;80t"), None);
-        assert_eq!(cell_aspect_from_replies(b"\x1b[4;624;0t\x1b[8;24;80t"), None);
-        assert_eq!(
-            cell_aspect_from_replies(b"\x1b[6;10;20t\x1b[4;624;800t\x1b[8;24;80t"),
-            Some(2.6)
-        );
-        // Bytes before and after the reports (a stray key, a split read) do not
-        // hide them.
-        assert_eq!(
-            cell_aspect_from_replies(b"q\x1b[4;624;800t\x1b[8;24;80t\x1b["),
-            Some(2.6)
-        );
-    }
 
     #[cfg(unix)]
     #[test]

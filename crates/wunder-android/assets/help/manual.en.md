@@ -72,7 +72,7 @@ The local AI workbench and the default entry point for individual users: it runs
 
 ## Fonts
 
-The interface sets its copy in MiSans, a free-for-commercial-use typeface from Xiaomi, with DejaVu Sans behind it for symbols MiSans does not carry. Both faces ship inside the executable, so the target machine needs no installed Chinese font, and any character both faces cover is drawn by MiSans. This keeps the desktop and Android Chinese typesetting identical, and keeps the glyphs independent of the system language setting.
+The interface sets its copy in MiSans, a free-for-commercial-use typeface from Xiaomi, with DejaVu Sans behind it for symbols MiSans does not carry and monochrome Noto Emoji for emoji (the desktop software renderer cannot rasterise colour emoji, so emoji are drawn in black and white). Both faces ship inside the executable, so the target machine needs no installed Chinese font, and any character both faces cover is drawn by MiSans. This keeps the desktop and Android Chinese typesetting identical, and keeps the glyphs independent of the system language setting.
 
 <!-- topic id="forms-desktop-deploy" block="forms" title="Deployment" group="Desktop" keywords="Desktop Deployment,OS and installer" -->
 
@@ -1184,7 +1184,7 @@ The `wait` action reads desktop windows and screen state. Give a wait duration (
 
 - **Actions are real input injection with no rollback.** `left_hold` and `left_release` must be used in pairs, or the mouse state may be left dangling; `drag_drop` is press, smooth move, release.
 - Coordinates change with resolution; normalized coordinates only guarantee consistency between one observation and the action that follows it, so observe again after switching screens or changing resolution.
-- A screenshot is also copied into the user container at `temp/desktop_control//`; a persistence failure only logs a warning and does not affect the result.
+- A screenshot is also copied into the user container at `temp/desktop_control/<session>/desktop_shot_<n>.png` (numbered inside that session directory); a persistence failure only logs a warning and does not affect the result.
 - The screenshot directory keeps frames by count, holding only the most recent few (3 by default), so temporary files do not pile up without bound.
 - Authorization follows least privilege: it needs an explicit user switch, it does not silently capture the screen in the background, and it does not expose system capabilities to a remote party.
 

@@ -32,6 +32,7 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -867,14 +868,23 @@ final class PhoneBridge {
                 shot.recycle();
                 return null;
             }
-            File file = new File(directory, "shot-" + System.currentTimeMillis() + ".png");
+            File file = nextScreenshotFile(directory);
+            if (file == null) {
+                return null;
+            }
             try (FileOutputStream out = new FileOutputStream(file)) {
-                scaled.compress(Bitmap.CompressFormat.PNG, 100, out);
+                if (!scaled.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                    //noinspection ResultOfMethodCallIgnored
+                    file.delete();
+                    return null;
+                }
                 lastDeviceSize = device;
                 lastFrameSize = frame;
                 prune(directory);
                 return file.getAbsolutePath();
             } catch (Throwable error) {
+                //noinspection ResultOfMethodCallIgnored
+                file.delete();
                 return null;
             } finally {
                 if (scaled != shot) {
@@ -884,8 +894,45 @@ final class PhoneBridge {
             }
         }
 
+        /**
+         * Reserve the next free {@code screenshot_<n>.png}. The path is handed
+         * to the model in the phone-control result, so an ordered serial is
+         * easier to reference than an epoch timestamp.
+         */
+        private static File nextScreenshotFile(File directory) {
+            int max = 0;
+            File[] files = directory.listFiles();
+            if (files != null) {
+                String head = "screenshot_";
+                for (File file : files) {
+                    String name = file.getName();
+                    if (!name.startsWith(head) || !name.endsWith(".png")) {
+                        continue;
+                    }
+                    String stem = name.substring(head.length(), name.length() - 4);
+                    try {
+                        max = Math.max(max, Integer.parseInt(stem));
+                    } catch (NumberFormatException ignored) {
+                        // Old timestamp or unrelated name: not part of the serial.
+                    }
+                }
+            }
+            for (int index = max + 1; index < max + 4096; index++) {
+                File candidate = new File(directory, "screenshot_" + index + ".png");
+                try {
+                    if (candidate.createNewFile()) {
+                        return candidate;
+                    }
+                } catch (IOException error) {
+                    return null;
+                }
+            }
+            return null;
+        }
+
         private static void prune(File directory) {
-            File[] files = directory.listFiles((dir, name) -> name.startsWith("shot-"));
+            File[] files = directory.listFiles((dir, name) ->
+                    name.startsWith("screenshot_") || name.startsWith("shot-"));
             if (files == null || files.length <= KEEP_SCREENSHOTS) {
                 return;
             }

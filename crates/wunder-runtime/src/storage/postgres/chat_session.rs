@@ -424,10 +424,15 @@ impl PostgresChatSessionStorage for PostgresStorage {
             params.iter().map(|value| value.as_ref()).collect();
         let total: i64 = conn.query_one(&count_sql, &params_ref)?.get(0);
 
-        let mut sql = format!(
-            "{}{where_clause} ORDER BY created_at DESC, session_id DESC",
-            chat_session_select_sql()
-        );
+        // The archive list is a history surface: the thread the user archived
+        // last belongs on top, and archiving stamps `updated_at`. Every other
+        // listing stays in creation order, which the thread tree depends on.
+        let order = if normalized_status == "archived" {
+            " ORDER BY updated_at DESC, created_at DESC, session_id DESC"
+        } else {
+            " ORDER BY created_at DESC, session_id DESC"
+        };
+        let mut sql = format!("{}{where_clause}{order}", chat_session_select_sql());
         let mut list_params: Vec<Box<dyn ToSql + Sync>> = params;
         if limit > 0 {
             list_params.push(Box::new(limit));

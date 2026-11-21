@@ -7,6 +7,10 @@ use std::path::PathBuf;
 use std::process::Command as StdCommand;
 #[cfg(windows)]
 use std::process::Stdio;
+#[cfg(not(windows))]
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(not(windows))]
+use std::sync::OnceLock;
 #[cfg(windows)]
 use std::sync::{Mutex, RwLock};
 #[cfg(windows)]
@@ -214,32 +218,135 @@ pub fn build_shell_command_with_shell(command: &str, cwd: &Path, shell: &ShellLa
             .map(PathBuf::from)
             .or_else(|| shell.posix_bin.clone())
             .unwrap_or_else(default_posix_shell);
-        let mut cmd = Command::new(posix_bin);
-        // A wrapper script cannot be executed directly inside an Android app
-        // sandbox (SELinux denies execve on app-private files), but the system
-        // shell may still read it. This form runs `<shell> <script> -lc <cmd>`
-        // and leaves the script in charge of entering its own runtime.
-        if let Some(script) = env::var_os(SHELL_SCRIPT_ENV) {
-            cmd.arg(PathBuf::from(script));
+        let wrapper = env::var_os(SHELL_SCRIPT_ENV).map(PathBuf::from);
+        build_posix_shell_command(command, cwd, posix_bin, wrapper.as_deref())
+    }
+}
+
+/// POSIX shell launch, optionally through a wrapper script (安卓版's proot shell).
+///
+/// The wrapper cannot be executed directly inside an Android app sandbox
+/// (SELinux denies execve on app-private files), so the system shell reads it:
+/// the command line is `<shell> <wrapper> -lc <launch>`.
+///
+/// `launch` has to survive every wrapper generation. A wrapper forwards the
+/// `-lc` text into its own runtime, but older 安卓版 wrappers only read argv and
+/// then reset the environment with `env -i`, which silently drops
+/// `WUNDER_COMMAND_SCRIPT` and leaves the guest evaluating an empty script
+/// (exit 0, no output, no side effects). Staging the script in a file the guest
+/// can read keeps the launch text version-independent *and* keeps user text out
+/// of argv, which is what the environment channel was introduced for
+/// (`pkill -f` inside the guest would otherwise match the wrapper itself).
+#[cfg(not(windows))]
+fn build_posix_shell_command(
+    command: &str,
+    cwd: &Path,
+    posix_bin: PathBuf,
+    wrapper: Option<&Path>,
+) -> Command {
+    let mut cmd = Command::new(posix_bin);
+    if let Some(wrapper) = wrapper {
+        cmd.arg(wrapper);
+    }
+    let script = posix_command_with_pipefail(command);
+    // Both channels carry the same text: argv for wrappers that only forward
+    // their arguments, the variable for current wrappers that re-evaluate it
+    // inside the guest.
+    let (launch, script_env) =
+        match wrapper.and_then(|wrapper| stage_shell_script(wrapper, &script)) {
+            Some(path) => {
+                let launch = staged_script_launch(&path);
+                (launch.clone(), launch)
+            }
+            // No wrapper (desktop Unix) or no writable staging directory: fall back
+            // to the environment channel, which any current wrapper understands.
+            None => ("eval \"${WUNDER_COMMAND_SCRIPT}\"".to_string(), script),
+        };
+    cmd.arg("-lc")
+        .arg(&launch)
+        .env("WUNDER_COMMAND_SCRIPT", &script_env)
+        .current_dir(cwd);
+    apply_platform_spawn_options(&mut cmd);
+    cmd
+}
+
+/// Launch text for a staged script: source it, keep its status, remove it.
+///
+/// The path is engine-generated (ASCII, no quoting hazards), so the double
+/// quotes are a guard rather than an escape.
+#[cfg(not(windows))]
+fn staged_script_launch(path: &Path) -> String {
+    let path = path.display();
+    format!(". \"{path}\"; wunder_rc=$?; rm -f \"{path}\"; exit $wunder_rc")
+}
+
+/// Write the script next to the wrapper so the guest shell can read it.
+///
+/// The wrapper lives in `<files>/bin`, and `<files>` is bind-mounted into the
+/// guest at the same absolute path, so `<files>/tmp/<name>.sh` resolves to the
+/// same file on both sides. Returns `None` when that layout is unavailable;
+/// the caller then falls back to the environment channel.
+#[cfg(not(windows))]
+fn stage_shell_script(wrapper: &Path, script: &str) -> Option<PathBuf> {
+    let dir = wrapper.parent()?.parent()?.join("tmp");
+    std::fs::create_dir_all(&dir).ok()?;
+    sweep_staged_scripts(&dir);
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    // A leftover file from a previous process with the same pid must not make
+    // `create_new` fail and silently fall back to the inline channel.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis())
+        .unwrap_or_default();
+    let path = dir.join(format!(
+        "wunder-cmd-{}-{stamp}-{}.sh",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&path).ok()?;
+    let written = {
+        use std::io::Write as _;
+        file.write_all(script.as_bytes())
+            .and_then(|()| file.write_all(b"\n"))
+    };
+    if written.is_err() {
+        drop(file);
+        let _ = std::fs::remove_file(&path);
+        return None;
+    }
+    Some(path)
+}
+
+/// Remove staged scripts a killed session never got to delete. Once per process:
+/// the directory is shared by every command, so a sweep per command would be
+/// wasted work.
+#[cfg(not(windows))]
+fn sweep_staged_scripts(dir: &Path) {
+    static SWEPT: OnceLock<()> = OnceLock::new();
+    if SWEPT.set(()).is_err() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let cutoff = std::time::SystemTime::now().checked_sub(std::time::Duration::from_secs(3600));
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if !name.to_string_lossy().starts_with("wunder-cmd-") {
+            continue;
         }
-        // Keep the script out of argv: pkill/pgrep -f otherwise matches this
-        // wrapper shell along with the intended target and kills the session
-        // itself. eval parses the same script once without an extra shell.
-        //
-        // 安卓版's proot wrapper re-evaluates the same variable inside the guest,
-        // so any wrapper sitting between this shell and the guest has to forward
-        // `WUNDER_COMMAND_SCRIPT` past its own environment reset (`env -i`).
-        // A wrapper that drops it runs an empty script instead: exit 0, no
-        // output and no side effects (see UbuntuRuntime.writeWrapper).
-        cmd.arg("-lc")
-            .arg("eval \"${WUNDER_COMMAND_SCRIPT}\"")
-            .env(
-                "WUNDER_COMMAND_SCRIPT",
-                posix_command_with_pipefail(command),
-            )
-            .current_dir(cwd);
-        apply_platform_spawn_options(&mut cmd);
-        cmd
+        let stale = cutoff
+            .and_then(|cutoff| entry.metadata().ok()?.modified().ok().map(|at| at < cutoff))
+            .unwrap_or(false);
+        if stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
     }
 }
 
@@ -2197,5 +2304,71 @@ mod tests {
             .and_then(|(_, value)| value)
             .map(|value| value.to_string_lossy().into_owned());
         assert_eq!(script.as_deref(), Some("set -o pipefail; echo ok | head"));
+    }
+
+    /// Old 安卓版 wrappers read the script from argv and then reset the guest
+    /// environment, so the argv text has to carry the script on its own — and it
+    /// must not contain user text, because `pkill -f` inside the guest matches
+    /// the wrapper's own command line.
+    #[cfg(not(windows))]
+    #[test]
+    fn wrapper_launch_stages_the_script_instead_of_passing_it_inline() {
+        let root = std::env::temp_dir().join(format!("wunder-stage-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let wrapper = bin.join("wunder-shell");
+        // Arg handling of the wrapper that shipped before the environment
+        // channel existed: forward `$2`, never look at the environment.
+        std::fs::write(
+            &wrapper,
+            "#!/bin/sh\nCMD=\"$2\"\nif [ \"$1\" != \"-lc\" ]; then CMD=\"$*\"; fi\nexec bash -lc \"$CMD\"\n",
+        )
+        .unwrap();
+
+        let mut command = build_posix_shell_command(
+            "echo ok | head",
+            Path::new("."),
+            PathBuf::from("bash"),
+            Some(&wrapper),
+        );
+        let args = command_args(&command);
+        assert_eq!(args[1], "-lc");
+        assert!(!args[2].contains("echo ok"), "user text in argv: {args:?}");
+        let staged = staged_path_from_launch(&args[2]).expect("staged script path");
+
+        let output = command.as_std_mut().output().expect("run staged launch");
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "ok\n");
+        assert!(
+            !staged.exists(),
+            "the guest must clean up its staged script"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Current wrappers evaluate the variable instead of argv; the same launch
+    /// text has to work through that channel too.
+    #[cfg(not(windows))]
+    #[test]
+    fn environment_channel_runs_the_same_launch() {
+        let mut command = build_posix_shell_command(
+            "echo ok | head",
+            Path::new("."),
+            PathBuf::from("bash"),
+            None,
+        );
+        let output = command.as_std_mut().output().expect("run env launch");
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "ok\n");
+    }
+
+    /// `. "/path"; wunder_rc=$?; rm -f "/path"; exit $wunder_rc`
+    #[cfg(not(windows))]
+    fn staged_path_from_launch(launch: &str) -> Option<PathBuf> {
+        let start = launch.strip_prefix(". \"")?;
+        let end = start.find('"')?;
+        Some(PathBuf::from(&start[..end]))
     }
 }

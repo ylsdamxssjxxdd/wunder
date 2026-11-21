@@ -243,12 +243,14 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let query = app.get_expert_query().to_string();
         let category = app.get_expert_category().to_string();
         let date = app.get_expert_date().to_string();
-        let offset = app.get_expert_archive_page() as i64 * 50;
+        // The facade pages by index; the page size (and therefore the page
+        // count) never leaves the native side.
+        let archive_page = app.get_expert_archive_page().max(0) as i64;
         app.set_expert_loading(true);
         std::thread::spawn(move || {
             enum Data {
                 Memories(Vec<wunder_desktop::native::ExpertMemory>),
-                Archives(Vec<wunder_desktop::NativeSession>, i64),
+                Archives(wunder_desktop::ArchivedThreadPage),
                 Runtime(serde_json::Value),
             }
             let result = match view {
@@ -267,8 +269,8 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                     .expert_runtime(&agent, (!date.is_empty()).then_some(date.as_str()))
                     .map(Data::Runtime),
                 5 => api
-                    .expert_archives(&agent, offset)
-                    .map(|(rows, total)| Data::Archives(rows, total)),
+                    .expert_archives(&agent, archive_page)
+                    .map(Data::Archives),
                 _ => unreachable!("view filtered before spawn"),
             };
             let _ = weak.upgrade_in_event_loop(move |app| {
@@ -311,10 +313,13 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                                 .collect(),
                         ));
                     }
-                    Ok(Data::Archives(rows, total)) => {
-                        app.set_expert_archive_total(total.min(i32::MAX as i64) as i32);
+                    Ok(Data::Archives(page)) => {
+                        app.set_expert_archive_total(page.total.min(i32::MAX as i64) as i32);
+                        app.set_expert_archive_pages(page.pages.min(i32::MAX as i64) as i32);
+                        let empty = page.items.is_empty();
                         app.set_expert_archives(model(
-                            rows.into_iter()
+                            page.items
+                                .into_iter()
                                 .map(|r| ArchiveCard {
                                     id: r.id.into(),
                                     title: r.title.into(),
@@ -323,6 +328,12 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                                 })
                                 .collect(),
                         ));
+                        // Restoring or deleting the last row of a page leaves it
+                        // empty; step back instead of showing a blank page.
+                        if empty && page.total > 0 && page.page > 0 {
+                            app.set_expert_archive_page((page.page - 1) as i32);
+                            app.invoke_refresh_expert();
+                        }
                     }
                     Ok(Data::Runtime(value)) => apply_runtime(&app, value),
                     Err(error) => app.set_expert_error(error.to_string().into()),

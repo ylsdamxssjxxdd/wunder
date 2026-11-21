@@ -620,11 +620,7 @@ struct ParkedApprovals<'a> {
 
 impl Drop for ParkedApprovals<'_> {
     fn drop(&mut self) {
-        let ids = self
-            .ids
-            .lock()
-            .map(|ids| ids.clone())
-            .unwrap_or_default();
+        let ids = self.ids.lock().map(|ids| ids.clone()).unwrap_or_default();
         self.hub.forget(&ids);
     }
 }

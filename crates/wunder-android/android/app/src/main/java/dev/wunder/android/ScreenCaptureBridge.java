@@ -24,6 +24,7 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
@@ -340,6 +341,42 @@ final class ScreenCaptureBridge {
         }
     }
 
+    /**
+     * Reserve the next free {@code screenshot_<n>.png}. The name is what the
+     * phone-control result exposes to the model, so a serial beats an epoch
+     * timestamp on both readability and ordering.
+     */
+    private static File nextScreenshotFile(File directory) {
+        int max = 0;
+        File[] files = directory.listFiles();
+        if (files != null) {
+            String head = "screenshot_";
+            for (File file : files) {
+                String name = file.getName();
+                if (!name.startsWith(head) || !name.endsWith(".png")) {
+                    continue;
+                }
+                String stem = name.substring(head.length(), name.length() - 4);
+                try {
+                    max = Math.max(max, Integer.parseInt(stem));
+                } catch (NumberFormatException ignored) {
+                    // Old timestamp or unrelated name: not part of the serial.
+                }
+            }
+        }
+        for (int index = max + 1; index < max + 4096; index++) {
+            File candidate = new File(directory, "screenshot_" + index + ".png");
+            try {
+                if (candidate.createNewFile()) {
+                    return candidate;
+                }
+            } catch (IOException error) {
+                return null;
+            }
+        }
+        return null;
+    }
+
     private static JSONObject saveFrame(Context context, Bitmap shot) {
         int width = shot.getWidth();
         int height = shot.getHeight();
@@ -347,12 +384,19 @@ final class ScreenCaptureBridge {
         if (!directory.exists() && !directory.mkdirs()) {
             return errorObject("storage_unavailable", "The screenshot directory is not writable.");
         }
-        File file = new File(directory, "shot-" + System.currentTimeMillis() + ".png");
+        File file = nextScreenshotFile(directory);
+        if (file == null) {
+            return errorObject("storage_unavailable", "No free screenshot name.");
+        }
         try (FileOutputStream out = new FileOutputStream(file)) {
             if (!shot.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                //noinspection ResultOfMethodCallIgnored
+                file.delete();
                 return errorObject("storage_unavailable", "PNG encoding failed.");
             }
         } catch (Throwable error) {
+            //noinspection ResultOfMethodCallIgnored
+            file.delete();
             return errorObject("storage_unavailable", String.valueOf(error));
         }
         prune(directory);
@@ -536,7 +580,8 @@ final class ScreenCaptureBridge {
     }
 
     private static void prune(File directory) {
-        File[] files = directory.listFiles((dir, name) -> name.startsWith("shot-"));
+        File[] files = directory.listFiles((dir, name) ->
+                name.startsWith("screenshot_") || name.startsWith("shot-"));
         if (files == null || files.length <= KEEP_SCREENSHOTS) {
             return;
         }

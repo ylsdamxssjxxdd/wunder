@@ -318,7 +318,8 @@ pub(super) fn build_invalid_tool_call_model_notice(
         if entry.reason != "tool_not_allowed_or_unknown" {
             continue;
         }
-        let known = is_known_builtin_tool(&entry.resolved_name) || is_known_builtin_tool(&entry.name);
+        let known =
+            is_known_builtin_tool(&entry.resolved_name) || is_known_builtin_tool(&entry.name);
         let bucket = if known {
             &mut known_but_not_allowed
         } else {

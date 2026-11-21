@@ -849,7 +849,7 @@ fn crop(
 }
 
 fn save_attachment(width: u32, height: u32, rgba: &[u8]) -> Result<(String, String), String> {
-    image_attachment::save(width, height, rgba, "wunder-screenshot")
+    image_attachment::save(width, height, rgba, "screenshot")
 }
 
 /// A capture whose pixels exist but could not become a composer attachment: the

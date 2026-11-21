@@ -403,11 +403,7 @@ mod tests {
         // 崩溃残留：文件还在，但进程已消失，锁可以拿到。
         std::fs::write(instances.join("dead-instance.lock"), b"pid=0\n").unwrap();
         assert!(crate::instance_liveness::reclaim_dead_thread_lease(
-            &storage,
-            "user",
-            "thread",
-            &instances,
-            "survivor",
+            &storage, "user", "thread", &instances, "survivor",
         ));
         assert!(matches!(
             storage
@@ -433,11 +429,7 @@ mod tests {
             ThreadOpenLeaseStatus::Busy => panic!("lease should be free"),
         }
         assert!(!crate::instance_liveness::reclaim_dead_thread_lease(
-            &storage,
-            "user",
-            "thread",
-            &instances,
-            "survivor",
+            &storage, "user", "thread", &instances, "survivor",
         ));
         assert_eq!(
             storage

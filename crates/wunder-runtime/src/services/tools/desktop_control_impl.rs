@@ -13,7 +13,6 @@ use std::time::Instant;
 use tokio::fs;
 use tokio::time::{sleep, Duration};
 use tracing::warn;
-use uuid::Uuid;
 
 pub const TOOL_DESKTOP_CONTROL: &str = "桌面控制";
 pub const TOOL_DESKTOP_CONTROL_ALIAS: &str = "desktop_control";
@@ -561,7 +560,9 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.key_required")))?;
+                .ok_or_else(|| {
+                    anyhow!(crate::i18n::prompt_t("tool.desktop_control.key_required"))
+                })?;
             send_key_sequence(key)?;
         }
         DesktopAction::TypeText => {
@@ -592,9 +593,11 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
             smooth_move(cx, cy, payload.duration_ms).await?;
         }
         DesktopAction::DragDrop => {
-            let to_bbox = payload
-                .to_bbox
-                .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.to_bbox_required")))?;
+            let to_bbox = payload.to_bbox.ok_or_else(|| {
+                anyhow!(crate::i18n::prompt_t(
+                    "tool.desktop_control.to_bbox_required"
+                ))
+            })?;
             let (to_cx_norm_raw, to_cy_norm_raw) = to_bbox.center();
             let to_cx_norm = to_cx_norm_raw.clamp(0, norm_width);
             let to_cy_norm = to_cy_norm_raw.clamp(0, norm_height);
@@ -789,7 +792,11 @@ fn parse_desktop_control_args(args: &Value) -> Result<DesktopControlArgs> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.action_required")))?;
+        .ok_or_else(|| {
+            anyhow!(crate::i18n::prompt_t(
+                "tool.desktop_control.action_required"
+            ))
+        })?;
     let action = DesktopAction::from_raw(action_raw)
         .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.unknown_action")))?;
     let allowed: &[&str] = match action {
@@ -822,7 +829,9 @@ fn parse_desktop_control_args(args: &Value) -> Result<DesktopControlArgs> {
     let to_bbox = obj.get("to_bbox").map(parse_bbox).transpose()?;
     match action {
         DesktopAction::PressKey if required_text(obj, "key").is_none() => {
-            return Err(anyhow!(crate::i18n::prompt_t("tool.desktop_control.key_required")));
+            return Err(anyhow!(crate::i18n::prompt_t(
+                "tool.desktop_control.key_required"
+            )));
         }
         DesktopAction::TypeText if required_text(obj, "text").is_none() => {
             return Err(anyhow!(crate::i18n::prompt_t(
@@ -913,10 +922,16 @@ fn parse_bbox(value: &Value) -> Result<BBox> {
                     Value::Array(items) => Some(items),
                     _ => None,
                 })
-                .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.invalid_bbox")))?;
+                .ok_or_else(|| {
+                    anyhow!(crate::i18n::prompt_t("tool.desktop_control.invalid_bbox"))
+                })?;
             decoded.as_slice()
         }
-        _ => return Err(anyhow!(crate::i18n::prompt_t("tool.desktop_control.invalid_bbox"))),
+        _ => {
+            return Err(anyhow!(crate::i18n::prompt_t(
+                "tool.desktop_control.invalid_bbox"
+            )))
+        }
     };
     if arr.len() == 4 {
         let x1 = parse_i32(arr.first())
@@ -936,7 +951,9 @@ fn parse_bbox(value: &Value) -> Result<BBox> {
             .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.desktop_control.invalid_bbox")))?;
         return bounded_bbox(cx, cy, cx, cy);
     }
-    Err(anyhow!(crate::i18n::prompt_t("tool.desktop_control.invalid_bbox")))
+    Err(anyhow!(crate::i18n::prompt_t(
+        "tool.desktop_control.invalid_bbox"
+    )))
 }
 
 fn bounded_bbox(x1: i32, y1: i32, x2: i32, y2: i32) -> Result<BBox> {
@@ -944,7 +961,9 @@ fn bounded_bbox(x1: i32, y1: i32, x2: i32, y2: i32) -> Result<BBox> {
         .into_iter()
         .any(|value| !(0..=MAX_NORMALIZED_COORD).contains(&value))
     {
-        return Err(anyhow!(crate::i18n::prompt_t("tool.desktop_control.invalid_bbox")));
+        return Err(anyhow!(crate::i18n::prompt_t(
+            "tool.desktop_control.invalid_bbox"
+        )));
     }
     Ok(BBox { x1, y1, x2, y2 })
 }
@@ -958,7 +977,9 @@ fn ensure_desktop_enabled(config: &Config) -> Result<()> {
     if desktop_tools_enabled(config) {
         return Ok(());
     }
-    Err(anyhow!(crate::i18n::prompt_t("tool.desktop_control.disabled")))
+    Err(anyhow!(crate::i18n::prompt_t(
+        "tool.desktop_control.disabled"
+    )))
 }
 
 fn build_followup_prompt(base: String, norm_width: i32, norm_height: i32) -> String {
@@ -1132,21 +1153,10 @@ async fn persist_screenshot_to_user_container(
         return;
     }
     let safe_session = sanitize_session_id(context.session_id);
-    let filename = screenshot
-        .path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.trim().is_empty())
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| format!("desktop_shot_{}.png", Uuid::new_v4().simple()));
     // 工作区里只留一份可回看的帧，且和其它运行时中间产物一样收在 temp/ 下，
     // 不在用户工作区根上长出一个 desktop_control/。
-    let relative = crate::services::workspace_temp::session_file(
-        "desktop_control",
-        &safe_session,
-        &filename,
-    );
-    let dest = match context.workspace.resolve_path(&workspace_id, &relative) {
+    let relative = crate::services::workspace_temp::session_dir("desktop_control", &safe_session);
+    let directory = match context.workspace.resolve_path(&workspace_id, &relative) {
         Ok(path) => path,
         Err(err) => {
             warn!(
@@ -1156,17 +1166,22 @@ async fn persist_screenshot_to_user_container(
             return;
         }
     };
-    let parent = dest.parent().map(Path::to_path_buf);
-    if let Some(parent) = parent.as_deref() {
-        if let Err(err) = fs::create_dir_all(parent).await {
-            warn!(
-                "desktop screenshot persist skipped: create dir failed user_id={} error={err}",
-                context.user_id
-            );
-            return;
-        }
-    }
-    if let Err(err) = fs::copy(&screenshot.path, &dest).await {
+    // Copy into the session directory with the same readable serial as the
+    // process temp frame. A UUID name cannot be quoted in a later turn ("look
+    // at the third shot") and hides which frame is newest.
+    let source = screenshot.path.clone();
+    let target_dir = directory.clone();
+    let saved = blocking::run_cpu("desktop_screenshot_persist", move || -> Result<PathBuf> {
+        let bytes = std::fs::read(&source)?;
+        Ok(crate::services::workspace_temp::write_sequenced_file(
+            &target_dir,
+            "desktop_shot_",
+            "png",
+            &bytes,
+        )?)
+    })
+    .await;
+    if let Err(err) = saved {
         warn!(
             "desktop screenshot persist skipped: copy failed user_id={} error={err}",
             context.user_id
@@ -1177,10 +1192,8 @@ async fn persist_screenshot_to_user_container(
     // temp frames rotate, but nothing ever pruned this directory: one file per
     // action grows without bound across a long session. Apply the same
     // newest-N policy the temp frames already use.
-    if let Some(parent) = parent.as_deref() {
-        let keep = context.config.tools.desktop_control.max_frames.max(2);
-        prune_dir_frames(parent, keep);
-    }
+    let keep = context.config.tools.desktop_control.max_frames.max(2);
+    prune_dir_frames(&directory, keep);
 }
 
 fn cleanup_old_frames(path: &Path, max_frames: usize) {
@@ -1261,12 +1274,14 @@ fn capture_screenshot_blocking(
         .collect();
     let signature = frame_signature(&resized, norm_width as usize, norm_height as usize, &masks);
     let dir = resolve_temp_dir()?.join("desktop_control");
-    std::fs::create_dir_all(&dir)
-        .map_err(|err| anyhow!(format!("create temp dir failed: {err}")))?;
-    let filename = format!("desktop_shot_{}.png", Uuid::new_v4().simple());
-    let path = dir.join(&filename);
-    std::fs::write(&path, &png)
-        .map_err(|err| anyhow!(format!("write screenshot failed: {err}")))?;
+    let path =
+        crate::services::workspace_temp::write_sequenced_file(&dir, "desktop_shot_", "png", &png)
+            .map_err(|err| anyhow!(format!("write screenshot failed: {err}")))?;
+    let filename = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| anyhow!("write screenshot failed: invalid name"))?
+        .to_string();
     let download_url = format!("/wunder/temp_dir/download?filename=desktop_control/{filename}");
     Ok(DesktopScreenshot {
         path,
@@ -1299,6 +1314,7 @@ fn resolve_temp_dir() -> Result<PathBuf> {
 mod temp_dir_tests {
     use super::*;
     use std::sync::Mutex;
+    use uuid::Uuid;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -1899,7 +1915,9 @@ fn send_key_sequence(keys: &str) -> Result<()> {
         .filter(|s| !s.is_empty())
         .collect();
     if parts.is_empty() {
-        return Err(anyhow!(crate::i18n::prompt_t("tool.desktop_control.key_required")));
+        return Err(anyhow!(crate::i18n::prompt_t(
+            "tool.desktop_control.key_required"
+        )));
     }
     let mut modifiers = Vec::new();
     let mut main = None;
@@ -1921,7 +1939,9 @@ fn send_key_sequence(keys: &str) -> Result<()> {
         return Ok(());
     }
     if modifiers.is_empty() {
-        return Err(anyhow!(crate::i18n::prompt_t("tool.desktop_control.key_required")));
+        return Err(anyhow!(crate::i18n::prompt_t(
+            "tool.desktop_control.key_required"
+        )));
     }
     for modifier in modifiers {
         key_down(modifier)?;

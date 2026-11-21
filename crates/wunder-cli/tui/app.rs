@@ -1080,6 +1080,7 @@ impl TuiApp {
             env!("CARGO_PKG_VERSION"),
             app.runtime.launch_dir.to_string_lossy().as_ref(),
             is_zh,
+            app.runtime.wunder_home.as_path(),
         );
         app.push_special_log(
             LogKind::Tool,

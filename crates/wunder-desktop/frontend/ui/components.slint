@@ -443,12 +443,23 @@ export component FormField inherits Rectangle {
     // Bold heading label for stacked form fields (the agent editor), instead of
     // the default muted caption used inside settings rows.
     in property <bool> strong-label: false;
+    // Touch shell. Android draws the caret in the selection color, so the pale
+    // selection this field uses on desktop leaves the caret invisible on a
+    // white box; a phone also needs a wider caret to stay findable under a
+    // finger. Both switch here instead of forking the field.
+    in property <bool> mobile: false;
     in-out property <string> text <=> editor.text;
     callback edited();
     // Fired when the user is done with the field (Enter or focus loss). Fields
     // whose value is an identity — the model config key — commit here instead
     // of on every keystroke.
     callback committed();
+    // Horizontal offset of the text inside the field, always ≤ 0. A single-line
+    // TextInput never scrolls on its own, so whatever sits right of the box
+    // stays clipped and the caret disappears with it once the value outgrows
+    // the field. The editor below is as wide as its whole text and this shift
+    // moves it with the caret — Slint's own LineEditBase scrolls the same way.
+    private property <length> editor-shift: 0px;
     height: root.error == "" ? 62px : 78px;
     init => {
         if root.auto-focus && root.enabled && !root.read-only {
@@ -472,26 +483,56 @@ export component FormField inherits Rectangle {
             clicked => { editor.focus(); }
         }
         Text { x: 10px; width: parent.width - 20px; height: parent.height; text: editor.text == "" && editor.preedit-text == "" ? root.placeholder : ""; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; overflow: elide; }
-        TextFieldMenu {
-            enabled: root.enabled;
-            read-only: root.read-only || !root.enabled;
-            text: editor.text;
-            cut() => { editor.cut(); }
-            copy() => { editor.copy(); }
-            paste() => { editor.paste(); }
-            select-all() => { editor.select-all(); }
-            editor := TextInput {
-                x: 10px; width: parent.width - 20px; height: parent.height;
-                color: root.read-only || !root.enabled ? Theme.input-readonly-text : Theme.text;
-                font-size: Theme.font-sm;
-                read-only: root.read-only || !root.enabled; single-line: true; vertical-alignment: center; input-type: root.secret ? InputType.password : InputType.text;
-                selection-background-color: Theme.accent-soft; selection-foreground-color: Theme.text;
-                accessible-role: text-input; accessible-label: root.label; accessible-placeholder-text: root.placeholder;
-                edited => { root.edited(); }
-                accepted => { root.committed(); }
-                changed has-focus => {
-                    if editor.has-focus && !editor.read-only && editor.enabled { TextFieldActivation.activated(); }
-                    if !editor.has-focus && root.commit-on-blur { root.committed(); }
+        // The editor is wider than this viewport once the value outgrows the
+        // field; clipping here keeps the overflowing glyphs inside the box.
+        viewport := Rectangle {
+            x: 10px; y: 0px;
+            width: parent.width - 20px;
+            height: parent.height;
+            clip: true;
+            TextFieldMenu {
+                enabled: root.enabled;
+                read-only: root.read-only || !root.enabled;
+                text: editor.text;
+                cut() => { editor.cut(); }
+                copy() => { editor.copy(); }
+                paste() => { editor.paste(); }
+                select-all() => { editor.select-all(); }
+                editor := TextInput {
+                    // Viewport minus one caret column: the last glyph must not
+                    // sit underneath the caret. `editor-shift` is clamped to
+                    // the reachable span so the text never leaves a gap.
+                    x: min(0px, max(viewport.width - self.width - self.text-cursor-width, root.editor-shift));
+                    width: max(viewport.width - self.text-cursor-width, self.preferred-width);
+                    height: parent.height;
+                    color: root.read-only || !root.enabled ? Theme.input-readonly-text : Theme.text;
+                    font-size: Theme.font-sm;
+                    read-only: root.read-only || !root.enabled; single-line: true; vertical-alignment: center; input-type: root.secret ? InputType.password : InputType.text;
+                    text-cursor-width: root.mobile ? 2px : 1px;
+                    selection-background-color: root.mobile ? Theme.accent-ink : Theme.accent-soft;
+                    selection-foreground-color: root.mobile ? #ffffff : Theme.text;
+                    accessible-role: text-input; accessible-label: root.label; accessible-placeholder-text: root.placeholder;
+                    // Keep the caret inside the viewport: this is what makes
+                    // the hidden right-hand side scroll into sight, including
+                    // while a touch drag extends the selection.
+                    cursor-position-changed(cursor-position) => {
+                        if (cursor-position.x + root.editor-shift < 0px) {
+                            root.editor-shift = -cursor-position.x;
+                        } else if (cursor-position.x + root.editor-shift > viewport.width - self.text-cursor-width) {
+                            root.editor-shift = viewport.width - cursor-position.x - self.text-cursor-width;
+                        }
+                    }
+                    edited => { root.edited(); }
+                    accepted => { root.committed(); }
+                    changed has-focus => {
+                        if editor.has-focus && !editor.read-only && editor.enabled { TextFieldActivation.activated(); }
+                        if !editor.has-focus {
+                            // A field at rest reads from the start of its value,
+                            // not from wherever the caret happened to sit.
+                            root.editor-shift = 0px;
+                            if root.commit-on-blur { root.committed(); }
+                        }
+                    }
                 }
             }
         }

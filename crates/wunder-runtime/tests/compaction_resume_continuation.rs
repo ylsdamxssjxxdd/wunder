@@ -206,7 +206,11 @@ async fn mock_chat_completions(
     // The tool result is the second model call of the turn; that is the point
     // where a real provider reports a context overflow mid-turn.
     let normal_index = state.normal_calls.fetch_add(1, Ordering::Relaxed);
-    if normal_index == 1 && state.overflow_after_tool_pending.swap(false, Ordering::SeqCst) {
+    if normal_index == 1
+        && state
+            .overflow_after_tool_pending
+            .swap(false, Ordering::SeqCst)
+    {
         state.overflow_calls.fetch_add(1, Ordering::Relaxed);
         return (
             StatusCode::BAD_REQUEST,
@@ -394,8 +398,14 @@ async fn compaction_after_tool_success_keeps_tools_and_pending_work() {
 
     let summary_calls = context.mock_state.summary_calls.load(Ordering::Relaxed);
     let overflow_calls = context.mock_state.overflow_calls.load(Ordering::Relaxed);
-    assert_eq!(summary_calls, 1, "expected exactly one compaction summary call");
-    assert_eq!(overflow_calls, 1, "expected the provider overflow to happen once");
+    assert_eq!(
+        summary_calls, 1,
+        "expected exactly one compaction summary call"
+    );
+    assert_eq!(
+        overflow_calls, 1,
+        "expected the provider overflow to happen once"
+    );
 
     let requests = context.mock_state.requests();
     let continuation_index = requests
@@ -437,7 +447,13 @@ async fn compaction_after_tool_success_keeps_tools_and_pending_work() {
         request
             .get("messages")
             .and_then(Value::as_array)
-            .map(|messages| messages.iter().map(message_text).collect::<Vec<_>>().join("\n"))
+            .map(|messages| {
+                messages
+                    .iter()
+                    .map(message_text)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
             .unwrap_or_default()
     };
     let resumed_text = all_text(continuation);

@@ -15,10 +15,7 @@ use wunder_server::{reset_syntax_hosts, syntax_hosts};
 
 #[test]
 fn syntax_hosts_adopt_a_new_node_override_without_a_restart() {
-    let root = std::env::temp_dir().join(format!(
-        "wunder-syntax-host-{}",
-        std::process::id()
-    ));
+    let root = std::env::temp_dir().join(format!("wunder-syntax-host-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).expect("create fixture dir");
     let stub = root.join("node");

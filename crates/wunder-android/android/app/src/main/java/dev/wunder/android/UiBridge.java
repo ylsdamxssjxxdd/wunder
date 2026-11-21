@@ -45,11 +45,9 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.security.MessageDigest;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.Date;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
@@ -718,9 +716,12 @@ public final class UiBridge {
                 File root = new File(current.getCacheDir(), "wunder-camera");
                 //noinspection ResultOfMethodCallIgnored
                 root.mkdirs();
-                String stamp = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
-                        .format(new Date());
-                target = new File(root, "photo-" + stamp + ".jpg");
+                // 照片名是用户和模型都能直接引用的序号（photo_1.jpg），
+                // 不再是毫秒时间戳；createNewFile 同时占住名字，避免并发覆盖。
+                target = nextNumberedFile(root, "photo", "jpg");
+                if (target == null) {
+                    throw new IOException("no free photo name");
+                }
                 output = PhotoProvider.uriFor(current, target);
             } catch (Exception error) {
                 publishPick(singlePath("!无法准备拍照文件"));
@@ -743,6 +744,47 @@ public final class UiBridge {
                 publishPick(singlePath("!没有可用的相机应用"));
             }
         });
+    }
+
+    /**
+     * Reserve the next free {@code <prefix>_<n>.<extension>} in {@code directory}.
+     *
+     * <p>A serial keeps camera output readable and ordered: the model can say
+     * "photo_2.jpg" and the user can match it at a glance. Old timestamp-named
+     * shots are ignored, so the first capture under the new scheme starts at 1.
+     */
+    private static File nextNumberedFile(File directory, String prefix, String extension) {
+        int max = 0;
+        File[] files = directory.listFiles();
+        if (files != null) {
+            String head = prefix + "_";
+            for (File file : files) {
+                String name = file.getName();
+                if (!name.startsWith(head)) {
+                    continue;
+                }
+                int dot = name.lastIndexOf('.');
+                String stem = dot > head.length()
+                        ? name.substring(head.length(), dot)
+                        : name.substring(head.length());
+                try {
+                    max = Math.max(max, Integer.parseInt(stem));
+                } catch (NumberFormatException ignored) {
+                    // Old timestamp or unrelated name: not part of the serial.
+                }
+            }
+        }
+        for (int index = max + 1; index < max + 4096; index++) {
+            File candidate = new File(directory, prefix + "_" + index + "." + extension);
+            try {
+                if (candidate.createNewFile()) {
+                    return candidate;
+                }
+            } catch (IOException error) {
+                return null;
+            }
+        }
+        return null;
     }
 
     /**

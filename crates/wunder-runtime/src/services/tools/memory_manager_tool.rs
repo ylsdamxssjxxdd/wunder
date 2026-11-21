@@ -478,7 +478,9 @@ pub(crate) async fn execute_memory_manager_tool(
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let action = normalize_memory_manager_action(&payload.action);
     if action.is_empty() {
-        return Err(anyhow!(i18n::prompt_t("tool.memory_manager.invalid_action")));
+        return Err(anyhow!(i18n::prompt_t(
+            "tool.memory_manager.invalid_action"
+        )));
     }
 
     let agent_scope = normalize_agent_memory_scope(context.agent_id);
@@ -523,7 +525,9 @@ pub(crate) async fn execute_memory_manager_tool(
                 &payload,
             )?;
             if memory_id.is_empty() {
-                return Err(anyhow!(i18n::prompt_t("tool.memory_manager.memory_id_required")));
+                return Err(anyhow!(i18n::prompt_t(
+                    "tool.memory_manager.memory_id_required"
+                )));
             }
             let record = fragment_store
                 .get_fragment(context.user_id, context.agent_id, &memory_id)
@@ -606,7 +610,9 @@ pub(crate) async fn execute_memory_manager_tool(
                 &payload,
             )?;
             if memory_id.is_empty() {
-                return Err(anyhow!(i18n::prompt_t("tool.memory_manager.memory_id_required")));
+                return Err(anyhow!(i18n::prompt_t(
+                    "tool.memory_manager.memory_id_required"
+                )));
             }
             let content = normalize_memory_content(&payload);
             if content.is_empty() {
@@ -680,7 +686,9 @@ pub(crate) async fn execute_memory_manager_tool(
                 &payload,
             )?;
             if memory_id.is_empty() {
-                return Err(anyhow!(i18n::prompt_t("tool.memory_manager.memory_id_required")));
+                return Err(anyhow!(i18n::prompt_t(
+                    "tool.memory_manager.memory_id_required"
+                )));
             }
             let fragment_deleted =
                 fragment_store.delete_fragment(context.user_id, context.agent_id, &memory_id);
@@ -750,10 +758,16 @@ pub(crate) async fn execute_memory_manager_tool(
                     "count": items.len(),
                     "items": items,
                 }),
-                Some(i18n::prompt_t("tool.memory_manager.note_recall_current_session")),
+                Some(i18n::prompt_t(
+                    "tool.memory_manager.note_recall_current_session",
+                )),
             )
         }
-        _ => return Err(anyhow!(i18n::prompt_t("tool.memory_manager.invalid_action"))),
+        _ => {
+            return Err(anyhow!(i18n::prompt_t(
+                "tool.memory_manager.invalid_action"
+            )))
+        }
     };
 
     Ok(response)
@@ -771,7 +785,9 @@ fn validate_memory_manager_args(args: &Value) -> Result<()> {
         .ok_or_else(|| anyhow!("memory_manager action is required"))?;
     let action = normalize_memory_manager_action(raw_action);
     if action.is_empty() {
-        return Err(anyhow!(i18n::prompt_t("tool.memory_manager.invalid_action")));
+        return Err(anyhow!(i18n::prompt_t(
+            "tool.memory_manager.invalid_action"
+        )));
     }
     let allowed = match action.as_str() {
         "list" => &["action", "query", "limit", "order"][..],
@@ -816,7 +832,9 @@ fn validate_memory_manager_args(args: &Value) -> Result<()> {
             .is_some_and(|value| !value.trim().is_empty())
     });
     if matches!(action.as_str(), "get" | "update" | "remove") && !has_id {
-        return Err(anyhow!(i18n::prompt_t("tool.memory_manager.memory_id_required")));
+        return Err(anyhow!(i18n::prompt_t(
+            "tool.memory_manager.memory_id_required"
+        )));
     }
     if matches!(action.as_str(), "add" | "update")
         && !object

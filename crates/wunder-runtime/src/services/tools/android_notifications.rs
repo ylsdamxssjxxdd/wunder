@@ -147,17 +147,26 @@ impl NotificationsArgs {
 }
 
 fn parse_notifications_args(args: &Value) -> Result<NotificationsArgs> {
-    let obj = args
-        .as_object()
-        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.android_notifications.invalid_args")))?;
+    let obj = args.as_object().ok_or_else(|| {
+        anyhow!(crate::i18n::prompt_t(
+            "tool.android_notifications.invalid_args"
+        ))
+    })?;
     let action_raw = obj
         .get("action")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.android_notifications.action_required")))?;
-    let action = NotificationsAction::from_raw(action_raw)
-        .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.android_notifications.unknown_action")))?;
+        .ok_or_else(|| {
+            anyhow!(crate::i18n::prompt_t(
+                "tool.android_notifications.action_required"
+            ))
+        })?;
+    let action = NotificationsAction::from_raw(action_raw).ok_or_else(|| {
+        anyhow!(crate::i18n::prompt_t(
+            "tool.android_notifications.unknown_action"
+        ))
+    })?;
     let limit = obj
         .get("limit")
         .and_then(Value::as_u64)

@@ -1350,8 +1350,8 @@ fn looks_like_text(bytes: &[u8]) -> bool {
 }
 
 fn format_json_content(text: &str, mode: ExtractMode) -> Result<String> {
-    let parsed: Value =
-        serde_json::from_str(text).map_err(|_| anyhow!(i18n::prompt_t("tool.web_fetch.invalid_json")))?;
+    let parsed: Value = serde_json::from_str(text)
+        .map_err(|_| anyhow!(i18n::prompt_t("tool.web_fetch.invalid_json")))?;
     let pretty = serde_json::to_string_pretty(&parsed).map_err(|err| anyhow!(err.to_string()))?;
     Ok(match mode {
         ExtractMode::Markdown => format!("```json\n{pretty}\n```"),

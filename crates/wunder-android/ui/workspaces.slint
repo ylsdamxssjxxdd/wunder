@@ -6,7 +6,8 @@
 
 import { Theme } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
 import { WorkspaceVisual } from "../../../crates/wunder-desktop/frontend/ui/workspace_visual.slint";
-import { Action, FormField, ConfirmDialog } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
+import { Action, ConfirmDialog } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
+import { MobileFormField } from "form_field.slint";
 import { MobileWorkspace } from "workspace_model.slint";
 import { ScrollView } from "std-widgets.slint";
 
@@ -589,7 +590,7 @@ export component WorkspacesPage inherits Rectangle {
                         spacing: 8px;
                         alignment: start;
 
-                        FormField {
+                        MobileFormField {
                             label: "名称";
                             placeholder: "给这个工作区起个名字";
                             auto-focus: true;

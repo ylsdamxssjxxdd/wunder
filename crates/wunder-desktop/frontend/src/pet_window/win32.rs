@@ -430,27 +430,27 @@ unsafe fn show_menu(
 /// rejects the registration the bubble falls back to the system Chinese face
 /// rather than drawing tofu — it is only a few words above the sprite.
 fn bubble_face() -> &'static [u16] {
-    thread_local! {
-        static FACE: std::cell::OnceCell<Vec<u16>> = const { std::cell::OnceCell::new() };
-    }
-    FACE.with(|slot| {
-        slot.get_or_init(|| {
-            let bytes = crate::bundled_font::misans();
-            let mut loaded: u32 = 0;
-            let handle = unsafe {
-                AddFontMemResourceEx(
-                    bytes.as_ptr().cast(),
-                    bytes.len() as u32,
-                    std::ptr::null(),
-                    &loaded,
-                )
-            };
-            if handle != 0 && loaded > 0 {
-                wide("MiSans")
-            } else {
-                wide("Microsoft YaHei")
-            }
-        })
+    // Process-wide on purpose: `AddFontMemResourceEx` registers the face for the
+    // whole process, and the `'static` cell is what lets GDI keep reading the
+    // bytes. A thread-local would re-register per thread and cannot hand out a
+    // borrow that outlives the closure.
+    static FACE: std::sync::OnceLock<Vec<u16>> = std::sync::OnceLock::new();
+    FACE.get_or_init(|| {
+        let bytes = crate::bundled_font::misans();
+        let loaded: u32 = 0;
+        let handle = unsafe {
+            AddFontMemResourceEx(
+                bytes.as_ptr().cast(),
+                bytes.len() as u32,
+                std::ptr::null(),
+                &loaded,
+            )
+        };
+        if handle != 0 && loaded > 0 {
+            wide("MiSans")
+        } else {
+            wide("Microsoft YaHei")
+        }
     })
 }
 

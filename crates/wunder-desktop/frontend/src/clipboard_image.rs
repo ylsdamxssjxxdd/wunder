@@ -92,7 +92,7 @@ pub fn paste(app: slint::Weak<MainWindow>) -> bool {
         window.set_status("正在读取剪贴板图片…".into());
     }
     std::thread::spawn(move || {
-        let result = image_attachment::save(width, height, &rgba, "wunder-clipboard");
+        let result = image_attachment::save(width, height, &rgba, "clipboard");
         let _ = slint::invoke_from_event_loop(move || match result {
             Ok((name, data_url)) => image_attachment::add(&app, name, data_url, "剪贴板图片"),
             Err(error) => report(&app, format!("无法添加剪贴板图片：{}", error)),

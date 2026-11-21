@@ -217,7 +217,10 @@ async fn search_with_firecrawl(
             query,
             "configuration",
             "TOOL_WEB_SEARCH_PROVIDER_CONFIG_INVALID",
-            format!("{}: {err}", i18n::prompt_t("tool.web_search.provider_failed")),
+            format!(
+                "{}: {err}",
+                i18n::prompt_t("tool.web_search.provider_failed")
+            ),
             Some("Check tools.web.search.firecrawl.base_url.".to_string()),
             false,
             None,
@@ -296,7 +299,10 @@ async fn search_with_firecrawl(
                 query,
                 "request",
                 "TOOL_WEB_SEARCH_REQUEST_FAILED",
-                format!("{}: {err}", i18n::prompt_t("tool.web_search.provider_failed")),
+                format!(
+                    "{}: {err}",
+                    i18n::prompt_t("tool.web_search.provider_failed")
+                ),
                 None,
                 true,
                 Some(timeout_secs.saturating_mul(1000)),

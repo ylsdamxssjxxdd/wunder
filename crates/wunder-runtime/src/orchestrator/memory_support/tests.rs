@@ -495,7 +495,8 @@ fn test_compaction_resume_action_ignores_negated_completion() {
 
 #[test]
 fn test_compaction_resume_action_defaults_to_continue_without_signals() {
-    let summary = "## Current progress\n- Built the scene module.\n## Critical references\n- engine.md";
+    let summary =
+        "## Current progress\n- Built the scene module.\n## Critical references\n- engine.md";
     assert_eq!(
         detect_compaction_resume_action(summary),
         CompactionResumeAction::Continue
@@ -504,7 +505,8 @@ fn test_compaction_resume_action_defaults_to_continue_without_signals() {
 
 #[test]
 fn test_compaction_resume_action_final_requires_an_empty_remaining_section() {
-    let done = "## Current progress\nAll shots rendered and checked.\n## What remains to be done\nNone.";
+    let done =
+        "## Current progress\nAll shots rendered and checked.\n## What remains to be done\nNone.";
     assert_eq!(
         detect_compaction_resume_action(done),
         CompactionResumeAction::Final

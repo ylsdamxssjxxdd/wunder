@@ -1446,6 +1446,17 @@ fn wire_callbacks(
             system_prompt: prompt.to_string(),
         });
     });
+    let sender = commands.clone();
+    ui.on_set_agent_approval_mode(move |mode| {
+        let _ = sender.send(Command::SetAgentApprovalMode(mode.to_string()));
+    });
+    let sender = commands.clone();
+    ui.on_decide_chat_approval(move |id, decision| {
+        let _ = sender.send(Command::DecideChatApproval {
+            id: id.to_string(),
+            decision: decision.to_string(),
+        });
+    });
 
     // ---- cron jobs ---------------------------------------------------
     let sender = commands.clone();
@@ -2358,6 +2369,7 @@ fn start_tick(
     let mut last_editor = 0u64;
     let mut last_probe = 0u64;
     let mut last_inquiry = 0u64;
+    let mut last_chat_approval = 0u64;
     let mut last_goal = 0u64;
     let mut last_activity = 0u64;
     let mut editor_was_open = false;
@@ -3188,6 +3200,27 @@ fn start_tick(
                 }
                 last_inquiry = state.inquiry_rev;
             }
+            // 本地工具审批：权限审批选「建议 / 自动编辑」后，运行时把这一步挂在
+            // 请求通道上等回答，回答前整轮停住。
+            if state.chat_approval_rev != last_chat_approval {
+                match state.chat_approval.as_ref() {
+                    Some(approval) => {
+                        ui.set_chat_approval_open(true);
+                        ui.set_chat_approval_id(approval.id.as_str().into());
+                        ui.set_chat_approval_tool(approval.tool.as_str().into());
+                        ui.set_chat_approval_kind(approval.kind.as_str().into());
+                        ui.set_chat_approval_summary(approval.summary.as_str().into());
+                    }
+                    None => {
+                        ui.set_chat_approval_open(false);
+                        ui.set_chat_approval_id("".into());
+                        ui.set_chat_approval_tool("".into());
+                        ui.set_chat_approval_kind("".into());
+                        ui.set_chat_approval_summary("".into());
+                    }
+                }
+                last_chat_approval = state.chat_approval_rev;
+            }
         }
 
         if state.trajectory_rev != last_trajectory {
@@ -3354,6 +3387,7 @@ fn start_tick(
                 .map(|question| question.as_str().into())
                 .collect();
             ui.set_settings_agent_questions(ModelRc::from(Rc::new(VecModel::from(questions))));
+            ui.set_settings_agent_approval_mode(state.agent.approval_mode.as_str().into());
             if state.agent.seed != last_agent_seed {
                 ui.set_settings_agent_description(state.agent.description.as_str().into());
                 ui.set_settings_agent_prompt(state.agent.system_prompt.as_str().into());
@@ -4803,6 +4837,16 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
             ui.set_settings_page(3);
             ui.set_settings_open(true);
         }
+        // 智能体设置页：问候语换成一段真实长度的文案，核对单行输入框在文本超出
+        // 宽度时的横向滚动与触摸端光标。
+        "agent" => {
+            ui.set_settings_agent_description(
+                "你好，我是 wunder，可以帮你拆解任务并调用工具。把整理资料、分析数据、写文章这类工作交给我，我会先确认目标，再一步步做完并给出结果。"
+                    .into(),
+            );
+            ui.set_settings_page(8);
+            ui.set_settings_open(true);
+        }
 
         "toast" => {
             ui.set_toast("已复制到剪贴板".into());
@@ -5057,6 +5101,14 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
         "agent" => {
             ui.set_settings_page(8);
             ui.set_settings_open(true);
+        }
+        // 本地工具审批对话框：权限审批选「建议 / 自动编辑」后弹出的那张卡。
+        "chat-approval" => {
+            ui.set_chat_approval_open(true);
+            ui.set_chat_approval_id("preview-approval".into());
+            ui.set_chat_approval_tool("execute_command".into());
+            ui.set_chat_approval_kind("exec".into());
+            ui.set_chat_approval_summary("execute_command: git status --short".into());
         }
         "cron" => {
             ui.set_settings_page(9);

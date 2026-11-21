@@ -339,6 +339,11 @@ fn delete_workspace_archives_or_discards_threads_without_touching_disk(
         .list_workspaces()?
         .iter()
         .all(|w| w.workspace_id != archived_ws.workspace_id));
+    // The workspace row is gone but the archived thread still names the
+    // workspace it came from instead of showing up as an unknown one.
+    let (archived_sessions, archived_total) = runtime.list_archived_sessions(0, 50)?;
+    assert_eq!(archived_total, 1);
+    assert_eq!(archived_sessions[0].workspace_name, "归档区");
     assert_eq!(std::fs::read_to_string(&marker)?, "磁盘内容必须保留");
 
     // Discard policy: thread records go, disk still untouched.

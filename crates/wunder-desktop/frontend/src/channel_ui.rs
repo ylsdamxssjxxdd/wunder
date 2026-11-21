@@ -96,6 +96,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let creator_api = api.clone();
     app.on_open_channel_creator(move || {
         let Some(app) = weak.upgrade() else { return };
+        // 渠道目录随账号清单一起返回。进入页面时没拉过、或者上一次拉取失败，
+        // 这里补一次，否则 ComboBox 只能落回“暂无可用渠道”。
+        if app.get_channel_catalog().row_count() == 0 {
+            refresh_channels(&app, &creator_api);
+        }
         reset_editor(&app);
         app.set_channel_edit_id("".into());
         app.set_channel_editor_open(true);
@@ -492,6 +497,11 @@ fn refresh_channels(app: &MainWindow, api: &Arc<NativeDesktop>) {
         return;
     }
     app.set_channel_loading(true);
+    // The page now reloads every time its category is opened, so the selection
+    // has to survive the pull instead of snapping back to the first account.
+    let keep_account_id = selected_account(app)
+        .map(|account| account.account_id.to_string())
+        .filter(|id| !id.is_empty());
     let weak = app.as_weak();
     let api = api.clone();
     std::thread::spawn(move || {
@@ -511,37 +521,42 @@ fn refresh_channels(app: &MainWindow, api: &Arc<NativeDesktop>) {
                             })
                             .collect::<Vec<_>>(),
                     )));
-                    app.set_channel_accounts(ModelRc::new(VecModel::from(
-                        listing
-                            .items
-                            .into_iter()
-                            .map(|item| ChannelAccountCard {
-                                channel: item.channel.into(),
-                                account_id: item.account_id.into(),
-                                name: item.name.into(),
-                                status: item.status.into(),
-                                active: item.active,
-                                configured: item.configured,
-                                peer_kind: item.peer_kind.into(),
-                                agent_id: item.agent_id.into(),
-                                created_at: item.created_at.into(),
-                                updated_at: item.updated_at.into(),
-                                summary: item.summary.into(),
-                                secret_set: item.secret_set,
-                                app_id: item.app_id.into(),
-                                corp_id: item.corp_id.into(),
-                                wechat_agent_id: item.wechat_agent_id.into(),
-                                original_id: item.original_id.into(),
-                                weixin_bot_id: item.weixin_bot_id.into(),
-                                weixin_user_id: item.weixin_user_id.into(),
-                                bot_type: item.bot_type.into(),
-                                domain: item.domain.into(),
-                            })
-                            .collect::<Vec<_>>(),
-                    )));
+                    let accounts = listing
+                        .items
+                        .into_iter()
+                        .map(|item| ChannelAccountCard {
+                            channel: item.channel.into(),
+                            account_id: item.account_id.into(),
+                            name: item.name.into(),
+                            status: item.status.into(),
+                            active: item.active,
+                            configured: item.configured,
+                            peer_kind: item.peer_kind.into(),
+                            agent_id: item.agent_id.into(),
+                            created_at: item.created_at.into(),
+                            updated_at: item.updated_at.into(),
+                            summary: item.summary.into(),
+                            secret_set: item.secret_set,
+                            app_id: item.app_id.into(),
+                            corp_id: item.corp_id.into(),
+                            wechat_agent_id: item.wechat_agent_id.into(),
+                            original_id: item.original_id.into(),
+                            weixin_bot_id: item.weixin_bot_id.into(),
+                            weixin_user_id: item.weixin_user_id.into(),
+                            bot_type: item.bot_type.into(),
+                            domain: item.domain.into(),
+                        })
+                        .collect::<Vec<_>>();
+                    let restored = keep_account_id.as_deref().and_then(|id| {
+                        accounts
+                            .iter()
+                            .position(|account| account.account_id.as_str() == id)
+                    });
+                    let selected = restored.unwrap_or(0) as i32;
+                    app.set_channel_accounts(ModelRc::new(VecModel::from(accounts)));
                     load_catalog_names(&app);
                     if app.get_channel_accounts().row_count() > 0 {
-                        app.invoke_select_channel_account(0);
+                        app.invoke_select_channel_account(selected);
                     } else {
                         app.set_selected_channel_account(-1);
                     }

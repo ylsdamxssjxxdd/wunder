@@ -10,7 +10,6 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
 use url::{Host, Url};
-use uuid::Uuid;
 
 const TEMP_DIR_ROOT_ENV: &str = "WUNDER_TEMP_DIR_ROOT";
 /// Grace on top of the per-call budget so the Rust deadline always fires after
@@ -909,11 +908,14 @@ fn optional_timeout_ms(args: &Value, default_timeout_secs: u64) -> Option<u64> {
 
 fn save_screenshot(bytes: &[u8]) -> Result<(String, String)> {
     let dir = resolve_temp_dir()?;
-    std::fs::create_dir_all(&dir).map_err(|err| anyhow!("Create temp dir failed: {err}"))?;
-    let filename = format!("browser_shot_{}.png", Uuid::new_v4().simple());
-    let path = dir.join(&filename);
-    std::fs::write(&path, bytes)
-        .map_err(|err| anyhow!("Write browser screenshot failed: {err}"))?;
+    let path =
+        crate::services::workspace_temp::write_sequenced_file(&dir, "browser_shot_", "png", bytes)
+            .map_err(|err| anyhow!("Write browser screenshot failed: {err}"))?;
+    let filename = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| anyhow!("Write browser screenshot failed: invalid name"))?
+        .to_string();
     Ok((
         filename.clone(),
         format!("/wunder/temp_dir/download?filename={filename}"),

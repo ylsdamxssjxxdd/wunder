@@ -45,6 +45,11 @@ pub async fn run_main(
     let (frame_requester, frame_notifications) = spawn_frame_scheduler();
     let mut terminal = setup_terminal()?;
     crate::runtime::cli_ui_startup_point("tui_terminal_ready");
+    // Raw mode is on, so the terminal's answer lands on stdin promptly; the
+    // probe then runs beside the engine's own startup work instead of in front
+    // of it. A VTE terminal needs about 100 ms to answer, which is longer than
+    // the first frame should ever wait.
+    crate::terminal_geometry::start_cell_aspect_probe();
     let mut app = match TuiApp::new(
         runtime.clone(),
         global.clone(),

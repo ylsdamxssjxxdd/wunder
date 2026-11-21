@@ -1059,7 +1059,11 @@ impl<'a> PostgresThreadLog<'a> {
         // dozen turns, and older windows were unreachable. `before_turn_index`
         // now walks the whole thread one complete page at a time.
         let max_items = w.max_items.clamp(1, if preview { 20_000 } else { 500 });
-        let item_bytes_cap = if preview { 8 * 1024 * 1024 } else { 16 * 1024 * 1024 };
+        let item_bytes_cap = if preview {
+            8 * 1024 * 1024
+        } else {
+            16 * 1024 * 1024
+        };
         let rows = tx.query("SELECT root.turn_id,root.root_turn_id,root.user_round,head.status,root.client_message_id,root.created_at_ms,head.updated_at_ms
             FROM (SELECT * FROM service_thread_admissions WHERE thread_id=$1 AND turn_id=root_turn_id
                 AND ($2::bigint IS NULL OR user_round<$2) ORDER BY user_round DESC LIMIT $3) root

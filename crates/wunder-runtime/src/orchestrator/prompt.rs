@@ -319,8 +319,7 @@ impl Orchestrator {
         // property of the thread. Freezing it here would let one control turn
         // permanently remove an authorized tool such as the image reader.
         let allowed = self.apply_preview_skill_tool_policy(allowed, request.preview_skill);
-        let allowed =
-            self.filter_tools_for_model_capability(allowed, llm_config.support_vision);
+        let allowed = self.filter_tools_for_model_capability(allowed, llm_config.support_vision);
         let mode = self
             .resolve_frozen_session_tool_call_mode(user_id, session_id, &llm_config)
             .await?;

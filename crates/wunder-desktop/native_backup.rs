@@ -85,8 +85,8 @@ fn create_backup_at(home: &Path) -> Result<PathBuf> {
         "{ZIP_PREFIX}{}{ZIP_SUFFIX}",
         chrono::Utc::now().timestamp_millis()
     ));
-    let file = File::create(&target)
-        .with_context(|| format!("创建备份文件失败：{}", target.display()))?;
+    let file =
+        File::create(&target).with_context(|| format!("创建备份文件失败：{}", target.display()))?;
     let mut zip = ZipWriter::new(BufWriter::new(file));
     let options = FileOptions::default()
         .compression_method(CompressionMethod::Deflated)
@@ -151,7 +151,10 @@ fn add_tree(
             Ok(entries) => entries.flatten().map(|entry| entry.path()).collect(),
             Err(error) => {
                 // 读不动的子目录（权限/占用）跳过，不让整份备份失败。
-                eprintln!("skip unreadable backup directory {}: {error}", file.display());
+                eprintln!(
+                    "skip unreadable backup directory {}: {error}",
+                    file.display()
+                );
                 return Ok(());
             }
         };
@@ -164,7 +167,14 @@ fn add_tree(
             if name.is_empty() {
                 continue;
             }
-            add_tree(zip, root, &child, &format!("{entry}/{name}"), depth + 1, options)?;
+            add_tree(
+                zip,
+                root,
+                &child,
+                &format!("{entry}/{name}"),
+                depth + 1,
+                options,
+            )?;
         }
         return Ok(());
     }
@@ -192,15 +202,17 @@ fn add_file(
     }
     let modified = meta.modified().ok().and_then(|time| {
         let stamp: chrono::DateTime<chrono::Utc> = time.into();
-        Some(zip::DateTime::from_date_and_time(
-            stamp.format("%Y").to_string().parse().ok()?,
-            stamp.format("%m").to_string().parse().ok()?,
-            stamp.format("%d").to_string().parse().ok()?,
-            stamp.format("%H").to_string().parse().ok()?,
-            stamp.format("%M").to_string().parse().ok()?,
-            stamp.format("%S").to_string().parse().ok()?,
+        Some(
+            zip::DateTime::from_date_and_time(
+                stamp.format("%Y").to_string().parse().ok()?,
+                stamp.format("%m").to_string().parse().ok()?,
+                stamp.format("%d").to_string().parse().ok()?,
+                stamp.format("%H").to_string().parse().ok()?,
+                stamp.format("%M").to_string().parse().ok()?,
+                stamp.format("%S").to_string().parse().ok()?,
+            )
+            .ok()?,
         )
-        .ok()?)
     });
     let mut header = (*options).clone();
     if let Some(modified) = modified {
@@ -447,7 +459,9 @@ fn swap_staged(home: &Path, staging: &Path, stamp: &str) -> Result<usize> {
             if !source.is_file() {
                 continue;
             }
-            let Some(name) = source.file_name().map(|name| name.to_string_lossy().into_owned())
+            let Some(name) = source
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
             else {
                 continue;
             };
@@ -485,7 +499,11 @@ fn swap_staged(home: &Path, staging: &Path, stamp: &str) -> Result<usize> {
                 let _ = fs::rename(&path, aside.join(stale));
             }
         }
-        if aside.is_dir() && fs::read_dir(&aside).map(|mut it| it.next().is_none()).unwrap_or(true) {
+        if aside.is_dir()
+            && fs::read_dir(&aside)
+                .map(|mut it| it.next().is_none())
+                .unwrap_or(true)
+        {
             let _ = fs::remove_dir(&aside);
         }
     }
@@ -590,10 +608,19 @@ mod tests {
         stage_restore_at(&home, &archive.to_string_lossy()).unwrap();
         apply_pending_restore_at(&home);
 
-        assert_eq!(fs::read(home.join("config/wunder.yaml")).unwrap(), b"model: one");
-        assert_eq!(fs::read(home.join("config/prompts/a.md")).unwrap(), b"prompt");
+        assert_eq!(
+            fs::read(home.join("config/wunder.yaml")).unwrap(),
+            b"model: one"
+        );
+        assert_eq!(
+            fs::read(home.join("config/prompts/a.md")).unwrap(),
+            b"prompt"
+        );
         assert_eq!(fs::read(home.join("data/state_1.sqlite")).unwrap(), b"db");
-        assert_eq!(fs::read(home.join("data/state_1.sqlite-wal")).unwrap(), b"wal");
+        assert_eq!(
+            fs::read(home.join("data/state_1.sqlite-wal")).unwrap(),
+            b"wal"
+        );
         // 旧库的线程租约跟新库对不上，随替换一起挪进留底目录。
         assert!(!home.join("data/instances").exists());
         let aside = fs::read_dir(home.join("data"))

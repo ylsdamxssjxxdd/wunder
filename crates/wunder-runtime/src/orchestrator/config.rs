@@ -50,8 +50,7 @@ impl Orchestrator {
             if binding.profile != crate::tools::ToolProfile::Dynamic {
                 // 旧快照可能把 MCP display name 当 id；只改标识，
                 // 不改变工具集合，不会把已收回的权限放回来。
-                let normalized =
-                    crate::tools::normalize_frozen_tool_ids(config, &binding.tool_ids);
+                let normalized = crate::tools::normalize_frozen_tool_ids(config, &binding.tool_ids);
                 if normalized != binding.tool_ids {
                     binding.tool_ids = normalized;
                     self.workspace

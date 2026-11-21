@@ -640,7 +640,10 @@ mod tests {
                 "size",
                 "output_format",
             ] {
-                assert!(props.contains_key(field), "{field} should stay visible to the model");
+                assert!(
+                    props.contains_key(field),
+                    "{field} should stay visible to the model"
+                );
             }
             // strength 是调参项：默认值由模型配置给，不再暴露给模型自己填。
             assert!(

@@ -425,7 +425,9 @@ fn parse_phone_args(args: &Value) -> Result<PhoneArgs> {
         PhoneAction::Tap | PhoneAction::LongPress | PhoneAction::Swipe
     );
     if requires_bbox && bbox.is_none() {
-        return Err(anyhow!(crate::i18n::prompt_t("tool.phone_control.bbox_required")));
+        return Err(anyhow!(crate::i18n::prompt_t(
+            "tool.phone_control.bbox_required"
+        )));
     }
     if action == PhoneAction::Swipe && to_bbox.is_none() {
         return Err(anyhow!(crate::i18n::prompt_t(
@@ -439,7 +441,9 @@ fn parse_phone_args(args: &Value) -> Result<PhoneArgs> {
             .filter(|value| !value.is_empty())
             .is_none()
     {
-        return Err(anyhow!(crate::i18n::prompt_t("tool.phone_control.text_required")));
+        return Err(anyhow!(crate::i18n::prompt_t(
+            "tool.phone_control.text_required"
+        )));
     }
     if action == PhoneAction::PressKey {
         let key = key
@@ -462,7 +466,9 @@ fn parse_phone_args(args: &Value) -> Result<PhoneArgs> {
             .filter(|value| !value.is_empty())
             .is_none()
     {
-        return Err(anyhow!(crate::i18n::prompt_t("tool.phone_control.app_required")));
+        return Err(anyhow!(crate::i18n::prompt_t(
+            "tool.phone_control.app_required"
+        )));
     }
     if action == PhoneAction::OpenUrl {
         let value = url
@@ -471,7 +477,9 @@ fn parse_phone_args(args: &Value) -> Result<PhoneArgs> {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| anyhow!(crate::i18n::prompt_t("tool.phone_control.url_required")))?;
         if !(value.starts_with("https://") || value.starts_with("http://")) {
-            return Err(anyhow!(crate::i18n::prompt_t("tool.phone_control.invalid_url")));
+            return Err(anyhow!(crate::i18n::prompt_t(
+                "tool.phone_control.invalid_url"
+            )));
         }
     }
     let page = obj
@@ -492,7 +500,9 @@ fn parse_phone_args(args: &Value) -> Result<PhoneArgs> {
             Some("get") => {}
             Some("set") => {
                 if text.as_deref().unwrap_or("").is_empty() {
-                    return Err(anyhow!(crate::i18n::prompt_t("tool.phone_control.text_required")));
+                    return Err(anyhow!(crate::i18n::prompt_t(
+                        "tool.phone_control.text_required"
+                    )));
                 }
             }
             _ => {
@@ -535,19 +545,27 @@ fn parse_bbox_field(value: Option<&Value>) -> Result<Option<(i32, i32)>> {
         return Ok(None);
     };
     let Some(items) = value.as_array() else {
-        return Err(anyhow!(crate::i18n::prompt_t("tool.phone_control.invalid_bbox")));
+        return Err(anyhow!(crate::i18n::prompt_t(
+            "tool.phone_control.invalid_bbox"
+        )));
     };
     let numbers = items
         .iter()
         .map(|item| item.as_i64().map(|value| value as i32))
         .collect::<Option<Vec<i32>>>();
     let Some(numbers) = numbers else {
-        return Err(anyhow!(crate::i18n::prompt_t("tool.phone_control.invalid_bbox")));
+        return Err(anyhow!(crate::i18n::prompt_t(
+            "tool.phone_control.invalid_bbox"
+        )));
     };
     let center = match numbers.as_slice() {
         [x, y] => (*x, *y),
         [x1, y1, x2, y2] => ((x1 + x2) / 2, (y1 + y2) / 2),
-        _ => return Err(anyhow!(crate::i18n::prompt_t("tool.phone_control.invalid_bbox"))),
+        _ => {
+            return Err(anyhow!(crate::i18n::prompt_t(
+                "tool.phone_control.invalid_bbox"
+            )))
+        }
     };
     if numbers.iter().any(|value| *value < 0 || *value > FRAME_BOX) {
         return Err(anyhow!(crate::i18n::prompt_t(

@@ -206,7 +206,8 @@ async fn execute_with_host(
                 data["action_applied"] = json!(false);
                 data["state"] = json!("failed");
                 data["code"] = json!("capture_failed");
-                data["message"] = json!(crate::i18n::prompt_t("tool.android_screen.capture_failed"));
+                data["message"] =
+                    json!(crate::i18n::prompt_t("tool.android_screen.capture_failed"));
                 return Ok(build_model_tool_success_with_hint(
                     TOOL_ANDROID_SCREEN_ALIAS,
                     "failed",
@@ -287,7 +288,9 @@ fn screen_summary(action: ScreenAction, authorized: bool, width: i64, height: i6
             };
             crate::i18n::prompt_t(key)
         }
-        ScreenAction::RequestPermission => crate::i18n::prompt_t("tool.android_screen.summary_permission"),
+        ScreenAction::RequestPermission => {
+            crate::i18n::prompt_t("tool.android_screen.summary_permission")
+        }
     }
 }
 

@@ -1,0 +1,11 @@
+// 安卓版：触摸端的表单输入框。
+//
+// 外观、提交、校验语义全部沿用桌面版的 FormField，只打开它的移动端分支：
+// Android 用选区背景色绘制光标，桌面那档浅色选区在白色输入框里几乎看不见，
+// 手指也需要更宽的光标才找得到。各页面统一用这个别名，避免每一处 FormField
+// 都记着补一个 `mobile: true`。
+import { FormField } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
+
+export component MobileFormField inherits FormField {
+    mobile: true;
+}

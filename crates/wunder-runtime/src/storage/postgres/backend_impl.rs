@@ -2284,4 +2284,16 @@ impl WorkspaceStore for PostgresStorage {
     fn delete_workspace(&self, user_id: &str, workspace_id: &str) -> Result<i64> {
         self.delete_workspace_impl(user_id, workspace_id)
     }
+    fn remember_workspace_name(&self, user_id: &str, workspace_id: &str, name: &str) -> Result<()> {
+        self.remember_workspace_name_impl(user_id, workspace_id, name)
+    }
+    fn removed_workspace_names(
+        &self,
+        user_id: &str,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        self.removed_workspace_names_impl(user_id)
+    }
+    fn purge_unused_workspace_names(&self, user_id: &str) -> Result<()> {
+        self.purge_unused_workspace_names_impl(user_id)
+    }
 }

@@ -81,7 +81,7 @@ export component ChannelsPage inherits Rectangle {
             background: white;
             VerticalLayout {
                 spacing: 0px;
-                HorizontalLayout { height: 42px; padding: 10px; Text { text: "我的渠道账号"; color: Theme.text; font-size: 14px; font-weight: 600; } Action { width: 48px; icon: @image-url("../assets/icons/plus.svg"); label: "新增"; show-label: true; clicked => { root.open-creator(); } } Action { width: 48px; icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; show-label: true; clicked => { root.refresh(); } } }
+                HorizontalLayout { height: 42px; padding: 10px; Text { horizontal-stretch: 1; text: "我的渠道账号"; color: Theme.text; font-size: 14px; font-weight: 600; vertical-alignment: center; overflow: elide; } Action { width: 72px; icon: @image-url("../assets/icons/plus.svg"); label: "新增"; show-label: true; clicked => { root.open-creator(); } } Action { width: 72px; icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; show-label: true; clicked => { root.refresh(); } } }
                 Rectangle { height: 6px; }
                 ScrollView {
                     vertical-stretch: 1; horizontal-scrollbar-policy: always-off;

@@ -775,7 +775,10 @@ mod tests {
                 "result": {"ok": true, "data": {"kind": "click", "url": "https://example.test/manual/"}}
             }),
         );
-        assert_eq!(click.preview, "click e12 \u{b7} https://example.test/manual/");
+        assert_eq!(
+            click.preview,
+            "click e12 \u{b7} https://example.test/manual/"
+        );
 
         // 结果还没到：只留动作与目标，不编造网址。
         let pending = NativeWorkflowEntry::from_payload(

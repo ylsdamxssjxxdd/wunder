@@ -17,6 +17,17 @@ pub(super) trait PostgresWorkspaceStorage {
     ) -> Result<Option<WorkspaceRecord>>;
     fn next_workspace_sort_index_impl(&self, user_id: &str) -> Result<i64>;
     fn delete_workspace_impl(&self, user_id: &str, workspace_id: &str) -> Result<i64>;
+    fn remember_workspace_name_impl(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        name: &str,
+    ) -> Result<()>;
+    fn removed_workspace_names_impl(
+        &self,
+        user_id: &str,
+    ) -> Result<std::collections::HashMap<String, String>>;
+    fn purge_unused_workspace_names_impl(&self, user_id: &str) -> Result<()>;
 }
 
 impl PostgresWorkspaceStorage for PostgresStorage {
@@ -131,6 +142,71 @@ impl PostgresWorkspaceStorage for PostgresStorage {
             &[&cleaned_user, &cleaned_id],
         )?;
         Ok(affected as i64)
+    }
+
+    fn remember_workspace_name_impl(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        name: &str,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_id = workspace_id.trim();
+        let cleaned_name = name.trim();
+        if cleaned_user.is_empty() || cleaned_id.is_empty() || cleaned_name.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO workspace_labels (workspace_id, user_id, name) VALUES ($1, $2, $3) \
+             ON CONFLICT(workspace_id) DO UPDATE SET name = EXCLUDED.name, \
+             user_id = EXCLUDED.user_id",
+            &[&cleaned_id, &cleaned_user, &cleaned_name],
+        )?;
+        Ok(())
+    }
+
+    fn removed_workspace_names_impl(
+        &self,
+        user_id: &str,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let mut names = std::collections::HashMap::new();
+        if cleaned_user.is_empty() {
+            return Ok(names);
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT l.workspace_id, l.name FROM workspace_labels l \
+             WHERE l.user_id = $1 AND EXISTS ( \
+               SELECT 1 FROM chat_sessions s \
+               WHERE s.workspace_id = l.workspace_id AND s.user_id = l.user_id \
+             )",
+            &[&cleaned_user],
+        )?;
+        for row in &rows {
+            names.insert(row.get::<_, String>(0), row.get::<_, String>(1));
+        }
+        Ok(names)
+    }
+
+    fn purge_unused_workspace_names_impl(&self, user_id: &str) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn()?;
+        conn.execute(
+            "DELETE FROM workspace_labels WHERE user_id = $1 AND NOT EXISTS ( \
+               SELECT 1 FROM chat_sessions s \
+               WHERE s.workspace_id = workspace_labels.workspace_id AND s.user_id = workspace_labels.user_id \
+             )",
+            &[&cleaned_user],
+        )?;
+        Ok(())
     }
 }
 

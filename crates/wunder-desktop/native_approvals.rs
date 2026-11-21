@@ -100,7 +100,10 @@ impl NativeApprovals {
 
     #[cfg(test)]
     fn pending_count(&self) -> usize {
-        self.pending.lock().map(|pending| pending.len()).unwrap_or(0)
+        self.pending
+            .lock()
+            .map(|pending| pending.len())
+            .unwrap_or(0)
     }
 }
 
@@ -130,9 +133,7 @@ mod tests {
     fn decide_delivers_the_answer_and_consumes_the_pending_entry() {
         let hub = NativeApprovals::default();
         let (request, mut receiver) = request("approval-1");
-        let frame = hub
-            .register("session-1", request)
-            .expect("approval parked");
+        let frame = hub.register("session-1", request).expect("approval parked");
         assert_eq!(frame["approval_id"], "approval-1");
         assert_eq!(frame["kind"], "exec");
         assert_eq!(frame["session_id"], "session-1");

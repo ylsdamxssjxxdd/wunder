@@ -138,7 +138,9 @@ impl std::error::Error for PatchToolError {}
 
 fn is_english_language() -> bool {
     // 补丁工具的错误与提示直接进模型上下文，恒用英文。
-    i18n::prompt_language().to_ascii_lowercase().starts_with("en")
+    i18n::prompt_language()
+        .to_ascii_lowercase()
+        .starts_with("en")
 }
 
 fn localized_message(zh: impl Into<String>, en: impl Into<String>) -> String {

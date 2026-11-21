@@ -18,6 +18,17 @@ pub(super) trait SqliteWorkspaceStorage {
     ) -> Result<Option<WorkspaceRecord>>;
     fn next_workspace_sort_index_impl(&self, user_id: &str) -> Result<i64>;
     fn delete_workspace_impl(&self, user_id: &str, workspace_id: &str) -> Result<i64>;
+    fn remember_workspace_name_impl(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        name: &str,
+    ) -> Result<()>;
+    fn removed_workspace_names_impl(
+        &self,
+        user_id: &str,
+    ) -> Result<std::collections::HashMap<String, String>>;
+    fn purge_unused_workspace_names_impl(&self, user_id: &str) -> Result<()>;
 }
 
 impl SqliteWorkspaceStorage for SqliteStorage {
@@ -142,6 +153,74 @@ impl SqliteWorkspaceStorage for SqliteStorage {
         )?;
         Ok(affected as i64)
     }
+
+    fn remember_workspace_name_impl(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        name: &str,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_id = workspace_id.trim();
+        let cleaned_name = name.trim();
+        if cleaned_user.is_empty() || cleaned_id.is_empty() || cleaned_name.is_empty() {
+            return Ok(());
+        }
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO workspace_labels (workspace_id, user_id, name) VALUES (?, ?, ?) \
+             ON CONFLICT(workspace_id) DO UPDATE SET name = excluded.name, \
+             user_id = excluded.user_id",
+            params![cleaned_id, cleaned_user, cleaned_name],
+        )?;
+        Ok(())
+    }
+
+    fn removed_workspace_names_impl(
+        &self,
+        user_id: &str,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let mut names = std::collections::HashMap::new();
+        if cleaned_user.is_empty() {
+            return Ok(names);
+        }
+        let conn = self.read_connection()?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT l.workspace_id, l.name FROM workspace_labels l \
+             WHERE l.user_id = ? AND EXISTS ( \
+               SELECT 1 FROM chat_sessions s \
+               WHERE s.workspace_id = l.workspace_id AND s.user_id = l.user_id \
+             )",
+        )?;
+        let rows = stmt.query_map([cleaned_user], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (id, name) = row?;
+            names.insert(id, name);
+        }
+        Ok(names)
+    }
+
+    fn purge_unused_workspace_names_impl(&self, user_id: &str) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(());
+        }
+        let conn = self.open()?;
+        conn.execute(
+            "DELETE FROM workspace_labels WHERE user_id = ? AND NOT EXISTS ( \
+               SELECT 1 FROM chat_sessions s \
+               WHERE s.workspace_id = workspace_labels.workspace_id AND s.user_id = workspace_labels.user_id \
+             )",
+            params![cleaned_user],
+        )?;
+        Ok(())
+    }
 }
 
 fn map_workspace_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkspaceRecord> {
@@ -241,5 +320,59 @@ mod tests {
             .get_workspace_impl("u1", "w1")
             .expect("get")
             .is_none());
+    }
+
+    #[test]
+    fn removed_workspace_names_stay_visible_while_threads_reference_them() {
+        use crate::storage::sqlite::chat_session::SqliteChatSessionStorage;
+        use crate::storage::ChatSessionRecord;
+
+        let storage = build_storage();
+        storage
+            .remember_workspace_name_impl("u1", "w1", "项目甲")
+            .expect("remember");
+        // The name is kept even before any thread points at it, but it only
+        // projects once a thread still references the removed workspace.
+        assert!(storage
+            .removed_workspace_names_impl("u1")
+            .expect("names")
+            .is_empty());
+
+        let thread = ChatSessionRecord {
+            session_id: "s1".into(),
+            user_id: "u1".into(),
+            title: "thread".into(),
+            status: "archived".into(),
+            created_at: 10.0,
+            updated_at: 20.0,
+            last_message_at: 20.0,
+            agent_id: None,
+            workspace_id: Some("w1".into()),
+            tool_overrides: Vec::new(),
+            parent_session_id: None,
+            parent_message_id: None,
+            spawn_label: None,
+            spawned_by: None,
+        };
+        storage.upsert_chat_session_impl(&thread).expect("thread");
+        let names = storage.removed_workspace_names_impl("u1").expect("names");
+        assert_eq!(names.get("w1").map(String::as_str), Some("项目甲"));
+
+        // Another user never sees this label.
+        assert!(storage
+            .removed_workspace_names_impl("u2")
+            .expect("names")
+            .is_empty());
+
+        storage
+            .delete_chat_session_impl("u1", "s1")
+            .expect("delete thread");
+        storage
+            .purge_unused_workspace_names_impl("u1")
+            .expect("purge");
+        assert!(storage
+            .removed_workspace_names_impl("u1")
+            .expect("names")
+            .is_empty());
     }
 }

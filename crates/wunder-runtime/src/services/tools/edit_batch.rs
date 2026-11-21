@@ -75,11 +75,8 @@ pub(super) fn continue_on_miss(args: &Value) -> bool {
 
 /// 取字符串字段，兼容常见别名；非字符串视为缺失。
 fn text_field(item: &Value, keys: &[&str]) -> Option<String> {
-    keys.iter().find_map(|key| {
-        item.get(*key)
-            .and_then(Value::as_str)
-            .map(str::to_string)
-    })
+    keys.iter()
+        .find_map(|key| item.get(*key).and_then(Value::as_str).map(str::to_string))
 }
 
 /// 参数是否真的被使用。
@@ -197,7 +194,12 @@ fn invalid(message: &str, data: Value, hint: &str) -> Value {
     build_failed_tool_result(
         message,
         data,
-        ToolErrorMeta::new("TOOL_EDIT_INVALID_ARGS", Some(hint.to_string()), false, None),
+        ToolErrorMeta::new(
+            "TOOL_EDIT_INVALID_ARGS",
+            Some(hint.to_string()),
+            false,
+            None,
+        ),
         false,
     )
 }
@@ -209,7 +211,8 @@ pub(super) fn parse_batch(args: &Value) -> Option<Vec<BatchStep>> {
     for item in items {
         steps.push(BatchStep {
             old_string: text_field(item, &["old_string", "old_str", "old_text"])?,
-            new_string: text_field(item, &["new_string", "new_str", "new_text"]).unwrap_or_default(),
+            new_string: text_field(item, &["new_string", "new_str", "new_text"])
+                .unwrap_or_default(),
             replace_all: item
                 .get("replace_all")
                 .and_then(Value::as_bool)
@@ -233,7 +236,12 @@ pub(super) fn prepare(
     let mut tier = MatchTier::Exact;
 
     for (index, step) in steps.iter().enumerate() {
-        match replace_literal(&working, &step.old_string, &step.new_string, step.replace_all) {
+        match replace_literal(
+            &working,
+            &step.old_string,
+            &step.new_string,
+            step.replace_all,
+        ) {
             Ok((next, found)) => {
                 applied += 1;
                 replacements += found.occurrences();
@@ -341,10 +349,7 @@ fn miss_summary(reports: &[Value]) -> String {
         let index = report.get("index").and_then(Value::as_u64).unwrap_or(0);
         let detail = match report.get("reason").and_then(Value::as_str) {
             Some("not_unique") => {
-                let count = report
-                    .get("matches")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0);
+                let count = report.get("matches").and_then(Value::as_u64).unwrap_or(0);
                 let first_line = report
                     .get("lines")
                     .and_then(Value::as_array)
@@ -375,7 +380,9 @@ fn miss_summary(reports: &[Value]) -> String {
                         format!("第 {index} 条未匹配（最近片段在第 {line} 行）")
                     }
                     // 连相近行都没有：多半是这段被改名/删掉，或本来就不在这个文件里。
-                    _ => format!("第 {index} 条未匹配（全文没有相近行，疑似该段已改名或不在本文件）"),
+                    _ => {
+                        format!("第 {index} 条未匹配（全文没有相近行，疑似该段已改名或不在本文件）")
+                    }
                 }
             }
         };
@@ -409,7 +416,9 @@ fn miss_hint(reports: &[Value]) -> String {
     let mut hint =
         String::from("改法：按上面未命中的条目校正 old_string 后整批重发（本次未写入任何内容）");
     if let Some(line) = nearest_line {
-        hint.push_str(&format!("；最近的那一处现在从第 {line} 行开始，可直接照着改"));
+        hint.push_str(&format!(
+            "；最近的那一处现在从第 {line} 行开始，可直接照着改"
+        ));
     }
     if ambiguous {
         hint.push_str("；匹配多处的条目补足上下文，或在该条上设 replace_all=true");
@@ -493,8 +502,16 @@ mod tests {
         let failure = prepare(content, &steps, false).expect_err("two misses");
         assert!(failure.message.contains("2/3"));
         // 未命中的定位要点必须在正文里：失败结果在观察层会被压成只剩 error 文本。
-        assert!(failure.message.contains("第 1 条未匹配"), "{}", failure.message);
-        assert!(failure.message.contains("第 3 条未匹配"), "{}", failure.message);
+        assert!(
+            failure.message.contains("第 1 条未匹配"),
+            "{}",
+            failure.message
+        );
+        assert!(
+            failure.message.contains("第 3 条未匹配"),
+            "{}",
+            failure.message
+        );
         let reports = failure.data.get("edits").expect("report list");
         assert_eq!(reports[0]["status"], json!("missed"));
         assert_eq!(reports[1]["status"], json!("applied"));

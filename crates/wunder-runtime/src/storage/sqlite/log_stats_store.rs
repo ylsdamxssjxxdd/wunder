@@ -216,10 +216,7 @@ impl SqliteLogStatsStorage for SqliteStorage {
         // (which holds most recent bytes) and ignored the thread history store
         // entirely, so the admin monitor showed a few megabytes for a
         // multi-gigabyte transcript.
-        let root = self
-            .db_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."));
+        let root = self.db_path.parent().unwrap_or_else(|| Path::new("."));
         let mut thread_bytes = 0;
         for name in [
             "thread_history_1.sqlite",
@@ -232,11 +229,7 @@ impl SqliteLogStatsStorage for SqliteStorage {
             thread_bytes += log_directory_bytes(&root.join(name), 0);
         }
         let mut diagnostic_bytes = 0;
-        for name in [
-            "logs_1.sqlite",
-            "logs_1.sqlite-wal",
-            "logs_1.sqlite-shm",
-        ] {
+        for name in ["logs_1.sqlite", "logs_1.sqlite-wal", "logs_1.sqlite-shm"] {
             diagnostic_bytes += regular_file_bytes(&root.join(name));
         }
         Ok(LogUsage {
@@ -442,7 +435,8 @@ mod tests {
     #[test]
     fn log_usage_separates_thread_and_diagnostic_footprint() {
         let dir = tempfile::tempdir().unwrap();
-        let storage = SqliteStorage::new(dir.path().join("state_1.sqlite").to_string_lossy().into());
+        let storage =
+            SqliteStorage::new(dir.path().join("state_1.sqlite").to_string_lossy().into());
         storage.ensure_initialized().unwrap();
         storage
             .append_tool_log(

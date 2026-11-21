@@ -97,10 +97,12 @@ fn expert_memories_archives_and_runtime_are_single_agent_scoped() -> anyhow::Res
     let second = api.create_session(None)?;
     api.archive_session(&first.id)?;
     api.archive_session(&second.id)?;
-    let (rows, total) = api.expert_archives("__default__", 0)?;
-    assert_eq!(total, 2);
-    assert_eq!(rows[0].id, second.id);
-    assert!(api.expert_archives("__default__", 50)?.0.is_empty());
+    let page = api.expert_archives("__default__", 0)?;
+    assert_eq!(page.total, 2);
+    assert_eq!(page.pages, 1);
+    // 最近归档的线程排在最前面。
+    assert_eq!(page.items[0].id, second.id);
+    assert!(api.expert_archives("__default__", 50)?.items.is_empty());
     let runtime = api.expert_runtime("__default__", Some("2026-01-01"))?;
     assert_eq!(runtime["data"]["daily"].as_array().unwrap().len(), 14);
     assert_eq!(runtime["data"]["summary"]["tool_calls"], 0);
@@ -120,13 +122,14 @@ fn archived_threads_can_be_restored_or_deleted_but_active_threads_are_protected(
     // The permanent-delete operation is intentionally archive-only. It must
     // never become a bypass around the normal archive/cancel protection.
     assert!(api.delete_archived_session(&active.id).is_err());
-    assert_eq!(api.expert_archives("__default__", 0)?.1, 0);
+    assert_eq!(api.expert_archives("__default__", 0)?.total, 0);
 
     api.archive_session(&restored.id)?;
     api.archive_session(&removed.id)?;
-    let (archives, total) = api.expert_archives("__default__", 0)?;
-    assert_eq!(total, 2);
-    let archive_ids = archives
+    let page = api.expert_archives("__default__", 0)?;
+    assert_eq!(page.total, 2);
+    let archive_ids = page
+        .items
         .iter()
         .map(|session| session.id.as_str())
         .collect::<Vec<_>>();
@@ -137,10 +140,10 @@ fn archived_threads_can_be_restored_or_deleted_but_active_threads_are_protected(
     // Restore returns the session to the active catalogue and removes it from
     // the archive projection without implicitly acquiring an execution lease.
     api.restore_session(&restored.id)?;
-    let (archives, total) = api.expert_archives("__default__", 0)?;
-    assert_eq!(total, 1);
-    assert_eq!(archives.len(), 1);
-    assert_eq!(archives[0].id, removed.id);
+    let page = api.expert_archives("__default__", 0)?;
+    assert_eq!(page.total, 1);
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].id, removed.id);
     let active_ids = api
         .list_sessions(None)?
         .into_iter()
@@ -151,7 +154,7 @@ fn archived_threads_can_be_restored_or_deleted_but_active_threads_are_protected(
     assert!(!active_ids.contains(&removed.id));
 
     api.delete_archived_session(&removed.id)?;
-    assert_eq!(api.expert_archives("__default__", 0)?.1, 0);
+    assert_eq!(api.expert_archives("__default__", 0)?.total, 0);
     assert!(api.get_session(&removed.id).is_err());
     assert!(api.delete_archived_session(&restored.id).is_err());
     Ok(())

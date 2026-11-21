@@ -16,12 +16,12 @@ pub use native_host_hud::{HostHud, HostHudSampler};
 
 pub use native::{
     random_workspace_visual, validate_cloud_password, AgentRecord, AgentSettingsEdit,
-    ChannelAccountCard, ChannelAccountListing, ChannelBindingCard, ChannelCatalogItem,
-    ChannelLogEntry, CloudStatusView, CompanionOverlayState, CompanionPlacement, CronRecord,
-    CronRunRecord, DesktopSettings, LanPeerRecord, LanSettings, ModelEdit, ModelProbeOutcome,
-    ModelRecord, NativeChannelAccountEdit, NativeChannelBindingEdit, NativeChatAttachment,
-    NativeChatEvent, NativeChatInput, NativeChatRound, NativeChatTurn, NativeContextUsage,
-    NativeCronJobEdit, NativeDesktop, NativeMessage, NativeMessageAttachment,
+    ArchivedThreadPage, ChannelAccountCard, ChannelAccountListing, ChannelBindingCard,
+    ChannelCatalogItem, ChannelLogEntry, CloudStatusView, CompanionOverlayState,
+    CompanionPlacement, CronRecord, CronRunRecord, DesktopSettings, LanPeerRecord, LanSettings,
+    ModelEdit, ModelProbeOutcome, ModelRecord, NativeChannelAccountEdit, NativeChannelBindingEdit,
+    NativeChatAttachment, NativeChatEvent, NativeChatInput, NativeChatRound, NativeChatTurn,
+    NativeContextUsage, NativeCronJobEdit, NativeDesktop, NativeMessage, NativeMessageAttachment,
     NativeNavigationOrder, NativePatchFile, NativePatchLine, NativePlanStep, NativePlanView,
     NativeProcessItem, NativeProcessPage, NativeProfile, NativeQueueTurn, NativeSession,
     NativeStream, NativeSubagentCard, NativeThreadUpdate, NativeThreadWatch,

@@ -93,6 +93,8 @@ pub(super) fn fixture_runtime(root: &Path) -> CliRuntime {
         user_id: "snapshot_user".to_string(),
         workspace,
         user_config: Default::default(),
+        instance_id: "snapshot_instance".to_string(),
+        instance_guard: None,
     }
 }
 

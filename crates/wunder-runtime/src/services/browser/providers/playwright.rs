@@ -337,7 +337,15 @@ fn browser_action_allowed_fields(action: &str) -> Option<&'static [&'static str]
             "steps",
             "timeout_ms",
         ],
-        "scroll" => &["action", "target_id", "delta_x", "delta_y", "x", "y", "timeout_ms"],
+        "scroll" => &[
+            "action",
+            "target_id",
+            "delta_x",
+            "delta_y",
+            "x",
+            "y",
+            "timeout_ms",
+        ],
         "console" => &["action", "target_id", "clear"],
         "press" => &[
             "action",
@@ -901,14 +909,7 @@ async fn dispatch_operation(
                     "timeout_ms",
                 ],
             );
-            act_outcome(
-                service,
-                &scope,
-                request,
-                target.as_deref(),
-                "Dragged.",
-            )
-            .await
+            act_outcome(service, &scope, request, target.as_deref(), "Dragged.").await
         }
         OP_SCROLL => {
             let request = request_with(
@@ -916,23 +917,12 @@ async fn dispatch_operation(
                 args,
                 &["delta_x", "delta_y", "x", "y", "timeout_ms"],
             );
-            act_outcome(
-                service,
-                &scope,
-                request,
-                target.as_deref(),
-                "Scrolled.",
-            )
-            .await
+            act_outcome(service, &scope, request, target.as_deref(), "Scrolled.").await
         }
         OP_CONSOLE => {
             let request = request_with("console", args, &["clear"]);
             let data = service
-                .execute(
-                    &scope,
-                    "act",
-                    &act_args(request, target.as_deref()),
-                )
+                .execute(&scope, "act", &act_args(request, target.as_deref()))
                 .await?;
             let text = data
                 .get("text")

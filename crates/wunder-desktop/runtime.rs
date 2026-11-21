@@ -794,10 +794,7 @@ fn merge_legacy_tree(legacy: &Path, target: &Path) {
     for entry in entries.flatten() {
         let source = entry.path();
         let destination = target.join(entry.file_name());
-        let is_dir = entry
-            .file_type()
-            .map(|kind| kind.is_dir())
-            .unwrap_or(false);
+        let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
         if is_dir {
             if fs::create_dir_all(&destination).is_ok() {
                 merge_legacy_tree(&source, &destination);
@@ -1236,7 +1233,11 @@ fn default_send_key() -> String {
 fn default_font_size() -> i32 {
     // 手机屏幕更小、握持距离更远，安卓版首次启动的聊天字号从 16 起步；
     // 桌面版沿用 14，两边都由设置页的同一枚 +/- 调整。
-    if cfg!(target_os = "android") { 16 } else { 14 }
+    if cfg!(target_os = "android") {
+        16
+    } else {
+        14
+    }
 }
 
 fn default_python_runtime_mode() -> String {
@@ -1356,7 +1357,10 @@ pub(crate) fn refresh_runtime_tool_env(settings: &DesktopSettings, app_dir: &Pat
         };
         match resolve_desktop_tool_bin(&settings.shell_path, app_dir) {
             Some(shell_bin) if !picks_cmd(&shell_bin) => {
-                set_env_path_if_exists(wunder_server::command_utils::POWERSHELL_EXE_ENV, &shell_bin);
+                set_env_path_if_exists(
+                    wunder_server::command_utils::POWERSHELL_EXE_ENV,
+                    &shell_bin,
+                );
                 wunder_server::command_utils::reset_powershell_host();
             }
             // 清空设置或改选 cmd.exe 都要撤掉上一次发布的覆盖：留着它进程会继续
@@ -2401,10 +2405,7 @@ fn migrate_desktop_local_agent_approval_modes(state: &AppState, user_id: &str) -
     for mut record in state.user_store.list_user_agents(user_id)? {
         let normalized = record.approval_mode.trim().to_ascii_lowercase();
         if !(normalized.is_empty()
-            || matches!(
-                normalized.as_str(),
-                "auto_edit" | "auto-edit" | "suggest"
-            ))
+            || matches!(normalized.as_str(), "auto_edit" | "auto-edit" | "suggest"))
         {
             continue;
         }

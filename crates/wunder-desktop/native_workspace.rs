@@ -250,13 +250,16 @@ impl NativeDesktop {
             bail!("工作区不存在");
         }
         let storage = self.state().storage.as_ref();
-        storage
+        let record = storage
             .get_workspace(self.user_id(), cleaned)?
             .ok_or_else(|| anyhow!("工作区不存在"))?;
         let mut summary = WorkspaceDeleteSummary::default();
         if delete_threads {
             summary.deleted_threads = self.discard_workspace_threads(cleaned)? as u64;
         } else {
+            // 归档的线程保留 workspace_id，但工作区行马上就没了。先记下名字，
+            // 归档列表才能说明这些线程原来在哪个工作区，而不是“未知工作区”。
+            storage.remember_workspace_name(self.user_id(), cleaned, &record.name)?;
             summary.archived_threads = self.archive_workspace_threads(cleaned)? as u64;
         }
         storage.delete_workspace(self.user_id(), cleaned)?;

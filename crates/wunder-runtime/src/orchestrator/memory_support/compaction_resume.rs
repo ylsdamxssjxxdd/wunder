@@ -13,8 +13,8 @@
 //! 2. When the evidence is ambiguous, continue. Only an explicit, empty
 //!    remaining-work section may end the turn.
 
-use super::CompactionResumeAction;
 use super::strip_compaction_prefix_text;
+use super::CompactionResumeAction;
 
 /// Words that read as "the task is finished" when they are not negated.
 const COMPLETION_WORDS: &[&str] = &["done", "complete", "completed", "finished"];
@@ -101,9 +101,7 @@ const PENDING_SIGNALS_CJK: &[&str] = &[
     "尚需",
     "继续",
 ];
-const FAILURE_SIGNALS: &[&str] = &[
-    "failed", "failure", "error", "retry", "repair", "blocked",
-];
+const FAILURE_SIGNALS: &[&str] = &["failed", "failure", "error", "retry", "repair", "blocked"];
 const FAILURE_SIGNALS_CJK: &[&str] = &["失败", "错误", "修复", "重试", "报错", "阻塞"];
 /// CJK completion markers; the char in front decides whether they are negated.
 const COMPLETION_SIGNALS_CJK: &[&str] = &[
@@ -156,11 +154,9 @@ const EMPTY_SECTION_PLACEHOLDERS: &[&str] = &[
 
 /// Words immediately before a completion word that void it.
 fn preceded_by_negation(words: &[&str]) -> bool {
-    words.iter().any(|word| {
-        COMPLETION_NEGATIONS
-            .iter()
-            .any(|negation| word == negation)
-    })
+    words
+        .iter()
+        .any(|word| COMPLETION_NEGATIONS.iter().any(|negation| word == negation))
 }
 
 /// Split lowercase ASCII words with their byte offsets.
@@ -305,7 +301,11 @@ fn remaining_work_section(text: &str) -> Option<Vec<String>> {
         }
         lines.push(trimmed.to_string());
     }
-    if collecting { Some(lines) } else { None }
+    if collecting {
+        Some(lines)
+    } else {
+        None
+    }
 }
 
 fn is_empty_section_line(line: &str) -> bool {
