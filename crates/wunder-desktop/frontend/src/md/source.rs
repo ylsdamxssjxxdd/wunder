@@ -53,6 +53,27 @@ pub fn is_document(source: &str) -> bool {
     )
 }
 
+/// Drop a protocol-looking prefix the model invented in front of a real path.
+///
+/// The prompt shows the reference shape as `![description](<path>)`, and some
+/// models write that placeholder literally as a scheme — `reference_path:/abs
+/// /shot.png`. The renderer then asks the workspace for `reference_path:/…`,
+/// which is neither an absolute path nor a workspace entry, so the card fails
+/// to load even though the file is right there. `reference_path` is not a real
+/// URL scheme, so treating it as one only ever breaks a reference. Genuine
+/// schemes (`http`, `data`, `file`, …) are left untouched.
+pub fn normalize_destination(source: &str) -> String {
+    let trimmed = source.trim();
+    for prefix in ["reference_path:", "reference-path:"] {
+        if let Some(rest) = trimmed.get(..prefix.len()) {
+            if rest.eq_ignore_ascii_case(prefix) {
+                return trimmed[prefix.len()..].trim().to_string();
+            }
+        }
+    }
+    trimmed.to_string()
+}
+
 /// The bare path of a reference, or `None` when it cannot address the
 /// workspace (absolute URLs, protocol-relative sources, fragments).
 fn trimmed(source: &str) -> Option<&str> {
@@ -104,5 +125,27 @@ mod tests {
         assert_eq!(file_name("a/b/c.pdf?x=1", "文件"), "c.pdf");
         assert_eq!(file_name("C:\\x\\y.docx", "文件"), "y.docx");
         assert_eq!(file_name("/", "文件"), "文件");
+    }
+
+    /// A model that writes the prompt's placeholder as a scheme must still get
+    /// a working card: the prefix is dropped, a real scheme is not.
+    #[test]
+    fn invented_reference_prefixes_are_stripped() {
+        assert_eq!(
+            normalize_destination("reference_path:/tmp/workspace/a.png"),
+            "/tmp/workspace/a.png"
+        );
+        assert_eq!(
+            normalize_destination(" Reference_Path:/tmp/a gif.gif "),
+            "/tmp/a gif.gif"
+        );
+        assert_eq!(
+            normalize_destination("https://example.com/a.png"),
+            "https://example.com/a.png"
+        );
+        assert_eq!(normalize_destination("a.png"), "a.png");
+        assert!(is_image(&normalize_destination(
+            "reference_path:/tmp/workspace/a.gif"
+        )));
     }
 }

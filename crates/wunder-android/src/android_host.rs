@@ -9,6 +9,7 @@
 use anyhow::{Context as _, Result};
 use jni::objects::{GlobalRef, JObject, JObjectArray, JString, JValue};
 use jni::{JNIEnv, JavaVM};
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 const SERVICE_CLASS: &str = "dev.wunder.android.WunderRuntimeService";
@@ -112,6 +113,24 @@ pub fn hide_keyboard() {
     if result.is_err() {
         clear_java_exception(&mut env);
     }
+}
+
+/// Back 走 Slint 按键派发时记下的次数（`MobileWindow.back-requested`）。
+///
+/// 系统手势在 API 34+ 上由 Slint 自己的 OnBackInvoked 回调转成 `Key.Back`，
+/// 旧版本与硬件返回键则从 android-activity 的输入队列进来；两条路都不经过
+/// Java 的 `UiBridge.requestBack`，所以在这里单独攒一份，和那边的计数器一起
+/// 由渲染 tick 消费，最终仍走同一个 `handle_back`。
+static SLINT_BACK_REQUESTS: AtomicI32 = AtomicI32::new(0);
+
+/// Record one Back press that arrived through Slint's key pipeline.
+pub fn request_back() {
+    SLINT_BACK_REQUESTS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Drain the Back presses recorded by the Slint key handler.
+pub fn take_slint_back_requests() -> i32 {
+    SLINT_BACK_REQUESTS.swap(0, Ordering::Relaxed)
 }
 
 /// Drain Back presses recorded by the activity. The UI tick turns them into

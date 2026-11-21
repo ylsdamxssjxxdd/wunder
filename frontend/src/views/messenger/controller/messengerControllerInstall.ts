@@ -8870,13 +8870,21 @@ function installMessengerControllerRuntimeToolLists(ctx: MessengerControllerCont
       ctx.agentSettingMode.value === 'agent' &&
       !ctx.showAgentGridOverview.value));
 
-  ctx.showChatComposerFooter = computed(() => {
-      if (ctx.sessionHub.activeSection !== 'messages') {
-          return false;
-      }
-      return !ctx.showChatSettingsView.value &&
-          ['agent', 'world'].includes(String(ctx.resolvedMessageConversationKind.value || ''));
-  });
+  // 设置是浮在聊天页上的窗口，输入区留在原位（壳体此时 inert）。打开设置时
+  // 卸载 footer 会让消息区突然变高、遮罩后的背景跟着跳，关闭后还要重算滚动。
+  // resolvedMessageConversationKind 在非消息分区恒为空，这里记住进入设置前的
+  // 对话类型，让 footer 保持挂载。
+  const composerConversationKind = ref<'agent' | 'world' | ''>('');
+  watch(
+      () => [ctx.sessionHub.activeSection, ctx.resolvedMessageConversationKind.value] as const,
+      ([section, kind]) => {
+          if (section === 'messages') {
+              composerConversationKind.value = kind;
+          }
+      },
+      { immediate: true }
+  );
+  ctx.showChatComposerFooter = computed(() => composerConversationKind.value !== '');
 
   ctx.filteredOwnedAgents = computed(() => {
       const text = ctx.keyword.value.toLowerCase();

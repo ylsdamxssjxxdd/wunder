@@ -68,6 +68,8 @@ GIF 可以按帧号取帧，帧号从 0 开始，与联系表每格标注的数�
 - 视频会被整理成一串图片帧；如果视频里带音轨，还会附上转写出来的文字。
 - `sheet: true` 时不再逐帧回图，而是把整段均匀抽成一张联系表；视频会先把抽帧收敛到 16 帧以内，格子按行列排布，画面等比缩放、不拉伸。
 - 联系表的格子宽高比跟随真实帧比例（16:9 仍是 16:9），不会为了凑格子把画面裁掉一截；每格左下角写着它的 0-based 帧号。
+- 一张联系表只用一个缩放系数：采样帧尺寸不一致时（视频或个别动图），小尺寸帧不会被单独放大去撑满格子，格子里画面大小不同只反映源帧本身的大小。`sheet.frame_sizes` 给出每格的源帧尺寸，`sheet.mixed_frame_sizes` 为 `true` 时 `warnings` 也会写明。
+- `frame: N` 单独使用时返回第 N 帧的 PNG（原分辨率、不经过联系表），结果里的 `frame_scope` 写明帧号、时间戳与总帧数；再叠加 `crop` / `scale` / `stats` 才进入单帧细看流程。
 
 ## 对比两张图
 
@@ -96,9 +98,9 @@ GIF 之间也能比：主图用 `frame` 取帧，对照图是动图时用 `compa
 
 返回里会说明素材的类型和大小，但那只表示素材已经准备好，不是模型的分析结论。
 
-联系表会额外给出 `sheet.columns`、`sheet.rows`、`sheet.cell_width`、`sheet.cell_height` 和 `sheet.frame_indices`：后者按行列顺序列出每格对应的源帧序号，视频的 `warnings` 里还写明第 k 格大约对应第几秒。
+联系表会额外给出 `sheet.columns`、`sheet.rows`、`sheet.cell_width`、`sheet.cell_height`、`sheet.frame_indices` 和 `sheet.frame_sizes`：`frame_indices` 按行列顺序列出每格对应的源帧序号，`frame_sizes` 是对齐的源帧像素尺寸，视频的 `warnings` 里还写明第 k 格大约对应第几秒。
 
-按帧号取帧时会给出 `frame_scope`：总帧数、总时长，以及每帧的帧号、时间戳与落盘路径。差异对比会给出 `compare.metrics`（`ssim`、`mean_abs_diff`、`changed_ratio`）。
+按帧号取帧时会给出 `frame_scope`：总帧数、总时长，以及每帧的帧号、时间戳与落盘路径；只取一帧时 `mode` 为 `frame`，附件就是这一帧的 PNG。差异对比会给出 `compare.metrics`（`ssim`、`mean_abs_diff`、`changed_ratio`）。
 
 ## 错误与处理
 

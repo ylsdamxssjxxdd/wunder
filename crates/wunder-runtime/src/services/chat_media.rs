@@ -87,6 +87,11 @@ pub struct SheetLayout {
     pub cell_height: u32,
     /// 联系表里每一格对应的源帧序号（0-based）。
     pub frame_indices: Vec<usize>,
+    /// 每一格的源帧像素尺寸，与 `frame_indices` 一一对应。源帧尺寸不一致时
+    /// 全表仍共用一个缩放系数，所以格子里的画面大小不同只反映源帧本身的大小。
+    pub frame_sizes: Vec<[u32; 2]>,
+    /// 采样帧的像素尺寸是否不一致；不一致时会写进 warnings。
+    pub mixed_frame_sizes: bool,
 }
 
 /// 动图/视频抽帧的一次查询。集中成一个结构，避免每加一个取帧维度就
@@ -610,6 +615,12 @@ async fn process_gif_source(
             layout.frame_indices.len(),
             total_frame_count
         ));
+        if layout.mixed_frame_sizes {
+            warnings.push(format!(
+                "Source frames differ in size ({}); every cell was drawn at one shared scale, so a cell whose picture looks smaller or larger is a smaller or larger source frame, not a sheet zoom.",
+                describe_frame_sizes(&layout.frame_sizes)
+            ));
+        }
         return Ok(ChatMediaProcessResult {
             kind: "gif".to_string(),
             name: filename.to_string(),
@@ -812,6 +823,12 @@ async fn process_video_source(
             applied,
             workspace.display_path(workspace_id, &derived_root),
         ));
+        if layout.mixed_frame_sizes {
+            warnings.push(format!(
+                "Source frames differ in size ({}); every cell was drawn at one shared scale, so a cell whose picture looks smaller or larger is a smaller or larger source frame, not a sheet zoom.",
+                describe_frame_sizes(&layout.frame_sizes)
+            ));
+        }
         attachments.push(attachment);
         sheet_layout = Some(layout);
     } else {
@@ -1784,15 +1801,35 @@ fn compose_contact_sheet(
     }
     const GAP: u32 = 4;
     let (cell_width, cell_height) = sheet_cell_size(&frames);
+    // 全表统一缩放：以中位面积的那一帧为基准算一次系数，所有格子共用。
+    // 逐帧各自缩放到撑满格子会让小尺寸帧被放得比别的帧大，看起来像“前几帧
+    // 被放大了”——那是拼图的锅，不是素材的锅。
+    let (reference_width, reference_height) = sheet_reference_size(&frames);
+    let shared_scale = fit_scale(reference_width, reference_height, cell_width, cell_height);
     let columns = frames.len().min(4).max(1);
     let rows = frames.len().div_ceil(columns).max(1);
     let width = columns as u32 * cell_width + (columns as u32 + 1) * GAP;
     let height = rows as u32 * cell_height + (rows as u32 + 1) * GAP;
     let mut canvas = image::RgbaImage::from_pixel(width, height, image::Rgba([236, 236, 236, 255]));
     let mut frame_indices = Vec::with_capacity(frames.len());
+    let mut frame_sizes = Vec::with_capacity(frames.len());
+    let mut mixed_frame_sizes = false;
     for (slot, (index, frame)) in frames.into_iter().enumerate() {
         frame_indices.push(index);
-        let thumb = fit_thumbnail(&frame, cell_width, cell_height);
+        let (source_width, source_height) = frame.dimensions();
+        frame_sizes.push([source_width, source_height]);
+        if (source_width, source_height) != (reference_width, reference_height) {
+            mixed_frame_sizes = true;
+        }
+        // 大帧按自己的适应系数再缩一次（保证放得进格子），但绝不超过全表
+        // 共用的系数：任何一帧都不会被放大成比同表其它帧更大的画面。
+        let scale = shared_scale.min(fit_scale(
+            source_width,
+            source_height,
+            cell_width,
+            cell_height,
+        ));
+        let thumb = fit_thumbnail_at_scale(&frame, cell_width, cell_height, scale);
         let column = (slot % columns) as u32;
         let row = (slot / columns) as u32;
         let cell_x = GAP + column * (cell_width + GAP);
@@ -1810,8 +1847,57 @@ fn compose_contact_sheet(
             cell_width,
             cell_height,
             frame_indices,
+            frame_sizes,
+            mixed_frame_sizes,
         },
     ))
+}
+
+/// 等比装进格子所需的缩放系数；不做任何拉伸，也不裁画面。
+fn fit_scale(width: u32, height: u32, cell_width: u32, cell_height: u32) -> f64 {
+    (f64::from(cell_width) / f64::from(width.max(1)))
+        .min(f64::from(cell_height) / f64::from(height.max(1)))
+}
+
+/// 给模型看的帧尺寸摘要：同一尺寸只报一次并带上帧数，最多列 4 种，
+/// 免得一行警告把 16 格的尺寸全铺出来。
+fn describe_frame_sizes(sizes: &[[u32; 2]]) -> String {
+    let mut counts: Vec<((u32, u32), usize)> = Vec::new();
+    for [width, height] in sizes {
+        let key = (*width, *height);
+        match counts.iter_mut().find(|(size, _)| *size == key) {
+            Some((_, count)) => *count += 1,
+            None => counts.push((key, 1)),
+        }
+    }
+    counts.sort_by(|left, right| right.1.cmp(&left.1));
+    let total = counts.len();
+    let mut parts: Vec<String> = counts
+        .iter()
+        .take(4)
+        .map(|((width, height), count)| format!("{width}x{height} ×{count}"))
+        .collect();
+    if total > 4 {
+        parts.push(format!("+{} more sizes", total - 4));
+    }
+    parts.join(", ")
+}
+
+/// 参考帧：按面积取中位数。中位数比最大帧稳，个别超大帧不会把整张表缩到
+/// 看不清；个别异形帧也不会把系数带偏。
+fn sheet_reference_size(frames: &[(usize, image::RgbaImage)]) -> (u32, u32) {
+    let mut sized: Vec<(u64, u32, u32)> = frames
+        .iter()
+        .filter_map(|(_, frame)| {
+            let (width, height) = frame.dimensions();
+            (width > 0 && height > 0).then(|| (u64::from(width) * u64::from(height), width, height))
+        })
+        .collect();
+    sized.sort_by_key(|(area, _, _)| *area);
+    sized
+        .get(sized.len() / 2)
+        .map(|(_, width, height)| (*width, *height))
+        .unwrap_or((SHEET_CELL_WIDTH, SHEET_CELL_MIN_HEIGHT))
 }
 
 /// 格子尺寸：宽度固定，高度跟随帧宽高比中位数。中位数比平均值稳，
@@ -1938,11 +2024,25 @@ fn draw_frame_index_label(
 /// 节奏和比例都会看错，所以只缩不拉伸，四周留底色。
 fn fit_thumbnail(frame: &image::RgbaImage, cell_width: u32, cell_height: u32) -> image::RgbaImage {
     let (width, height) = frame.dimensions();
+    fit_thumbnail_at_scale(
+        frame,
+        cell_width,
+        cell_height,
+        fit_scale(width, height, cell_width, cell_height),
+    )
+}
+
+/// 按给定系数缩放单帧（联系表用它统一整张表的比例）。
+fn fit_thumbnail_at_scale(
+    frame: &image::RgbaImage,
+    cell_width: u32,
+    cell_height: u32,
+    scale: f64,
+) -> image::RgbaImage {
+    let (width, height) = frame.dimensions();
     if width == 0 || height == 0 {
         return image::RgbaImage::new(1, 1);
     }
-    let scale =
-        (f64::from(cell_width) / f64::from(width)).min(f64::from(cell_height) / f64::from(height));
     let target_width = ((f64::from(width) * scale).round() as u32).clamp(1, cell_width);
     let target_height = ((f64::from(height) * scale).round() as u32).clamp(1, cell_height);
     image::imageops::resize(
@@ -3433,13 +3533,14 @@ fn compute_image_view_stats(image: &DynamicImage) -> ImageViewStats {
 #[cfg(test)]
 mod tests {
     use super::{
-        compose_contact_sheet, contact_sheet_frame_rate, detect_media_kind_from_path,
-        effective_frame_rate, extract_video_frames, extract_workspace_id_from_public_path,
-        fit_thumbnail, gif_step_for_frame_rate, list_frame_paths, load_contact_sheet_frames,
-        load_image_data_url_for_path, normalize_filename, normalize_requested_frame_rate,
-        normalize_requested_frame_step, probe_media, ImageViewCache, ImageViewKey,
-        DEFAULT_VIDEO_FRAME_RATE, IMAGE_VIEW_CACHE_BYTES, IMAGE_VIEW_CACHE_VERSION,
-        MAX_CONTACT_SHEET_FRAMES, MAX_GIF_FRAME_STEP, MAX_VIDEO_FRAMES,
+        compose_contact_sheet, contact_sheet_frame_rate, describe_frame_sizes,
+        detect_media_kind_from_path, effective_frame_rate, extract_video_frames,
+        extract_workspace_id_from_public_path, fit_thumbnail, gif_step_for_frame_rate,
+        list_frame_paths, load_contact_sheet_frames, load_image_data_url_for_path,
+        normalize_filename, normalize_requested_frame_rate, normalize_requested_frame_step,
+        probe_media, ImageViewCache, ImageViewKey, DEFAULT_VIDEO_FRAME_RATE,
+        IMAGE_VIEW_CACHE_BYTES, IMAGE_VIEW_CACHE_VERSION, MAX_CONTACT_SHEET_FRAMES,
+        MAX_GIF_FRAME_STEP, MAX_VIDEO_FRAMES,
     };
     use std::path::Path;
     use std::sync::Arc;
@@ -3506,6 +3607,57 @@ mod tests {
             216,
         );
         assert_eq!(tall.dimensions(), (108, 216));
+    }
+
+    /// 源帧尺寸不一致时，全表必须共用一个缩放系数：小尺寸帧不能被单独放大到
+    /// 撑满格子，否则模型会看到“前几帧被放大、后几帧正常”的假象。
+    #[test]
+    fn contact_sheet_scales_mixed_size_frames_uniformly() {
+        let big = image::Rgba([200, 30, 30, 255]);
+        let small = image::Rgba([30, 30, 200, 255]);
+        let frames = vec![
+            (0, image::RgbaImage::from_pixel(400, 200, big)),
+            (1, image::RgbaImage::from_pixel(200, 100, small)),
+            (2, image::RgbaImage::from_pixel(400, 200, big)),
+        ];
+        let (canvas, layout) = compose_contact_sheet(frames).expect("sheet");
+        assert_eq!((layout.cell_width, layout.cell_height), (384, 192));
+        assert!(layout.mixed_frame_sizes);
+        assert_eq!(layout.frame_sizes, vec![[400, 200], [200, 100], [400, 200]]);
+
+        let small_pixels = canvas
+            .pixels()
+            .filter(|pixel| pixel.0[2] > 150 && pixel.0[0] < 120)
+            .count();
+        // 共用 384/400 的系数后，小帧应显示成 192×96（约 1.8 万像素）；
+        // 逐帧撑满格子会变成 384×192（约 7.4 万像素）。
+        assert!(
+            (15_000..30_000).contains(&small_pixels),
+            "small frame was magnified: {small_pixels} blue pixels"
+        );
+    }
+
+    /// 来源尺寸一致时不报 mixed，也不改原有布局。
+    #[test]
+    fn contact_sheet_reports_uniform_frames_as_uniform() {
+        let frames = (0..4)
+            .map(|index| {
+                (
+                    index,
+                    image::RgbaImage::from_pixel(400, 200, image::Rgba([20, 40, 60, 255])),
+                )
+            })
+            .collect();
+        let (_, layout) = compose_contact_sheet(frames).expect("sheet");
+        assert!(!layout.mixed_frame_sizes);
+        assert_eq!(layout.frame_sizes, vec![[400, 200]; 4]);
+    }
+
+    #[test]
+    fn frame_size_summary_merges_repeated_sizes() {
+        let summary = describe_frame_sizes(&[[400, 200], [200, 100], [400, 200]]);
+        assert!(summary.contains("400x200 ×2"), "{summary}");
+        assert!(summary.contains("200x100 ×1"), "{summary}");
     }
 
     /// 每格都打上 0-based 帧号：格子左下角必须出现白色数字像素。

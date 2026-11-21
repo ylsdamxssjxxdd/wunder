@@ -201,18 +201,22 @@ impl Builder {
             Tag::Strong => self.open_style(Style::Strong),
             Tag::Strikethrough => self.open_style(Style::Strike),
             Tag::Link { dest_url, .. } => {
+                // A model may write the prompt's placeholder as a scheme
+                // (`reference_path:/…`); classify and store the bare path so
+                // the card can actually load and open.
+                let dest_url = source::normalize_destination(&dest_url);
                 // A link to a workspace document is an affordance, not prose:
                 // it becomes a file card and the label becomes its title.
                 if source::is_document(&dest_url) {
                     self.flush_paragraph();
                     self.document = Some(ImageRef {
-                        source: dest_url.to_string(),
+                        source: dest_url,
                         title: String::new(),
                         alt: String::new(),
                     });
                     return;
                 }
-                self.link_url = Some(dest_url.to_string());
+                self.link_url = Some(dest_url);
                 self.open_style(Style::Link);
             }
             Tag::Image {
@@ -224,6 +228,7 @@ impl Builder {
                     self.push_text(&dest_url);
                     return;
                 }
+                let dest_url = source::normalize_destination(&dest_url);
                 // Only a target the workspace can serve earns a card. Anything
                 // else stays inline, so its paragraph must not be split here.
                 let card = source::is_image(&dest_url) || source::is_document(&dest_url);
@@ -232,7 +237,7 @@ impl Builder {
                 }
                 self.image_card = card;
                 self.image = Some(ImageRef {
-                    source: dest_url.to_string(),
+                    source: dest_url,
                     title: title.to_string(),
                     alt: String::new(),
                 });
@@ -536,6 +541,25 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert!(matches!(blocks[2], Block::Paragraph(_)));
+    }
+
+    #[test]
+    fn a_reference_prefixed_image_still_becomes_a_loadable_card() {
+        // The exact shape a weaker model produced: the prompt's placeholder
+        // written as a URL scheme in front of an absolute phone path.
+        let blocks = parse(
+            "![poster](reference_path:/data/data/dev.wunder/files/wunder/workspace/a.png)\n",
+        );
+        match &blocks[0] {
+            Block::Image(image) => {
+                assert_eq!(
+                    image.source,
+                    "/data/data/dev.wunder/files/wunder/workspace/a.png"
+                );
+                assert_eq!(image.alt, "poster");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

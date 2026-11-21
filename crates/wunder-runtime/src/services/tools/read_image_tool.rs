@@ -739,6 +739,49 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         ));
     }
 
+    // 按帧号取到的单帧：帧图已经落成 PNG，直接把它回给模型。
+    // 这里必须提前返回——落到下面的动图流程会重新处理源 GIF，`frame=N`
+    // 又变回首帧，还会附一条 `frame_step=0` 的提示，看起来像参数没生效。
+    if let Some(set) = frame_set.as_ref().filter(|set| set.frames.len() == 1) {
+        if let Some(frame) = set.frames.first() {
+            let attachment = serde_json::to_value(&frame.attachment).unwrap_or(Value::Null);
+            let entry = frame_entry_data(frame);
+            let data = json!({
+                "path": raw_path,
+                "resolved_path": resolved.to_string_lossy().to_string(),
+                "media_kind": media_kind,
+                "size_bytes": metadata.len(),
+                "source_public_path": source_public_path,
+                "mode": "frame",
+                "frame": entry.clone(),
+                "frame_scope": {
+                    "total_frames": set.total_frames,
+                    "duration_ms": set.duration_ms,
+                    "requested": frame.index.to_string(),
+                    "frames": [entry],
+                },
+                "result": {
+                    "kind": "image",
+                    "frame_count": 1,
+                    "total_frame_count": set.total_frames,
+                    "attachments": [attachment],
+                },
+            });
+            return Ok(build_model_tool_success(
+                "read_image",
+                "completed",
+                format!(
+                    "Returned frame {} of {} at {:.2}s (0-based, full detail; frame delay {} ms). Add crop/scale/stats to inspect a region, or pass frame=N for another frame.",
+                    frame.index,
+                    set.total_frames,
+                    frame.timestamp_ms as f64 / 1000.0,
+                    frame.delay_ms
+                ),
+                data,
+            ));
+        }
+    }
+
     // 动图默认只回首帧，等于什么都没看：没有明确取帧参数时直接给带帧号的联系表。
     let auto_sheet = media_kind == "gif"
         && !payload.sheet
@@ -1332,6 +1375,113 @@ mod tests {
             )
             .expect("encode png");
         std::fs::write(path, &bytes).expect("write png");
+    }
+
+    /// 逐帧不同纯色的小动图：取第 N 帧时可以直接用颜色断言“回的是哪一帧”。
+    fn write_gif(path: &std::path::Path, colors: &[[u8; 4]]) {
+        use image::codecs::gif::GifEncoder;
+        use image::{Delay, Frame};
+        let file = std::fs::File::create(path).expect("create gif");
+        let mut encoder = GifEncoder::new(file);
+        let frames: Vec<Frame> = colors
+            .iter()
+            .map(|color| {
+                Frame::from_parts(
+                    ImageBuffer::<Rgba<u8>, _>::from_pixel(32, 20, Rgba(*color)),
+                    0,
+                    0,
+                    Delay::from_numer_denom_ms(100, 1),
+                )
+            })
+            .collect();
+        encoder.encode_frames(frames).expect("encode gif");
+    }
+
+    #[tokio::test]
+    async fn frame_parameter_returns_the_requested_gif_frame() {
+        let dir = tempdir().expect("tempdir");
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            dir.path()
+                .join("read-image-frame.db")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let workspace = Arc::new(WorkspaceManager::new(
+            dir.path().to_string_lossy().as_ref(),
+            storage.clone(),
+            0,
+            &HashMap::new(),
+        ));
+        let lsp_manager = LspManager::new(workspace.clone());
+        let config = Config::default();
+        let skills = SkillRegistry::default();
+        let http = reqwest::Client::new();
+        let context = ToolContext {
+            user_id: "user",
+            session_id: "read-image-frame",
+            workspace_id: "user",
+            agent_id: None,
+            user_round: None,
+            model_round: None,
+            is_admin: false,
+            storage,
+            orchestrator: None,
+            monitor: None,
+            workspace,
+            lsp_manager,
+            config: &config,
+            skills: &skills,
+            gateway: None,
+            user_world: None,
+            cron_wake_signal: None,
+            user_tool_manager: None,
+            user_tool_bindings: None,
+            user_tool_store: None,
+            request_config_overrides: None,
+            allow_roots: None,
+            read_roots: None,
+            command_sessions: None,
+            event_emitter: None,
+            http: &http,
+        };
+        let user_root = context
+            .workspace
+            .resolve_path("user", "")
+            .expect("user root");
+        std::fs::create_dir_all(&user_root).expect("mkdir user root");
+        write_gif(
+            &user_root.join("pillar.gif"),
+            &[[250, 10, 10, 255], [10, 250, 10, 255], [10, 10, 250, 255]],
+        );
+
+        let read = tool_read_image(&context, &json!({ "path": "pillar.gif", "frame": 2 }))
+            .await
+            .expect("frame read");
+        assert_eq!(read["data"]["mode"], json!("frame"));
+        assert_eq!(read["data"]["frame"]["index"], json!(2));
+        assert_eq!(read["data"]["frame_scope"]["total_frames"], json!(3));
+        let summary = read["summary"].as_str().unwrap_or_default();
+        assert!(summary.contains("Returned frame 2 of 3"), "{summary}");
+        assert!(!summary.contains("frame 0 only"), "{summary}");
+
+        let attachments = read["data"]["result"]["attachments"]
+            .as_array()
+            .expect("attachments");
+        assert_eq!(attachments.len(), 1);
+        let name = attachments[0]["name"].as_str().unwrap_or_default();
+        assert_eq!(name, "frame_0002.png");
+
+        // 回给模型的必须真是第 2 帧（蓝色），而不是源动图的首帧（红色）。
+        // 公开路径按模型的读法解析回来，顺便验证这条路径真的能再次读到。
+        let public_path = attachments[0]["public_path"].as_str().expect("path");
+        let resolved =
+            super::super::resolve_tool_path(context.workspace.as_ref(), "user", public_path, &[])
+                .expect("resolve returned frame");
+        let pixels = image::open(&resolved)
+            .expect("decode returned frame")
+            .to_rgba8();
+        let pixel = pixels.get_pixel(0, 0).0;
+        assert!(pixel[2] > 200 && pixel[0] < 60, "returned {pixel:?}");
     }
 
     #[tokio::test]

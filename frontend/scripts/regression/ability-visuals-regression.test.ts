@@ -57,6 +57,30 @@ test('ability visuals keep skill and knowledge defaults when descriptions mentio
   );
 });
 
+test('skills keep the book icon even when their names describe another tool', () => {
+  const cases: Array<[string, string]> = [
+    ['知识短片', '把知识主题写成短片脚本并生成视频。'],
+    ['3D网页', '构建可交互的 3D 网页，并使用 browser 预览效果。']
+  ];
+  for (const [name, description] of cases) {
+    assert.deepEqual(
+      resolveAbilityVisual({ kind: 'skill', group: 'skills', name, description }),
+      { icon: 'fa-book', tone: 'skill' },
+      name
+    );
+    assert.deepEqual(
+      resolveAbilityVisual({ group: 'skills', name, description }),
+      { icon: 'fa-book', tone: 'skill' },
+      name
+    );
+    assert.deepEqual(
+      resolveAbilityVisual({ kind: 'skill', name, description }),
+      { icon: 'fa-book', tone: 'skill' },
+      name
+    );
+  }
+});
+
 test('ability visuals keep MCP sources on plug icon over skill-like wording', () => {
   assert.deepEqual(
     resolveAbilityVisual({

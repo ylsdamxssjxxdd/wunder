@@ -38,8 +38,12 @@ import android.widget.ImageView;
 import android.widget.PopupWindow;
 import android.view.inputmethod.BaseInputConnection;
 import android.os.Build;
+import android.os.Looper;
+import android.util.Log;
 import android.window.OnBackInvokedCallback;
 import android.window.OnBackInvokedDispatcher;
+
+import dev.wunder.android.UiBridge;
 
 class InputHandle extends ImageView {
     private PopupWindow mPopupWindow;
@@ -572,15 +576,14 @@ public class SlintAndroidJavaHelper {
     }
 
     // Called from Rust when an OnBackInvokedCallback fires and Slint's key
-    // dispatch reports the Back key as unhandled — preserves the legacy
-    // Back-closes-the-activity default.
+    // dispatch reports the Back key as unhandled.
+    //
+    // The shell owns Back: one press closes one page, and only a second press
+    // on the chat root closes the activity (through UiBridge.finishActivity).
+    // Finishing here instead is what sent a back gesture from a page without
+    // keyboard focus (the settings sheet) straight to the launcher.
     public void finish_activity() {
-        mActivity.runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                mActivity.finish();
-            }
-        });
+        UiBridge.requestBack();
     }
 
     static public native void updateText(String text, int cursorPosition, int anchorPosition, int preeditStart,
@@ -701,11 +704,18 @@ public class SlintAndroidJavaHelper {
             @Override
             public String call() throws Exception {
                 ClipboardManager clipboard = (ClipboardManager) mActivity.getSystemService(Context.CLIPBOARD_SERVICE);
-                if (clipboard.hasPrimaryClip()) {
-                    ClipData.Item item = clipboard.getPrimaryClip().getItemAt(0);
-                    return item.getText().toString();
+                if (clipboard == null || !clipboard.hasPrimaryClip()) {
+                    return "";
                 }
-                return "";
+                ClipData clip = clipboard.getPrimaryClip();
+                if (clip == null || clip.getItemCount() == 0) {
+                    return "";
+                }
+                // A picture or URI clip carries no text. Returning "" keeps the
+                // paste a no-op; the old `getText().toString()` threw inside the
+                // future and the caller could not tell that from an empty clip.
+                CharSequence text = clip.getItemAt(0).getText();
+                return text == null ? "" : text.toString();
             }
         });
 
@@ -718,14 +728,56 @@ public class SlintAndroidJavaHelper {
         }
     }
 
+    // Binder carries one clip in a single transaction; the buffer (1 MiB) is
+    // shared by the whole process and a Java String costs two bytes per char.
+    // 200k UTF-16 units (~400 KiB) stays inside it while still covering every
+    // payload the Rust shell prepares (100k scalar values at most, so this cap
+    // never cuts a copy the shell already bounded and re-reads).
+    private static final int MAX_CLIPBOARD_CHARS = 200_000;
+
     public void set_clipboard(String text) {
-        mActivity.runOnUiThread(new Runnable() {
+        String raw = text == null ? "" : text;
+        if (raw.length() > MAX_CLIPBOARD_CHARS) {
+            int end = MAX_CLIPBOARD_CHARS;
+            // Never split a surrogate pair: an unpaired half is not valid text
+            // and some IMEs drop the whole paste because of it.
+            if (end < raw.length()
+                    && Character.isLowSurrogate(raw.charAt(end))
+                    && Character.isHighSurrogate(raw.charAt(end - 1))) {
+                end -= 1;
+            }
+            Log.w("wunder", "clipboard text clipped from " + raw.length() + " to " + end + " chars");
+            raw = raw.substring(0, end);
+        }
+        final String value = raw;
+        Runnable task = new Runnable() {
             @Override
             public void run() {
-                ClipboardManager clipboard = (ClipboardManager) mActivity.getSystemService(Context.CLIPBOARD_SERVICE);
-                ClipData clip = ClipData.newPlainText(null, text);
-                clipboard.setPrimaryClip(clip);
+                try {
+                    ClipboardManager clipboard = (ClipboardManager) mActivity.getSystemService(Context.CLIPBOARD_SERVICE);
+                    if (clipboard == null) {
+                        return;
+                    }
+                    // A labelled plain-text clip: some keyboards and vendor ROMs
+                    // treat a null-label clip as unsupported content and refuse
+                    // the paste that follows. wunder's own clipboard writes
+                    // (PhoneBridge) always carry a label as well.
+                    ClipData clip = ClipData.newPlainText("wunder", value);
+                    clipboard.setPrimaryClip(clip);
+                } catch (RuntimeException error) {
+                    // A rejected write must not take the UI thread down; the
+                    // Rust side reads the clipboard back and reports it.
+                    Log.w("wunder", "clipboard write failed", error);
+                }
             }
-        });
+        };
+        // The Slint callbacks run on the UI thread. Running the write inline
+        // keeps the read-back in the same call consistent, and avoids losing it
+        // when the activity pauses immediately after a copy.
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            task.run();
+        } else {
+            mActivity.runOnUiThread(task);
+        }
     }
 }

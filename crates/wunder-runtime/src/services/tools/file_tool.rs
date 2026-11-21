@@ -2776,6 +2776,11 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
         &unified,
         unified_truncated,
     );
+    // 模型必须能直接引用产物：`path` 是它自己传入的形状（可能是相对路径），
+    // 只靠它拼绝对路径就得靠 {DIR} 猜层级，一旦多写一段目录引用就失效。
+    if let Some(map) = data.as_object_mut() {
+        map.insert("abs_path".to_string(), abs_path_value(&write_outcome.target));
+    }
     // 新文件写入没有旧内容可 diff；只有 diff 本身被行预算截断时，才把实际
     // 落盘文本整份回显，模型才能核对参数里是否有字符被丢掉（例如 format 串
     // 少了左花括号），而不是靠猜。短文件 diff 已完整，不重复占上下文。
@@ -2818,6 +2823,16 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
         summary,
         data,
     ))
+}
+
+/// Absolute path handed back with a write/edit receipt. `path` in the payload
+/// echoes the model's own argument, which may be workspace-relative, so a reply
+/// quoting it later would depend on the model rebuilding `{DIR}` correctly.
+/// Shared with the edit tool so both write paths report the same shape.
+pub(crate) fn abs_path_value(target: &std::path::Path) -> Value {
+    json!(normalize_target_path(target)
+        .to_string_lossy()
+        .to_string())
 }
 
 /// 组装写入结果 `data`：既有字段保持不变，回执、历史快照与 unified diff 一并给出。
@@ -3223,6 +3238,24 @@ mod write_result_tests {
             map.insert("overwrite_binary".to_string(), json!(flag));
         }
         Value::Object(map)
+    }
+
+    /// The receipt must carry a path the model can quote verbatim, even when it
+    /// wrote the file with a workspace-relative argument.
+    #[test]
+    fn abs_path_value_is_absolute_even_for_a_relative_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("nested/deep/out.gif");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, b"GIF89a").unwrap();
+        let value = abs_path_value(&target);
+        let text = value.as_str().expect("abs_path is a string");
+        assert!(std::path::Path::new(text).is_absolute(), "{text}");
+        assert!(text.ends_with("nested/deep/out.gif"), "{text}");
+        assert_eq!(
+            std::path::Path::new(text).canonicalize().unwrap(),
+            dir.path().canonicalize().unwrap().join("nested/deep/out.gif")
+        );
     }
 
     #[test]

@@ -509,6 +509,11 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         data["changed_files"] = json!(0);
         data["updated"] = json!(0);
     }
+    // `path` 是模型传入的形状；引用产物要的是可直接打开/展示的本地绝对路径。
+    data.insert(
+        "abs_path".to_string(),
+        super::file_tool::abs_path_value(&outcome.target),
+    );
     // 定位档位常驻一个键：`exact` 之外说明这次靠空白容错命中，模型据此决定
     // 要不要回读确认（取值是固定几个枚举字符串，键集不随情况变化）。
     data.insert("match".to_string(), json!(outcome.tier.as_str()));

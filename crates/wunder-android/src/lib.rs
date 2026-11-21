@@ -15,6 +15,7 @@ mod background;
 #[cfg(target_os = "android")]
 mod backup;
 mod channels;
+mod clipboard;
 mod cloud;
 #[cfg(target_os = "android")]
 mod companion;

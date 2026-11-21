@@ -72,6 +72,8 @@ pub enum Command {
         title: String,
     },
     TrajectoryFilter(i32),
+    /// 导出当前轨迹页所看线程的完整日志（.jsonl），落到手机的「下载」。
+    ExportTrajectoryLog,
     LoadPromptPreview,
     LoadWorkspace {
         path: String,
@@ -1017,6 +1019,8 @@ pub struct Shared {
     pub archived_total: i64,
     pub preset_questions: Vec<String>,
     pub trajectory_title: String,
+    /// 轨迹页当前展示的线程；导出日志按它取，不再回读界面文字。
+    pub trajectory_session: String,
     pub trajectory_loading: bool,
     pub trajectory_error: String,
     pub trajectory_items: Vec<TrajectoryItem>,
@@ -1525,6 +1529,10 @@ fn run(
                 state.trajectory_filter = filter.clamp(0, 3);
                 state.trajectory_rev = state.trajectory_rev.wrapping_add(1);
                 state.touch();
+            }
+            Command::ExportTrajectoryLog => {
+                #[cfg(target_os = "android")]
+                export_trajectory_log(&desktop, &shared);
             }
             Command::LoadPromptPreview => load_prompt_preview(&desktop, &shared),
             Command::LoadWorkspace { path } => load_workspace(&desktop, &shared, &path),
@@ -7356,6 +7364,47 @@ fn human_size(bytes: u64) -> String {
     format!("{amount:.0} TB")
 }
 
+/// 导出轨迹页当前线程的完整日志（.jsonl），落到手机的「下载」。
+///
+/// 导出器与桌面版相同（存储层逐轮写出，不受轨迹页 160 行窗口的限制）；
+/// 手机端只负责把结果交给系统：Android 10+ 直接写 MediaStore，旧版仍走
+/// 保存对话框，结果由渲染 tick 的 `take_save_results` 送达。
+#[cfg(target_os = "android")]
+fn export_trajectory_log(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
+    let session = shared
+        .lock()
+        .map(|state| state.trajectory_session.clone())
+        .unwrap_or_default();
+    if session.is_empty() {
+        notify(shared, "没有可导出的线程");
+        return;
+    }
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    let name = format!("wunder-thread-log-{millis}.jsonl");
+    // 应用私有缓存做中转：系统只允许从可读路径复制，导出后再删。
+    let dir = std::env::temp_dir().join("wunder-export");
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+        notify(shared, format!("导出线程日志失败：{error}"));
+        return;
+    }
+    let path = dir.join(&name);
+    if let Err(error) = desktop.export_thread_log(&session, &path) {
+        notify(shared, format!("导出线程日志失败：{error:#}"));
+        return;
+    }
+    let result = crate::android_host::save_file_to_phone(&path.to_string_lossy(), &name);
+    if let Some(reason) = result.strip_prefix("failed:") {
+        notify(shared, format!("导出线程日志失败：{reason}"));
+    } else if result == "saved" {
+        notify(shared, format!("线程日志已导出到「下载」：{name}"));
+        // 旧版保存对话框在用户选完目录后才复制，文件必须留到那之后。
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
 /// Bounded, read-only trajectory projection for the phone page. The active
 /// thread is already leased; any other thread is opened for the read and
 /// released immediately so the chosen transcript keeps its lease.
@@ -7365,6 +7414,7 @@ fn load_trajectory(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, id: &st
             return;
         };
         state.trajectory_title = title.to_string();
+        state.trajectory_session = id.to_string();
         state.trajectory_loading = true;
         state.trajectory_error.clear();
         state.trajectory_items.clear();

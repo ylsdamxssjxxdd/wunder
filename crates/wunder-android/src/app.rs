@@ -777,6 +777,11 @@ fn wire_callbacks(
             crate::help::set_language(&ui, zh);
         }
     });
+    // Back 走 Slint 按键派发时（系统预测性返回的 Slint 回调、旧版输入队列、
+    // 硬件返回键）只记一笔，页面状态与键盘状态统一在渲染 tick 里读。
+    #[cfg(target_os = "android")]
+    ui.on_back_requested(|| crate::android_host::request_back());
+
     let sender = commands.clone();
     let weak = ui.as_weak();
     ui.on_open_drawer(move || {
@@ -1036,6 +1041,11 @@ fn wire_callbacks(
     let sender = commands.clone();
     ui.on_trajectory_filter_changed(move |filter| {
         let _ = sender.send(Command::TrajectoryFilter(filter));
+    });
+
+    let sender = commands.clone();
+    ui.on_trajectory_export(move || {
+        let _ = sender.send(Command::ExportTrajectoryLog);
     });
 
     ui.on_keyboard_dismiss(move || {
@@ -1832,19 +1842,58 @@ fn wire_callbacks(
     // the Android backend forwards the text to the system clipboard. Give the
     // tap visible feedback: the system clipboard has no toast of its own in a
     // NativeActivity window.
+    //
+    // The payload is bounded before it leaves Rust (`crate::clipboard`): a
+    // work-process entry can carry the whole tool result, and an oversized
+    // string never reaches the system clipboard — the Binder transaction is
+    // dropped, the previous clip stays in place, and the toast still said
+    // 已复制. The write is read back so that case is reported instead of hidden.
     let weak = ui.as_weak();
     let shared_for_copy = shared.clone();
     ui.on_copy_text(move |text| {
         let Some(ui) = weak.upgrade() else { return };
-        i_slint_core::window::WindowInner::from_pub(ui.window())
-            .context()
-            .platform()
-            .set_clipboard_text(
-                text.as_str(),
-                i_slint_core::platform::Clipboard::DefaultClipboard,
-            );
+        let payload = crate::clipboard::prepare(text.as_str());
+        // An empty payload (a row whose text is still empty) would otherwise
+        // read back as "the old clip is still there" and report a write
+        // failure. There is simply nothing to copy yet.
+        if payload.text.is_empty() {
+            if let Ok(mut state) = shared_for_copy.lock() {
+                state.notify("没有可复制的内容");
+                state.touch();
+            }
+            return;
+        }
+        let window = i_slint_core::window::WindowInner::from_pub(ui.window());
+        let platform = window.context().platform();
+        platform.set_clipboard_text(
+            payload.text.as_str(),
+            i_slint_core::platform::Clipboard::DefaultClipboard,
+        );
+        // Android can refuse the read-back when the app is not focused. Only a
+        // read that succeeded and disagrees proves the write was dropped. A
+        // stored prefix means the platform kept only part of the clip (some
+        // ROMs do this below the Binder budget): say how much landed instead of
+        // calling it a failure. Anything else is the previous clip still being
+        // there, which is exactly the state that made the following paste fail.
+        let message =
+            match platform.clipboard_text(i_slint_core::platform::Clipboard::DefaultClipboard) {
+                Some(current) if current != payload.text => {
+                    log::warn!(
+                        "clipboard write rejected: {} chars (of {}), read-back {} chars",
+                        payload.text.chars().count(),
+                        payload.total_chars,
+                        current.chars().count()
+                    );
+                    if !current.is_empty() && payload.text.starts_with(current.as_str()) {
+                        format!("内容过长，已复制前 {} 字", current.chars().count())
+                    } else {
+                        "复制失败：剪贴板未写入".to_string()
+                    }
+                }
+                _ => payload.toast(),
+            };
         if let Ok(mut state) = shared_for_copy.lock() {
-            state.notify("已复制");
+            state.notify(message);
             state.touch();
         }
     });
@@ -2593,12 +2642,15 @@ fn start_tick(
                 }
             }
         }
-        // Back presses are recorded by the activity. Resolve them on the UI
-        // thread so page state, keyboard state and the exit prompt all read
-        // the same snapshot the user is looking at.
+        // Back presses arrive either from the activity's dispatcher callback or
+        // from Slint's key pipeline (Key.Back). Resolve them on the UI thread
+        // so page state, keyboard state and the exit prompt all read the same
+        // snapshot the user is looking at.
         #[cfg(target_os = "android")]
         if host_ticks % 3 == 0 {
-            for _ in 0..crate::android_host::take_back_requests() {
+            let presses = crate::android_host::take_back_requests()
+                + crate::android_host::take_slint_back_requests();
+            for _ in 0..presses {
                 // 录音中按返回：先丢掉这段录音，返回键不继续关页面，
                 // 免得用户带着一条看不见的录音条离开聊天页。
                 if ui.get_voice_phase() != 0 {

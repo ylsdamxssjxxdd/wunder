@@ -68,6 +68,8 @@ To see the whole motion first, pass `sheet`: it works for GIFs and video and ret
 - A video is organized into a series of image frames; if the video has an audio track, the transcript is attached as well.
 - With `sheet: true` the frames are not returned one by one: the whole clip is sampled into a single contact sheet. For video the sampling is capped at 16 frames, cells are laid out in rows, and each frame is scaled to fit without stretching.
 - Cell aspect follows the real frame aspect (16:9 stays 16:9), so no picture band is cropped to fit a fixed cell; each cell is stamped with its 0-based frame index.
+- One contact sheet uses a single scale: when sampled frames differ in size (video, or some GIFs), a small frame is never blown up to fill its cell, so differing picture sizes reflect the source frames rather than the sheet. `sheet.frame_sizes` lists each cell's source size, and `warnings` explains it when `sheet.mixed_frame_sizes` is `true`.
+- `frame: N` on its own returns that frame as a PNG at native resolution (no contact sheet); `frame_scope` reports the index, timestamp and total frames. Add `crop` / `scale` / `stats` to inspect a single frame in detail.
 
 ## Comparing two images
 

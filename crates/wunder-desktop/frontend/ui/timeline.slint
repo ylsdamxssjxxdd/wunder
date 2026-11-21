@@ -249,6 +249,15 @@ component UserBubble inherits Rectangle {
     /// Right-click on the bubble text: window coordinates plus whether there
     /// is a selection to act on.
     callback show-context-menu(length, length, bool);
+    // The bubble never takes more than 70 % of the transcript, and a picture
+    // card has to be measured against the same cap: taking the card width from
+    // the bubble would feed the card back into the bubble's own preferred width
+    // and the pair collapsed to a narrow bubble whose picture hung past its
+    // right edge, clipped by the row.
+    private property <length> cap: bubble-row.width * 0.7;
+    // No floor above zero: the card and the bubble share the same cap, so the
+    // picture always fits inside the bubble, however narrow the pane gets.
+    private property <length> card-width: max(0px, min(360px, root.cap - 24px));
     height: bubble-column.preferred-height;
     bubble-column := VerticalLayout {
         spacing: 2px;
@@ -256,11 +265,18 @@ component UserBubble inherits Rectangle {
             padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding; padding-top: 10px;
             Rectangle { horizontal-stretch: 1; }
             bubble := Rectangle {
-                width: min(parent.width * 0.7, bubble-body.preferred-width + 24px);
-                height: bubble-body.preferred-height + 16px;
+                // The padding below is part of `preferred-width`, so the card
+                // only asks for the extra 24px when it can actually be drawn
+                // wider than the text.
+                width: min(root.cap, max(bubble-body.preferred-width, root.card-width + 24px));
+                height: bubble-body.preferred-height;
                 border-radius: Theme.radius-lg; background: Theme.timeline-bubble;
+                // Insets are padding, not an explicit width: a bound width made
+                // the layout report its own width as its preferred width, which
+                // is what let the bubble and its content size each other.
                 bubble-body := VerticalLayout {
-                    x: 12px; y: 8px; width: parent.width - 24px;
+                    padding-left: 12px; padding-right: 12px;
+                    padding-top: 8px; padding-bottom: 8px;
                     spacing: 6px;
                     // The bubble hugs its text, so it stays one read-only
                     // control instead of a block column: a block column would
@@ -271,8 +287,10 @@ component UserBubble inherits Rectangle {
                         line-height-factor: Theme.prose-line;
                         read-only: true; wrap: word-wrap;
                     }
-                    // Attachments are the one block kind a user message needs;
-                    // their card width is intrinsic, so it can be fixed here.
+                    // Attachments are the one block kind a user message needs.
+                    // The card is laid out at the bubble's inner width so a
+                    // narrow pane shrinks the picture instead of letting it run
+                    // under the bubble's edge and get clipped by the row.
                     // `visible: false` still keeps the element's slot in a
                     // layout, so the wrapper only takes the card's own height
                     // when the card is shown; otherwise every paragraph of the
@@ -282,7 +300,7 @@ component UserBubble inherits Rectangle {
                         attachment := BlockView {
                             visible: block.kind == BlockKind.image || block.kind == BlockKind.document;
                             block: block;
-                            column-width: 360px;
+                            column-width: root.card-width;
                             copy-text(text) => { root.copy-text(text); }
                             open-resource(path) => { root.open-resource(path); }
                             link-clicked(path) => { root.open-resource(path); }

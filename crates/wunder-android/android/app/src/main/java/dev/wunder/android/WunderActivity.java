@@ -4,6 +4,7 @@ import android.app.NativeActivity;
 import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.Window;
@@ -21,6 +22,8 @@ import android.window.OnBackInvokedDispatcher;
  * the activity.
  */
 public class WunderActivity extends NativeActivity {
+    private static final String TAG = "WunderBack";
+
     // Kept as Object so class loading on API 26-32 never resolves the
     // API 33+ callback type. Casts only happen inside the guarded path.
     private Object backCallback;
@@ -126,16 +129,34 @@ public class WunderActivity extends NativeActivity {
             }
         }
         OnBackInvokedCallback callback = () -> UiBridge.requestBack();
-        int priority = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
-                ? OnBackInvokedDispatcher.PRIORITY_OVERLAY
-                : OnBackInvokedDispatcher.PRIORITY_DEFAULT;
+        // PRIORITY_OVERLAY keeps the shell ahead of the backend's own
+        // default-priority callback (the Slint helper registers one that
+        // finishes the activity when the key is unhandled). It is a hint:
+        // when the platform refuses it, fall back to default instead of
+        // leaving the app without any callback.
+        boolean registered = false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            registered = tryRegisterBackCallback(
+                    dispatcher, OnBackInvokedDispatcher.PRIORITY_OVERLAY, callback);
+        }
+        if (!registered) {
+            registered = tryRegisterBackCallback(
+                    dispatcher, OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback);
+        }
+        backCallback = registered ? callback : null;
+    }
+
+    private boolean tryRegisterBackCallback(
+            OnBackInvokedDispatcher dispatcher, int priority, OnBackInvokedCallback callback) {
         try {
             dispatcher.registerOnBackInvokedCallback(priority, callback);
-            backCallback = callback;
-        } catch (RuntimeException ignored) {
-            // Fall back to the legacy key path (dispatchKeyEvent) rather than
-            // crashing the activity over an OEM dispatcher quirk.
-            backCallback = null;
+            return true;
+        } catch (RuntimeException error) {
+            // OEM dispatchers and platforms with predictive back disabled can
+            // reject a registration outright; the shell still owns Back
+            // through the Slint key pipeline, so a rejection is not fatal.
+            Log.w(TAG, "back callback rejected at priority " + priority, error);
+            return false;
         }
     }
 

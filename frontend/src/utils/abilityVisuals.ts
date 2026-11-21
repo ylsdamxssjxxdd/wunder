@@ -292,6 +292,11 @@ export const resolveAbilityVisual = (input: AbilityVisualInput): AbilityVisualMe
   if (preferredTone === 'mcp') {
     return { icon: 'fa-plug', tone: 'mcp' };
   }
+  // 技能是复用指令包，类别优先于名称/描述里的主题词：知识短片、3D网页
+  // 这类名字会命中知识库或浏览器关键词，但技能徽标始终是书。
+  if (preferredTone === 'skill') {
+    return { icon: 'fa-book', tone: 'skill' };
+  }
   const nameOverride = resolveNameIconOverride(input);
   if (nameOverride) {
     return nameOverride;
@@ -317,19 +322,11 @@ export const resolveAbilityVisual = (input: AbilityVisualInput): AbilityVisualMe
     return { icon: 'fa-paintbrush', tone: 'search' };
   }
   const matchedRule = findAbilityRule(input);
-
-  // For skill-type abilities, prevent non-skill rules from overriding the icon
-  // (a skill description may mention tool names of another tone).
-  const effectiveRule =
-    kind === 'skill' && preferredTone === 'skill' && matchedRule?.tone !== 'skill'
-      ? null
-      : matchedRule;
-
-  const tone = preferredTone || effectiveRule?.tone || (kind === 'skill' ? 'skill' : 'general');
+  const tone = preferredTone || matchedRule?.tone || 'general';
   const sharedIcon = resolveToolIconClass(input);
 
   return {
-    icon: effectiveRule?.icon || (sharedIcon !== 'fa-toolbox' ? sharedIcon : resolveContextualDefaultIcon(input, tone)),
+    icon: matchedRule?.icon || (sharedIcon !== 'fa-toolbox' ? sharedIcon : resolveContextualDefaultIcon(input, tone)),
     tone
   };
 };

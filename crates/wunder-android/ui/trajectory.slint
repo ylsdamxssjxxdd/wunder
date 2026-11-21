@@ -488,6 +488,9 @@ export component TrajectoryPage inherits Rectangle {
     callback back();
     callback retry();
     callback filter-changed(int);
+    // 导出当前线程的完整日志（.jsonl）到手机「下载」；页面只负责发信号，
+    // 写入与落地在 Rust 侧（engine.rs 的 ExportTrajectoryLog）。
+    callback export-log();
 
     function select-filter(value: int) {
         root.filter = value;
@@ -550,6 +553,15 @@ export component TrajectoryPage inherits Rectangle {
                         label: "刷新轨迹";
                         enabled: !root.loading;
                         clicked => { root.retry(); }
+                    }
+                    Action {
+                        width: 34px;
+                        height: 34px;
+                        icon-size: 16px;
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/trajectory-export.svg");
+                        label: "导出线程日志";
+                        enabled: !root.loading && root.error == "";
+                        clicked => { root.export-log(); }
                     }
                 }
             }
