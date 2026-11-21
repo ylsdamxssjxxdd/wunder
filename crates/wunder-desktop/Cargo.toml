@@ -51,6 +51,8 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true
 uuid.workspace = true
+# 本地备份与恢复：config 树 + 顶层 SQLite 库打包成 zip。
+zip.workspace = true
 wunder-runtime = { path = "../wunder-runtime", default-features = false }
 # 首次启动按系统 locale 选界面语言（zh* → zh-CN，其余 en-US）。安卓与桌面版
 # 共用这一条链路，因此放在共享的桌面 crate 而不是前端壳里。

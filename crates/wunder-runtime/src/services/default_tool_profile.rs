@@ -53,7 +53,8 @@ pub fn default_tool_candidates() -> Vec<String> {
                     continue;
                 }
                 let name = if crate::tools::is_browser_tool_name(&spec.name) {
-                    crate::tools::BROWSER_GROUP_NAME_ALIAS.to_string()
+                    // 默认选择保存规范名；英文别名只给模型提示词用。
+                    crate::tools::BROWSER_GROUP_NAME.to_string()
                 } else {
                     spec.name
                 };
@@ -74,6 +75,11 @@ pub fn default_builtin_tool_names(allowed: &HashSet<String>) -> Vec<String> {
         .map(|name| crate::tools::resolve_tool_name(name.trim()))
         .collect();
     let mut selected = Vec::new();
+    // `browser` 与 `浏览器` 都代表整组浏览器能力；旧授权/默认值可能只写了
+    // 英文别名，这里统一按规范名选中。
+    let browser_allowed = allowed
+        .iter()
+        .any(|name| crate::tools::is_browser_group_name(name));
     for name in default_tool_candidates() {
         if DEFAULT_SKILL_NAMES.contains(&name.as_str()) {
             continue;
@@ -81,6 +87,10 @@ pub fn default_builtin_tool_names(allowed: &HashSet<String>) -> Vec<String> {
         if canonical_allowed.contains(&name) {
             selected.push(name);
         } else if crate::tools::is_browser_group_name(&name) {
+            if browser_allowed {
+                selected.push(name);
+                continue;
+            }
             selected.extend(
                 crate::tools::browser_tool_names()
                     .into_iter()
@@ -217,7 +227,7 @@ mod tests {
         );
         let selected = default_tool_names(&allowed);
         for name in [
-            "browser",
+            "浏览器",
             "文本编辑",
             "计划面板",
             "问询面板",
@@ -282,7 +292,7 @@ mod tests {
         let selected = default_tool_names(&allowed);
         assert_eq!(
             selected.into_iter().collect::<HashSet<_>>(),
-            ["文本编辑", "计划面板", "问询面板", "browser"]
+            ["文本编辑", "计划面板", "问询面板", "浏览器"]
                 .into_iter()
                 .map(str::to_string)
                 .collect()
@@ -300,7 +310,7 @@ mod tests {
             let skills = crate::skills::SkillRegistry::default();
             let allowed = crate::tools::collect_available_tool_names(&config, &skills, None);
             let selected = default_tool_names(&allowed);
-            for name in ["browser", "文本编辑", "计划面板", "问询面板"] {
+            for name in ["浏览器", "文本编辑", "计划面板", "问询面板"] {
                 assert!(
                     selected.iter().any(|selected| selected == name),
                     "{mode}: missing {name}"

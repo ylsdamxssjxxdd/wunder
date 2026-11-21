@@ -623,9 +623,24 @@
   "en": "Open"
  },
  {
+  "key": "common_cut",
+  "zh": "剪切",
+  "en": "Cut"
+ },
+ {
   "key": "common_copy",
   "zh": "复制",
   "en": "Copy"
+ },
+ {
+  "key": "common_paste",
+  "zh": "粘贴",
+  "en": "Paste"
+ },
+ {
+  "key": "common_select_all",
+  "zh": "全选",
+  "en": "Select all"
  },
  {
   "key": "common_fork",
@@ -6386,6 +6401,106 @@
   "params": [
    "position"
   ]
+ },
+ {
+  "key": "stc_data",
+  "zh": "数据与恢复",
+  "en": "Data & recovery"
+ },
+ {
+  "key": "st_data_backup_title",
+  "zh": "本地备份",
+  "en": "Local backup"
+ },
+ {
+  "key": "st_data_backup_note",
+  "zh": "打包 config 与本地数据库（含 WAL），不包含工作区文件。",
+  "en": "Packs config and the local databases (WAL included). Workspace files are not included."
+ },
+ {
+  "key": "st_data_backup_target",
+  "zh": "备份到本机",
+  "en": "Back up on this machine"
+ },
+ {
+  "key": "st_data_backup_now",
+  "zh": "立即备份",
+  "en": "Back up now"
+ },
+ {
+  "key": "st_data_backup_running",
+  "zh": "处理中…",
+  "en": "Working…"
+ },
+ {
+  "key": "st_data_restore_title",
+  "zh": "从备份恢复",
+  "en": "Restore from backup"
+ },
+ {
+  "key": "st_data_restore_note",
+  "zh": "恢复会覆盖本地配置与数据库，完成后需要重启应用。",
+  "en": "Restoring overwrites local configuration and databases; restart the app afterwards."
+ },
+ {
+  "key": "st_data_restore_empty",
+  "zh": "还没有本地备份：先点「立即备份」生成一个，或从文件选择其它位置的备份。",
+  "en": "No local backups yet: create one with \"Back up now\", or choose an archive from disk."
+ },
+ {
+  "key": "st_data_pick_file",
+  "zh": "从文件选择…",
+  "en": "Choose file…"
+ },
+ {
+  "key": "st_data_restore_now",
+  "zh": "恢复所选备份",
+  "en": "Restore selected"
+ },
+ {
+  "key": "st_data_restore_ready",
+  "zh": "恢复已就绪：请完全退出并重新打开应用后生效。",
+  "en": "Restore is ready: quit the app completely and open it again."
+ },
+ {
+  "key": "st_data_crash_title",
+  "zh": "崩溃日志",
+  "en": "Crash log"
+ },
+ {
+  "key": "st_data_crash_note",
+  "zh": "panic 报告写入本地 logs 目录，最多保留最近 10 份。",
+  "en": "Panic reports are written to the local logs directory; the 10 newest are kept."
+ },
+ {
+  "key": "st_data_crash_row",
+  "zh": "最近崩溃报告",
+  "en": "Latest crash report"
+ },
+ {
+  "key": "st_data_crash_view",
+  "zh": "查看最近崩溃日志",
+  "en": "View latest crash log"
+ },
+ {
+  "key": "st_data_confirm_title",
+  "zh": "恢复本地数据",
+  "en": "Restore local data"
+ },
+ {
+  "key": "st_data_confirm_message",
+  "zh": "将用备份覆盖本地配置与数据库，完成后必须重启应用。恢复期间请勿发送消息。",
+  "en": "This overwrites local configuration and databases with the backup; the app must restart afterwards. Do not send messages during the restore."
+ },
+ {
+  "key": "st_data_confirm_action",
+  "zh": "恢复",
+  "en": "Restore"
+ },
+ {
+  "key": "st_data_footer",
+  "zh": "备份与恢复只处理本地数据面；工作区文件请通过文件管理器单独备份。",
+  "en": "Backup and restore cover local data only; back up workspace files separately with the file manager."
  },
  {
   "key": "sub_card_title",

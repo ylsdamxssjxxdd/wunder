@@ -4,6 +4,7 @@
 
 export struct MobileTool {
     name: string,
+    title: string,
     description: string,
     category: string,
     enabled: bool,
@@ -12,6 +13,7 @@ export struct MobileTool {
 }
 
 export struct MobileToolGroup {
+    category: string,
     title: string,
     tools: [MobileTool],
     all-selected: bool,

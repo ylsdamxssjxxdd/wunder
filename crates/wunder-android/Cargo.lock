@@ -7629,6 +7629,7 @@ version = "1.0.0"
 dependencies = [
  "android_logger",
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "fontique",
  "i-slint-backend-winit",
@@ -7688,6 +7689,7 @@ dependencies = [
  "uuid",
  "windows-sys 0.52.0",
  "wunder-runtime",
+ "zip 0.6.6",
 ]
 
 [[package]]

@@ -4,7 +4,7 @@ import { ScrollView } from "std-widgets.slint";
 import { ToolIcons } from "tool_icons.slint";
 import { I18n } from "i18n.slint";
 
-export struct ExpertToolGroup { title: string, source: string, tools: [ToolCard], all-selected: bool }
+export struct ExpertToolGroup { category: string, title: string, source: string, tools: [ToolCard], all-selected: bool }
 export component ExpertButton inherits Action {
     show-label: true;
     width: 92px;
@@ -38,7 +38,7 @@ component ToolTile inherits Rectangle {
             Image { width: 18px; height: 18px; source: ToolIcons.image(root.tool.icon); colorize: ToolIcons.tone-color(root.tool.tone); }
         }
         VerticalLayout { horizontal-stretch: 1; spacing: 4px;
-            Text { text: root.tool.name; color: Theme.text; font-size: 12px; font-weight: 600; overflow: elide; }
+            Text { text: root.tool.title == "" ? root.tool.name : root.tool.title; color: Theme.text; font-size: 12px; font-weight: 600; overflow: elide; }
             // Slint elides a *wrapped* text from the head, which would show the
             // tail of the description; one clipped line keeps the leading text.
             Text { text: root.tool.description == "" ? I18n.stc_agent_tool_no_desc : root.tool.description; color: Theme.muted; font-size: 11px; height: 16px; overflow: elide; }
@@ -72,7 +72,7 @@ export component ExpertToolPicker inherits Rectangle {
                     HorizontalLayout { height: 22px;
                         Text { text: I18n.ew_type_label + group.title; color: Theme.text-secondary; font-size: 12px; font-weight: 600; }
                         Rectangle { horizontal-stretch: 1; }
-                        ExpertButton { width: 72px; height: 22px; selected: true; label: group.all-selected ? I18n.ew_deselect_all : I18n.ew_select_all; enabled: root.enabled; clicked => { root.toggle-group(group.title); } }
+                        ExpertButton { width: 72px; height: 22px; selected: true; label: group.all-selected ? I18n.ew_deselect_all : I18n.ew_select_all; enabled: root.enabled; clicked => { root.toggle-group(group.category); } }
                     }
                     ScrollView { horizontal-scrollbar-policy: always-off;
                         VerticalLayout { spacing: 8px; alignment: start;

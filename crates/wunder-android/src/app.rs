@@ -9,8 +9,9 @@ use crate::engine::{self, Command, Shared};
 use crate::md::MarkdownRenderer;
 use crate::project::{self, RowData};
 use crate::{
-    InquiryOption, InquiryQuestion, MobilePermission, MobileSession, MobileWindow, MobileWorkspace,
-    ModelCard, Theme, TimelineRow, TurnMark, WorkspaceFile,
+    CommandTask, InquiryOption, InquiryQuestion, MobileBackup, MobilePermission, MobileSession,
+    MobileWindow, MobileWorkspace, ModelCard, SubagentItem, Theme, TimelineRow, TurnMark,
+    WorkspaceFile,
 };
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
 use std::collections::HashMap;
@@ -20,6 +21,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const TICK: Duration = Duration::from_millis(33);
+/// 软键盘跟随的帧间隔：与 60Hz 的屏幕刷新对齐。
+const IME_TICK: Duration = Duration::from_millis(16);
 const CACHE_LIMIT: usize = 800;
 
 pub fn build() -> MobileWindow {
@@ -42,6 +45,71 @@ thread_local! {
     // the previous timer when that activity goes away instead of leaking one
     // timer per recreation.
     static TICK_TIMER: std::cell::RefCell<Option<Timer>> = const { std::cell::RefCell::new(None) };
+    /// The IME follow heartbeat, only alive while the keyboard animates.
+    static IME_TIMER: std::cell::RefCell<Option<Timer>> = const { std::cell::RefCell::new(None) };
+    /// The keyboard height already applied, plus how many frames in a row it
+    /// has stayed there.
+    static IME_STATE: std::cell::Cell<(f32, u8)> =
+        const { std::cell::Cell::new((0.0, 0)) };
+}
+
+/// 当前软键盘高度。Slint 的 virtual-keyboard 矩形就是系统逐帧动画值。
+fn ime_height(ui: &MobileWindow) -> f32 {
+    ui.window()
+        .virtual_keyboard(i_slint_core::InternalToken)
+        .map(|(_origin, size)| size.height)
+        .unwrap_or(0.0)
+}
+
+/// 已经落到布局里的键盘高度。
+fn ime_applied() -> f32 {
+    IME_STATE.with(|state| state.get().0)
+}
+
+/// 记下落定的键盘高度，并清空「连续没变化」的计数。
+fn ime_settle(height: f32) {
+    IME_STATE.with(|state| state.set((height, 0)));
+}
+
+/// 逐帧跟随软键盘。Android 的 WindowInsetsAnimation 每帧回调一次，键盘弹出/
+/// 收起整段都有中间值；主心跳 33ms 采样只会得到 30Hz 的台阶，而「等动画落定
+/// 再落一次布局」会让输入区在整段动画里被键盘盖住、结束时才猛地跳出来。所以
+/// 键盘一动就切到 16ms 的跟随心跳，把每一帧都落进 `ime-height`；连续两拍不变
+/// 即认为键盘停稳，立刻停表，空闲时不产生任何额外唤醒。
+fn start_ime_follow(ui: &MobileWindow) {
+    let weak = ui.as_weak();
+    IME_TIMER.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let timer = slot.get_or_insert_with(Timer::default);
+        if timer.running() {
+            return;
+        }
+        timer.start(TimerMode::Repeated, IME_TICK, move || {
+            let Some(ui) = weak.upgrade() else {
+                stop_ime_follow();
+                return;
+            };
+            let ime = ime_height(&ui);
+            let (applied, steady) = IME_STATE.with(|state| state.get());
+            if (ime - applied).abs() > 0.5 {
+                ui.set_ime_height(ime);
+                ime_settle(ime);
+            } else if steady >= 2 {
+                ime_settle(ime);
+                stop_ime_follow();
+            } else {
+                IME_STATE.with(|state| state.set((applied, steady + 1)));
+            }
+        });
+    });
+}
+
+fn stop_ime_follow() {
+    IME_TIMER.with(|slot| {
+        if let Some(timer) = slot.borrow().as_ref() {
+            timer.stop();
+        }
+    });
 }
 
 /// Window without the engine, used by the desktop preview binary. The layout
@@ -222,12 +290,6 @@ pub fn build_preview() -> MobileWindow {
             ui.set_settings_font_size(size);
             ui.global::<Theme>()
                 .set_font_scale(size.clamp(12, 20) as f32 / 14.0);
-        }
-    });
-    let weak = ui.as_weak();
-    ui.on_save_send_key(move |value| {
-        if let Some(ui) = weak.upgrade() {
-            ui.set_settings_send_key(value);
         }
     });
     let weak = ui.as_weak();
@@ -627,6 +689,65 @@ fn preview_trajectory_audit() -> (
     (projection.audit, projection.segments, projection.bars)
 }
 
+/// 预览用的二维码示意位图。预览进程不联网、也不会真的被扫，三只定位角加
+/// 一段固定伪随机数据，只用来核对 220px 容器里的观感与状态覆盖层。
+fn preview_qr_image() -> slint::Image {
+    const MODULES: u32 = 33;
+    const QUIET: u32 = 4;
+    const SCALE: u32 = 8;
+    let mut modules = vec![false; (MODULES * MODULES) as usize];
+    let finder = |modules: &mut Vec<bool>, x0: u32, y0: u32| {
+        for y in 0..7u32 {
+            for x in 0..7u32 {
+                let edge = x == 0 || x == 6 || y == 0 || y == 6;
+                let core = (2..=4).contains(&x) && (2..=4).contains(&y);
+                if edge || core {
+                    modules[((y0 + y) * MODULES + (x0 + x)) as usize] = true;
+                }
+            }
+        }
+    };
+    finder(&mut modules, 0, 0);
+    finder(&mut modules, MODULES - 7, 0);
+    finder(&mut modules, 0, MODULES - 7);
+    let mut seed = 0x9e37_79b9u32;
+    for y in 0..MODULES {
+        for x in 0..MODULES {
+            let near_finder =
+                (x < 8 && y < 8) || (x >= MODULES - 8 && y < 8) || (x < 8 && y >= MODULES - 8);
+            if near_finder {
+                continue;
+            }
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            if (seed >> 9) & 1 == 1 {
+                modules[(y * MODULES + x) as usize] = true;
+            }
+        }
+    }
+    let side = (MODULES + QUIET * 2) * SCALE;
+    let mut rgba = vec![255u8; (side * side * 4) as usize];
+    for y in 0..MODULES {
+        for x in 0..MODULES {
+            if !modules[(y * MODULES + x) as usize] {
+                continue;
+            }
+            let px = (x + QUIET) * SCALE;
+            let py = (y + QUIET) * SCALE;
+            for dy in 0..SCALE {
+                for dx in 0..SCALE {
+                    let offset = (((py + dy) * side + (px + dx)) * 4) as usize;
+                    rgba[offset] = 0;
+                    rgba[offset + 1] = 0;
+                    rgba[offset + 2] = 0;
+                }
+            }
+        }
+    }
+    slint::Image::from_rgba8(slint::SharedPixelBuffer::clone_from_slice(
+        &rgba, side, side,
+    ))
+}
+
 fn create_window() -> (MobileWindow, Rc<VecModel<TimelineRow>>) {
     crate::fonts::install();
     let ui = MobileWindow::new().expect("create the mobile window");
@@ -998,6 +1119,17 @@ fn wire_callbacks(
         let _ = sender.send(Command::SelectModel(key.to_string()));
     });
 
+    // 浮层里的后台任务 / 子智能体行：终止命令、中断子智能体都回到引擎，
+    // 权限与结算语义仍由运行时决定（手机只转发）。
+    let sender = commands.clone();
+    ui.on_stop_task(move |id| {
+        let _ = sender.send(Command::TerminateTask(id.to_string()));
+    });
+    let sender = commands.clone();
+    ui.on_stop_subagent(move |id| {
+        let _ = sender.send(Command::StopSubagent(id.to_string()));
+    });
+
     // ---- settings sheet ----------------------------------------------
     let sender = commands.clone();
     let weak = ui.as_weak();
@@ -1073,17 +1205,10 @@ fn wire_callbacks(
     let sender = commands.clone();
     let weak = ui.as_weak();
     ui.on_save_theme(move |theme| {
-        let (send_key, font_size) = match weak.upgrade() {
-            Some(ui) => (
-                ui.get_settings_send_key().to_string(),
-                ui.get_settings_font_size(),
-            ),
-            None => return,
-        };
+        let Some(ui) = weak.upgrade() else { return };
         let _ = sender.send(Command::SavePreferences {
             theme: theme.to_string(),
-            send_key,
-            font_size,
+            font_size: ui.get_settings_font_size(),
         });
     });
 
@@ -1097,19 +1222,7 @@ fn wire_callbacks(
         ui.global::<Theme>().set_font_scale(font_size as f32 / 14.0);
         let _ = sender.send(Command::SavePreferences {
             theme: ui.get_settings_theme().to_string(),
-            send_key: ui.get_settings_send_key().to_string(),
             font_size,
-        });
-    });
-
-    let sender = commands.clone();
-    let weak = ui.as_weak();
-    ui.on_save_send_key(move |send_key| {
-        let Some(ui) = weak.upgrade() else { return };
-        let _ = sender.send(Command::SavePreferences {
-            theme: ui.get_settings_theme().to_string(),
-            send_key: send_key.to_string(),
-            font_size: ui.get_settings_font_size(),
         });
     });
 
@@ -1304,9 +1417,9 @@ fn wire_callbacks(
         });
     });
     let sender = commands.clone();
-    ui.on_toggle_agent_tool_group(move |title, select, description, prompt| {
+    ui.on_toggle_agent_tool_group(move |category, select, description, prompt| {
         let _ = sender.send(Command::ToggleAgentToolGroup {
-            title: title.to_string(),
+            category: category.to_string(),
             select,
             description: description.to_string(),
             system_prompt: prompt.to_string(),
@@ -1514,6 +1627,25 @@ fn wire_callbacks(
     let sender = commands.clone();
     ui.on_delete_channel_binding(move |id| {
         let _ = sender.send(Command::DeleteChannelBinding(id.to_string()));
+    });
+    // 扫码登录只出现在微信机器人渠道：目标账号取编辑中的草稿（新建时为空，
+    // 即登录成一个新账号；编辑已有账号时为空之外的 id，即重绑该账号）。
+    let weak = ui.as_weak();
+    let sender = commands.clone();
+    ui.on_start_channel_qr(move |force| {
+        let account_id = weak
+            .upgrade()
+            .map(|ui| ui.get_settings_channel_draft().account_id.to_string())
+            .unwrap_or_default();
+        let _ = sender.send(Command::StartChannelQr { account_id, force });
+    });
+    let sender = commands.clone();
+    ui.on_cancel_channel_qr(move || {
+        let _ = sender.send(Command::CancelChannelQr);
+    });
+    let sender = commands.clone();
+    ui.on_save_channel_qr(move || {
+        let _ = sender.send(Command::SaveChannelQr);
     });
 
     // 撤下一条还在等待发送的消息：文本由引擎退回草稿，这一帧只发命令。
@@ -2195,6 +2327,8 @@ fn start_tick(
     let mut last_channels = 0u64;
     let mut last_channel_editor = 0u64;
     let mut channel_editor_was_open = false;
+    let mut last_channel_qr = 0u64;
+    let mut last_channel_qr_pending = 0u64;
     let mut last_settings_page = 0;
     let mut tool_editor_was_open = false;
     let mut tool_file_was_open = false;
@@ -2210,6 +2344,9 @@ fn start_tick(
     let mut last_permissions = 0u64;
     let mut last_backup = u64::MAX;
     let mut last_context = u64::MAX;
+    // 模型浮层活动区块（后台任务 / 子智能体）的修订号，以及浮层的开合状态。
+    let mut last_sheet_activity = u64::MAX;
+    let mut last_model_sheet = false;
     let mut last_update = 0u64;
     let mut last_update_progress = -1i32;
     let mut last_update_downloaded = String::new();
@@ -2219,13 +2356,6 @@ fn start_tick(
     let mut last_goal = 0u64;
     let mut last_activity = 0u64;
     let mut editor_was_open = false;
-    let mut last_ime = -1.0f32;
-    // 输入法高度在弹出/收起时会逐帧动画（WindowInsetsAnimation 每帧回调一次）。
-    // 跟着每一帧改 `ime-height` 会让整页（尤其是聊天列表）连续重排，看起来
-    // 就是键盘一动就卡。这里只认「连续两拍都没变」的值：动画中间帧一律丢弃，
-    // 键盘落定后一次性移到最终位置，整段动画只有一次布局。
-    let mut ime_candidate = 0.0f32;
-    let mut ime_steady_ticks = 0u8;
     #[cfg(target_os = "android")]
     let mut last_back: Option<Instant> = None;
     let mut host_ticks = 0u32;
@@ -2238,22 +2368,15 @@ fn start_tick(
         let Some(ui) = weak.upgrade() else { return };
         // The window is edge-to-edge: the activity does not resize under the
         // soft keyboard, so the shell reads Slint's virtual-keyboard rect and
-        // lifts the transcript and composer above it.
-        let ime = ui
-            .window()
-            .virtual_keyboard(i_slint_core::InternalToken)
-            .map(|(_origin, size)| size.height)
-            .unwrap_or(0.0);
-        if (ime - ime_candidate).abs() > 0.5 {
-            // 还在动画：记下这一帧，等它稳定下来再落布局。
-            ime_candidate = ime;
-            ime_steady_ticks = 0;
-        } else {
-            ime_steady_ticks = ime_steady_ticks.saturating_add(1);
-        }
-        if ime_steady_ticks >= 1 && (ime_candidate - last_ime).abs() > 0.5 {
-            ui.set_ime_height(ime_candidate);
-            last_ime = ime_candidate;
+        // lifts the transcript and composer above it. This tick is only the
+        // safety net and the trigger: the keyboard animation is followed by
+        // the 16 ms timer above, so the input card rides with the IME instead
+        // of waiting for it to settle.
+        let ime = ime_height(&ui);
+        if (ime - ime_applied()).abs() > 0.5 {
+            ui.set_ime_height(ime);
+            ime_settle(ime);
+            start_ime_follow(&ui);
         }
         // 首装引导的液面动画相位：只在引导页打开时推进，页面关闭后不再产生
         // 任何属性更新。相位单调递增（以 4s 波浪周期为单位），不取模：气泡
@@ -2263,10 +2386,18 @@ fn start_tick(
             let cycles = env_phase_origin.elapsed().as_secs_f32() / 4.0;
             ui.set_env_setup_phase(cycles);
         }
-        // Live command counts move at 1 Hz, not at the render tick.
+        // Live command counts move at 1 Hz, not at the render tick. 浮层打开的
+        // 那一刻先要一份活动快照，再交给这条秒级刷新维持耗时与状态。
         host_ticks = host_ticks.wrapping_add(1);
+        let model_sheet = ui.get_model_sheet_open();
+        if model_sheet != last_model_sheet {
+            last_model_sheet = model_sheet;
+            if model_sheet {
+                let _ = commands.send(Command::RefreshTasks { deep: true });
+            }
+        }
         if host_ticks % 30 == 0 {
-            let _ = commands.send(Command::RefreshTasks);
+            let _ = commands.send(Command::RefreshTasks { deep: model_sheet });
             // 目标横幅的本地秒表：只在目标真正执行时前进。
             if let Ok(mut state) = shared.lock() {
                 if state.goal.active() && !state.goal.paused() {
@@ -2328,7 +2459,15 @@ fn start_tick(
             if let Some(picked) = crate::android_host::take_picked() {
                 match picked {
                     crate::android_host::PickedFiles::Workspace { dir, files, attach } => {
-                        let _ = commands.send(Command::UploadWorkspace { dir, files, attach });
+                        // 相机回来的是一张照片：走单独的入口，量词是「张」，
+                        // 也不刷新工作目录页（用户正在浏览的目录不该被切走）。
+                        if attach && dir == crate::engine::CHAT_MEDIA_SOURCE {
+                            for path in files {
+                                let _ = commands.send(Command::UploadPhoto { path });
+                            }
+                        } else {
+                            let _ = commands.send(Command::UploadWorkspace { dir, files, attach });
+                        }
                     }
                     crate::android_host::PickedFiles::ToolFiles(files) => {
                         let _ = commands.send(Command::UploadToolFiles { files });
@@ -2657,6 +2796,13 @@ fn start_tick(
                 ui.set_goal_paused(false);
                 ui.set_activity_steps_total(0);
                 ui.set_activity_plan_steps(ModelRc::default());
+                // 后台任务与子智能体是本地线程的运行时状态，云端线程没有。
+                ui.set_task_rows(ModelRc::default());
+                ui.set_task_count(0);
+                ui.set_subagent_rows(ModelRc::default());
+                ui.set_subagent_count(0);
+                // 切回本地时按本地修订号重新投影一次。
+                last_sheet_activity = u64::MAX;
                 if active.rows.is_empty() {
                     model.set_vec(Vec::new());
                 } else {
@@ -2901,6 +3047,55 @@ fn start_tick(
             last_channel_editor = state.channel_editor_rev;
         }
 
+        if state.channel_qr_rev != last_channel_qr {
+            let qr = &state.channel_qr;
+            ui.set_settings_channel_qr_open(qr.open);
+            ui.set_settings_channel_qr_status(qr.status);
+            ui.set_settings_channel_qr_message(qr.message.as_str().into());
+            if qr.image_width > 0 && qr.image_height > 0 && !qr.image_rgba.is_empty() {
+                // The worker decoded the QR off the UI thread; wrapping the
+                // pixels is the only per-frame-ish cost and it happens once
+                // per new code, not per tick.
+                let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+                    &qr.image_rgba,
+                    qr.image_width,
+                    qr.image_height,
+                );
+                ui.set_settings_channel_qr_image(slint::Image::from_rgba8(buffer));
+            } else {
+                ui.set_settings_channel_qr_image(slint::Image::default());
+            }
+            // 扫码确认的凭据只改它自己的四个字段，其余内容取界面上的当前
+            // 草稿：用户等待扫码时输入的账号名称不会被整份草稿盖掉。
+            if let Some(credentials) = qr.pending.as_ref() {
+                if qr.pending_seq != last_channel_qr_pending {
+                    let mut draft = ui.get_settings_channel_draft();
+                    if draft.channel.is_empty() {
+                        draft.channel = "weixin".into();
+                    }
+                    if !credentials.bot_token.is_empty() {
+                        draft.weixin_bot_token = credentials.bot_token.as_str().into();
+                    }
+                    if !credentials.bot_id.is_empty() {
+                        draft.weixin_bot_id = credentials.bot_id.as_str().into();
+                    }
+                    if !credentials.user_id.is_empty() {
+                        draft.weixin_user_id = credentials.user_id.as_str().into();
+                    }
+                    if !credentials.api_base.is_empty() {
+                        draft.weixin_api_base = credentials.api_base.as_str().into();
+                    }
+                    if draft.name.trim().is_empty() {
+                        draft.name = "微信机器人".into();
+                    }
+                    draft.enabled = true;
+                    ui.set_settings_channel_draft(draft);
+                    last_channel_qr_pending = qr.pending_seq;
+                }
+            }
+            last_channel_qr = state.channel_qr_rev;
+        }
+
         if state.archived_rev != last_archived {
             ui.set_archived_sessions(ModelRc::from(Rc::new(VecModel::from(
                 state.archived_sessions.clone(),
@@ -3140,6 +3335,7 @@ fn start_tick(
                 .groups
                 .iter()
                 .map(|group| crate::MobileToolGroup {
+                    category: group.category.as_str().into(),
                     title: group.title.as_str().into(),
                     tools: ModelRc::new(VecModel::from(group.tools.clone())),
                     all_selected: group.all_selected,
@@ -3263,7 +3459,6 @@ fn start_tick(
         if state.settings_rev != last_settings {
             ui.set_settings_theme(state.settings.theme.as_str().into());
             ui.set_settings_font_size(state.settings.font_size);
-            ui.set_settings_send_key(state.settings.send_key.as_str().into());
             ui.set_settings_language(state.settings.language.as_str().into());
             // 语言投影后立刻落一次 `I18n.zh`：不依赖 `changed ui-zh` 的通知时序，
             // 保存语言后整屏文案在同一帧切过去。
@@ -3363,6 +3558,16 @@ fn start_tick(
         if state.backup_rev != last_backup {
             ui.set_settings_backup_status(state.backup_message.as_str().into());
             ui.set_settings_backup_path(state.backup_path.as_str().into());
+            let backups: Vec<MobileBackup> = state
+                .backups
+                .iter()
+                .map(|entry| MobileBackup {
+                    path: entry.path.as_str().into(),
+                    name: entry.name.as_str().into(),
+                    detail: entry.detail.as_str().into(),
+                })
+                .collect();
+            ui.set_settings_backup_items(ModelRc::from(Rc::new(VecModel::from(backups))));
             ui.set_settings_backup_busy(state.backup_phase == "busy");
             ui.set_settings_backup_restart(state.backup_restart);
             ui.set_settings_crash_log_title(state.crash_log_title.as_str().into());
@@ -3376,6 +3581,20 @@ fn start_tick(
             ui.set_context_counts(state.context_counts.as_str().into());
             ui.set_context_compacted(state.context_compacted);
             last_context = state.context_rev;
+        }
+
+        // 模型浮层里的后台任务 / 子智能体：引擎每秒重投影，只在内容变化时
+        // 写回 Slint 模型（行数已在 Rust 侧裁剪）。
+        if state.target == 0 && state.activity_rev != last_sheet_activity {
+            ui.set_task_rows(ModelRc::from(Rc::new(VecModel::from(
+                state.activity.tasks.clone(),
+            ))));
+            ui.set_task_count(state.activity.task_count);
+            ui.set_subagent_rows(ModelRc::from(Rc::new(VecModel::from(
+                state.activity.subagents.clone(),
+            ))));
+            ui.set_subagent_count(state.activity.subagent_count);
+            last_sheet_activity = state.activity_rev;
         }
 
         if state.update_rev != last_update {
@@ -3681,6 +3900,12 @@ fn handle_back(
         ui.set_workspace_delete_armed(false);
     } else if ui.get_settings_open()
         && ui.get_settings_page() == 14
+        && ui.get_settings_channel_qr_open()
+    {
+        // 扫码面板叠在编辑面板之上，返回键先收起它并停掉轮询。
+        ui.invoke_cancel_channel_qr();
+    } else if ui.get_settings_open()
+        && ui.get_settings_page() == 14
         && (ui.get_settings_channel_editor_open() || ui.get_settings_channel_logs_open())
     {
         if ui.get_settings_channel_editor_open() {
@@ -3872,7 +4097,6 @@ pub fn install_preview_data(
     // and the editor on a workstation without starting the engine.
     ui.set_settings_theme("terracotta".into());
     ui.set_settings_font_size(16);
-    ui.set_settings_send_key("enter".into());
     ui.set_settings_language("zh-CN".into());
     // The preview has no engine, so nothing else would deliver the derived
     // language flag; the phone build gets it from the settings projection.
@@ -3979,6 +4203,7 @@ pub fn install_preview_data(
         |name: &str, description: &str, category: &str, icon: &str, tone: &str, enabled: bool| {
             crate::MobileTool {
                 name: name.into(),
+                title: name.into(),
                 description: description.into(),
                 category: category.into(),
                 enabled,
@@ -4099,16 +4324,18 @@ pub fn install_preview_data(
     ui.set_settings_agent_tool_count(4);
     ui.set_settings_agent_description("你好，我是 wunder，可以帮你拆解任务并调用工具。".into());
     ui.set_settings_agent_prompt("你是 wunder 智能体。先确认目标，再拆解任务并逐步执行。".into());
-    let agent_group = |title: &str, tools: Vec<crate::MobileTool>| crate::MobileToolGroup {
-        title: title.into(),
-        all_selected: tools.iter().all(|tool| tool.enabled),
-        tools: ModelRc::new(VecModel::from(tools)),
-    };
+    let agent_group =
+        |category: &str, title: &str, tools: Vec<crate::MobileTool>| crate::MobileToolGroup {
+            category: category.into(),
+            title: title.into(),
+            all_selected: tools.iter().all(|tool| tool.enabled),
+            tools: ModelRc::new(VecModel::from(tools)),
+        };
     ui.set_settings_agent_groups(ModelRc::from(Rc::new(VecModel::from(vec![
-        agent_group("内置工具", builtin),
-        agent_group("MCP 工具", mcp_tools),
-        agent_group("技能工具", skill_tools),
-        agent_group("知识库工具", knowledge_tools),
+        agent_group("内置工具", "内置工具", builtin),
+        agent_group("MCP 工具", "MCP 工具", mcp_tools),
+        agent_group("技能", "技能工具", skill_tools),
+        agent_group("知识库", "知识库工具", knowledge_tools),
     ]))));
     ui.set_settings_agent_questions(ModelRc::from(Rc::new(VecModel::from(vec![
         slint::SharedString::from("总结当前进度"),
@@ -4564,6 +4791,11 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
             ui.set_settings_page(0);
             ui.set_settings_open(true);
         }
+        // 通用偏好页（主题、字号、语言）：核对没有「发送键」后的表单高度。
+        "general" => {
+            ui.set_settings_page(3);
+            ui.set_settings_open(true);
+        }
 
         "toast" => {
             ui.set_toast("已复制到剪贴板".into());
@@ -4618,6 +4850,60 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
             ui.set_context_counts("32.1k / 51.8k tokens".into());
             ui.set_model_sheet_open(true);
         }
+        // `model-activity` 在模型浮层里叠上后台任务与子智能体两段：计数故意大于
+        // 行数，核对「还有 N 条未显示」的收口行。
+        "model-activity" => {
+            ui.set_context_usage(0.62);
+            ui.set_context_known(true);
+            ui.set_context_counts("32.1k / 51.8k tokens".into());
+            ui.set_task_rows(ModelRc::from(Rc::new(VecModel::from(vec![
+                CommandTask {
+                    id: "cmd-1".into(),
+                    command: "cargo test --workspace".into(),
+                    full_command: "".into(),
+                    cwd: "".into(),
+                    elapsed: "2m04s".into(),
+                    expanded: false,
+                    output: "".into(),
+                    detail_state: 0,
+                },
+                CommandTask {
+                    id: "cmd-2".into(),
+                    command: "python scripts/build_help_manual.py".into(),
+                    full_command: "".into(),
+                    cwd: "".into(),
+                    elapsed: "18s".into(),
+                    expanded: false,
+                    output: "".into(),
+                    detail_state: 0,
+                },
+            ]))));
+            ui.set_task_count(3);
+            ui.set_subagent_rows(ModelRc::from(Rc::new(VecModel::from(vec![
+                SubagentItem {
+                    id: "sub-1".into(),
+                    title: "整理资料".into(),
+                    summary: "已读取 12 份文档，正在合并要点".into(),
+                    status_kind: 1,
+                    stoppable: true,
+                    duration: "1m 05s".into(),
+                    credits: "7".into(),
+                    context: "25%".into(),
+                },
+                SubagentItem {
+                    id: "sub-2".into(),
+                    title: "核对数据".into(),
+                    summary: "核对完成，未发现冲突".into(),
+                    status_kind: 0,
+                    stoppable: false,
+                    duration: "42s".into(),
+                    credits: "3".into(),
+                    context: "12%".into(),
+                },
+            ]))));
+            ui.set_subagent_count(4);
+            ui.set_model_sheet_open(true);
+        }
         "data" => {
             ui.set_settings_page(15);
             ui.set_settings_open(true);
@@ -4627,8 +4913,25 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
             ui.set_settings_backup_path(
                 "/storage/emulated/0/Download/wunder-backup-20261108.zip".into(),
             );
+            ui.set_settings_backup_items(ModelRc::from(Rc::new(VecModel::from(vec![
+                MobileBackup {
+                    path: "/storage/emulated/0/Download/wunder-backup-20261121.zip".into(),
+                    name: "今天 09:41".into(),
+                    detail: "1.2 MB · wunder-backup-20261121.zip".into(),
+                },
+                MobileBackup {
+                    path: "/storage/emulated/0/Download/wunder-backup-20261120.zip".into(),
+                    name: "昨天 18:07".into(),
+                    detail: "1.1 MB · wunder-backup-20261120.zip".into(),
+                },
+                MobileBackup {
+                    path: "/storage/emulated/0/Download/wunder-backup-20261116.zip".into(),
+                    name: "2026-11-16 21:52".into(),
+                    detail: "1.0 MB · wunder-backup-20261116.zip".into(),
+                },
+            ]))));
             ui.set_settings_restore_path(
-                "/storage/emulated/0/Download/wunder-backup-20261108.zip".into(),
+                "/storage/emulated/0/Download/wunder-backup-20261121.zip".into(),
             );
             ui.set_settings_crash_log_title("crash-rust-20261108-143012.log".into());
             ui.set_settings_crash_log_text(
@@ -4828,6 +5131,44 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
                 enabled: true,
                 ..crate::MobileChannelDraft::default()
             });
+        }
+        // 微信机器人编辑页：核对「扫码登录」入口与手动字段共存的样子。
+        "channel-editor-weixin" => {
+            ui.set_settings_page(14);
+            ui.set_settings_open(true);
+            ui.set_settings_channel_editor_open(true);
+            ui.set_settings_channel_editor_new(true);
+            ui.set_settings_channel_draft(crate::MobileChannelDraft {
+                channel: "weixin".into(),
+                name: "微信机器人".into(),
+                enabled: true,
+                ..crate::MobileChannelDraft::default()
+            });
+        }
+        // 扫码面板：预览里没有网络，二维码用本地生成的示意位图，只核对版式。
+        "channel-qr" | "channel-qr-expired" | "channel-qr-failed" => {
+            ui.set_settings_page(14);
+            ui.set_settings_open(true);
+            ui.set_settings_channel_editor_open(true);
+            ui.set_settings_channel_editor_new(true);
+            ui.set_settings_channel_draft(crate::MobileChannelDraft {
+                channel: "weixin".into(),
+                name: "微信机器人".into(),
+                enabled: true,
+                ..crate::MobileChannelDraft::default()
+            });
+            ui.set_settings_channel_qr_open(true);
+            ui.set_settings_channel_qr_status(match page {
+                "channel-qr-expired" => 3,
+                "channel-qr-failed" => 5,
+                _ => 1,
+            });
+            ui.set_settings_channel_qr_message(if page == "channel-qr-failed" {
+                "无法获取二维码：网络不可用".into()
+            } else {
+                "".into()
+            });
+            ui.set_settings_channel_qr_image(preview_qr_image());
         }
         "devices" => {
             ui.set_drawer_open(true);

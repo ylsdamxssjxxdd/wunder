@@ -3868,5 +3868,9 @@
   "tool.read_image.compare_media_only": {
     "en-US": "compare_with works on still images and single GIF frames. Pass frame=N to compare one GIF frame (use compare_frame=N for a frame of compare_with).",
     "zh-CN": "compare_with 仅支持静态图片与单帧 GIF。对比 GIF 请先用 frame=N 取帧（compare_with 侧用 compare_frame=N）。"
+  },
+  "tool.title.浏览器": {
+    "en-US": "Browser",
+    "zh-CN": "浏览器"
   }
 }

@@ -8,7 +8,7 @@ import { I18n } from "i18n.slint";
 // the root file get a public wrapper. The fields report focus through
 // components.slint / textedit-base.slint.
 export { TextFieldActivation } from "text_field.slint";
-import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, TurnMark, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow, CommandTask, SubagentItem, SplitContext } from "theme.slint";
+import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, TurnMark, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow, CommandTask, SubagentItem, SplitContext, LocalBackupRow } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
 export { ToastState }
 import { ProcessEntry } from "theme.slint";
@@ -49,7 +49,7 @@ export { ModelPresets }
 import { WindowChrome, WindowFrame } from "window_chrome.slint";
 // `TimelineView` is deliberately absent: nothing in Rust names it, and an
 // exported component that does not inherit Window only earns a build warning.
-export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, WorkflowLine, WorkflowSection, ToolWorkflowEntry, ProcessEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajMdSection, TrajTab, CronCard, CronRunCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkApproval, WorkspaceFileRow }
+export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, WorkflowLine, WorkflowSection, ToolWorkflowEntry, ProcessEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajMdSection, TrajTab, CronCard, CronRunCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkApproval, WorkspaceFileRow, LocalBackupRow }
 export { AppTray } from "tray.slint";
 export { TrayNotice } from "tray-notice.slint";
 export { CompletionNotice } from "completion-notice.slint";
@@ -1067,6 +1067,19 @@ export component MainWindow inherits Window {
     in-out property <string> stress-model-rounds: "1000";
     in-out property <string> stress-count: "1";
     in-out property <string> stress-status;
+    // 数据与恢复：本地备份、从备份恢复与崩溃日志。
+    in property <[LocalBackupRow]> data-backups: [];
+    in-out property <string> data-restore-path;
+    in property <bool> data-backup-busy: false;
+    in property <string> data-backup-status;
+    in property <bool> data-backup-restart: false;
+    in property <string> data-crash-title;
+    in property <string> data-crash-text;
+    callback refresh-backups();
+    callback backup-now();
+    callback pick-backup-file();
+    callback restore-backup(string);
+    callback view-crash-log();
     callback run-cron-now(string);
     callback open-cron-runs(string);
     callback close-cron-runs();
@@ -1169,7 +1182,7 @@ export component MainWindow inherits Window {
     // query is filtered natively and the matching categories come back as one
     // flag per category, in §9.2 order.
     in-out property <string> settings-query: "";
-    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true];
+    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true, true];
     callback filter-settings-categories(string);
     // Help is not a category anymore: the general page raises this to open the
     // standalone help window.
@@ -1760,6 +1773,18 @@ export component MainWindow inherits Window {
         stress-count <=> root.stress-count;
         stress-status <=> root.stress-status;
         generate-stress-thread => { root.generate-stress-thread(); }
+        data-backups: root.data-backups;
+        data-restore-path <=> root.data-restore-path;
+        data-backup-busy: root.data-backup-busy;
+        data-backup-status: root.data-backup-status;
+        data-backup-restart: root.data-backup-restart;
+        data-crash-title: root.data-crash-title;
+        data-crash-text: root.data-crash-text;
+        refresh-backups => { root.refresh-backups(); }
+        backup-now => { root.backup-now(); }
+        pick-backup-file => { root.pick-backup-file(); }
+        restore-backup(path) => { root.restore-backup(path); }
+        view-crash-log => { root.view-crash-log(); }
         save-runtime => { root.save-runtime(); }
         selected-key: root.settings-model-key; selected-provider: root.settings-model-provider;
         selected-model-name: root.settings-model-name; selected-base-url: root.settings-model-base-url;

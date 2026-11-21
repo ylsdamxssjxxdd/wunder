@@ -25,8 +25,42 @@ fn timestamp(value: f64) -> String {
         })
         .unwrap_or_default()
 }
+fn category_label(category: &str, zh: bool) -> String {
+    match (category, zh) {
+        ("内置工具", true) => "内置工具",
+        ("内置工具", false) => "Built-in tools",
+        ("MCP 工具", true) => "MCP 工具",
+        ("MCP 工具", false) => "MCP tools",
+        ("A2A 工具", true) => "A2A 工具",
+        ("A2A 工具", false) => "A2A tools",
+        ("技能", true) => "技能工具",
+        ("技能", false) => "Skill tools",
+        ("知识库", true) => "知识库工具",
+        ("知识库", false) => "Knowledge tools",
+        ("用户工具", true) => "自定义工具",
+        ("用户工具", false) => "Custom tools",
+        ("共享工具", true) => "共享工具",
+        ("共享工具", false) => "Shared tools",
+        (other, _) => other,
+    }
+    .to_string()
+}
+
+fn category_source(category: &str, zh: bool) -> String {
+    match (category, zh) {
+        ("技能" | "知识库", true) => "管理员开放工具",
+        ("技能" | "知识库", false) => "Administrator-enabled tools",
+        ("用户工具", true) => "用户自建工具",
+        ("用户工具", false) => "User-built tools",
+        (_, true) => "管理员开放工具",
+        (_, false) => "Administrator-enabled tools",
+    }
+    .to_string()
+}
+
 pub(crate) fn project_tools(app: &MainWindow) {
     let query = app.get_expert_tool_keyword().trim().to_lowercase();
+    let zh = app.get_ui_zh();
     let mut groups = Vec::new();
     for category in [
         "内置工具",
@@ -43,19 +77,15 @@ pub(crate) fn project_tools(app: &MainWindow) {
                 t.category == category
                     && (query.is_empty()
                         || t.name.to_lowercase().contains(&query)
+                        || t.title.to_lowercase().contains(&query)
                         || t.description.to_lowercase().contains(&query))
             })
             .collect::<Vec<_>>();
         if !tools.is_empty() {
-            let (title, source) = match category {
-                "技能" => ("技能工具", "管理员开放工具"),
-                "知识库" => ("知识库工具", "管理员开放工具"),
-                "用户工具" => ("自定义工具", "用户自建工具"),
-                _ => (category, "管理员开放工具"),
-            };
             groups.push(ExpertToolGroup {
-                title: title.into(),
-                source: source.into(),
+                category: category.into(),
+                title: category_label(category, zh).into(),
+                source: category_source(category, zh).into(),
                 all_selected: tools.iter().all(|t| t.enabled),
                 tools: model(tools),
             });
@@ -118,7 +148,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let Some(group) = app
             .get_expert_tool_groups()
             .iter()
-            .find(|g| g.title == category)
+            .find(|g| g.category == category)
         else {
             return;
         };

@@ -6,6 +6,7 @@
 
 slint::include_modules!();
 
+mod activity;
 #[cfg(target_os = "android")]
 mod android_host;
 mod app;

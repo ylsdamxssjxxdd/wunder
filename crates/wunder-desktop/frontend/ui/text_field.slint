@@ -5,6 +5,9 @@
 // asks for it explicitly (src/touch_keyboard.rs). Every editable field reports
 // focus here; the platform layer ignores the report unless the focus change
 // came from a finger, so mouse and keyboard activation stay quiet.
+
+import { I18n } from "i18n.slint";
+
 export global TextFieldActivation {
     callback activated();
 }
@@ -25,9 +28,9 @@ export component TextFieldMenu inherits ContextMenuArea {
     // it would keep the stale insertion index and panic the compiler.
     @children
     Menu {
-        MenuItem { title: @tr("Cut"); enabled: !root.read-only && root.enabled; activated => { root.cut(); } }
-        MenuItem { title: @tr("Copy"); enabled: !root.text.is-empty; activated => { root.copy(); } }
-        MenuItem { title: @tr("Paste"); enabled: !root.read-only && root.enabled; activated => { root.paste(); } }
-        MenuItem { title: @tr("Select All"); enabled: !root.text.is-empty; activated => { root.select-all(); } }
+        MenuItem { title: I18n.common_cut; enabled: !root.read-only && root.enabled; activated => { root.cut(); } }
+        MenuItem { title: I18n.common_copy; enabled: !root.text.is-empty; activated => { root.copy(); } }
+        MenuItem { title: I18n.common_paste; enabled: !root.read-only && root.enabled; activated => { root.paste(); } }
+        MenuItem { title: I18n.common_select_all; enabled: !root.text.is-empty; activated => { root.select-all(); } }
     }
 }

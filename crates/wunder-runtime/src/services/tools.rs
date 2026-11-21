@@ -82,9 +82,9 @@ pub(crate) mod write_syntax;
 pub use android_notifications::{install_android_notifications_host, AndroidNotificationsHost};
 pub use android_screen::{install_android_screen_host, AndroidScreenHost};
 pub use browser_tool::{
-    browser_tool_names, browser_tool_summary_spec, BROWSER_GROUP_NAME, BROWSER_GROUP_NAME_ALIAS,
+    browser_tool_names, browser_tool_summary_spec, browser_tool_summary_spec_in_language,
+    BROWSER_GROUP_NAME, BROWSER_GROUP_NAME_ALIAS,
 };
-pub(crate) use catalog::current_executable_tool_input_schema;
 pub use catalog::{
     android_notifications_tools_enabled, android_screen_tools_enabled, browser_tools_available,
     build_browser_followup_user_message, build_desktop_followup_user_message,
@@ -92,16 +92,17 @@ pub use catalog::{
     build_phone_followup_user_message, build_read_image_followup_user_message,
     build_runtime_tool_display_map, builtin_aliases, builtin_tool_specs,
     collect_available_tool_names, collect_enabled_tool_names_for_catalog,
-    collect_prompt_tool_specs, collect_prompt_tool_specs_with_language,
+    collect_prompt_tool_specs, collect_prompt_tool_specs_with_language, collect_tool_catalog_specs,
     current_tool_schema_reference, desktop_tools_available, expand_browser_group_selection,
     filter_tool_names_by_model_capability, is_android_notifications_tool_name,
     is_android_screen_tool_name, is_browser_group_name, is_browser_tool_name,
     is_desktop_control_tool_name, is_phone_control_tool_name, is_read_image_tool_name,
     normalize_frozen_tool_ids, phone_tools_available, resolve_builtin_tool_schema,
-    resolve_builtin_tool_schema_reference,
-    resolve_runtime_tool_display_name, resolve_tool_name, runtime_tool_schema,
-    runtime_tool_schema_reference, tool_specs_with_runtime_names, with_browser_group_members,
+    resolve_builtin_tool_schema_reference, resolve_runtime_tool_display_name, resolve_tool_name,
+    runtime_tool_schema, runtime_tool_schema_reference, tool_catalog_title,
+    tool_specs_with_runtime_names, with_browser_group_members,
 };
+pub(crate) use catalog::{builtin_tool_specs_with_language, current_executable_tool_input_schema};
 /// Decode raw command output (UTF-8, then Windows GBK / UTF-16 fallbacks).
 /// Exposed so non-tool callers that render command streams use the same
 /// byte-level decoder instead of a lossy conversion.

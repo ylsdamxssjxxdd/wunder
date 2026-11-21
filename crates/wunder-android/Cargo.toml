@@ -21,6 +21,7 @@ path = "src/preview.rs"
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 pulldown-cmark = "0.10"
 # Markdown images arrive as bounded bytes from the workspace; decode them into

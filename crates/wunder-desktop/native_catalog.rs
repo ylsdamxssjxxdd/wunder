@@ -50,7 +50,10 @@ pub struct AgentSettingsEdit {
 
 #[derive(Clone, Debug)]
 pub struct ToolRecord {
+    /// Stable identity used by agent selections (canonical tool name).
     pub name: String,
+    /// Display label in the current UI language; falls back to `name`.
+    pub title: String,
     pub description: String,
     pub category: String,
 }
@@ -113,8 +116,9 @@ impl NativeDesktop {
                 .ok_or_else(|| anyhow::anyhow!("用户不存在"))?;
             let context = user_access::build_user_tool_context(self.state(), self.user_id()).await;
             let allowed = user_access::compute_allowed_tool_names(&user, &context);
-            // Use the same resolved descriptions and permissions as model tool calls.
-            let specs = tools::collect_prompt_tool_specs(
+            // 设置页展示的是"可选择的能力"，身份必须是规范名：模型侧英文别名
+            // 只在提示词里出现，混进设置会让勾选状态永远对不上已保存的选择。
+            let specs = tools::collect_tool_catalog_specs(
                 &context.config,
                 &context.skills,
                 &allowed,
@@ -159,6 +163,7 @@ impl NativeDesktop {
                     };
                     ToolRecord {
                         name: spec.name,
+                        title: spec.title.unwrap_or_default(),
                         description: spec.description,
                         category: category.into(),
                     }
@@ -171,9 +176,12 @@ impl NativeDesktop {
                 .any(|record| tools::is_browser_tool_name(&record.name))
             {
                 records.retain(|record| !tools::is_browser_tool_name(&record.name));
-                let summary = tools::browser_tool_summary_spec();
+                let summary = tools::browser_tool_summary_spec_in_language(
+                    &wunder_server::i18n::get_language(),
+                );
                 records.push(ToolRecord {
                     name: summary.name,
+                    title: summary.title.unwrap_or_default(),
                     description: summary.description,
                     category: "内置工具".into(),
                 });
@@ -189,6 +197,7 @@ impl NativeDesktop {
                 }
                 records.push(ToolRecord {
                     name: spec.name,
+                    title: String::new(),
                     description: spec.description,
                     category: "技能".into(),
                 });

@@ -13,9 +13,9 @@ use crate::services::runtime::thread::ThreadSubmitOutcome;
 use crate::skills::load_skills;
 use crate::state::AppState;
 use crate::tools::{
-    build_mcp_tool_alias_entries_for_names, builtin_tool_specs,
-    collect_enabled_tool_names_for_catalog, mcp_pack_runtime_name, mcp_pack_schema,
-    mcp_pack_spec_for_server, resolve_builtin_tool_schema, validate_external_tool_spec,
+    build_mcp_tool_alias_entries_for_names, collect_enabled_tool_names_for_catalog,
+    mcp_pack_runtime_name, mcp_pack_schema, mcp_pack_spec_for_server, resolve_builtin_tool_schema,
+    validate_external_tool_spec,
 };
 use crate::user_store::UserStore;
 use crate::user_tools::{UserMcpServer, UserToolStore, UserToolsPayload};
@@ -252,16 +252,9 @@ async fn wunder_tools(
     let enabled_tools = collect_enabled_tool_names_for_catalog(&config, &skills_snapshot, None);
     let mut builtin_tools = Vec::new();
     let mut browser_summarized = false;
-    let alias_map = crate::tools::builtin_aliases();
-    let mut canonical_aliases: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
-    for (alias, canonical) in alias_map {
-        canonical_aliases.entry(canonical).or_default().push(alias);
-    }
-    for aliases in canonical_aliases.values_mut() {
-        aliases.sort();
-    }
-    for spec in builtin_tool_specs() {
+    // 清单身份用规范名；展示标题按界面语言给出，英文界面不再直接抛 `read_file`。
+    let ui_language = i18n::get_language();
+    for mut spec in crate::tools::builtin_tool_specs_with_language(&ui_language) {
         // Goal 工具由 orchestrator 强制注入，属运行时能力，不在用户工具清单中展示。
         if crate::services::goal::is_goal_tool_name(&spec.name) {
             continue;
@@ -273,22 +266,14 @@ async fn wunder_tools(
         if crate::tools::is_browser_tool_name(&spec.name) {
             if !browser_summarized {
                 browser_summarized = true;
-                builtin_tools.push(crate::tools::browser_tool_summary_spec());
+                builtin_tools.push(crate::tools::browser_tool_summary_spec_in_language(
+                    &ui_language,
+                ));
             }
             continue;
         }
-        // 工具面统一英文：模型与用户清单都看到英文别名。
-        let english_alias = canonical_aliases
-            .get(&spec.name)
-            .and_then(|aliases| select_english_alias(&spec.name, aliases));
-        if let Some(alias) = english_alias {
-            builtin_tools.push(ToolSpec {
-                name: alias,
-                title: None,
-                description: spec.description.clone(),
-                input_schema: spec.input_schema.clone(),
-            });
-            continue;
+        if spec.title.is_none() {
+            spec.title = crate::tools::tool_catalog_title(&spec.name, &ui_language);
         }
         builtin_tools.push(spec);
     }
@@ -803,19 +788,6 @@ async fn wunder_attachment_convert(multipart: Multipart) -> Result<Json<Value>, 
     Ok(Json(build_ok_conversion_payload(conversions)))
 }
 
-fn select_english_alias(canonical: &str, aliases: &[String]) -> Option<String> {
-    let preferred = match canonical {
-        "问询面板" => Some("question_panel"),
-        "技能调用" => Some("skill_call"),
-        "会话线程控制" => Some("thread_control"),
-        _ => None,
-    };
-    if let Some(preferred) = preferred.filter(|value| aliases.iter().any(|alias| alias == *value)) {
-        return Some(preferred.to_string());
-    }
-    aliases.first().cloned()
-}
-
 fn map_orchestrator_error(err: Error) -> Response {
     if let Some(orchestrator_err) = err.downcast_ref::<OrchestratorError>() {
         let status = crate::api::errors::status_for_error_code(orchestrator_err.code());
@@ -869,6 +841,7 @@ struct ToolSchemaQuery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::builtin_tool_specs;
 
     #[tokio::test]
     async fn schema_endpoint_returns_the_exact_builtin_definition() {

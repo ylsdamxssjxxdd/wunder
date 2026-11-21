@@ -27,6 +27,7 @@ const SETTINGS_CATEGORY_LABELS: &[&[&str]] = &[
     &["记忆碎片", "记忆", "memories"],
     &["渠道设置", "渠道", "channels"],
     &["归档线程", "归档", "archived"],
+    &["数据与恢复", "备份", "恢复", "崩溃日志", "data recovery backup restore crash"],
 ];
 
 /// How many categories the navigation defines. The shell's initial flag list has
@@ -82,6 +83,6 @@ mod tests {
     /// The shell hard-codes the initial flag list, so the count is a contract.
     #[test]
     fn category_count_matches_the_navigation() {
-        assert_eq!(SETTINGS_CATEGORY_COUNT, 12);
+        assert_eq!(SETTINGS_CATEGORY_COUNT, 13);
     }
 }

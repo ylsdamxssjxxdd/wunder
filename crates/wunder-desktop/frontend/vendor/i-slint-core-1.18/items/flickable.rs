@@ -749,6 +749,15 @@ impl FlickableData {
                 }
             }
             MouseEvent::Moved { position, .. } => {
+                // A long press in an editable field selects a word and raises
+                // its handles; the finger that follows extends that range, so
+                // panning here would both scroll the draft and drop the
+                // selection. Forward the move to the field and stay out of it.
+                if inner.capture_events.is_none()
+                    && crate::text_selection::input_dragging(window_adapter, flick_rc)
+                {
+                    return InputEventFilterResult::ForwardAndIgnore;
+                }
                 let do_intercept = inner.capture_events.is_some()
                     || inner.pressed_mouse_state.is_some_and(
                         |(pressed_time, pressed_mouse_position)| {

@@ -126,7 +126,10 @@ export global I18n {
     out property <string> common_add: zh ? "添加" : "Add";
     out property <string> common_new: zh ? "新建" : "New";
     out property <string> common_open: zh ? "打开" : "Open";
+    out property <string> common_cut: zh ? "剪切" : "Cut";
     out property <string> common_copy: zh ? "复制" : "Copy";
+    out property <string> common_paste: zh ? "粘贴" : "Paste";
+    out property <string> common_select_all: zh ? "全选" : "Select all";
     out property <string> common_fork: zh ? "从此处分叉" : "Fork from here";
     out property <string> common_rename: zh ? "重命名" : "Rename";
     out property <string> common_confirm: zh ? "确认" : "Confirm";
@@ -1270,6 +1273,26 @@ export global I18n {
     out property <string> inquiry_submit_blocked: zh ? "请先回答任一问题" : "Answer at least one question";
     out property <string> inquiry_use_recommended: zh ? "使用推荐" : "Use the recommended";
     public pure function inquiry_question_progress(position: string) -> string { return zh ? "第 " + position + " 题" : "Question " + position + ""; }
+    out property <string> stc_data: zh ? "数据与恢复" : "Data & recovery";
+    out property <string> st_data_backup_title: zh ? "本地备份" : "Local backup";
+    out property <string> st_data_backup_note: zh ? "打包 config 与本地数据库（含 WAL），不包含工作区文件。" : "Packs config and the local databases (WAL included). Workspace files are not included.";
+    out property <string> st_data_backup_target: zh ? "备份到本机" : "Back up on this machine";
+    out property <string> st_data_backup_now: zh ? "立即备份" : "Back up now";
+    out property <string> st_data_backup_running: zh ? "处理中…" : "Working…";
+    out property <string> st_data_restore_title: zh ? "从备份恢复" : "Restore from backup";
+    out property <string> st_data_restore_note: zh ? "恢复会覆盖本地配置与数据库，完成后需要重启应用。" : "Restoring overwrites local configuration and databases; restart the app afterwards.";
+    out property <string> st_data_restore_empty: zh ? "还没有本地备份：先点「立即备份」生成一个，或从文件选择其它位置的备份。" : "No local backups yet: create one with \"Back up now\", or choose an archive from disk.";
+    out property <string> st_data_pick_file: zh ? "从文件选择…" : "Choose file…";
+    out property <string> st_data_restore_now: zh ? "恢复所选备份" : "Restore selected";
+    out property <string> st_data_restore_ready: zh ? "恢复已就绪：请完全退出并重新打开应用后生效。" : "Restore is ready: quit the app completely and open it again.";
+    out property <string> st_data_crash_title: zh ? "崩溃日志" : "Crash log";
+    out property <string> st_data_crash_note: zh ? "panic 报告写入本地 logs 目录，最多保留最近 10 份。" : "Panic reports are written to the local logs directory; the 10 newest are kept.";
+    out property <string> st_data_crash_row: zh ? "最近崩溃报告" : "Latest crash report";
+    out property <string> st_data_crash_view: zh ? "查看最近崩溃日志" : "View latest crash log";
+    out property <string> st_data_confirm_title: zh ? "恢复本地数据" : "Restore local data";
+    out property <string> st_data_confirm_message: zh ? "将用备份覆盖本地配置与数据库，完成后必须重启应用。恢复期间请勿发送消息。" : "This overwrites local configuration and databases with the backup; the app must restart afterwards. Do not send messages during the restore.";
+    out property <string> st_data_confirm_action: zh ? "恢复" : "Restore";
+    out property <string> st_data_footer: zh ? "备份与恢复只处理本地数据面；工作区文件请通过文件管理器单独备份。" : "Backup and restore cover local data only; back up workspace files separately with the file manager.";
     out property <string> sub_card_title: zh ? "子智能体" : "Subagent";
     out property <string> sub_status_running: zh ? "运行中" : "Running";
     out property <string> sub_status_done: zh ? "已完成" : "Completed";

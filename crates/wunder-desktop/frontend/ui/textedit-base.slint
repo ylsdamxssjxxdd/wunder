@@ -3,6 +3,7 @@
 
 import { ScrollView } from "std-widgets.slint";
 import { TextFieldActivation } from "text_field.slint";
+import { I18n } from "i18n.slint";
 
 export component TextEditBase inherits Rectangle {
     in property <length> scroll-view-padding;
@@ -90,7 +91,7 @@ export component TextEditBase inherits Rectangle {
         enabled: root.enabled;
         Menu {
             MenuItem {
-                title: @tr("Cut");
+                title: I18n.common_cut;
                 enabled: !root.read-only && root.enabled;
                 activated => {
                     text-input.cut();
@@ -98,7 +99,7 @@ export component TextEditBase inherits Rectangle {
             }
 
             MenuItem {
-                title: @tr("Copy");
+                title: I18n.common_copy;
                 enabled: !root.text.is-empty;
                 activated => {
                     text-input.copy();
@@ -107,7 +108,7 @@ export component TextEditBase inherits Rectangle {
 
             MenuItem {
                 enabled: !root.read-only && root.enabled;
-                title: @tr("Paste");
+                title: I18n.common_paste;
                 activated => {
                     if !root.paste-image() {
                         text-input.paste();
@@ -116,7 +117,7 @@ export component TextEditBase inherits Rectangle {
             }
 
             MenuItem {
-                title: @tr("Select All");
+                title: I18n.common_select_all;
                 enabled: !root.text.is-empty;
                 activated => {
                     text-input.select-all();

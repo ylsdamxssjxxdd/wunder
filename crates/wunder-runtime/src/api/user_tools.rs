@@ -19,8 +19,8 @@ use crate::skills::{load_skills, SkillRegistry, SkillSpec};
 use crate::state::AppState;
 use crate::storage::StorageBackend;
 use crate::tools::{
-    build_mcp_tool_alias_entries_for_names, builtin_tool_specs, mcp_pack_spec_for_server,
-    resolve_tool_name, validate_external_tool_spec,
+    build_mcp_tool_alias_entries_for_names, mcp_pack_spec_for_server, resolve_tool_name,
+    validate_external_tool_spec,
 };
 use crate::user_access::{
     build_user_tool_context, build_user_tool_context_for_catalog, compute_allowed_tool_names,
@@ -1524,7 +1524,9 @@ fn build_user_tools_summary(
     let mut builtin_tools = Vec::new();
     let mut seen_builtin = HashSet::new();
     let mut browser_summarized = false;
-    for spec in builtin_tool_specs() {
+    // 用户清单的身份是规范名（智能体保存的选择），展示标题按界面语言给出。
+    let ui_language = i18n::get_language();
+    for spec in crate::tools::builtin_tool_specs_with_language(&ui_language) {
         // Goal 工具由 orchestrator 强制注入，属运行时能力，不在用户工具清单中展示。
         if crate::services::goal::is_goal_tool_name(&spec.name) {
             continue;
@@ -1542,23 +1544,21 @@ fn build_user_tools_summary(
         if crate::tools::is_browser_tool_name(&spec.name) {
             if !browser_summarized {
                 browser_summarized = true;
-                builtin_tools.push(crate::tools::browser_tool_summary_spec());
+                builtin_tools.push(crate::tools::browser_tool_summary_spec_in_language(
+                    &ui_language,
+                ));
             }
             continue;
         }
-        // 工具面统一英文：对外清单优先给出英文别名。
-        let name = aliases
-            .iter()
-            .find(|alias| allowed.contains(alias.as_str()))
-            .cloned()
-            .or_else(|| aliases.first().cloned())
-            .unwrap_or_else(|| spec.name.clone());
+        let name = spec.name.clone();
         if !seen_builtin.insert(name.clone()) {
             continue;
         }
         builtin_tools.push(ToolSpec {
+            title: spec
+                .title
+                .or_else(|| crate::tools::tool_catalog_title(&name, &ui_language)),
             name,
-            title: None,
             description: spec.description.clone(),
             input_schema: spec.input_schema.clone(),
         });

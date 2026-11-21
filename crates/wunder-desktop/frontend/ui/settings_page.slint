@@ -1,5 +1,5 @@
 import { I18n } from "i18n.slint";
-import { Theme, ToolCard, ModelCard, ProfileCard, FileCard, WorkspaceFileRow, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard } from "theme.slint";
+import { Theme, ToolCard, ModelCard, ProfileCard, FileCard, WorkspaceFileRow, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, LocalBackupRow } from "theme.slint";
 import { Action, FormField, MiddleHeader, PageState, PageStateKind, ThemeCheck, ThemeSwitch, ThemeSlider } from "components.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { TextFieldActivation, TextFieldMenu } from "text_field.slint";
@@ -509,6 +509,21 @@ export component SettingsPage inherits Rectangle {
     in-out property <string> stress-count: "1";
     in-out property <string> stress-status;
     callback generate-stress-thread();
+    // ---- 数据与恢复：本地备份、恢复与崩溃日志 ----
+    // 备份列表与状态由原生侧投影；恢复只做校验与解包，覆盖留到下次启动。
+    in property <[LocalBackupRow]> data-backups;
+    in-out property <string> data-restore-path;
+    in-out property <bool> data-restore-confirm: false;
+    in property <bool> data-backup-busy: false;
+    in property <string> data-backup-status;
+    in property <bool> data-backup-restart: false;
+    in property <string> data-crash-title;
+    in property <string> data-crash-text;
+    callback refresh-backups();
+    callback backup-now();
+    callback pick-backup-file();
+    callback restore-backup(string);
+    callback view-crash-log();
     // ---- cloud account (§6.1) ----
     // Login state, quota snapshot and the drafts are wired two-way to the
     // shell; the native side owns every cloud call and pushes results back.
@@ -691,11 +706,11 @@ export component SettingsPage inherits Rectangle {
     // have no substring test, so the filter runs natively and the matching
     // categories come back as a bit set (bit N = category N).
     in-out property <string> settings-query: "";
-    // One flag per category, in navigation order (12 categories). Slint 1.18 has
+    // One flag per category, in navigation order (13 categories). Slint 1.18 has
     // no bitwise operators, so the native search projection ships booleans rather
     // than a mask; an all-true list means "no query". Index = nav position, not
     // tab id.
-    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true];
+    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true, true];
     out property <bool> settings-has-matches: root.count-visible() > 0;
     out property <int> settings-visible-count: root.count-visible();    // How many categories the current query keeps; the empty state and the test
     // projections both read this instead of re-deriving the flags.
@@ -711,7 +726,8 @@ export component SettingsPage inherits Rectangle {
             + (root.settings-category-flags[8] ? 1 : 0)
             + (root.settings-category-flags[9] ? 1 : 0)
             + (root.settings-category-flags[10] ? 1 : 0)
-            + (root.settings-category-flags[11] ? 1 : 0);
+            + (root.settings-category-flags[11] ? 1 : 0)
+            + (root.settings-category-flags[12] ? 1 : 0);
     }
     // 换了模型类型后，当前提供方若不在新类型的预设里就切到该类型的默认
     // 提供方；服务地址只在「空着」或「还是上一个预设的地址」时替换，用户
@@ -944,6 +960,13 @@ export component SettingsPage inherits Rectangle {
     changed expert-tool-keyword => { root.search-expert-tools(); }
     callback open-info(string, string);
 
+    // 数据与恢复页每次进入都重读备份目录：别处删掉的归档不能还留在列表里。
+    changed settings-tab => {
+        if (root.settings-tab == 16) {
+            root.refresh-backups();
+        }
+    }
+
 
     // 模型删除确认框。状态由窗口持有（与 settings-open 一致），原生冒烟也
     // 可以据此截图核对文案：模型 ≠ 智能体。
@@ -1100,6 +1123,13 @@ export component SettingsPage inherits Rectangle {
                             title: I18n.stc_archives;
                             selected: root.settings-tab == 10;
                             clicked => { root.settings-tab = 10;  }
+                        }
+                        SettingsNavItem {
+                            visible: root.settings-category-flags[12];
+                            icon: @image-url("../assets/icons/database.svg");
+                            title: I18n.stc_data;
+                            selected: root.settings-tab == 16;
+                            clicked => { root.settings-tab = 16; }
                         }
                         // A live query that matches nothing says so instead of
                         // leaving an empty column with no explanation.
@@ -1888,7 +1918,7 @@ export component SettingsPage inherits Rectangle {
                                 ExpertToolPicker {
                                     groups: root.expert-tool-groups;
                                     toggle(name) => { root.toggle-agent-tool-option(name); }
-                                    toggle-group(title) => { root.toggle-expert-tool-group(title); }
+                                    toggle-group(category) => { root.toggle-expert-tool-group(category); }
                                 }
                                 if root.expert-tool-groups.length == 0 : Text {
                                     height: 44px; text: root.expert-tool-keyword.is-empty ? I18n.ag_empty : I18n.ag_no_matching_tool;
@@ -2175,9 +2205,134 @@ export component SettingsPage inherits Rectangle {
                             }
                         }
                     }
+                    if root.settings-tab == 16 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                        VerticalLayout { padding: 24px; spacing: 16px; alignment: start; vertical-stretch: 1;
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.st_data_backup_title; subtitle: I18n.st_data_backup_note; }
+                                SettingRow { label: I18n.st_data_backup_target; note: root.data-backup-status; last: true;
+                                    Action {
+                                        width: 100px; height: 34px;
+                                        label: root.data-backup-busy ? I18n.st_data_backup_running : I18n.st_data_backup_now;
+                                        show-label: true;
+                                        primary: !root.data-backup-busy;
+                                        enabled: !root.data-backup-busy;
+                                        clicked => { root.backup-now(); }
+                                    }
+                                }
+                            }
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.st_data_restore_title; subtitle: I18n.st_data_restore_note; }
+                                if root.data-backups.length == 0 : Text {
+                                    height: 44px;
+                                    text: I18n.st_data_restore_empty;
+                                    color: Theme.muted; font-size: Theme.font-sm;
+                                    wrap: word-wrap; vertical-alignment: center;
+                                }
+                                // 点一行即选中；按钮仍然要按一次，恢复是不可撤销的危险动作。
+                                for backup in root.data-backups : Rectangle {
+                                    height: 50px;
+                                    border-radius: Theme.radius-sm;
+                                    background: backup.path == root.data-restore-path ? Theme.accent-soft : transparent;
+                                    border-width: 1px;
+                                    border-color: backup.path == root.data-restore-path ? Theme.accent : Theme.border;
+                                    Text {
+                                        x: 10px; y: 7px; width: max(0px, parent.width - 48px); height: 19px;
+                                        text: backup.name; color: Theme.text; font-size: Theme.font-sm; font-weight: 600;
+                                        vertical-alignment: center; overflow: elide;
+                                    }
+                                    Text {
+                                        x: 10px; y: 26px; width: max(0px, parent.width - 48px); height: 16px;
+                                        text: backup.detail; color: Theme.muted; font-size: Theme.font-xs;
+                                        vertical-alignment: center; overflow: elide;
+                                    }
+                                    Rectangle {
+                                        x: parent.width - 28px; y: 17px; width: 16px; height: 16px;
+                                        border-radius: 8px;
+                                        background: backup.path == root.data-restore-path ? Theme.accent : transparent;
+                                        border-width: 1px;
+                                        border-color: backup.path == root.data-restore-path ? Theme.accent : Theme.border-strong;
+                                    }
+                                    backup-row := TouchArea { mouse-cursor: pointer; clicked => { root.data-restore-path = backup.path; } }
+                                }
+                                HorizontalLayout { height: 42px; spacing: 8px;
+                                    Action {
+                                        width: 112px; height: 34px;
+                                        label: I18n.st_data_pick_file;
+                                        show-label: true;
+                                        enabled: !root.data-backup-busy;
+                                        clicked => { root.pick-backup-file(); }
+                                    }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    Action {
+                                        width: 132px; height: 34px;
+                                        label: I18n.st_data_restore_now;
+                                        show-label: true;
+                                        danger: true;
+                                        enabled: !root.data-backup-busy && root.data-restore-path != "";
+                                        clicked => { root.data-restore-confirm = true; }
+                                    }
+                                }
+                                if root.data-backup-restart : Rectangle {
+                                    height: 42px; border-radius: Theme.radius-sm; background: Theme.accent-soft;
+                                    Text {
+                                        x: 10px; width: parent.width - 20px; height: parent.height;
+                                        text: I18n.st_data_restore_ready;
+                                        color: Theme.accent-ink; font-size: Theme.font-xs;
+                                        wrap: word-wrap; vertical-alignment: center;
+                                    }
+                                }
+                            }
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.st_data_crash_title; subtitle: I18n.st_data_crash_note; }
+                                SettingRow { label: I18n.st_data_crash_row; note: root.data-crash-title; last: root.data-crash-text == "";
+                                    Action {
+                                        width: 132px; height: 34px;
+                                        label: I18n.st_data_crash_view;
+                                        show-label: true;
+                                        clicked => { root.view-crash-log(); }
+                                    }
+                                }
+                                if root.data-crash-text != "" : Rectangle {
+                                    height: 240px;
+                                    border-radius: Theme.radius-sm;
+                                    background: Theme.input-readonly-bg;
+                                    border-width: 1px; border-color: Theme.input-border;
+                                    VerticalLayout { padding: 10px; spacing: 0px;
+                                        ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                                            Text {
+                                                width: parent.width - 12px;
+                                                text: root.data-crash-text;
+                                                color: Theme.text;
+                                                font-size: Theme.font-xs;
+                                                wrap: word-wrap;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Text {
+                                text: I18n.st_data_footer;
+                                color: Theme.muted; font-size: Theme.font-xs; wrap: word-wrap;
+                            }
+                        }
+                    }
                 }
             }
         }
+    if root.data-restore-confirm : Rectangle { background: Theme.overlay; TouchArea { clicked => { root.data-restore-confirm = false; } scroll-event(event) => { return accept; } }
+        Rectangle { width: min(420px, parent.width - 44px); height: 196px; border-radius: Theme.radius-lg; background: Theme.surface; border-width: 1px; border-color: Theme.border; TouchArea { }
+            VerticalLayout { padding: 20px; spacing: 10px;
+                Text { height: 24px; text: I18n.st_data_confirm_title; color: Theme.text; font-size: Theme.font-xl; font-weight: 600; }
+                Text { vertical-stretch: 1; text: I18n.st_data_confirm_message; color: Theme.muted; font-size: Theme.font-sm; wrap: word-wrap; }
+                Text { height: 18px; text: root.data-restore-path; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                HorizontalLayout { height: 32px; Rectangle { horizontal-stretch: 1; }
+                    Action { label: I18n.common_cancel; show-label: true; enabled: !root.data-backup-busy; clicked => { root.data-restore-confirm = false; } }
+                    Action { width: 84px; label: I18n.st_data_confirm_action; show-label: true; danger: true; enabled: !root.data-backup-busy;
+                        clicked => { root.data-restore-confirm = false; root.restore-backup(root.data-restore-path); } }
+                }
+            }
+        }
+    }
     if root.model-delete-open : Rectangle { background: Theme.overlay; TouchArea { clicked => { root.model-delete-open = false; } scroll-event(event) => { return accept; } }
         Rectangle { width: min(400px, parent.width - 44px); height: 180px; border-radius: Theme.radius-lg; background: Theme.surface; border-width: 1px; border-color: Theme.border; TouchArea { }
             VerticalLayout { padding: 20px; spacing: 10px;

@@ -5,6 +5,7 @@
 
 pub mod args;
 pub mod native;
+pub mod native_backup;
 pub mod native_command_tasks;
 pub mod native_host_hud;
 pub mod runtime;

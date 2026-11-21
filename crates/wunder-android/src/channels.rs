@@ -2,9 +2,16 @@
 //! Secrets only travel into `save`; every projection stays secret-free.
 
 use crate::engine::Shared;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use wunder_desktop::native::{ChannelAccountCard, NativeChannelAccountEdit};
+use wunder_desktop::native::{
+    ChannelAccountCard, NativeChannelAccountEdit, WeixinQrLoginStatus,
+};
 use wunder_desktop::NativeDesktop;
+
+/// One short window of the weixin QR long poll. The loop re-reads the sheet
+/// between windows so cancelling takes effect within ~3 s.
+const QR_POLL_WINDOW_MS: u64 = 3_000;
 
 #[derive(Clone, Default)]
 pub struct MobileChannelAccount {
@@ -71,6 +78,39 @@ pub struct ChannelEditorView {
     pub draft: crate::MobileChannelDraft,
     pub error: String,
 }
+
+/// State of the native weixin QR login sheet. The bitmap is decoded on the
+/// polling worker, so the render tick only wraps the pixels into a
+/// `slint::Image` and no PNG work happens on the UI thread.
+#[derive(Clone, Default)]
+pub struct ChannelQrView {
+    pub open: bool,
+    /// 0 正在获取 · 1 等待扫码 · 2 已确认 · 3 已过期 · 4 已取消 · 5 失败
+    pub status: i32,
+    pub message: String,
+    pub image_rgba: Vec<u8>,
+    /// 同一张码的 PNG 原件，供「保存图片」在不重编码的情况下落盘。
+    pub image_png: Vec<u8>,
+    pub image_width: u32,
+    pub image_height: u32,
+    /// 扫码确认后待回填的凭据。UI 线程按 `pending_seq` 消费一次，只改这些
+    /// 字段，用户在等待期间输入的账号名称等内容不会被整份草稿覆盖。
+    pub pending: Option<ChannelQrCredentials>,
+    pub pending_seq: u64,
+}
+
+/// Credentials a confirmed QR login hands to the editor draft.
+#[derive(Clone, Default)]
+pub struct ChannelQrCredentials {
+    pub bot_token: String,
+    pub bot_id: String,
+    pub user_id: String,
+    pub api_base: String,
+}
+
+/// Bumped on every start / close. A polling thread only writes while its own
+/// generation is current, so a late reply never paints over a newer attempt.
+static QR_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 pub fn refresh(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
     match desktop.list_channel_accounts() {
@@ -243,6 +283,240 @@ pub fn close_editor(shared: &Arc<Mutex<Shared>>) {
         state.channel_editor_rev = state.channel_editor_rev.wrapping_add(1);
         state.touch();
     }
+}
+
+/// Opens the weixin QR login sheet and starts one polling worker. `force`
+/// discards a still-valid cached QR so 「刷新二维码」 always produces a new one.
+pub fn start_qr_login(
+    desktop: &Arc<NativeDesktop>,
+    shared: &Arc<Mutex<Shared>>,
+    account_id: &str,
+    force: bool,
+) {
+    let target = {
+        let trimmed = account_id.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    };
+    let generation = QR_GENERATION.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+    mutate_qr(shared, generation, |qr| {
+        qr.open = true;
+        qr.status = 0;
+        qr.message.clear();
+        qr.image_rgba.clear();
+        qr.image_png.clear();
+        qr.image_width = 0;
+        qr.image_height = 0;
+    });
+
+    let worker_desktop = Arc::clone(desktop);
+    let worker_shared = Arc::clone(shared);
+    let spawned = std::thread::Builder::new()
+        .name("wunder-android-weixin-qr".into())
+        .spawn(move || {
+            let started = match worker_desktop.start_weixin_qr_login(target.as_deref(), force) {
+                Ok(started) => started,
+                Err(error) => {
+                    let message = format!("无法获取二维码：{error}");
+                    mutate_qr(&worker_shared, generation, |qr| {
+                        qr.open = true;
+                        qr.status = 5;
+                        qr.message = message;
+                    });
+                    return;
+                }
+            };
+            let Some((width, height, rgba, png)) = decode_qr_png(&started.png_data_uri) else {
+                mutate_qr(&worker_shared, generation, |qr| {
+                    qr.open = true;
+                    qr.status = 5;
+                    qr.message = "二维码渲染失败，请刷新重试".into();
+                });
+                return;
+            };
+            mutate_qr(&worker_shared, generation, |qr| {
+                qr.open = true;
+                qr.status = 1;
+                qr.message.clear();
+                qr.image_width = width;
+                qr.image_height = height;
+                qr.image_rgba = rgba;
+                qr.image_png = png;
+            });
+            poll_qr_login(
+                &worker_desktop,
+                &worker_shared,
+                generation,
+                &started.session_key,
+            );
+        });
+    if let Err(error) = spawned {
+        log::error!("spawn android weixin qr worker failed: {error}");
+        mutate_qr(shared, QR_GENERATION.load(Ordering::SeqCst), |qr| {
+            qr.open = true;
+            qr.status = 5;
+            qr.message = "无法启动扫码线程".into();
+        });
+    }
+}
+
+/// Closes the sheet. The generation bump stops the polling worker at its next
+/// window boundary; no thread handle has to be joined.
+pub fn cancel_qr(shared: &Arc<Mutex<Shared>>) {
+    QR_GENERATION.fetch_add(1, Ordering::SeqCst);
+    if let Ok(mut state) = shared.lock() {
+        state.channel_qr.open = false;
+        state.channel_qr.status = 4;
+        state.channel_qr.message.clear();
+        state.channel_qr_rev = state.channel_qr_rev.wrapping_add(1);
+        state.touch();
+    }
+}
+
+/// Saves the current QR to the phone's Downloads so a user who only has this
+/// phone can pick it in WeChat's 「扫一扫 → 相册」.
+pub fn save_qr_image(shared: &Arc<Mutex<Shared>>) {
+    let png = shared
+        .lock()
+        .ok()
+        .map(|state| state.channel_qr.image_png.clone())
+        .filter(|png| !png.is_empty());
+    let Some(png) = png else {
+        notify(shared, "二维码还没生成，请稍后重试");
+        return;
+    };
+    let path = std::env::temp_dir().join("wunder-weixin-qr.png");
+    if let Err(error) = std::fs::write(&path, &png) {
+        notify(shared, format!("无法写入二维码：{error}"));
+        return;
+    }
+    #[cfg(target_os = "android")]
+    {
+        match crate::android_host::save_file_to_phone(
+            &path.to_string_lossy(),
+            "wunder-weixin-qr.png",
+        )
+        .as_str()
+        {
+            "saved" => notify(shared, "二维码已存到「下载」，可在微信「扫一扫 → 相册」中选择"),
+            "pending" => notify(shared, "请选择保存位置"),
+            _ => notify(shared, "保存失败，请稍后重试"),
+        }
+    }
+    // 桌面预览没有手机下载目录，只把文件落到临时目录并如实说明。
+    #[cfg(not(target_os = "android"))]
+    notify(
+        shared,
+        format!("二维码已写入 {}", path.display()),
+    );
+}
+
+/// Loops short wait windows until confirmed, expired, failed or superseded.
+fn poll_qr_login(
+    desktop: &Arc<NativeDesktop>,
+    shared: &Arc<Mutex<Shared>>,
+    generation: u64,
+    session_key: &str,
+) {
+    loop {
+        if QR_GENERATION.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        match desktop.wait_weixin_qr_login(session_key, QR_POLL_WINDOW_MS) {
+            Ok(status) if status.connected => {
+                hand_off_qr_credentials(shared, generation, &status);
+                if let Ok(mut state) = shared.lock() {
+                    state.notify("扫码成功，凭据已填入，保存后生效");
+                    state.touch();
+                }
+                return;
+            }
+            Ok(status) if status.status == "expired" => {
+                mutate_qr(shared, generation, |qr| {
+                    qr.open = true;
+                    qr.status = 3;
+                    qr.message.clear();
+                });
+                return;
+            }
+            Ok(_) => continue,
+            Err(error) => {
+                let text = error.to_string();
+                let expired = text.contains("expired");
+                mutate_qr(shared, generation, |qr| {
+                    qr.open = true;
+                    qr.status = if expired { 3 } else { 5 };
+                    qr.message = if expired { String::new() } else { text };
+                });
+                return;
+            }
+        }
+    }
+}
+
+/// Hands the confirmed credentials to the UI thread. The editor draft itself
+/// is merged there, because only the UI owns a draft the user has been typing
+/// into while the code was on screen.
+fn hand_off_qr_credentials(
+    shared: &Arc<Mutex<Shared>>,
+    generation: u64,
+    status: &WeixinQrLoginStatus,
+) {
+    let credentials = ChannelQrCredentials {
+        bot_token: status.bot_token.clone(),
+        bot_id: status.ilink_bot_id.clone(),
+        user_id: status.ilink_user_id.clone(),
+        api_base: status.api_base.clone(),
+    };
+    mutate_qr(shared, generation, |qr| {
+        qr.open = false;
+        qr.status = 2;
+        qr.message.clear();
+        qr.pending = Some(credentials);
+        qr.pending_seq = qr.pending_seq.wrapping_add(1);
+    });
+}
+
+/// Applies one change to the sheet unless a newer attempt has superseded it.
+fn mutate_qr(shared: &Arc<Mutex<Shared>>, generation: u64, change: impl FnOnce(&mut ChannelQrView)) {
+    if QR_GENERATION.load(Ordering::SeqCst) != generation {
+        return;
+    }
+    let Ok(mut state) = shared.lock() else {
+        return;
+    };
+    if QR_GENERATION.load(Ordering::SeqCst) != generation {
+        return;
+    }
+    change(&mut state.channel_qr);
+    state.channel_qr_rev = state.channel_qr_rev.wrapping_add(1);
+    state.touch();
+}
+
+/// Decodes the locally rendered QR PNG into RGBA pixels and keeps the PNG
+/// bytes beside them: Slint needs pixels, 「保存图片」 needs the file. The code
+/// is opaque, so the decoder's straight alpha is already what Slint's
+/// premultiplied buffer needs.
+fn decode_qr_png(data_uri: &str) -> Option<(u32, u32, Vec<u8>, Vec<u8>)> {
+    use base64::Engine;
+    let encoded = data_uri.strip_prefix("data:image/png;base64,")?;
+    let png = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .ok()?;
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(&png))
+        .with_guessed_format()
+        .ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(2048);
+    limits.max_image_height = Some(2048);
+    limits.max_alloc = Some(16 * 1024 * 1024);
+    reader.limits(limits);
+    let decoded = reader.decode().ok()?;
+    let rgba = decoded.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    if width == 0 || height == 0 {
+        return None;
+    }
+    Some((width, height, rgba.into_raw(), png))
 }
 
 pub fn save(

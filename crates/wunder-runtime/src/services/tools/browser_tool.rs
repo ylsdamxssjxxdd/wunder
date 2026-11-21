@@ -74,16 +74,28 @@ pub fn is_browser_group_name(name: &str) -> bool {
 }
 
 /// The aggregate entry shown to users in place of the provider's tool surface.
+///
+/// The name is the canonical [`BROWSER_GROUP_NAME`] because that is the identity
+/// agent selections persist; the English `browser` alias stays model-facing.
+/// `title` carries the display label for the current UI language.
 pub fn browser_tool_summary_spec() -> ToolSpec {
+    browser_tool_summary_spec_in_language(crate::i18n::prompt_language())
+}
+
+pub fn browser_tool_summary_spec_in_language(language: &str) -> ToolSpec {
     const DESCRIPTION_KEY: &str = "tool.spec.browser_group.description";
-    let mut description = crate::i18n::prompt_t(DESCRIPTION_KEY);
+    let mut description = crate::i18n::t_in_language(DESCRIPTION_KEY, language);
     if description.is_empty() || description == DESCRIPTION_KEY {
         // 文案缺失时保底，不能让聚合条目显示成键名。
         description = "Browser automation as one action tool, bounded by the session, allowed domains and timeout limits.".to_string();
     }
+    let mut title = crate::i18n::t_in_language("tool.title.浏览器", language);
+    if title.is_empty() || title == "tool.title.浏览器" {
+        title = BROWSER_GROUP_NAME.to_string();
+    }
     ToolSpec {
-        name: BROWSER_GROUP_NAME_ALIAS.to_string(),
-        title: None,
+        name: BROWSER_GROUP_NAME.to_string(),
+        title: Some(title),
         description,
         // 聚合条目不可调用，只用于展示与选择，所以不带参数面。
         input_schema: json!({}),

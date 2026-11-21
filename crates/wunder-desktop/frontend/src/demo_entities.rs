@@ -1,5 +1,5 @@
 //! Entity actions in preview mode never persist configuration or credentials.
-use crate::{MainWindow, ModelCard};
+use crate::{LocalBackupRow, MainWindow, ModelCard};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{cell::RefCell, rc::Rc};
 
@@ -100,6 +100,30 @@ pub fn install(app: &MainWindow) {
     crate::entity_state::restore_model(app, "demo-local");
     app.set_workspace_root("本地演示".into());
     app.set_runtime_language("zh-CN".into());
+    // 数据与恢复页的演示数据：三份归档 + 一段崩溃日志，刷新按钮在演示里
+    // 不读真实目录（由 demo 的 refresh 回调覆盖），布局照旧可核对。
+    app.set_data_backups(ModelRc::new(VecModel::from(vec![
+        LocalBackupRow {
+            path: "/home/user/.wunder/backups/wunder-backup-1763694000000.zip".into(),
+            name: "今天 09:41".into(),
+            detail: "1.2 MB · wunder-backup-1763694000000.zip".into(),
+        },
+        LocalBackupRow {
+            path: "/home/user/.wunder/backups/wunder-backup-1763607600000.zip".into(),
+            name: "昨天 18:07".into(),
+            detail: "1.1 MB · wunder-backup-1763607600000.zip".into(),
+        },
+        LocalBackupRow {
+            path: "/home/user/.wunder/backups/wunder-backup-1763380800000.zip".into(),
+            name: "2026-11-16 21:52".into(),
+            detail: "1.0 MB · wunder-backup-1763380800000.zip".into(),
+        },
+    ])));
+    app.set_data_restore_path(
+        "/home/user/.wunder/backups/wunder-backup-1763694000000.zip".into(),
+    );
+    app.set_data_backup_status("共 3 份备份，最近一份 今天 09:41".into());
+    app.on_refresh_backups(|| {});
     app.on_refresh_profile(|| {});
     app.on_save_profile_avatar(|_, _| {});
     let weak = app.as_weak();

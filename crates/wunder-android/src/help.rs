@@ -196,6 +196,24 @@ fn model<T: Clone + 'static>(rows: Vec<T>) -> ModelRc<T> {
     Rc::new(VecModel::from(rows)).into()
 }
 
+/// 正文底部的上一篇 / 下一篇：给出相邻主题的下标与标题，`-1` 表示这一侧
+/// 已经到头（第一篇没有上一篇，末篇没有下一篇）。
+fn push_neighbours(
+    ui: &MobileWindow,
+    index: usize,
+    prev: Option<&Topic>,
+    next: Option<&Topic>,
+) {
+    ui.set_settings_help_prev(prev.map_or(-1, |_| index as i32 - 1));
+    ui.set_settings_help_prev_title(
+        prev.map_or_else(String::new, |topic| topic.title.clone()).into(),
+    );
+    ui.set_settings_help_next(next.map_or(-1, |_| index as i32 + 1));
+    ui.set_settings_help_next_title(
+        next.map_or_else(String::new, |topic| topic.title.clone()).into(),
+    );
+}
+
 impl Help {
     fn new(zh: bool) -> Self {
         Self {
@@ -300,6 +318,12 @@ impl Help {
         let mut blocks = self.renderer.render(&topic.body);
         hydrate_art(&mut blocks);
         self.open = Some(index);
+        // 相邻主题：正文底部直接画出上一篇 / 下一篇，目录顺序就是阅读顺序，
+        // 读完一篇顺势往下翻，不必退回目录再找。标题一起投影，读者点之前
+        // 就知道要去哪一篇。
+        let prev = index.checked_sub(1).and_then(|at| manual.topics.get(at));
+        let next = manual.topics.get(index + 1);
+        push_neighbours(ui, index, prev, next);
         ui.set_settings_help_topic_title(topic.title.as_str().into());
         ui.set_settings_help_blocks(model(blocks));
         ui.set_settings_help_topic_open(true);
@@ -313,6 +337,7 @@ impl Help {
         self.open = None;
         ui.set_settings_help_topic_open(false);
         ui.set_settings_help_blocks(model(Vec::<crate::MdBlock>::new()));
+        push_neighbours(ui, 0, None, None);
     }
 
     fn link(&mut self, ui: &MobileWindow, url: &str) {

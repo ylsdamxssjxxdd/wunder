@@ -89,6 +89,10 @@ std::thread_local! {
     /// Bumped whenever the selection changes. Drawing reads it, which is what schedules the
     /// repaint of the texts whose highlight differs.
     static CHANGES: Pin<Box<Property<u32>>> = Box::pin(Property::new(0));
+    /// The texts of the view a handle drag started in, in reading order. Collected and sorted
+    /// once per drag instead of once per pointer move: on a long transcript the walk plus the
+    /// sort was the whole cost of moving a knob.
+    static HANDLE_PARTS: RefCell<Option<(ItemWeak, Vec<ItemWeak>)>> = const { RefCell::new(None) };
 }
 
 /// What the context menu was opened on: the item whose view `select-all` walks, and the text to
@@ -176,6 +180,9 @@ fn scope_of(item: &ItemRc) -> ItemRc {
 
 fn set(selection: Selection) {
     SELECTION.with(|current| *current.borrow_mut() = Some(selection));
+    // A new selection may run through a different view, so the cached reading
+    // order of the previous handle drag no longer applies.
+    forget_handle_parts();
     changed();
 }
 
@@ -185,6 +192,7 @@ pub(crate) fn clear() {
         return;
     }
     if SELECTION.with(|current| current.borrow_mut().take()).is_some() {
+        forget_handle_parts();
         changed();
     }
 }
@@ -275,6 +283,37 @@ pub(crate) fn pressed_at(window: &crate::api::Window, position: LogicalPoint) {
     pressed();
 }
 
+/// True while the pointer belongs to a selection inside an editable field.
+///
+/// A long press in a `TextInput` selects a word and puts the field's handles
+/// up; the finger that keeps going is extending that range, so the scroll view
+/// around the field must hand the moves over instead of panning the draft
+/// under it and cancelling the selection. Read-only fields are excluded: they
+/// live in the transcript, where panning has to stay available.
+pub(crate) fn input_dragging(
+    window_adapter: &Rc<dyn WindowAdapter>,
+    container: &ItemRc,
+) -> bool {
+    let window = window_adapter.window();
+    let Some(item) = WindowInner::from_pub(window).focus_item.borrow().upgrade() else {
+        return false;
+    };
+    let Some(input) = item.downcast::<crate::items::TextInput>() else { return false };
+    if input.as_pin_ref().read_only() || !input.as_pin_ref().has_selection() {
+        return false;
+    }
+    // Only the view that contains the field keeps the gesture: a selection in
+    // the composer must not stop the transcript from scrolling.
+    let mut parent = item.parent_item(ParentItemTraversalMode::StopAtPopups);
+    while let Some(current) = parent {
+        if &current == container {
+            return true;
+        }
+        parent = current.parent_item(ParentItemTraversalMode::StopAtPopups);
+    }
+    false
+}
+
 /// Move one edge to the text under `position` (window coordinates). The edge
 /// is clamped at the opposite edge, so a drag shrinks at most to an empty
 /// selection and never inverts it.
@@ -284,24 +323,28 @@ pub fn move_handle(
     position: LogicalPoint,
 ) {
     let window_adapter = WindowInner::from_pub(window).window_adapter();
-    let Some((parts, start_item, end_item, start_offset, end_offset)) =
+    let Some((scope, start_item, end_item, start_offset, end_offset)) =
         SELECTION.with(|current| {
             let mut slot = current.borrow_mut();
             let selection = slot.as_mut()?;
             let scope = selection.scope.upgrade()?;
-            let mut parts = Vec::new();
-            // `resolve` only fills `parts` when an edge's item was rebuilt, so
-            // always collect: the handle drag needs the reading order.
-            collect(&scope, &mut parts);
-            let start = resolve(&mut selection.start, &scope, &mut parts)?;
-            let end = resolve(&mut selection.end, &scope, &mut parts)?;
-            Some((parts, start, end, selection.start.offset, selection.end.offset))
+            let mut repair = Vec::new();
+            let start = resolve(&mut selection.start, &scope, &mut repair)?;
+            let end = resolve(&mut selection.end, &scope, &mut repair)?;
+            Some((scope, start, end, selection.start.offset, selection.end.offset))
         })
     else {
         return;
     };
 
-    let Some(target) = item_at(&parts, position) else { return };
+    let parts = handle_parts(&scope);
+    // Read every block's window rect once per move and hit-test that snapshot.
+    // The old path asked for the rects inside the sort and again inside the
+    // nearest-block scan, which is thousands of ancestor walks per pointer
+    // move on a long transcript.
+    let rects: Vec<(LogicalRect, ItemRc)> =
+        parts.iter().map(|part| (window_rect(part), part.clone())).collect();
+    let Some(target) = item_at(&rects, position) else { return };
     let Some(text) = target.downcast::<StyledTextItem>() else { return };
     let local = window_to_item_position(&target, position);
     let Some(range) =
@@ -310,9 +353,22 @@ pub fn move_handle(
     else {
         return;
     };
-    let Some(ordinal) = parts.iter().position(|part| part == &target) else { return };
-    let start_ordinal = parts.iter().position(|part| part == &start_item).unwrap_or(0);
-    let end_ordinal = parts.iter().position(|part| part == &end_item).unwrap_or(0);
+    // One pass for all three ordinals; each used to be its own linear search.
+    let mut ordinal = None;
+    let mut start_ordinal = 0;
+    let mut end_ordinal = 0;
+    for (index, part) in parts.iter().enumerate() {
+        if ordinal.is_none() && part == &target {
+            ordinal = Some(index);
+        }
+        if part == &start_item {
+            start_ordinal = index;
+        }
+        if part == &end_item {
+            end_ordinal = index;
+        }
+    }
+    let Some(ordinal) = ordinal else { return };
 
     let new_edge = match handle {
         SelectionHandle::Start if (ordinal, range.start) > (end_ordinal, end_offset) => Edge {
@@ -338,25 +394,51 @@ pub fn move_handle(
     changed();
 }
 
+/// The text blocks of `scope` in reading order, reused across the moves of one
+/// drag. A streaming view rebuilds its blocks, which kills the weak references
+/// below; the list is then collected again instead of dragging onto stale
+/// texts. Holding weak references (not the items themselves) keeps a rebuild
+/// free to drop the old blocks.
+fn handle_parts(scope: &ItemRc) -> Vec<ItemRc> {
+    let cached = HANDLE_PARTS.with(|cache| -> Option<Vec<ItemRc>> {
+        let cache = cache.borrow();
+        let (cached_scope, parts) = cache.as_ref()?;
+        if &cached_scope.upgrade()? != scope {
+            return None;
+        }
+        parts.iter().map(|part| part.upgrade()).collect::<Option<Vec<ItemRc>>>()
+    });
+    if let Some(parts) = cached {
+        return parts;
+    }
+    let mut parts = Vec::new();
+    collect(scope, &mut parts);
+    let weak: Vec<ItemWeak> = parts.iter().map(|part| part.downgrade()).collect();
+    HANDLE_PARTS.with(|cache| *cache.borrow_mut() = Some((scope.downgrade(), weak)));
+    parts
+}
+
+/// Forget the cached reading order; the next handle move re-collects it.
+fn forget_handle_parts() {
+    HANDLE_PARTS.with(|cache| *cache.borrow_mut() = None);
+}
+
 /// The text block under `position`, or the nearest one vertically when the
 /// pointer is beyond the first or last block: a handle drag past the viewport
-/// keeps extending the edge instead of stopping.
-fn item_at(parts: &[ItemRc], position: LogicalPoint) -> Option<ItemRc> {
-    if let Some(item) = parts
-        .iter()
-        .find(|part| is_text(part) && window_rect(part).contains(position))
-    {
+/// keeps extending the edge instead of stopping. Rects come from the caller's
+/// snapshot, so each block is measured at most once per move.
+fn item_at(parts: &[(LogicalRect, ItemRc)], position: LogicalPoint) -> Option<ItemRc> {
+    if let Some((_, item)) = parts.iter().find(|(rect, _)| rect.contains(position)) {
         return Some(item.clone());
     }
-    parts
-        .iter()
-        .filter(|part| is_text(part))
-        .min_by(|a, b| {
-            let da = vertical_distance(window_rect(a), position);
-            let db = vertical_distance(window_rect(b), position);
-            da.partial_cmp(&db).unwrap_or(core::cmp::Ordering::Equal)
-        })
-        .cloned()
+    let mut nearest: Option<(f32, &ItemRc)> = None;
+    for (rect, item) in parts {
+        let distance = vertical_distance(*rect, position);
+        if nearest.as_ref().map_or(true, |(closest, _)| distance < *closest) {
+            nearest = Some((distance, item));
+        }
+    }
+    nearest.map(|(_, item)| item.clone())
 }
 
 fn vertical_distance(rect: LogicalRect, position: LogicalPoint) -> f32 {

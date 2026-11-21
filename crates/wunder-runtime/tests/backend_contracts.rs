@@ -272,15 +272,8 @@ async fn tools_catalog_hides_unavailable_tools_and_resolves_enabled_aliases() {
         .expect("configure tool visibility");
 
     let catalog = request_tools_catalog(&ctx.server_app).await;
-    let read_name = if wunder_server::i18n::get_language()
-        .to_lowercase()
-        .starts_with("en")
-    {
-        "read_file"
-    } else {
-        "读取文件"
-    };
-    assert_builtin_catalog_names(&catalog, &HashSet::from([read_name.to_string()]));
+    // 清单身份始终是规范名，模型侧的英文别名不进入用户目录。
+    assert_builtin_catalog_names(&catalog, &HashSet::from([String::from("读取文件")]));
 }
 
 #[tokio::test]
@@ -309,10 +302,7 @@ async fn tools_catalog_tracks_browser_switches_without_builtin_whitelist_entries
 
         let catalog = request_tools_catalog(&ctx.server_app).await;
         let expected = if visible {
-            HashSet::from([wunder_server::tools::browser_tool_summary_spec(
-                &wunder_server::i18n::get_language().to_lowercase(),
-            )
-            .name])
+            HashSet::from([wunder_server::tools::BROWSER_GROUP_NAME.to_string()])
         } else {
             HashSet::new()
         };

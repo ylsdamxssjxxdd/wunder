@@ -25,9 +25,9 @@ use wunder_desktop::native::{
     NativeToolFiles, NativeToolResource, ToolResourceKind,
 };
 use wunder_desktop::{
-    AgentSettingsEdit, CURRENT_VERSION, DEFAULT_AGENT_ID, ModelEdit, NativeChatEvent,
-    NativeChatInput, NativeChatTurn, NativeCronJobEdit, NativeDesktop, NativeStream,
-    NativeThreadUpdate, NativeThreadWatchCancel, NativeWorkflowEntry, ToolRecord, WorkspaceEdit,
+    AgentSettingsEdit, ModelEdit, NativeChatEvent, NativeChatInput, NativeChatTurn,
+    NativeCronJobEdit, NativeDesktop, NativeStream, NativeThreadUpdate, NativeThreadWatchCancel,
+    NativeWorkflowEntry, ToolRecord, WorkspaceEdit, CURRENT_VERSION, DEFAULT_AGENT_ID,
 };
 
 pub enum Command {
@@ -180,7 +180,6 @@ pub enum Command {
     },
     SavePreferences {
         theme: String,
-        send_key: String,
         font_size: i32,
     },
     SaveLanguage(String),
@@ -225,7 +224,15 @@ pub enum Command {
     InquiryPageMove(i32),
     InquiryExpandToggle,
     InquirySubmit,
-    RefreshTasks,
+    /// 重投影浮层的活动区块。`deep` 为真时（浮层打开）回读一次线程日志里的
+    /// 子智能体卡片，与桌面版浮层同一口径；浮层关闭时只用内存里的回合卡片。
+    RefreshTasks {
+        deep: bool,
+    },
+    /// 终止一条仍在执行的命令任务（浮层里的后台任务行）。
+    TerminateTask(String),
+    /// 中断一个仍在运行的子智能体（浮层里的子智能体行）。
+    StopSubagent(String),
     // ---- tool manager -------------------------------------------------
     RefreshTools,
     SelectToolServer {
@@ -297,7 +304,7 @@ pub enum Command {
         system_prompt: String,
     },
     ToggleAgentToolGroup {
-        title: String,
+        category: String,
         select: bool,
         description: String,
         system_prompt: String,
@@ -397,6 +404,14 @@ pub enum Command {
     OpenChannelLogs(String),
     CloseChannelLogs,
     DeleteChannelBinding(String),
+    /// 打开微信机器人扫码登录面板；`force` 丢弃仍有效的缓存二维码。
+    StartChannelQr {
+        account_id: String,
+        force: bool,
+    },
+    CancelChannelQr,
+    /// 把当前二维码另存到手机下载目录（单机扫码时用微信相册扫码）。
+    SaveChannelQr,
     // ---- local backup / crash reports ---------------------------------
     RefreshBackup,
     BackupNow,
@@ -411,7 +426,6 @@ pub enum Command {
 pub struct SettingsView {
     pub theme: String,
     pub font_size: i32,
-    pub send_key: String,
     pub language: String,
     pub workspace_root: String,
     pub update_source: String,
@@ -423,13 +437,23 @@ impl Default for SettingsView {
         Self {
             theme: "terracotta".into(),
             font_size: 16,
-            send_key: "enter".into(),
             language: "zh-CN".into(),
             workspace_root: String::new(),
             update_source: "cloud".into(),
             version: CURRENT_VERSION.into(),
         }
     }
+}
+
+/// One row of 设置 → 数据与恢复 → 从已有备份恢复.
+///
+/// `detail` carries size and file name; `name` is the readable timestamp the
+/// row shows, so the list never asks the user to read a millis file name.
+#[derive(Clone, Default)]
+pub struct BackupEntry {
+    pub path: String,
+    pub name: String,
+    pub detail: String,
 }
 
 /// One selectable companion library entry for the settings picker.
@@ -764,6 +788,7 @@ pub struct ToolFileView {
 /// so the engine never stores it; the tick converts this on the main thread.
 #[derive(Clone, Default)]
 pub struct AgentToolGroupView {
+    pub category: String,
     pub title: String,
     pub tools: Vec<MobileTool>,
     pub all_selected: bool,
@@ -1058,6 +1083,9 @@ pub struct Shared {
     pub channels: crate::channels::ChannelsView,
     pub channel_editor_rev: u64,
     pub channel_editor: Option<crate::channels::ChannelEditorView>,
+    /// 微信机器人扫码登录面板：二维码位图已由工作线程解码，UI 只负责包成 Image。
+    pub channel_qr_rev: u64,
+    pub channel_qr: crate::channels::ChannelQrView,
     pub inquiry: Option<InquiryView>,
     pub inquiry_rev: u64,
     /// 目标横幅与计划面板（输入带上沿）。
@@ -1065,10 +1093,10 @@ pub struct Shared {
     pub goal_rev: u64,
     pub plan: PlanView,
     pub plan_rev: u64,
-    /// Live command sessions in the active thread and the child agents a
-    /// finished turn still owns; both feed the composer's status pills.
-    pub running_task_count: i32,
-    pub subagent_count: i32,
+    /// 模型浮层「后台任务 / 子智能体」区块：本线程仍在执行的命令与本线程的
+    /// 子智能体。引擎每秒重投影一次（行数与文案都在 Rust 侧定稿）。
+    pub activity: crate::activity::ActivityView,
+    pub activity_rev: u64,
     /// Consumption keys of panels the user already answered in this process.
     /// A late durable replay of the waiting turn must not reopen them.
     pub consumed_inquiries: std::collections::VecDeque<String>,
@@ -1079,6 +1107,8 @@ pub struct Shared {
     pub backup_phase: String,
     pub backup_message: String,
     pub backup_path: String,
+    /// 缓存目录里已有的备份（新→旧），供「从已有备份恢复」直接选。
+    pub backups: Vec<BackupEntry>,
     /// The staged restore is applied on the next process start.
     pub backup_restart: bool,
     pub crash_log_title: String,
@@ -1828,15 +1858,27 @@ fn run(
                     Err(error) => notify(&shared, format!("读取更新源设置失败：{error}")),
                 }
             }
-            Command::RefreshTasks => {
-                let session = shared.lock().unwrap().session_id.clone();
-                let count = desktop.running_command_tasks(&session).len() as i32;
-                if let Ok(mut state) = shared.lock() {
-                    if state.running_task_count != count {
-                        state.running_task_count = count;
-                        state.touch();
-                    }
+            Command::RefreshTasks { deep } => refresh_activity(&desktop, &shared, deep),
+            Command::TerminateTask(id) => {
+                let session = shared
+                    .lock()
+                    .map(|state| state.session_id.clone())
+                    .unwrap_or_default();
+                if desktop.terminate_command_task(&session, &id) {
+                    notify(&shared, "已终止后台任务");
                 }
+                refresh_activity(&desktop, &shared, true);
+            }
+            Command::StopSubagent(id) => {
+                let session = shared
+                    .lock()
+                    .map(|state| state.session_id.clone())
+                    .unwrap_or_default();
+                match desktop.subagent_control(&session, "interrupt", &id) {
+                    Ok(()) => notify(&shared, "已请求终止子智能体"),
+                    Err(error) => notify(&shared, format!("终止子智能体失败：{error}")),
+                }
+                refresh_activity(&desktop, &shared, true);
             }
             Command::RefreshUbuntu => refresh_ubuntu(&desktop, &shared),
             Command::InstallUbuntu => {
@@ -1989,15 +2031,16 @@ fn run(
                 let session = shared.lock().unwrap().session_id.clone();
                 release_next_waiting(&desktop, &shared, &session);
             }
-            Command::SavePreferences {
-                theme,
-                send_key,
-                font_size,
-            } => {
-                let update_source = desktop
-                    .get_desktop_settings()
-                    .map(|settings| settings.update_source)
-                    .unwrap_or_else(|_| "cloud".into());
+            Command::SavePreferences { theme, font_size } => {
+                // 手机不提供「发送键」设置：沿用配置里已存的值，只更新外观项。
+                let settings = desktop.get_desktop_settings().ok();
+                let update_source = settings
+                    .as_ref()
+                    .map(|settings| settings.update_source.clone())
+                    .unwrap_or_else(|| "cloud".into());
+                let send_key = settings
+                    .map(|settings| settings.send_key)
+                    .unwrap_or_else(|| "enter".into());
                 match desktop.save_preferences(&theme, &send_key, font_size, &update_source) {
                     Ok(_) => {
                         let active = shared.lock().unwrap().session_id.clone();
@@ -2135,13 +2178,13 @@ fn run(
                 );
             }
             Command::ToggleAgentToolGroup {
-                title,
+                category,
                 select,
                 description,
                 system_prompt,
             } => {
                 let (mut tools, questions) = agent_selection(&shared);
-                let category = category_for_group(&title);
+                // Slint 回传的是分组身份（category），标题只用于展示。
                 match desktop.list_tools() {
                     Ok(catalog) => {
                         let names = catalog
@@ -2367,6 +2410,11 @@ fn run(
             Command::DeleteChannelBinding(id) => {
                 crate::channels::delete_binding(&desktop, &shared, &id);
             }
+            Command::StartChannelQr { account_id, force } => {
+                crate::channels::start_qr_login(&desktop, &shared, &account_id, force);
+            }
+            Command::CancelChannelQr => crate::channels::cancel_qr(&shared),
+            Command::SaveChannelQr => crate::channels::save_qr_image(&shared),
             Command::CloseModelEditor => {
                 if let Ok(mut state) = shared.lock() {
                     state.editor = None;
@@ -2771,15 +2819,18 @@ fn refresh_permissions(shared: &Arc<Mutex<Shared>>) {
     }
 }
 
-/// Refresh the newest local archive shown by 设置 → 数据与恢复.
+/// Refresh the local archives shown by 设置 → 数据与恢复.
 #[cfg(target_os = "android")]
 fn refresh_backup(shared: &Arc<Mutex<Shared>>) {
-    let latest = crate::backup::latest_backup()
-        .map(|path| path.to_string_lossy().into_owned())
+    let backups = backup_entries();
+    let latest = backups
+        .first()
+        .map(|entry| entry.path.clone())
         .unwrap_or_default();
     if let Ok(mut state) = shared.lock() {
-        if state.backup_path != latest {
+        if state.backup_path != latest || !same_backup_paths(&state.backups, &backups) {
             state.backup_path = latest;
+            state.backups = backups;
             state.backup_rev = state.backup_rev.wrapping_add(1);
             state.touch();
         }
@@ -2788,6 +2839,73 @@ fn refresh_backup(shared: &Arc<Mutex<Shared>>) {
 
 #[cfg(not(target_os = "android"))]
 fn refresh_backup(_shared: &Arc<Mutex<Shared>>) {}
+
+/// Project the cache directory's archives into selectable rows, newest first.
+#[cfg(target_os = "android")]
+fn backup_entries() -> Vec<BackupEntry> {
+    crate::backup::list_backups()
+        .iter()
+        .map(|path| backup_entry(path))
+        .collect()
+}
+
+#[cfg(target_os = "android")]
+fn backup_entry(path: &std::path::Path) -> BackupEntry {
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let meta = std::fs::metadata(path).ok();
+    let stamp = file_name
+        .strip_prefix("wunder-backup-")
+        .and_then(|rest| rest.strip_suffix(".zip"))
+        .and_then(|millis| millis.parse::<i64>().ok())
+        .and_then(chrono::DateTime::from_timestamp_millis)
+        .map(|utc| utc.with_timezone(&chrono::Local))
+        .or_else(|| {
+            let modified = meta.as_ref()?.modified().ok()?;
+            Some(chrono::DateTime::<chrono::Local>::from(modified))
+        });
+    let name = stamp
+        .map(|stamp| {
+            let today = chrono::Local::now().date_naive();
+            let day = stamp.date_naive();
+            match (today - day).num_days() {
+                0 => format!("今天 {}", stamp.format("%H:%M")),
+                1 => format!("昨天 {}", stamp.format("%H:%M")),
+                _ => stamp.format("%Y-%m-%d %H:%M").to_string(),
+            }
+        })
+        .unwrap_or_else(|| file_name.clone());
+    let detail = match meta {
+        Some(meta) => format!("{} · {file_name}", format_backup_size(meta.len())),
+        None => file_name,
+    };
+    BackupEntry {
+        path: path.to_string_lossy().into_owned(),
+        name,
+        detail,
+    }
+}
+
+#[cfg(target_os = "android")]
+fn format_backup_size(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    let bytes = bytes as f64;
+    if bytes >= MB {
+        format!("{:.1} MB", bytes / MB)
+    } else if bytes >= KB {
+        format!("{:.0} KB", bytes / KB)
+    } else {
+        format!("{} B", bytes as u64)
+    }
+}
+
+#[cfg(target_os = "android")]
+fn same_backup_paths(left: &[BackupEntry], right: &[BackupEntry]) -> bool {
+    left.len() == right.len() && left.iter().zip(right).all(|(a, b)| a.path == b.path)
+}
 
 /// Package config and databases on a worker; the engine loop keeps serving.
 #[cfg(target_os = "android")]
@@ -2811,6 +2929,9 @@ fn start_backup(shared: &Arc<Mutex<Shared>>) {
         .name("wunder-android-backup".into())
         .spawn(move || {
             let result = crate::backup::backup();
+            // Listing touches the JVM and the cache directory: do it before the
+            // lock so the engine loop never waits on it.
+            let listed = backup_entries();
             if let Ok(mut state) = worker_shared.lock() {
                 match result {
                     Ok(path) => {
@@ -2818,6 +2939,8 @@ fn start_backup(shared: &Arc<Mutex<Shared>>) {
                         state.backup_phase = "done".into();
                         state.backup_message = format!("已备份到 {path}");
                         state.backup_path = path;
+                        // The new archive is the newest row of the restore list.
+                        state.backups = listed;
                         state.notify("本地备份已完成");
                     }
                     Err(error) => {
@@ -3426,7 +3549,12 @@ fn select_session(
         .ok()
         .filter(|turns| !turns.is_empty())
         .unwrap_or_else(|| snapshot.turns.clone());
-    let running_tasks = desktop.running_command_tasks(session).len() as i32;
+    let running_tasks = desktop.running_command_tasks(session);
+    let activity = crate::activity::project(
+        &running_tasks,
+        &initial_turns,
+        crate::activity::now_epoch_seconds(),
+    );
     {
         let mut state = shared.lock().unwrap();
         state.session_id = snapshot.session.id.clone();
@@ -3471,8 +3599,8 @@ fn select_session(
         state.inquiry_rev = state.inquiry_rev.wrapping_add(1);
         state.live_rows.clear();
         state.live_root.clear();
-        state.running_task_count = running_tasks;
-        state.subagent_count = running_subagents(&initial_turns);
+        state.activity = activity;
+        state.activity_rev = state.activity_rev.wrapping_add(1);
         state.rows_rev = state.rows_rev.wrapping_add(1);
         state.live_rev = state.live_rev.wrapping_add(1);
         state.stream_revision = state.stream_revision.wrapping_add(1);
@@ -3632,12 +3760,46 @@ fn apply_plan_event(shared: &Arc<Mutex<Shared>>, value: &serde_json::Value) {
     state.touch();
 }
 
-fn running_subagents(turns: &[NativeChatTurn]) -> i32 {
-    turns
-        .iter()
-        .flat_map(|turn| turn.subagents.iter())
-        .filter(|card| !card.terminal)
-        .count() as i32
+/// 重投影模型浮层的活动区块：本线程仍在执行的命令 + 已加载回合里的子智能体。
+///
+/// 命令表来自运行时命令会话（内存投影，按秒轮询没有代价）；子智能体卡片在
+/// 浮层打开时回读线程日志、关闭时用内存里的回合卡片。列表内容不变时不写回
+/// `Shared`，Slint 侧也就不会每秒重建模型。
+fn refresh_activity(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, deep: bool) {
+    let session = match shared.lock() {
+        Ok(state) => state.session_id.clone(),
+        Err(_) => return,
+    };
+    if session.trim().is_empty() {
+        return;
+    }
+    let tasks = desktop.running_command_tasks(&session);
+    // 浮层打开时回读线程日志：正在跑的与已结束的子智能体都在这里，跨回合不漏；
+    // 浮层关着时退回内存里的回合卡片，不产生多余存储读取。
+    let cards = if deep {
+        desktop.subagent_cards(&session).ok()
+    } else {
+        None
+    };
+    let Ok(mut state) = shared.lock() else {
+        return;
+    };
+    if state.session_id != session {
+        return;
+    }
+    let now = crate::activity::now_epoch_seconds();
+    let activity = match &cards {
+        Some(cards) => {
+            let refs: Vec<&wunder_desktop::NativeSubagentCard> = cards.iter().collect();
+            crate::activity::project_cards(&tasks, &refs, now)
+        }
+        None => crate::activity::project(&tasks, &state.durable_turns, now),
+    };
+    if state.activity != activity {
+        state.activity = activity;
+        state.activity_rev = state.activity_rev.wrapping_add(1);
+        state.touch();
+    }
 }
 
 fn project_turns(turns: &[wunder_desktop::NativeChatTurn]) -> Vec<RowData> {
@@ -3689,7 +3851,11 @@ fn project_turns_preserving(turns: &[NativeChatTurn], previous: &[RowData]) -> V
         for child in &mut row.process_children {
             // 用户点过的条目沿用他的选择；没点过的按最新状态重算（命令输出
             // 运行中展开、结束后收起），不被上一次的自动状态粘住。
-            if !child_manual.get(child.id.as_str()).copied().unwrap_or(false) {
+            if !child_manual
+                .get(child.id.as_str())
+                .copied()
+                .unwrap_or(false)
+            {
                 continue;
             }
             child.manual = true;
@@ -3766,11 +3932,6 @@ fn publish_durable(
             && !turns.is_empty()
             && turns.iter().all(|turn| turn.root_id == state.live_root);
         merge_turns(&mut state.durable_turns, turns);
-        let subagents = running_subagents(&state.durable_turns);
-        if state.subagent_count != subagents {
-            state.subagent_count = subagents;
-            state.touch();
-        }
         if live_owned {
             restore_pending_inquiry(&mut state, session);
             false
@@ -3809,7 +3970,6 @@ fn publish_durable(
             return;
         }
         merge_turns(&mut state.durable_turns, detailed);
-        state.subagent_count = running_subagents(&state.durable_turns);
         let rows = project_turns_preserving(&state.durable_turns, &state.durable_rows);
         state.durable_rows = rows;
         restore_pending_inquiry(&mut state, session);
@@ -3862,7 +4022,6 @@ fn refresh_sessions(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, active
             state.settings = SettingsView {
                 theme: settings.theme.clone(),
                 font_size: settings.font_size,
-                send_key: settings.send_key.clone(),
                 language: settings.language.clone(),
                 workspace_root: settings.workspace_root.clone(),
                 update_source: settings.update_source.clone(),
@@ -3957,6 +4116,7 @@ fn mobile_tool(tool: &ToolRecord, enabled: bool) -> MobileTool {
         wunder_desktop::tool_icons::tool_card_visual(&tool.name, &tool.description, &tool.category);
     MobileTool {
         name: tool.name.as_str().into(),
+        title: tool.title.as_str().into(),
         description: tool.description.as_str().into(),
         category: tool.category.as_str().into(),
         enabled,
@@ -4006,19 +4166,39 @@ fn dedup_text(values: Vec<String>, limit: usize) -> Vec<String> {
     result
 }
 
-fn category_for_group(title: &str) -> &str {
-    match title {
-        "技能工具" => "技能",
-        "知识库工具" => "知识库",
-        "自定义工具" => "用户工具",
-        other => other,
+/// 智能体设置里的工具分组标题。身份仍是 `category`，标题只做展示。
+fn agent_group_title(category: &str, zh: bool) -> String {
+    match (category, zh) {
+        ("内置工具", true) => "内置工具".to_string(),
+        ("内置工具", false) => "Built-in tools".to_string(),
+        ("MCP 工具", true) => "MCP 工具".to_string(),
+        ("MCP 工具", false) => "MCP tools".to_string(),
+        ("A2A 工具", true) => "A2A 工具".to_string(),
+        ("A2A 工具", false) => "A2A tools".to_string(),
+        ("技能", true) => "技能工具".to_string(),
+        ("技能", false) => "Skill tools".to_string(),
+        ("知识库", true) => "知识库工具".to_string(),
+        ("知识库", false) => "Knowledge tools".to_string(),
+        ("用户工具", true) => "自定义工具".to_string(),
+        ("用户工具", false) => "Custom tools".to_string(),
+        ("共享工具", true) => "共享工具".to_string(),
+        ("共享工具", false) => "Shared tools".to_string(),
+        (other, _) => other.to_string(),
     }
+}
+
+fn ui_zh(shared: &Arc<Mutex<Shared>>) -> bool {
+    shared
+        .lock()
+        .map(|state| !state.settings.language.starts_with("en"))
+        .unwrap_or(true)
 }
 
 fn agent_groups(
     catalog: &[ToolRecord],
     tool_names: &[String],
     query: &str,
+    zh: bool,
 ) -> Vec<AgentToolGroupView> {
     let query = query.trim().to_lowercase();
     let mut groups = Vec::new();
@@ -4036,6 +4216,7 @@ fn agent_groups(
             .filter(|tool| {
                 query.is_empty()
                     || tool.name.to_lowercase().contains(&query)
+                    || tool.title.to_lowercase().contains(&query)
                     || tool.description.to_lowercase().contains(&query)
             })
             .map(|tool| mobile_tool(tool, tool_names.iter().any(|name| name == &tool.name)))
@@ -4043,15 +4224,10 @@ fn agent_groups(
         if tools.is_empty() {
             continue;
         }
-        let title = match category {
-            "技能" => "技能工具",
-            "知识库" => "知识库工具",
-            "用户工具" => "自定义工具",
-            other => other,
-        };
         let all_selected = tools.iter().all(|tool| tool.enabled);
         groups.push(AgentToolGroupView {
-            title: title.into(),
+            category: category.into(),
+            title: agent_group_title(category, zh).into(),
             tools,
             all_selected,
         });
@@ -4680,7 +4856,7 @@ fn refresh_agent(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
     // A fresh load always starts unfiltered; the tick pushes the empty search
     // back so the field and the list never disagree.
     let query = String::new();
-    let groups = agent_groups(&catalog, &agent.tool_names, &query);
+    let groups = agent_groups(&catalog, &agent.tool_names, &query, ui_zh(shared));
     let preset_questions = dedup_text(agent.preset_questions.clone(), 12);
     if let Ok(mut state) = shared.lock() {
         let seed = state.agent.seed.wrapping_add(1);
@@ -4731,7 +4907,11 @@ fn search_agent_tools(shared: &Arc<Mutex<Shared>>, query: &str) {
         Ok(state) => (state.agent_catalog.clone(), state.agent.tool_names.clone()),
         Err(_) => return,
     };
-    let groups = agent_groups(&catalog, &tool_names, query);
+    let zh = shared
+        .lock()
+        .map(|state| !state.settings.language.starts_with("en"))
+        .unwrap_or(true);
+    let groups = agent_groups(&catalog, &tool_names, query, zh);
     if let Ok(mut state) = shared.lock() {
         state.agent.search = query.to_string();
         state.agent.groups = groups;
@@ -4786,7 +4966,8 @@ fn persist_agent(
             if let Ok(mut state) = shared.lock() {
                 let query = state.agent.search.clone();
                 let seed = state.agent.seed;
-                let groups = agent_groups(&catalog, &updated.tool_names, &query);
+                let zh = !state.settings.language.starts_with("en");
+                let groups = agent_groups(&catalog, &updated.tool_names, &query, zh);
                 state.agent = AgentView {
                     name: updated.name.clone(),
                     description: updated.description.clone(),
@@ -6356,6 +6537,14 @@ fn upload_workspace_at(
             return;
         }
     };
+    // 目标目录可能是第一次用到：相机照片落在 temp/chat_media/source，工作区
+    // 里原本没有这几层目录时，workspace_local_upload_to 会以「目标目录不存在」
+    // 直接失败，用户看到的就是「上传失败」。先按工作区边界把它建出来。
+    if !dir.is_empty() {
+        if let Err(error) = desktop.workspace_local_mkdir(&root, dir) {
+            log::warn!("prepare the upload directory {dir}: {error}");
+        }
+    }
     let mut existing: std::collections::HashSet<String> = desktop
         .workspace_local_listing(&root, dir, 0)
         .map(|listing| {
@@ -6429,7 +6618,10 @@ fn upload_workspace_at(
     } else if uploaded == 0 {
         notify(shared, format!("上传失败（{failed} {noun}）"));
     } else {
-        notify(shared, format!("已上传 {uploaded} {noun}，还有 {failed} 个失败"));
+        notify(
+            shared,
+            format!("已上传 {uploaded} {noun}，还有 {failed} 个失败"),
+        );
     }
 }
 
@@ -6636,7 +6828,7 @@ fn start_voice(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
     }
     notify(
         shared,
-        "请先在设置中配置语音识别模型（这台设备也没有可用的系统识别）",
+        "这台设备没有系统识别服务：请在「设置 → 模型」里添加一个语音识别（ASR）模型",
     );
 }
 
@@ -8099,7 +8291,6 @@ fn start_stream_with_id(
                 if let Ok(mut state) = shared.lock() {
                     if state.session_id == session {
                         merge_turns(&mut state.durable_turns, turns);
-                        state.subagent_count = running_subagents(&state.durable_turns);
                         let rows =
                             project_turns_preserving(&state.durable_turns, &state.durable_rows);
                         state.durable_rows = rows;
@@ -8246,7 +8437,11 @@ fn publish_live(shared: &Arc<Mutex<Shared>>, session: &str, stream_id: u64, live
                 for child in &mut row.process_children {
                     // 只有用户亲手点过的条目沿用旧状态；命令输出的自动展开/
                     // 收起每一帧都按最新执行状态重算。
-                    if !child_manual.get(child.id.as_str()).copied().unwrap_or(false) {
+                    if !child_manual
+                        .get(child.id.as_str())
+                        .copied()
+                        .unwrap_or(false)
+                    {
                         continue;
                     }
                     child.manual = true;
@@ -9358,12 +9553,11 @@ mod tests {
         assert_eq!(bar.process_children[2].detail, "第二段");
         assert_eq!(bar.process_children[2].status_kind, project::STATUS_DONE);
         // The answer starts a new phase; no thought is left spinning.
-        assert!(
-            bar.process_children
-                .iter()
-                .filter(|child| child.kind == project::KIND_REASON)
-                .all(|child| child.status_kind != project::STATUS_RUNNING)
-        );
+        assert!(bar
+            .process_children
+            .iter()
+            .filter(|child| child.kind == project::KIND_REASON)
+            .all(|child| child.status_kind != project::STATUS_RUNNING));
     }
 
     #[test]
@@ -9419,6 +9613,7 @@ mod tests {
     fn tool_record(name: &str, category: &str) -> ToolRecord {
         ToolRecord {
             name: name.into(),
+            title: name.into(),
             description: format!("{name} description"),
             category: category.into(),
         }
@@ -9432,7 +9627,7 @@ mod tests {
             tool_record("summarize", "技能"),
             tool_record("weather", "MCP 工具"),
         ];
-        let groups = agent_groups(&catalog, &["read_file".to_string()], "");
+        let groups = agent_groups(&catalog, &["read_file".to_string()], "", true);
         let titles = groups.iter().map(|g| g.title.as_str()).collect::<Vec<_>>();
         assert_eq!(titles, ["内置工具", "MCP 工具", "技能工具"]);
         assert_eq!(groups[0].tools.len(), 2);
@@ -9444,18 +9639,30 @@ mod tests {
         assert_eq!(groups[0].tools[0].icon.as_str(), "file-lines");
         assert_eq!(groups[0].tools[1].icon.as_str(), "terminal");
 
-        let filtered = agent_groups(&catalog, &[], "WEATHER");
+        let filtered = agent_groups(&catalog, &[], "WEATHER", true);
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].tools[0].name.as_str(), "weather");
         assert!(!filtered[0].all_selected);
     }
 
     #[test]
-    fn group_titles_map_back_to_tool_categories() {
-        assert_eq!(category_for_group("技能工具"), "技能");
-        assert_eq!(category_for_group("知识库工具"), "知识库");
-        assert_eq!(category_for_group("自定义工具"), "用户工具");
-        assert_eq!(category_for_group("内置工具"), "内置工具");
+    fn group_titles_follow_the_ui_language_but_keep_the_category_identity() {
+        assert_eq!(agent_group_title("技能", true), "技能工具");
+        assert_eq!(agent_group_title("技能", false), "Skill tools");
+        assert_eq!(agent_group_title("内置工具", true), "内置工具");
+        assert_eq!(agent_group_title("内置工具", false), "Built-in tools");
+        let catalog = vec![tool_record("read_file", "内置工具")];
+        let groups = agent_groups(&catalog, &[], "", false);
+        assert_eq!(groups[0].category.as_str(), "内置工具");
+        assert_eq!(groups[0].title.as_str(), "Built-in tools");
+    }
+
+    #[test]
+    fn english_groups_keep_tool_identity_for_the_switch() {
+        let catalog = vec![tool_record("读取文件", "内置工具")];
+        let groups = agent_groups(&catalog, &[], "", false);
+        assert_eq!(groups[0].tools[0].name.as_str(), "读取文件");
+        assert_eq!(groups[0].tools[0].title.as_str(), "读取文件");
     }
 
     #[test]
@@ -9603,12 +9810,10 @@ mod tests {
         let workspace = create_managed_workspace(&desktop, "测试 工作区", "flask", "teal", "")
             .expect("create the managed workspace");
         assert!(std::path::Path::new(&workspace.root_path).is_dir());
-        assert!(
-            workspace
-                .root_path
-                .replace('\\', "/")
-                .contains("/workspaces/")
-        );
+        assert!(workspace
+            .root_path
+            .replace('\\', "/")
+            .contains("/workspaces/"));
         assert_eq!(workspace.name, "测试 工作区");
         assert_eq!(workspace.icon, "flask");
 
@@ -9626,12 +9831,10 @@ mod tests {
         .expect("create the picked folder workspace");
         assert!(std::path::Path::new(&external.root_path).is_dir());
         assert!(external.root_path.ends_with("picked-folder"));
-        assert!(
-            !external
-                .root_path
-                .replace('\\', "/")
-                .contains("/workspaces/")
-        );
+        assert!(!external
+            .root_path
+            .replace('\\', "/")
+            .contains("/workspaces/"));
 
         select_workspace(&desktop, &shared, &workspace.workspace_id).expect("select");
         assert_eq!(
@@ -9639,27 +9842,23 @@ mod tests {
             workspace.workspace_id
         );
         refresh_workspaces(&desktop, &shared).expect("refresh");
-        assert!(
-            shared
-                .lock()
-                .unwrap()
-                .workspaces
-                .iter()
-                .find(|card| card.id == workspace.workspace_id)
-                .is_some_and(|card| card.active)
-        );
+        assert!(shared
+            .lock()
+            .unwrap()
+            .workspaces
+            .iter()
+            .find(|card| card.id == workspace.workspace_id)
+            .is_some_and(|card| card.active));
 
         let session = desktop
             .create_session(Some(&workspace.workspace_id))
             .expect("session in the new workspace");
         assert_eq!(session.workspace_name, "测试 工作区");
-        assert!(
-            desktop
-                .list_sessions(Some(&workspace.workspace_id))
-                .unwrap()
-                .iter()
-                .any(|candidate| candidate.id == session.id)
-        );
+        assert!(desktop
+            .list_sessions(Some(&workspace.workspace_id))
+            .unwrap()
+            .iter()
+            .any(|candidate| candidate.id == session.id));
 
         // The drawer mirrors the desktop sidebar: a selected workspace hides
         // threads that live in another one.

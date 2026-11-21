@@ -25,6 +25,7 @@ fn card(tool: ToolRecord) -> ToolCard {
         wunder_desktop::tool_icons::tool_card_visual(&tool.name, &tool.description, &tool.category);
     ToolCard {
         name: tool.name.into(),
+        title: tool.title.into(),
         description: tool.description.into(),
         category: tool.category.into(),
         enabled: false,

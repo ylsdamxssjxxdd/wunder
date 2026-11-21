@@ -2018,6 +2018,7 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
         "执行命令" => Some("execute_command"),
         "问询面板" => Some("question_panel"),
         "技能调用" => Some("skill_call"),
+        "浏览器" | "browser" => Some("browser"),
         // 合并后以字面替换为主，模型侧优先暴露 `edit`。
         "文本编辑" => Some("edit"),
         thread_control_tool::TOOL_THREAD_CONTROL => {
@@ -2067,6 +2068,64 @@ fn select_english_tool_alias(
         .iter()
         .find(|alias| allowed_names.contains(*alias))
         .cloned()
+}
+
+/// 设置界面的英文标题。
+///
+/// 英文界面没有逐个工具的标题文案，别名又是给模型用的标识符；直接显示
+/// `read_file` 只会让人以为映射坏了。这里把别名转成可读短语（`Read file`）。
+fn english_alias_title(canonical: &str, aliases: &[String], language: &str) -> Option<String> {
+    if !language.to_lowercase().starts_with("en") {
+        return None;
+    }
+    let alias = preferred_english_alias(canonical)
+        .map(str::to_string)
+        .or_else(|| {
+            aliases
+                .iter()
+                .find(|alias| {
+                    alias
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+                })
+                .cloned()
+        })?;
+    Some(humanize_tool_alias(&alias))
+}
+
+/// 用户可见的内置工具标题（设置、清单与提示预览共用）。
+///
+/// 永远返回可展示文本：没有显式标题时中文界面回落到规范名，英文界面回落到
+/// 可读别名；身份仍然只由 [`ToolSpec::name`] 承担。
+pub fn tool_catalog_title(name: &str, language: &str) -> Option<String> {
+    let mut aliases = builtin_aliases()
+        .into_iter()
+        .filter(|(_, canonical)| canonical == name)
+        .map(|(alias, _)| alias)
+        .collect::<Vec<_>>();
+    aliases.sort();
+    Some(
+        localized_tool_title(name, language)
+            .or_else(|| english_alias_title(name, &aliases, language))
+            .unwrap_or_else(|| name.to_string()),
+    )
+}
+
+fn humanize_tool_alias(alias: &str) -> String {
+    let mut words = alias.split('_').filter(|part| !part.is_empty());
+    let Some(first) = words.next() else {
+        return alias.to_string();
+    };
+    let mut label = first.to_string();
+    if let Some(first_char) = label.chars().next() {
+        let upper = first_char.to_uppercase().to_string();
+        label.replace_range(0..first_char.len_utf8(), &upper);
+    }
+    for word in words {
+        label.push(' ');
+        label.push_str(word);
+    }
+    label
 }
 
 /// 汇总系统当前可用的工具名称（包含内置别名、MCP、技能与用户工具）。
@@ -2269,6 +2328,56 @@ pub fn collect_prompt_tool_specs_with_language(
     user_tool_bindings: Option<&UserToolBindings>,
     language: &str,
 ) -> Vec<ToolSpec> {
+    collect_tool_specs(
+        config,
+        skills,
+        allowed_names,
+        user_tool_bindings,
+        language,
+        ToolSpecSurface::Prompt,
+    )
+}
+
+/// 设置界面的工具目录。
+///
+/// 选择开关的身份必须是稳定的规范名（例如 `执行命令`），不能复用模型侧的
+/// 英文别名：智能体保存的 `tool_names` 存规范名，清单若给英文别名，勾选状态
+/// 永远对不上，写回去的别名又会在保存时被解析掉，开关看起来就"按不动"。
+/// 展示用 [`ToolSpec::title`] 按界面语言本地化，名称只做身份。
+pub fn collect_tool_catalog_specs(
+    config: &Config,
+    skills: &SkillRegistry,
+    allowed_names: &HashSet<String>,
+    user_tool_bindings: Option<&UserToolBindings>,
+) -> Vec<ToolSpec> {
+    let language = i18n::get_language();
+    collect_tool_specs(
+        config,
+        skills,
+        allowed_names,
+        user_tool_bindings,
+        &language,
+        ToolSpecSurface::Catalog,
+    )
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ToolSpecSurface {
+    /// 模型侧：名称取英文别名，规格做紧凑化。
+    Prompt,
+    /// 设置界面：名称保持规范名，标题与描述按界面语言本地化。
+    Catalog,
+}
+
+fn collect_tool_specs(
+    config: &Config,
+    skills: &SkillRegistry,
+    allowed_names: &HashSet<String>,
+    user_tool_bindings: Option<&UserToolBindings>,
+    language: &str,
+    surface: ToolSpecSurface,
+) -> Vec<ToolSpec> {
+    let model_facing = surface == ToolSpecSurface::Prompt;
     let mut output = Vec::new();
     let mut seen = HashSet::new();
     let language = language.trim();
@@ -2291,7 +2400,7 @@ pub fn collect_prompt_tool_specs_with_language(
         if !enabled {
             continue;
         }
-        let preferred_alias = if language_lower.starts_with("en") {
+        let preferred_alias = if model_facing && language_lower.starts_with("en") {
             select_english_tool_alias(&spec.name, aliases, allowed_names)
         } else {
             None
@@ -2300,9 +2409,19 @@ pub fn collect_prompt_tool_specs_with_language(
         if !seen.insert(name.clone()) {
             continue;
         }
+        // 设置界面的标题只影响展示；身份仍是 `spec.name` 规范名。
+        let title = if model_facing {
+            None
+        } else {
+            Some(
+                localized_tool_title(&spec.name, language)
+                    .or_else(|| english_alias_title(&spec.name, aliases, language))
+                    .unwrap_or_else(|| spec.name.clone()),
+            )
+        };
         output.push(ToolSpec {
             name,
-            title: None,
+            title,
             description: spec.description.clone(),
             input_schema: spec.input_schema.clone(),
         });
@@ -2336,16 +2455,32 @@ pub fn collect_prompt_tool_specs_with_language(
         }
     }
     for entry in mcp_alias_entries {
-        if !allowed_names.contains(&entry.runtime_name) || !seen.insert(entry.display_name.clone())
-        {
+        // 模型侧用展示别名；设置界面用运行时名（`server@tool`），因为智能体
+        // 保存的选择就是这个身份，展示别名只放在 title 里。
+        let identity = if model_facing {
+            entry.display_name.clone()
+        } else {
+            entry.runtime_name.clone()
+        };
+        if !allowed_names.contains(&entry.runtime_name) || !seen.insert(identity.clone()) {
             continue;
         }
         let Some(spec) = mcp_tool_lookup.get(&entry.runtime_name) else {
             continue;
         };
+        let title = if model_facing {
+            spec.title.clone()
+        } else {
+            Some(
+                spec.title
+                    .clone()
+                    .filter(|title| !title.trim().is_empty())
+                    .unwrap_or_else(|| entry.display_name.clone()),
+            )
+        };
         output.push(ToolSpec {
-            name: entry.display_name.clone(),
-            title: spec.title.clone(),
+            name: identity,
+            title,
             description: spec.description.clone(),
             input_schema: spec.input_schema.clone(),
         });
@@ -2404,10 +2539,13 @@ pub fn collect_prompt_tool_specs_with_language(
     // Stable provider order improves prefix-cache reuse and makes a profile
     // revision independent of HashMap iteration order.
     output.sort_by_cached_key(|spec| resolve_tool_name(&spec.name));
+    if model_facing {
+        return output
+            .into_iter()
+            .map(|spec| super::compact_tool_spec(&spec))
+            .collect();
+    }
     output
-        .into_iter()
-        .map(|spec| super::compact_tool_spec(&spec))
-        .collect()
 }
 
 /// 将 YAML 配置值转换为 JSON，便于统一处理输入 Schema 与鉴权字段。
@@ -2421,8 +2559,9 @@ mod tests {
     use super::{
         build_mcp_tool_alias_entries, builtin_tool_specs_with_language,
         collect_available_tool_names, collect_enabled_tool_names_for_catalog,
-        collect_prompt_tool_specs_with_language, current_tool_schema_reference,
+        collect_prompt_tool_specs_with_language, collect_tool_specs, current_tool_schema_reference,
         expand_browser_group_selection, resolve_tool_name, select_english_tool_alias,
+        ToolSpecSurface,
     };
     use crate::config::{Config, McpServerConfig, McpToolSpec};
     use crate::schemas::ToolSpec;
@@ -2430,6 +2569,66 @@ mod tests {
     use crate::user_tools::{UserToolAlias, UserToolBindings, UserToolKind};
     use serde_json::json;
     use std::path::PathBuf;
+
+    #[test]
+    fn catalog_specs_keep_canonical_identity_while_titles_follow_the_ui_language() {
+        let config = Config::default();
+        let skills = crate::skills::SkillRegistry::default();
+        let allowed = HashSet::from([
+            "读取文件".to_string(),
+            "read_file".to_string(),
+            "执行命令".to_string(),
+            "execute_command".to_string(),
+        ]);
+
+        let catalog = collect_tool_specs(
+            &config,
+            &skills,
+            &allowed,
+            None,
+            "en-US",
+            ToolSpecSurface::Catalog,
+        );
+        let read = catalog
+            .iter()
+            .find(|spec| spec.name == "读取文件")
+            .expect("canonical read_file entry");
+        assert_eq!(
+            read.title.as_deref(),
+            Some("Read file"),
+            "settings surface must show a readable English title"
+        );
+        let prompt = collect_tool_specs(
+            &config,
+            &skills,
+            &allowed,
+            None,
+            "en-US",
+            ToolSpecSurface::Prompt,
+        );
+        assert!(
+            prompt.iter().any(|spec| spec.name == "read_file"),
+            "the model surface still uses the English alias as the callable name"
+        );
+
+        let zh_catalog = collect_tool_specs(
+            &config,
+            &skills,
+            &allowed,
+            None,
+            "zh-CN",
+            ToolSpecSurface::Catalog,
+        );
+        let zh_read = zh_catalog
+            .iter()
+            .find(|spec| spec.name == "读取文件")
+            .expect("canonical read_file entry");
+        assert_eq!(
+            zh_read.title.as_deref(),
+            Some("读取文件"),
+            "Chinese settings titles stay the canonical label"
+        );
+    }
 
     /// 线程冻结快照必须存运行时名（`server@tool`），不能存给模型看的
     /// display name；否则第二轮按冻结集求交时 MCP 工具会全部消失。

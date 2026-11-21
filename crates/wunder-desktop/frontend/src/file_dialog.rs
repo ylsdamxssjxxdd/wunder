@@ -41,6 +41,20 @@ pub fn pick_companion_package() -> Option<String> {
     }
 }
 
+/// Pick one local backup archive (the zip written by 数据与恢复); the list on
+/// that page covers the archives this machine created, this covers everything
+/// else (another machine, a Downloads folder, a USB stick).
+pub fn pick_backup_archive() -> Option<String> {
+    #[cfg(windows)]
+    {
+        pick_windows_backup()
+    }
+    #[cfg(not(windows))]
+    {
+        pick_linux_backup()
+    }
+}
+
 /// Pick an executable file (python / git / rg / ffmpeg / browser / shell) for a
 /// runtime tool path; `None` means the user cancelled or no native picker is
 /// available.
@@ -182,6 +196,43 @@ fn pick_windows_companion() -> Option<String> {
 }
 
 #[cfg(windows)]
+fn pick_windows_backup() -> Option<String> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use windows_sys::Win32::UI::Controls::Dialogs::{
+        GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_HIDEREADONLY, OFN_NOCHANGEDIR, OFN_PATHMUSTEXIST,
+        OPENFILENAMEW,
+    };
+
+    let filter = OsString::from("备份文件\0*.zip\0所有文件\0*.*\0\0")
+        .encode_wide()
+        .collect::<Vec<u16>>();
+    let mut file_buffer = vec![0u16; 32768];
+    let mut dialog: OPENFILENAMEW = unsafe { std::mem::zeroed() };
+    dialog.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as u32;
+    dialog.lpstrFilter = filter.as_ptr();
+    dialog.lpstrFile = file_buffer.as_mut_ptr();
+    dialog.nMaxFile = file_buffer.len() as u32;
+    dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
+    let picked = unsafe { GetOpenFileNameW(&mut dialog) };
+    if picked == 0 {
+        return None;
+    }
+    let end = file_buffer
+        .iter()
+        .position(|unit| *unit == 0)
+        .unwrap_or(file_buffer.len());
+    let path = OsString::from_wide(&file_buffer[..end])
+        .to_string_lossy()
+        .into_owned();
+    if path.trim().is_empty() {
+        None
+    } else {
+        Some(path)
+    }
+}
+
+#[cfg(windows)]
 fn pick_windows_executable(filter_label: &str) -> Option<String> {
     use std::ffi::OsString;
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
@@ -289,6 +340,33 @@ fn pick_linux_companion() -> Option<String> {
             vec![
                 "--file-selection".to_string(),
                 "--file-filter=形象包 | *.zip".to_string(),
+            ],
+        ),
+        (
+            "kdialog",
+            vec!["--getopenfilename".to_string(), ". *.zip".to_string()],
+        ),
+    ] {
+        if let Ok(output) = std::process::Command::new(program).args(&args).output() {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !path.is_empty() {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+fn pick_linux_backup() -> Option<String> {
+    for (program, args) in [
+        (
+            "zenity",
+            vec![
+                "--file-selection".to_string(),
+                "--file-filter=备份文件 | *.zip".to_string(),
             ],
         ),
         (

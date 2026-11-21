@@ -20,13 +20,12 @@ The differences: `weixin` long-polls for updates, must echo the conversation ide
 
 ## QR onboarding
 
-1. Pick `weixin` in channel settings and generate a QR code.
-2. Scan it with WeChat.
-3. Wait for confirmation.
-4. The bot token, bot id, user id and endpoint are filled in automatically.
-5. **Save the account** — without saving, long polling never starts.
+1. Pick `weixin` in channel settings and generate a QR code (on Android the button reads "Scan to sign in").
+2. Scan it with WeChat and confirm on the phone.
+3. The bot token, bot id, user id and endpoint are filled in automatically.
+4. **Save the account** — without saving, long polling never starts.
 
-QR codes expire; regenerate if needed.
+QR codes expire; refresh to get a new one. On Android you can also fill the credentials in by hand instead of scanning.
 
 ## Settings
 

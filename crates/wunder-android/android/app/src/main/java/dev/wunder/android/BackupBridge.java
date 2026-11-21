@@ -186,27 +186,37 @@ public final class BackupBridge {
         return "restart";
     }
 
-    /** Newest archive created by {@link #backup}, or the empty string. */
-    public static String latestBackup(Context context) {
+    /**
+     * Every archive created by {@link #backup}, newest first.
+     *
+     * <p>The settings page lists these so restoring never asks the user to
+     * type a path by hand.
+     */
+    public static String[] listBackups(Context context) {
         if (context == null) {
-            return "";
+            return new String[0];
         }
         File directory = new File(applicationContext(context).getCacheDir(), "backup");
-        File[] archives = directory.listFiles();
-        if (archives == null) {
-            return "";
+        File[] entries = directory.listFiles();
+        if (entries == null) {
+            return new String[0];
         }
-        File newest = null;
-        for (File archive : archives) {
-            if (!archive.isFile() || !archive.getName().startsWith(ZIP_PREFIX)
-                    || !archive.getName().endsWith(ZIP_SUFFIX)) {
-                continue;
-            }
-            if (newest == null || archive.lastModified() > newest.lastModified()) {
-                newest = archive;
+        ArrayList<File> archives = new ArrayList<>();
+        for (File entry : entries) {
+            if (entry.isFile() && entry.getName().startsWith(ZIP_PREFIX)
+                    && entry.getName().endsWith(ZIP_SUFFIX)) {
+                archives.add(entry);
             }
         }
-        return newest == null ? "" : newest.getAbsolutePath();
+        archives.sort((left, right) -> {
+            int byTime = Long.compare(right.lastModified(), left.lastModified());
+            return byTime != 0 ? byTime : right.getName().compareTo(left.getName());
+        });
+        String[] paths = new String[archives.size()];
+        for (int index = 0; index < archives.size(); index++) {
+            paths[index] = archives.get(index).getAbsolutePath();
+        }
+        return paths;
     }
 
     private static void addTree(ZipOutputStream zip, File canonicalRoot, File file,

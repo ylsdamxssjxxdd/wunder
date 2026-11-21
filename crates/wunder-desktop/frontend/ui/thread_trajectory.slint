@@ -1280,8 +1280,8 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                             if section.blocks.length == 0 : ContextMenuArea {
                                                 height: section-content.preferred-height;
                                                 Menu {
-                                                    MenuItem { title: @tr("Copy"); activated => { section-content.copy(); } }
-                                                    MenuItem { title: @tr("Select All"); activated => { section-content.select-all(); } }
+                                                    MenuItem { title: I18n.common_copy; activated => { section-content.copy(); } }
+                                                    MenuItem { title: I18n.common_select_all; activated => { section-content.select-all(); } }
                                                 }
                                                 section-content := TrajTextInput {
                                                     width: section-scroll.visible-width - 28px;
@@ -1341,8 +1341,8 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                 background: TrajTokens.code-bg;
                                 ContextMenuArea {
                                     Menu {
-                                        MenuItem { title: @tr("Copy"); activated => { raw-content.copy(); } }
-                                        MenuItem { title: @tr("Select All"); activated => { raw-content.select-all(); } }
+                                        MenuItem { title: I18n.common_copy; activated => { raw-content.copy(); } }
+                                        MenuItem { title: I18n.common_select_all; activated => { raw-content.select-all(); } }
                                     }
                                     raw-content := TrajTextInput {
                                         x: 14px; y: 14px;

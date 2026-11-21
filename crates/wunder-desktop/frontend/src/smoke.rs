@@ -216,6 +216,10 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
     // was removed to match the web messenger information architecture.
     snapshot(app, &directory.join("native-workspace.png"))?;
     app.set_settings_open(true);
+    app.set_settings_active_panel(16);
+    snapshot(app, &directory.join("native-settings-data.png"))?;
+    app.set_settings_active_panel(0);
+    app.set_settings_open(true);
     app.set_model_key_draft("测试模型".into());
     app.set_model_provider_draft("openai".into());
     app.set_model_name_draft("test-model".into());

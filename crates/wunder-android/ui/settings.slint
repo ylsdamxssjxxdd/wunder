@@ -14,7 +14,7 @@ import { ToolIcons } from "../../../crates/wunder-desktop/frontend/ui/tool_icons
 import { MobileTool, MobileToolGroup, MobileToolResource, MobileToolFile, MobileMcpDraft, MobileKnowledgeDraft } from "tools_model.slint";
 import { MobileCronJob, MobileCronDraft, MobileCronRun, MobileMemory, MobileMemoryDraft, MobileDevice } from "automation_model.slint";
 import { MobileChannelAccount, MobileChannelCatalog, MobileChannelBinding, MobileChannelLog, MobileChannelDraft } from "channel_model.slint";
-import { MobileSession, MobilePermission } from "session_model.slint";
+import { MobileSession, MobileBackup, MobilePermission } from "session_model.slint";
 import { ListView, ScrollView } from "std-widgets.slint";
 
 component SheetHeader inherits Rectangle {
@@ -538,7 +538,7 @@ component ToolInfoRow inherits Rectangle {
             horizontal-stretch: 1;
             spacing: 2px;
             Text {
-                text: root.tool.name;
+                text: root.tool.title == "" ? root.tool.name : root.tool.title;
                 color: Theme.text;
                 font-size: Theme.font-sm;
                 font-weight: 600;
@@ -568,7 +568,7 @@ component AgentToolRow inherits Rectangle {
         VerticalLayout {
             horizontal-stretch: 1;
             spacing: 2px;
-            Text { text: root.tool.name; color: Theme.text; font-size: Theme.font-sm; font-weight: 600; overflow: elide; }
+            Text { text: root.tool.title == "" ? root.tool.name : root.tool.title; color: Theme.text; font-size: Theme.font-sm; font-weight: 600; overflow: elide; }
             Text { text: root.tool.description == "" ? I18n.stc_agent_tool_no_desc : root.tool.description; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
         }
         ThemeSwitch {
@@ -1355,7 +1355,7 @@ component AgentPage inherits Rectangle {
                                     height: 26px;
                                     label: group.all-selected ? I18n.ew_deselect_all : I18n.ew_select_all;
                                     show-label: true;
-                                    clicked => { root.toggle-group(group.title, !group.all-selected, root.description, root.prompt); }
+                                    clicked => { root.toggle-group(group.category, !group.all-selected, root.description, root.prompt); }
                                 }
                             }
                             for tool in group.tools : AgentToolRow {
@@ -2379,6 +2379,8 @@ component ChannelEditorSheet inherits Rectangle {
     callback close();
     callback save(MobileChannelDraft);
     callback pick-channel();
+    // 微信机器人：扫码登录，true 表示换一张新二维码。
+    callback start-qr(bool);
 
     pure function channel-label(value: string) -> string {
         return value == "" ? "请选择渠道类型" : value;
@@ -2450,7 +2452,19 @@ component ChannelEditorSheet inherits Rectangle {
                     FormField { label: "原始 ID"; placeholder: "gh_xxx"; text <=> root.draft.original-id; }
                 }
                 if root.draft.channel == "weixin" : SheetCard {
-                    Text { height: 34px; text: "微信机器人可手动填写凭据；扫码登录请在桌面版完成。"; color: Theme.muted; font-size: Theme.font-2xs; wrap: word-wrap; }
+                    SettingRow {
+                        label: "扫码登录";
+                        note: "在微信里扫一扫并确认，凭据会自动填入下方字段。";
+                        last: true;
+                        Action {
+                            width: 96px;
+                            height: 32px;
+                            label: "获取二维码";
+                            show-label: true;
+                            primary: true;
+                            clicked => { root.start-qr(false); }
+                        }
+                    }
                     FormField { label: "API Base"; placeholder: "留空使用默认"; text <=> root.draft.weixin-api-base; }
                     FormField { label: "Bot Token"; placeholder: "已保存则留空"; secret: true; text <=> root.draft.weixin-bot-token; }
                     FormField { label: "Bot ID"; placeholder: "ilink_bot_id"; text <=> root.draft.weixin-bot-id; }
@@ -2519,6 +2533,145 @@ component ChannelLogsSheet inherits Rectangle {
     }
 }
 
+// 微信机器人扫码登录：叠在渠道编辑面板之上。二维码位图由引擎在后台线程
+// 渲染并解码，这一层只显示它、报告状态并允许换一张。
+component ChannelQrSheet inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    /// 0 正在获取 · 1 等待扫码 · 2 已确认 · 3 已过期 · 4 已取消 · 5 失败
+    in property <int> status: 0;
+    in property <string> message: "";
+    in property <image> code;
+    callback close();
+    callback refresh();
+    callback save();
+
+    pure function status-text(value: int) -> string {
+        if value == 0 { return "正在获取二维码…"; }
+        if value == 1 { return "用微信扫一扫，并在手机上确认"; }
+        if value == 2 { return "已确认，凭据已填入"; }
+        if value == 3 { return "二维码已过期，请刷新"; }
+        if value == 4 { return "已取消"; }
+        return "扫码登录失败";
+    }
+
+    pure function status-color(value: int) -> color {
+        if value == 2 { return Theme.success; }
+        if value == 3 { return Theme.warning; }
+        if value == 5 { return Theme.danger; }
+        return Theme.muted;
+    }
+
+    x: 0px; y: 0px;
+    width: 100%; height: 100%;
+    background: Theme.panel;
+    VerticalLayout {
+        spacing: 0px;
+        SheetHeader {
+            title: "扫码登录";
+            subtitle: "微信机器人";
+            inset-top: root.inset-top;
+            back() => { root.close(); }
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding: 14px;
+                padding-bottom: 24px + root.inset-bottom;
+                spacing: 12px;
+                alignment: start;
+                SheetCard {
+                    row-spacing: 12px;
+                    HorizontalLayout {
+                        height: 232px;
+                        alignment: center;
+                        Rectangle {
+                            width: 220px;
+                            height: 220px;
+                            border-radius: Theme.radius-md;
+                            background: white;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            Image {
+                                x: 10px;
+                                y: 10px;
+                                width: 200px;
+                                height: 200px;
+                                source: root.code;
+                                image-fit: contain;
+                                // 过期 / 失败时二维码已经没用了，让位给状态文字，
+                                // 免得文字压在码点上读不清。
+                                visible: root.status == 0 || root.status == 1;
+                            }
+                            if root.status != 1 && root.status != 0 : Text {
+                                width: 100%;
+                                height: 100%;
+                                text: root.status-text(root.status);
+                                color: root.status-color(root.status);
+                                font-size: Theme.font-sm;
+                                wrap: word-wrap;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                    Text {
+                        text: root.status-text(root.status);
+                        color: root.status-color(root.status);
+                        font-size: Theme.font-sm;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                        // 获取中 / 等待扫码时二维码框里是码图，说明放在下面；
+                        // 过期、失败、已确认时说明已经在框内，不重复一遍。
+                        visible: root.status <= 1;
+                    }
+                    if root.status == 5 && root.message != "" : Text {
+                        text: root.message;
+                        color: Theme.muted;
+                        font-size: Theme.font-2xs;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                    if root.status == 2 : Text {
+                        text: "回到编辑页检查账号名称，保存后生效。";
+                        color: Theme.muted;
+                        font-size: Theme.font-2xs;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Rectangle { horizontal-stretch: 1; }
+                    if root.status == 0 || root.status == 1 : Action {
+                        width: 92px;
+                        height: 34px;
+                        label: "保存图片";
+                        show-label: true;
+                        clicked => { root.save(); }
+                    }
+                    Action {
+                        width: 108px;
+                        height: 34px;
+                        label: "刷新二维码";
+                        show-label: true;
+                        primary: true;
+                        clicked => { root.refresh(); }
+                    }
+                    Action {
+                        width: 68px;
+                        height: 34px;
+                        label: I18n.common_close;
+                        show-label: true;
+                        clicked => { root.close(); }
+                    }
+                }
+            }
+        }
+    }
+}
+
 component ChannelsPage inherits Rectangle {
     in property <length> inset-top: 0px;
     in property <length> inset-bottom: 0px;
@@ -2530,6 +2683,10 @@ component ChannelsPage inherits Rectangle {
     in property <bool> editor-open: false;
     in property <bool> editor-new: true;
     in property <string> editor-error: "";
+    in property <bool> qr-open: false;
+    in property <int> qr-status: 0;
+    in property <string> qr-message: "";
+    in property <image> qr-image;
     in property <[string]> catalog-ids: [];
     in property <[string]> catalog-names: [];
     in-out property <MobileChannelDraft> draft;
@@ -2546,6 +2703,9 @@ component ChannelsPage inherits Rectangle {
     callback close-editor();
     callback save(MobileChannelDraft);
     callback pick-channel();
+    callback start-qr(bool);
+    callback cancel-qr();
+    callback save-qr();
 
     private property <bool> confirm-delete: false;
     private property <string> pending-delete: "";
@@ -2663,6 +2823,18 @@ component ChannelsPage inherits Rectangle {
         close() => { root.close-editor(); }
         save(draft) => { root.save(draft); }
         pick-channel() => { root.pick-channel(); }
+        start-qr(force) => { root.start-qr(force); }
+    }
+
+    if root.qr-open : ChannelQrSheet {
+        inset-top: root.inset-top;
+        inset-bottom: root.inset-bottom;
+        status: root.qr-status;
+        message: root.qr-message;
+        code: root.qr-image;
+        close() => { root.cancel-qr(); }
+        refresh() => { root.start-qr(true); }
+        save() => { root.save-qr(); }
     }
 
     if root.logs-open : ChannelLogsSheet {
@@ -2769,7 +2941,7 @@ component SettingsHome inherits Rectangle {
                     NavRow {
                         icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-sliders-horizontal.svg");
                         label: I18n.st_tab_general;
-                        detail: "主题、字号、语言与发送方式";
+                        detail: "主题、字号与界面语言";
                         clicked => { root.open-page(3); }
                     }
                     NavRow {
@@ -2890,25 +3062,19 @@ component SettingsHome inherits Rectangle {
     }
 }
 
-// 通用偏好：把桌面版的「通用」分类拆成外观与交互两张卡，仍是一屏内可滚动的
-// 手机表单；所有值即时保存，和桌面版一致。
+// 通用偏好：手机只保留主题、字号与界面语言，仍是一屏内可滚动的手机表单；
+// 所有值即时保存，和桌面版一致。发送键只对物理键盘有意义，手机上不提供。
 component GeneralPage inherits Rectangle {
     in property <length> inset-top: 0px;
     in property <length> inset-bottom: 0px;
     in property <string> theme: "terracotta";
     in property <int> font-size: 16;
-    in property <string> send-key: "enter";
     in property <string> language: "zh-CN";
     callback back();
     callback save-theme(string);
     callback save-font-size(int);
     callback open-picker(int, string, string);
 
-    pure function send-key-label(value: string) -> string {
-        return value == "ctrl_enter" ? I18n.st_send_ctrl_enter
-            : value == "none" ? I18n.st_send_button
-            : I18n.st_send_enter_direct;
-    }
     VerticalLayout {
         SheetHeader {
             title: I18n.st_tab_general;
@@ -2929,7 +3095,7 @@ component GeneralPage inherits Rectangle {
                 alignment: start;
 
                 SheetCard {
-                    CardTitle { title: I18n.st_palette; subtitle: I18n.st_palette_note; }
+                    CardTitle { title: "外观与语言"; subtitle: "主题、字号与界面语言"; }
                     HorizontalLayout {
                         spacing: 6px;
                         ThemeTile {
@@ -2969,7 +3135,6 @@ component GeneralPage inherits Rectangle {
                     SettingRow {
                         label: I18n.st_font_size;
                         note: I18n.st_font_size_note;
-                        last: true;
                         Rectangle {
                             width: 112px;
                             height: 32px;
@@ -3024,24 +3189,13 @@ component GeneralPage inherits Rectangle {
                             }
                         }
                     }
-                }
-
-                SheetCard {
-                    CardTitle { title: "交互"; subtitle: "输入方式与发送行为"; }
-                    SettingRow {
-                        label: I18n.st_send_key;
-                        PickerField {
-                            text: root.send-key-label(root.send-key);
-                            picked => { root.open-picker(1, I18n.st_send_key, root.send-key); }
-                        }
-                    }
                     SettingRow {
                         label: I18n.st_ui_language;
                         note: I18n.st_language_hint;
                         last: true;
                         PickerField {
                             text: root.language;
-                            picked => { root.open-picker(2, I18n.st_ui_language, root.language); }
+                            picked => { root.open-picker(1, I18n.st_ui_language, root.language); }
                         }
                     }
                 }
@@ -3431,13 +3585,77 @@ component HelpRow inherits Rectangle {
     }
 }
 
+// 正文底部的上一篇 / 下一篇。目录顺序就是阅读顺序，读完一篇顺势往下翻，
+// 不必退回目录再找；没有相邻主题的一侧留一块等宽空白，两张卡宽度稳定。
+component HelpNavCard inherits Rectangle {
+    in property <string> title: "";
+    // true = 下一篇：文字右对齐、箭头在右，视觉上和左侧那张对称。
+    in property <bool> forward: false;
+    callback clicked();
+
+    height: 62px;
+    border-radius: Theme.radius-md;
+    background: touch.has-hover || touch.pressed ? Theme.hover : Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 8px;
+        cross-axis-alignment: center;
+
+        if !root.forward : Image {
+            width: 12px;
+            height: 12px;
+            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-left.svg");
+            colorize: Theme.muted;
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.forward ? I18n.common_next_page : I18n.common_previous_page;
+                color: Theme.muted;
+                font-size: Theme.font-2xs;
+                horizontal-alignment: root.forward ? right : left;
+            }
+            Text {
+                text: root.title;
+                color: Theme.text;
+                font-size: Theme.font-sm;
+                overflow: elide;
+                horizontal-alignment: root.forward ? right : left;
+            }
+        }
+
+        if root.forward : Image {
+            width: 12px;
+            height: 12px;
+            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-right.svg");
+            colorize: Theme.muted;
+        }
+    }
+}
+
 // 一篇主题的正文：Markdown 由宿主投影成 `[MdBlock]`，这里交给聊天同一个
 // `BlockView`，所以标题、列表、引用、代码和表格和回答里长得一样；宽表按
 // 触屏规则横向平移而不是被裁掉。
 component HelpTopicView inherits Rectangle {
     in property <[MdBlock]> blocks: [];
     in property <int> open-request: 0;
+    // 相邻主题（-1 表示没有）与它们的标题，由 src/help.rs 按当前目录顺序给出。
+    in property <int> prev-topic: -1;
+    in property <string> prev-title: "";
+    in property <int> next-topic: -1;
+    in property <string> next-title: "";
     callback link(string);
+    callback open-topic(int);
 
     changed open-request => { scroll.content-y = 0px; }
 
@@ -3465,6 +3683,40 @@ component HelpTopicView inherits Rectangle {
                 image-clickable: false;
                 link-clicked(url) => { root.link(url); }
             }
+
+            if root.prev-topic >= 0 || root.next-topic >= 0 : Rectangle {
+                height: 44px;
+            }
+
+            if root.prev-topic >= 0 || root.next-topic >= 0 : HorizontalLayout {
+                spacing: 10px;
+                // 两张卡各自套一层占位：卡片自身的首选宽度取决于标题长短，
+                // 直接放进布局里会让「界面」比「运行环境」窄一截；占位层
+                // 只有 stretch，没有首选宽度，两侧因此严格等宽。
+                if root.prev-topic >= 0 : Rectangle {
+                    horizontal-stretch: 1;
+                    height: 62px;
+                    HelpNavCard {
+                        width: parent.width;
+                        height: parent.height;
+                        title: root.prev-title;
+                        clicked => { root.open-topic(root.prev-topic); }
+                    }
+                }
+                if root.prev-topic < 0 : Rectangle { horizontal-stretch: 1; height: 62px; }
+                if root.next-topic >= 0 : Rectangle {
+                    horizontal-stretch: 1;
+                    height: 62px;
+                    HelpNavCard {
+                        width: parent.width;
+                        height: parent.height;
+                        title: root.next-title;
+                        forward: true;
+                        clicked => { root.open-topic(root.next-topic); }
+                    }
+                }
+                if root.next-topic < 0 : Rectangle { horizontal-stretch: 1; height: 62px; }
+            }
         }
     }
 }
@@ -3479,6 +3731,11 @@ component HelpPage inherits Rectangle {
     in property <string> topic-title: "";
     in property <[MdBlock]> blocks: [];
     in property <int> open-request: 0;
+    // 当前主题在目录里的前后邻居，正文底部据此画出上一篇 / 下一篇。
+    in property <int> prev-topic: -1;
+    in property <string> prev-title: "";
+    in property <int> next-topic: -1;
+    in property <string> next-title: "";
     callback back();
     callback back-topic();
     callback open-topic(int);
@@ -3504,7 +3761,12 @@ component HelpPage inherits Rectangle {
             vertical-stretch: 1;
             blocks: root.blocks;
             open-request: root.open-request;
+            prev-topic: root.prev-topic;
+            prev-title: root.prev-title;
+            next-topic: root.next-topic;
+            next-title: root.next-title;
             link(url) => { root.link(url); }
+            open-topic(topic) => { root.open-topic(topic); }
         }
 
         if !root.topic-open : ScrollView {
@@ -4752,6 +5014,7 @@ component DataPage inherits Rectangle {
     in property <length> inset-bottom: 0px;
     in property <string> backup-status: "";
     in property <string> backup-path: "";
+    in property <[MobileBackup]> backups: [];
     in property <bool> backup-busy: false;
     in property <bool> backup-restart: false;
     in property <string> crash-log-title: "";
@@ -4810,12 +5073,63 @@ component DataPage inherits Rectangle {
                 }
 
                 SheetCard {
+                    row-spacing: 10px;
                     CardTitle {
-                        title: "从文件恢复";
+                        title: "从备份恢复";
                         subtitle: "恢复会覆盖本地配置与数据库，完成后需要重启应用。";
                     }
+                    if root.backups.length == 0 : Text {
+                        text: "还没有本地备份：先点上一栏「立即备份」生成一个，或在下面手动填写其它位置的备份文件。";
+                        color: Theme.muted;
+                        font-size: Theme.font-xs;
+                        wrap: word-wrap;
+                    }
+                    for backup in root.backups : Rectangle {
+                        height: backup-row.preferred-height;
+                        border-radius: Theme.radius-sm;
+                        background: backup.path == root.restore-path ? Theme.accent-soft : Theme.input-bg;
+                        border-width: 1px;
+                        border-color: backup.path == root.restore-path ? Theme.accent : Theme.input-border;
+                        backup-row := HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            padding-top: 8px;
+                            padding-bottom: 8px;
+                            spacing: 10px;
+                            cross-axis-alignment: center;
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 2px;
+                                Text {
+                                    text: backup.name;
+                                    color: Theme.text;
+                                    font-size: Theme.font-sm;
+                                    font-weight: 600;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: backup.detail;
+                                    color: Theme.muted;
+                                    font-size: Theme.font-2xs;
+                                    overflow: elide;
+                                }
+                            }
+                            // 选中标记：实心点为已选，空心点为可选。
+                            Rectangle {
+                                width: 18px;
+                                height: 18px;
+                                border-radius: 9px;
+                                background: backup.path == root.restore-path ? Theme.accent : transparent;
+                                border-width: 1px;
+                                border-color: backup.path == root.restore-path ? Theme.accent : Theme.border-strong;
+                            }
+                        }
+                        TouchArea {
+                            clicked => { root.restore-path = backup.path; }
+                        }
+                    }
                     FormField {
-                        label: "备份文件路径";
+                        label: "或填写其它备份文件路径";
                         placeholder: "/storage/emulated/0/Download/wunder-backup-....zip";
                         text <=> root.restore-path;
                     }
@@ -4824,11 +5138,11 @@ component DataPage inherits Rectangle {
                         spacing: 8px;
                         Rectangle { horizontal-stretch: 1; }
                         Action {
-                            width: 116px;
-                            label: "从文件恢复";
+                            width: 128px;
+                            label: "恢复所选备份";
                             show-label: true;
                             danger: true;
-                            enabled: !root.backup-busy;
+                            enabled: !root.backup-busy && root.restore-path != "";
                             clicked => { root.confirm-restore = true; }
                         }
                     }
@@ -4910,7 +5224,6 @@ export component MobileSettings inherits Rectangle {
     in-out property <int> tools-mode: 1;
     in property <string> theme: "terracotta";
     in property <int> font-size: 16;
-    in property <string> send-key: "enter";
     in property <string> language: "zh-CN";
     in property <string> current-model: "";
     in property <int> model-count: 0;
@@ -4944,6 +5257,7 @@ export component MobileSettings inherits Rectangle {
     // 数据与恢复页
     in property <string> backup-status: "";
     in property <string> backup-path: "";
+    in property <[MobileBackup]> backups: [];
     in property <bool> backup-busy: false;
     in property <bool> backup-restart: false;
     in property <string> crash-log-title: "";
@@ -5051,6 +5365,10 @@ export component MobileSettings inherits Rectangle {
     in property <bool> channel-editor-new: true;
     in property <string> channel-editor-error: "";
     in-out property <MobileChannelDraft> channel-draft;
+    in property <bool> channel-qr-open: false;
+    in property <int> channel-qr-status: 0;
+    in property <string> channel-qr-message: "";
+    in property <image> channel-qr-image;
 
     in property <bool> editor-open: false;
     in property <bool> editor-new: false;
@@ -5069,11 +5387,15 @@ export component MobileSettings inherits Rectangle {
     in property <string> help-topic-title: "";
     in property <[MdBlock]> help-blocks: [];
     in property <int> help-open-request: 0;
+    // 正文底部的上一篇 / 下一篇：相邻主题下标（-1 表示到头）与标题。
+    in property <int> help-prev-topic: -1;
+    in property <string> help-prev-title: "";
+    in property <int> help-next-topic: -1;
+    in property <string> help-next-title: "";
 
     callback close();
     callback save-theme(string);
     callback save-font-size(int);
-    callback save-send-key(string);
     callback save-language(string);
     callback install-ubuntu();
     callback set-ubuntu-enabled(bool);
@@ -5160,6 +5482,9 @@ export component MobileSettings inherits Rectangle {
     callback open-channel-logs(string);
     callback close-channel-logs();
     callback delete-channel-binding(string);
+    callback start-channel-qr(bool);
+    callback cancel-channel-qr();
+    callback save-channel-qr();
     callback refresh-backup();
     callback backup-now();
     callback restore-backup(string);
@@ -5180,9 +5505,6 @@ export component MobileSettings inherits Rectangle {
         root.picker-title = title;
         root.picker-value = value;
         if (id == 1) {
-            root.picker-options = [I18n.st_send_enter_direct, I18n.st_send_ctrl_enter, I18n.st_send_button];
-            root.picker-values = ["enter", "ctrl_enter", "none"];
-        } else if (id == 2) {
             root.picker-options = ["zh-CN", "en-US"];
             root.picker-values = ["zh-CN", "en-US"];
         } else if (id == 4) {
@@ -5256,8 +5578,7 @@ export component MobileSettings inherits Rectangle {
     }
 
     function apply-pick(id: int, value: string) {
-        if (id == 1) { root.save-send-key(value); }
-        else if (id == 2) { root.save-language(value); }
+        if (id == 1) { root.save-language(value); }
         else if (id == 4) {
             root.draft.model-type = value;
             // 换了类型就只保留该类型支持的提供方；服务地址只在空着或还是
@@ -5372,7 +5693,6 @@ export component MobileSettings inherits Rectangle {
             inset-bottom: root.inset-bottom;
             theme: root.theme;
             font-size: root.font-size;
-            send-key: root.send-key;
             language: root.language;
             back() => { root.page = 0; }
             save-theme(value) => {
@@ -5430,6 +5750,7 @@ export component MobileSettings inherits Rectangle {
             inset-bottom: root.inset-bottom;
             backup-status: root.backup-status;
             backup-path: root.backup-path;
+            backups: root.backups;
             backup-busy: root.backup-busy;
             backup-restart: root.backup-restart;
             crash-log-title: root.crash-log-title;
@@ -5483,6 +5804,10 @@ export component MobileSettings inherits Rectangle {
             topic-title: root.help-topic-title;
             blocks: root.help-blocks;
             open-request: root.help-open-request;
+            prev-topic: root.help-prev-topic;
+            prev-title: root.help-prev-title;
+            next-topic: root.help-next-topic;
+            next-title: root.help-next-title;
             back() => { root.page = 6; }
             back-topic() => { root.help-back-topic(); }
             open-topic(topic) => { root.help-open-topic(topic); }
@@ -5549,7 +5874,7 @@ export component MobileSettings inherits Rectangle {
             search-tools(query) => { root.search-agent-tools(query); }
             save-text(description, prompt) => { root.save-agent-text(description, prompt); }
             toggle-tool(name, enabled, description, prompt) => { root.toggle-agent-tool(name, enabled, description, prompt); }
-            toggle-group(title, select, description, prompt) => { root.toggle-agent-tool-group(title, select, description, prompt); }
+            toggle-group(category, select, description, prompt) => { root.toggle-agent-tool-group(category, select, description, prompt); }
             add-question(question, description, prompt) => { root.add-agent-question(question, description, prompt); }
             remove-question(index, description, prompt) => { root.remove-agent-question(index, description, prompt); }
         }
@@ -5649,6 +5974,10 @@ export component MobileSettings inherits Rectangle {
             editor-error: root.channel-editor-error;
             catalog-ids: root.channel-catalog-ids;
             catalog-names: root.channel-catalog-names;
+            qr-open: root.channel-qr-open;
+            qr-status: root.channel-qr-status;
+            qr-message: root.channel-qr-message;
+            qr-image: root.channel-qr-image;
             draft <=> root.channel-draft;
             back() => { root.page = 0; }
             refresh() => { root.refresh-channels(); }
@@ -5663,6 +5992,9 @@ export component MobileSettings inherits Rectangle {
             close-editor() => { root.close-channel-editor(); }
             save(draft) => { root.save-channel(draft); }
             pick-channel() => { root.show-channel-picker(); }
+            start-qr(force) => { root.start-channel-qr(force); }
+            cancel-qr() => { root.cancel-channel-qr(); }
+            save-qr() => { root.save-channel-qr(); }
         }
 
         if root.page == 1 : ModelsPage {

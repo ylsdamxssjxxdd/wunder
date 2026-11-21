@@ -5,6 +5,7 @@ mod agent_editor;
 mod audio_recording;
 pub(crate) mod avatar_assets;
 mod avatar_ui;
+mod backup_ui;
 mod channel_ui;
 mod chat_process;
 mod chat_split;
@@ -118,6 +119,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
     wunder_desktop::install_local_home_env();
+    // 数据与恢复的「恢复」只解包到暂存目录；真正替换 config 与数据库必须在
+    // 任何 SQLite 连接打开之前完成，所以放在这里、窗口创建之前。
+    wunder_desktop::native_backup::apply_pending_restore();
     rotate_startup_log();
     let startup_boot = *STARTUP_BOOT.get_or_init(std::time::Instant::now);
     // 引擎内部的阶段耗时默认只走 tracing，桌面版没有 subscriber；注册后同一批
@@ -324,7 +328,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     match first_argument.as_deref().and_then(std::ffi::OsStr::to_str) {
         Some("--demo") => demo::install(&app),
-        None | Some("--native") => native_runtime::install(&app),
+        None | Some("--native") => {
+            native_runtime::install(&app);
+            // 设置 → 数据与恢复：只读写本机文件，装在做真实运行时的形态上。
+            backup_ui::install(&app);
+        }
         Some(_) => return Err("旧 bridge 参数已移除；请直接启动桌面程序".into()),
     }
     tray::install(&app);

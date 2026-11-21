@@ -23,3 +23,11 @@ export struct MobilePermission {
     granted: bool,
     available: bool,
 }
+
+// One existing local archive on 设置 → 数据与恢复. The label is already a
+// readable timestamp: the cache file name is a millisecond stamp.
+export struct MobileBackup {
+    path: string,
+    name: string,
+    detail: string,
+}

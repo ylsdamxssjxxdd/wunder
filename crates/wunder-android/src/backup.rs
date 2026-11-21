@@ -84,15 +84,73 @@ pub fn restore(zip_path: &str) -> Result<RestoreOutcome> {
     }
 }
 
-/// Newest archive created by the settings page, if any.
-pub fn latest_backup() -> Option<PathBuf> {
-    let reply = call_with_context(
-        "latestBackup",
-        "(Landroid/content/Context;)Ljava/lang/String;",
-        "latestBackup",
-    )
-    .ok()?;
-    (!reply.is_empty()).then(|| PathBuf::from(reply))
+/// Every archive the settings page created, newest first.
+///
+/// The backups live in the app cache, which only the Java side can resolve, so
+/// the page lists them instead of asking the user to type a path.
+#[cfg(target_os = "android")]
+pub fn list_backups() -> Vec<PathBuf> {
+    let Some(bridge) = bridge() else {
+        return Vec::new();
+    };
+    let mut env = match bridge.vm.attach_current_thread() {
+        Ok(env) => env,
+        Err(error) => {
+            log::warn!("attach the JVM to list backups: {error}");
+            return Vec::new();
+        }
+    };
+    let value = match env.call_static_method(
+        &bridge.class,
+        "listBackups",
+        "(Landroid/content/Context;)[Ljava/lang/String;",
+        &[JValue::Object(bridge.context.as_obj())],
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            clear_java_exception(&mut env);
+            log::warn!("BackupBridge.listBackups: {error}");
+            return Vec::new();
+        }
+    };
+    let object = match value.l() {
+        Ok(object) if !object.is_null() => object,
+        Ok(_) => return Vec::new(),
+        Err(error) => {
+            clear_java_exception(&mut env);
+            log::warn!("BackupBridge.listBackups returned no array: {error}");
+            return Vec::new();
+        }
+    };
+    let array = jni::objects::JObjectArray::from(object);
+    let length = match env.get_array_length(&array) {
+        Ok(length) => length.max(0) as usize,
+        Err(error) => {
+            clear_java_exception(&mut env);
+            log::warn!("read the backup array length: {error}");
+            return Vec::new();
+        }
+    };
+    let mut paths = Vec::with_capacity(length);
+    for index in 0..length {
+        let Ok(item) = env.get_object_array_element(&array, index as i32) else {
+            clear_java_exception(&mut env);
+            break;
+        };
+        if item.is_null() {
+            continue;
+        }
+        match env.get_string(&JString::from(item)) {
+            Ok(text) => paths.push(PathBuf::from(text.to_string_lossy().into_owned())),
+            Err(_) => clear_java_exception(&mut env),
+        }
+    }
+    paths
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn list_backups() -> Vec<PathBuf> {
+    Vec::new()
 }
 
 /// Apply a staged restore from a previous session. Must run before SQLite is

@@ -76,6 +76,27 @@ fn tool_selection_persists_for_default_agent() {
 }
 
 #[test]
+fn tool_catalog_keeps_canonical_identity_and_a_display_title() {
+    let runtime = start_isolated().expect("isolated runtime");
+    let tools = runtime.list_tools().expect("tools");
+    let read = tools
+        .iter()
+        .find(|tool| tool.name == "读取文件")
+        .expect("read_file is part of the builtin catalog");
+    assert_eq!(
+        read.title, "读取文件",
+        "the catalog title is what the settings page shows; the name stays the identity"
+    );
+    assert!(
+        tools
+            .iter()
+            .filter(|tool| tool.category == "内置工具")
+            .all(|tool| !tool.title.trim().is_empty()),
+        "every builtin needs a display title, otherwise the UI falls back to identifiers"
+    );
+}
+
+#[test]
 fn settings_updates_are_rejected_for_unknown_agents() {
     let runtime = start_isolated().expect("isolated runtime");
     let result = runtime.update_agent_settings(

@@ -62,8 +62,9 @@ fn main() {
         std::mem::forget(timer);
     }
     // Optional first argument opens a page for layout review: `settings`,
-    // `models`, `editor`, `editor-image`, or the first-run setup page
-    // (`env-setup`, `env-setup-error`, `env-setup-ready`). `settings-live` opens
+    // `models`, `editor`, `editor-image`, `channels`, `channel-editor`,
+    // `channel-editor-weixin`, `channel-qr`（含 `-expired` / `-failed`）, or the
+    // first-run setup page (`env-setup`, `env-setup-error`, `env-setup-ready`). `settings-live` opens
     // the sheet after the event loop has started, matching the phone's dynamic
     // path.
     // `env-setup-live` additionally loops the injection animation so the liquid
@@ -173,6 +174,14 @@ fn main() {
             std::mem::forget(timer);
         } else {
             wunder_android::open_preview_page(&ui, page);
+        }
+    }
+    // `WUNDER_PREVIEW_HELP=<index>` 直接翻开手册的第 N 篇（配合 `help` 页），
+    // 用于核对正文底部、页尾这类只有滚动到底才看得见的部分；索引按当前语言
+    // 手册的目录顺序。
+    if let Ok(value) = std::env::var("WUNDER_PREVIEW_HELP") {
+        if let Ok(index) = value.trim().parse::<i32>() {
+            ui.invoke_settings_help_open(index);
         }
     }
     // A portrait phone body; the window manager may resize it, but the first

@@ -358,6 +358,11 @@ impl NativeDesktop {
                     .and_then(|s| s.as_str())
                     .unwrap_or_default()
                     .into(),
+                title: s
+                    .get("title")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or_default()
+                    .into(),
                 description: s
                     .get("description")
                     .and_then(|s| s.as_str())

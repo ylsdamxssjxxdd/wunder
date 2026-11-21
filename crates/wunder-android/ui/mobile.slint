@@ -21,8 +21,8 @@ import { WorkspacesPage } from "workspaces.slint";
 import { MobileWorkspace } from "workspace_model.slint";
 import { WorkspaceVisual } from "../../../crates/wunder-desktop/frontend/ui/workspace_visual.slint";
 export { TrajectoryItem, TrajectoryAudit, TrajectorySegment, MobileWorkspace }
-import { MobileSession, MobilePermission } from "session_model.slint";
-export { MobileSession, MobilePermission }
+import { MobileSession, MobileBackup, MobilePermission } from "session_model.slint";
+export { MobileSession, MobileBackup, MobilePermission }
 import { MobileHelpRow } from "help_model.slint";
 import { MobileTool, MobileToolGroup, MobileToolResource, MobileToolFile, MobileMcpDraft, MobileKnowledgeDraft } from "tools_model.slint";
 export { MobileTool, MobileToolGroup, MobileToolResource, MobileToolFile, MobileMcpDraft, MobileKnowledgeDraft }
@@ -30,6 +30,7 @@ import { MobileCronJob, MobileCronDraft, MobileCronRun, MobileMemory, MobileMemo
 export { MobileCronJob, MobileCronDraft, MobileCronRun, MobileMemory, MobileMemoryDraft, MobileDevice }
 import { MobileChannelAccount, MobileChannelCatalog, MobileChannelBinding, MobileChannelLog, MobileChannelDraft } from "channel_model.slint";
 export { MobileChannelAccount, MobileChannelCatalog, MobileChannelBinding, MobileChannelLog, MobileChannelDraft }
+import { MobileActivityBlock } from "activity.slint";
 import { ListView, ScrollView } from "std-widgets.slint";
 
 // One row of the mobile thread drawer. The projection lives in Rust; this is
@@ -209,8 +210,17 @@ component SelectionKnob inherits Rectangle {
     // `knob-y` is the caret line's centre. The circle hangs 12px below it so
     // it does not cover the glyphs; the drag reports the line point back.
     private property <length> circle-drop: 12px;
-    x: knob-x - self.width / 2;
-    y: knob-y + circle-drop - self.height / 2;
+    // While the finger is down the knob rides exactly under it. The core only
+    // reports the snapped caret position on the next projection tick (33ms),
+    // so following that made a fast drag trail behind the finger and snap at
+    // the end. The knob is drawn at the finger and lets go back to the caret
+    // once the drag ends.
+    in-out property <bool> grabbed: false;
+    in-out property <length> grab-x: 0px;
+    in-out property <length> grab-y: 0px;
+    x: (root.grabbed ? root.grab-x : root.knob-x) - self.width / 2;
+    y: (root.grabbed ? root.grab-y + root.circle-drop : root.knob-y + root.circle-drop)
+        - self.height / 2;
 
     Rectangle {
         x: 12px;
@@ -231,14 +241,18 @@ component SelectionKnob inherits Rectangle {
         height: parent.height;
         pointer-event(event) => {
             if event.kind == PointerEventKind.down || event.kind == PointerEventKind.move {
-                root.dragged(
-                    root.start-handle,
-                    root.x + self.mouse-x,
-                    root.y + self.mouse-y - root.circle-drop,
-                );
+                // Window coordinates of the caret line under the finger. The
+                // knob's own origin is what these are relative to, and it
+                // moves with the drag — the sum stays the finger position, so
+                // the mapping does not drift.
+                root.grabbed = true;
+                root.grab-x = root.x + self.mouse-x;
+                root.grab-y = root.y + self.mouse-y - root.circle-drop;
+                root.dragged(root.start-handle, root.grab-x, root.grab-y);
                 return EventResult.accept;
             }
             if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
+                root.grabbed = false;
                 return EventResult.accept;
             }
             return EventResult.reject;
@@ -427,6 +441,14 @@ export component MobileWindow inherits Window {
     // The top-centre model chip opens this sheet; the composer's own trigger
     // is hidden on phones.
     in-out property <bool> model-sheet-open: false;
+    // 浮层里紧跟上下文占用的两块活动投影（engine 每秒重投影，行数在 Rust 侧
+    // 裁剪）：本线程仍在执行的命令任务，以及本线程的子智能体。
+    in property <[CommandTask]> task-rows: [];
+    in property <int> task-count: 0;
+    in property <[SubagentItem]> subagent-rows: [];
+    in property <int> subagent-count: 0;
+    callback stop-task(string);
+    callback stop-subagent(string);
     // System prompt preview opened by the greeting's eye button.
     in-out property <bool> prompt-preview-open: false;
     in-out property <bool> prompt-preview-loading: false;
@@ -451,7 +473,6 @@ export component MobileWindow inherits Window {
     in-out property <int> settings-page: 0;
     in property <string> settings-theme: "terracotta";
     in property <int> settings-font-size: 16;
-    in property <string> settings-send-key: "enter";
     in property <string> settings-language: "zh-CN";
     // 界面语言跟随设置页写入的 `settings-language`（zh-CN / en-US）。所有
     // `I18n` 文案都是 `zh ? ... : ...` 绑定，所以切换这一个标志即可整屏换语言；
@@ -468,6 +489,11 @@ export component MobileWindow inherits Window {
     in property <string> settings-help-topic-title: "";
     in property <[MdBlock]> settings-help-blocks: [];
     in property <int> settings-help-open-request: 0;
+    // 正文底部的上一篇 / 下一篇：相邻主题下标（-1 表示到头）与标题。
+    in property <int> settings-help-prev: -1;
+    in property <string> settings-help-prev-title: "";
+    in property <int> settings-help-next: -1;
+    in property <string> settings-help-next-title: "";
     callback settings-help-toggle(int);
     callback settings-help-open(int);
     callback settings-help-back();
@@ -475,6 +501,7 @@ export component MobileWindow inherits Window {
     // 数据与恢复页
     in property <string> settings-backup-status: "";
     in property <string> settings-backup-path: "";
+    in property <[MobileBackup]> settings-backup-items: [];
     in property <bool> settings-backup-busy: false;
     in property <bool> settings-backup-restart: false;
     in property <string> settings-crash-log-title: "";
@@ -629,6 +656,12 @@ export component MobileWindow inherits Window {
     in property <bool> settings-channel-editor-new: true;
     in property <string> settings-channel-editor-error: "";
     in-out property <MobileChannelDraft> settings-channel-draft;
+    // 微信机器人扫码登录面板：状态 0 正在获取 / 1 等待扫码 / 2 已确认 /
+    // 3 已过期 / 4 已取消 / 5 失败。
+    in property <bool> settings-channel-qr-open: false;
+    in property <int> settings-channel-qr-status: 0;
+    in property <string> settings-channel-qr-message: "";
+    in property <image> settings-channel-qr-image;
 
     // ---- intents -----------------------------------------------------
     callback open-drawer();
@@ -708,7 +741,6 @@ export component MobileWindow inherits Window {
     callback close-settings();
     callback save-theme(string);
     callback save-font-size(int);
-    callback save-send-key(string);
     callback save-language(string);
     callback install-ubuntu();
     callback set-ubuntu-enabled(bool);
@@ -800,6 +832,10 @@ export component MobileWindow inherits Window {
     callback open-channel-logs(string);
     callback close-channel-logs();
     callback delete-channel-binding(string);
+    // 扫码登录：右侧 bool 为 true 时强制换一张新二维码。
+    callback start-channel-qr(bool);
+    callback cancel-channel-qr();
+    callback save-channel-qr();
 
     private property <length> inset-top: self.safe-area-insets.top;
     private property <length> inset-bottom: self.safe-area-insets.bottom;
@@ -1855,7 +1891,6 @@ export component MobileWindow inherits Window {
         page <=> root.settings-page;
         theme: root.settings-theme;
         font-size: root.settings-font-size;
-        send-key: root.settings-send-key;
         language: root.settings-language;
         current-model: root.model-name;
         model-count: root.model-catalogue-count;
@@ -1866,6 +1901,10 @@ export component MobileWindow inherits Window {
         help-topic-title: root.settings-help-topic-title;
         help-blocks: root.settings-help-blocks;
         help-open-request: root.settings-help-open-request;
+        help-prev-topic: root.settings-help-prev;
+        help-prev-title: root.settings-help-prev-title;
+        help-next-topic: root.settings-help-next;
+        help-next-title: root.settings-help-next-title;
         help-toggle(block) => { root.settings-help-toggle(block); }
         help-open-topic(topic) => { root.settings-help-open(topic); }
         help-back-topic() => { root.settings-help-back(); }
@@ -1888,6 +1927,7 @@ export component MobileWindow inherits Window {
         permission-summary: root.permission-summary;
         backup-status: root.settings-backup-status;
         backup-path: root.settings-backup-path;
+        backups: root.settings-backup-items;
         backup-busy: root.settings-backup-busy;
         backup-restart: root.settings-backup-restart;
         crash-log-title: root.settings-crash-log-title;
@@ -2008,10 +2048,13 @@ export component MobileWindow inherits Window {
         channel-editor-new: root.settings-channel-editor-new;
         channel-editor-error: root.settings-channel-editor-error;
         channel-draft <=> root.settings-channel-draft;
+        channel-qr-open: root.settings-channel-qr-open;
+        channel-qr-status: root.settings-channel-qr-status;
+        channel-qr-message: root.settings-channel-qr-message;
+        channel-qr-image: root.settings-channel-qr-image;
         close() => { root.close-settings(); }
         save-theme(value) => { root.save-theme(value); }
         save-font-size(value) => { root.save-font-size(value); }
-        save-send-key(value) => { root.save-send-key(value); }
         save-language(value) => { root.save-language(value); }
         install-ubuntu() => { root.install-ubuntu(); }
         set-ubuntu-enabled(value) => { root.set-ubuntu-enabled(value); }
@@ -2053,7 +2096,7 @@ export component MobileWindow inherits Window {
         search-agent-tools(query) => { root.search-agent-tools(query); }
         save-agent-text(description, prompt) => { root.save-agent-text(description, prompt); }
         toggle-agent-tool(name, enabled, description, prompt) => { root.toggle-agent-tool(name, enabled, description, prompt); }
-        toggle-agent-tool-group(title, select, description, prompt) => { root.toggle-agent-tool-group(title, select, description, prompt); }
+        toggle-agent-tool-group(category, select, description, prompt) => { root.toggle-agent-tool-group(category, select, description, prompt); }
         add-agent-question(question, description, prompt) => { root.add-agent-question(question, description, prompt); }
         remove-agent-question(index, description, prompt) => { root.remove-agent-question(index, description, prompt); }
         refresh-cron() => { root.refresh-cron(); }
@@ -2095,6 +2138,9 @@ export component MobileWindow inherits Window {
         open-channel-logs(id) => { root.open-channel-logs(id); }
         close-channel-logs() => { root.close-channel-logs(); }
         delete-channel-binding(id) => { root.delete-channel-binding(id); }
+        start-channel-qr(force) => { root.start-channel-qr(force); }
+        cancel-channel-qr() => { root.cancel-channel-qr(); }
+        save-channel-qr() => { root.save-channel-qr(); }
         restore-archived(id) => { root.restore-session(id); }
         delete-archived(id) => { root.delete-archived-session(id); }
         refresh-archived() => { root.refresh-archived(); }
@@ -2485,7 +2531,10 @@ export component MobileWindow inherits Window {
             x: 8px;
             y: parent.height - self.height - 8px;
             width: parent.width - 16px;
-            height: min(parent.height - root.inset-top - 24px, 460px + root.inset-bottom);
+            // 活动区块（后台任务 / 子智能体）自己报高度：没有活动时浮层保持
+            // 原来的 460px，有内容时按行数长高，到屏幕高度为止。
+            height: min(parent.height - root.inset-top - 24px,
+                460px + root.inset-bottom + activity-block.preferred-height);
             border-radius: Theme.radius-lg;
             background: Theme.surface;
             drop-shadow-color: #00000033;
@@ -2549,6 +2598,17 @@ export component MobileWindow inherits Window {
                     }
                 }
                 Rectangle { height: 1px; background: Theme.border; }
+
+                // 后台任务与子智能体：桌面版挂在输入区的两个悬停浮层上，手机
+                // 没有悬停，收在这里、上下文占用下面。空列表不占高度。
+                activity-block := MobileActivityBlock {
+                    tasks: root.task-rows;
+                    task-count: root.task-count;
+                    subagents: root.subagent-rows;
+                    subagent-count: root.subagent-count;
+                    stop-task(id) => { root.stop-task(id); }
+                    stop-subagent(id) => { root.stop-subagent(id); }
+                }
 
                 if root.models.length == 0 : Rectangle {
                     vertical-stretch: 1;

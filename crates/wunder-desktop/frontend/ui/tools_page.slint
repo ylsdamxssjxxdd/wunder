@@ -338,7 +338,7 @@ export component ToolsPage inherits Rectangle {
                                             border-radius: Theme.radius-sm;
                                             background: mcp-hot.has-hover ? Theme.hover : Theme.surface;
                                             VerticalLayout { padding-left: 10px; padding-right: 10px; padding-top: 8px; spacing: 2px;
-                                                ToolText { height: 19px; text: tool.name; font-size: Theme.font-md; font-weight: 600; color: Theme.text; }
+                                                ToolText { height: 19px; text: tool.title == "" ? tool.name : tool.title; font-size: Theme.font-md; font-weight: 600; color: Theme.text; }
                                                 ToolText { height: 30px; text: tool.description; wrap: word-wrap; font-size: Theme.font-xs; color: Theme.muted; }
                                             }
                                         }
