@@ -225,6 +225,12 @@ pub fn build_shell_command_with_shell(command: &str, cwd: &Path, shell: &ShellLa
         // Keep the script out of argv: pkill/pgrep -f otherwise matches this
         // wrapper shell along with the intended target and kills the session
         // itself. eval parses the same script once without an extra shell.
+        //
+        // 安卓版's proot wrapper re-evaluates the same variable inside the guest,
+        // so any wrapper sitting between this shell and the guest has to forward
+        // `WUNDER_COMMAND_SCRIPT` past its own environment reset (`env -i`).
+        // A wrapper that drops it runs an empty script instead: exit 0, no
+        // output and no side effects (see UbuntuRuntime.writeWrapper).
         cmd.arg("-lc")
             .arg("eval \"${WUNDER_COMMAND_SCRIPT}\"")
             .env(
@@ -2166,5 +2172,30 @@ mod tests {
             command_args(&command),
             vec!["-lc", "eval \"${WUNDER_COMMAND_SCRIPT}\""]
         );
+    }
+
+    /// The Android proot wrapper re-evaluates `WUNDER_COMMAND_SCRIPT` inside the
+    /// guest, so the variable itself is part of the contract: a wrapper that
+    /// resets the environment must forward it, or the guest runs an empty script
+    /// and every command silently "succeeds" without doing anything.
+    #[cfg(not(windows))]
+    #[test]
+    fn unix_shell_hands_the_script_over_in_env() {
+        let command = build_shell_command_with_shell(
+            "echo ok | head",
+            Path::new("."),
+            &ShellLaunch {
+                kind: ShellKind::Sh,
+                posix_bin: Some(PathBuf::from("/system/bin/sh")),
+                path_dirs: Vec::new(),
+            },
+        );
+        let script = command
+            .as_std()
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("WUNDER_COMMAND_SCRIPT"))
+            .and_then(|(_, value)| value)
+            .map(|value| value.to_string_lossy().into_owned());
+        assert_eq!(script.as_deref(), Some("set -o pipefail; echo ok | head"));
     }
 }

@@ -549,9 +549,56 @@ READABLE_JS = """(opts) => {
 
 
 # 工作区预览域名。页面资源由 bridge 自己从工作区读出并直接喂给浏览器
-# （page.route），既不发网络请求也不占用端口，所以 file:// 被禁用、容器里
+# （context.route），既不发网络请求也不占用端口，所以 file:// 被禁用、容器里
 # 端口被别人占用时，仍然可以预览交付的 HTML。
+# 路由必须挂在 context 上：page.route 只覆盖装它的那个标签页，之后新建的标签页
+# 会退回真实 DNS 解析，对不存在的域名报 ERR_NAME_NOT_RESOLVED。
 PREVIEW_HOST = "wunder.preview"
+
+
+def is_preview_url(url):
+    """True for `http://wunder.preview/...`, the workspace preview origin."""
+    try:
+        return (urlparse(str(url)).hostname or "").strip().lower() == PREVIEW_HOST
+    except Exception:
+        return False
+
+
+def has_url_scheme(url):
+    """True when the caller already named a scheme, e.g. https:// or about:.
+
+    `urlparse` reads `localhost:3000` as scheme `localhost`, so only a known
+    scheme counts: everything else is treated as a missing scheme and gets an
+    actionable error instead of a driver-level one.
+    """
+    text = str(url or "").strip()
+    if not text:
+        return False
+    if "://" in text:
+        return bool(text.split("://", 1)[0])
+    try:
+        scheme = (urlparse(text).scheme or "").lower()
+    except Exception:
+        return False
+    return scheme in (
+        "about",
+        "data",
+        "blob",
+        "file",
+        "mailto",
+        "javascript",
+        "chrome",
+        "view-source",
+    )
+
+
+def missing_scheme_message(url):
+    """Actionable text for a `url` that never named a scheme."""
+    return (
+        "navigate needs an absolute URL such as https://example.com; to open a "
+        "workspace page pass path='<workspace-relative file>' instead of url "
+        "(got: %s)" % url
+    )
 
 # Console ring per tab: enough to see the first error and its follow-ups, small
 # enough that a page stuck in a render loop cannot grow the bridge's memory.
@@ -673,9 +720,9 @@ class Policy:
             return False, "file:// URLs are disabled"
         if scheme not in ("http", "https"):
             return False, "only http/https URLs are supported (got %s)" % scheme
-        # 预览域名只由 page.route 应答工作区里的文件，从不发网络请求，所以
+        # 预览域名只由 context.route 应答工作区里的文件，从不发网络请求，所以
         # 不受私网与域名策略约束。
-        if (parsed.hostname or "").strip().lower() == PREVIEW_HOST:
+        if is_preview_url(url):
             return True, ""
         if self.allow_private_network:
             return True, ""
@@ -1059,7 +1106,7 @@ class BridgeSession:
         # to. Both are bounded and tab-scoped, so a closed tab releases them.
         self.console_logs = {}
         self.preview_root = None
-        self.preview_installed = set()
+        self.preview_route_installed = False
         # Cursor signatures bind a window to this one bridge process.  They are
         # deliberately not persisted: a restarted browser cannot promise the
         # same DOM, so callers must observe the page again.
@@ -1198,6 +1245,14 @@ class BridgeSession:
         )
 
     def _handle_route(self, route, request):
+        # 预览请求由工作区处理器从磁盘应答：交给网络就是一次注定失败的 DNS
+        # 解析，所以这里只把请求交还给下一个（预览）处理器。
+        if is_preview_url(request.url):
+            try:
+                route.fallback()
+            except Exception:
+                pass
+            return
         allowed, reason = self.policy.check(request.url)
         if allowed:
             try:
@@ -1288,73 +1343,99 @@ class BridgeSession:
             if buffer is not None:
                 buffer.append({"type": "info", "text": "console capture unavailable"})
 
+    def _serve_preview(self, route, request):
+        """Answer one `wunder.preview` request from the workspace root."""
+        root = self.preview_root
+        if not root:
+            try:
+                route.fulfill(
+                    status=503,
+                    content_type="text/plain; charset=utf-8",
+                    body="Preview root is not configured\n",
+                )
+            except Exception:
+                pass
+            return
+        try:
+            parsed = urlparse(request.url)
+            relative = unquote(parsed.path or "/").lstrip("/")
+            target = os.path.realpath(os.path.join(root, relative))
+            inside = target == root or target.startswith(root + os.sep)
+            if not inside:
+                route.fulfill(
+                    status=403,
+                    content_type="text/plain; charset=utf-8",
+                    body="Blocked: path escapes the workspace\n",
+                )
+                return
+            if os.path.isdir(target):
+                target = os.path.join(target, "index.html")
+            if not os.path.isfile(target):
+                route.fulfill(
+                    status=404,
+                    content_type="text/plain; charset=utf-8",
+                    body="Not found in workspace: %s\n" % relative,
+                )
+                return
+            content_type = mimetypes.guess_type(target)[0] or "application/octet-stream"
+            if content_type.startswith("text/") or content_type in (
+                "application/javascript",
+                "application/json",
+            ):
+                content_type += "; charset=utf-8"
+            with open(target, "rb") as handle:
+                body = handle.read()
+        except Exception as exc:
+            try:
+                route.fulfill(
+                    status=500,
+                    content_type="text/plain; charset=utf-8",
+                    body="Preview failed: %s\n" % type(exc).__name__,
+                )
+            except Exception:
+                pass
+            return
+        try:
+            route.fulfill(
+                status=200,
+                content_type=content_type,
+                headers={"cache-control": "no-store"},
+                body=body,
+            )
+        except Exception:
+            pass
+
     def _install_preview(self, page, root):
-        """Serve the workspace over `http://wunder.preview/` for this page.
+        """Serve the workspace over `http://wunder.preview/` for every tab.
 
         Self-contained HTML still needs an origin to run in: file:// is refused
         in sandboxed runtimes and a hand-started HTTP server collides with other
         workspaces in a shared container. Fulfilling the request from the
         workspace keeps preview deterministic and port-free.
+
+        The route is installed on the context, not on one page: a page-scoped
+        route only covers the tab that installed it, so a tab opened later
+        (tabs_new or a popup) fell back to a real DNS lookup for a host that
+        does not exist and reported ERR_NAME_NOT_RESOLVED. Context routes are
+        inherited by current and future pages, and the handler reads the root
+        at request time, so switching workspaces needs no reinstall.
         """
         resolved = os.path.realpath(str(root))
-        if resolved in self.preview_installed:
+        self.preview_root = resolved
+        if self.preview_route_installed:
             return
-        self.preview_installed.add(resolved)
-
-        def handler(route, request):
+        handler = self._serve_preview
+        try:
+            self.context.route("http://%s/**" % PREVIEW_HOST, handler)
+            self.preview_route_installed = True
+        except Exception:
+            # Rare driver/context without routing support: fall back to a page
+            # route so the current tab still previews, and retry the
+            # context-level install on the next call.
             try:
-                parsed = urlparse(request.url)
-                relative = unquote(parsed.path or "/").lstrip("/")
-                target = os.path.realpath(os.path.join(resolved, relative))
-                inside = target == resolved or target.startswith(resolved + os.sep)
-                if not inside:
-                    route.fulfill(
-                        status=403,
-                        content_type="text/plain; charset=utf-8",
-                        body="Blocked: path escapes the workspace\n",
-                    )
-                    return
-                if os.path.isdir(target):
-                    target = os.path.join(target, "index.html")
-                if not os.path.isfile(target):
-                    route.fulfill(
-                        status=404,
-                        content_type="text/plain; charset=utf-8",
-                        body="Not found in workspace: %s\n" % relative,
-                    )
-                    return
-                content_type = mimetypes.guess_type(target)[0] or "application/octet-stream"
-                if content_type.startswith("text/") or content_type in (
-                    "application/javascript",
-                    "application/json",
-                ):
-                    content_type += "; charset=utf-8"
-                with open(target, "rb") as handle:
-                    body = handle.read()
-            except Exception as exc:
-                try:
-                    route.fulfill(
-                        status=500,
-                        content_type="text/plain; charset=utf-8",
-                        body="Preview failed: %s\n" % type(exc).__name__,
-                    )
-                except Exception:
-                    pass
-                return
-            try:
-                route.fulfill(
-                    status=200,
-                    content_type=content_type,
-                    headers={"cache-control": "no-store"},
-                    body=body,
-                )
+                page.route("http://%s/**" % PREVIEW_HOST, handler)
             except Exception:
                 pass
-
-        try:
-            page.route("http://%s/**" % PREVIEW_HOST, handler)
-        except Exception:
-            self.preview_installed.discard(resolved)
 
     def _preview_url(self, root, relative):
         """Remember the workspace root and turn a relative path into a URL."""
@@ -1558,6 +1639,8 @@ class BridgeSession:
     def open_tab(self, url=None, timeout_ms=None, preview_root=None, preview_path=None):
         if preview_root and preview_path:
             url = self._preview_url(preview_root, preview_path)
+        if url and not has_url_scheme(url):
+            return {"success": False, "error": missing_scheme_message(url)}
         if url:
             allowed, reason = self.policy.check(url)
             if not allowed:
@@ -1652,6 +1735,8 @@ class BridgeSession:
             url = self._preview_url(preview_root, preview_path)
         if not url:
             return {"success": False, "error": "Missing 'url' parameter"}
+        if not has_url_scheme(url):
+            return {"success": False, "error": missing_scheme_message(url)}
         allowed, reason = self.policy.check(url)
         if not allowed:
             return {"success": False, "error": "Navigation blocked: %s" % reason}

@@ -44,7 +44,7 @@ python crates/wunder-desktop/frontend/scripts/check-native.py --ui crates/wunder
 
 ## Win7 32 位
 
-工程复用了参考项目的 Slint 实现及已验证的 Slint 1.18 software renderer、Winit 0.30.2 和 Win7 兼容 vendor patch。`assets/fonts/msyh.ttc` 是内置的完整微软雅黑（Microsoft YaHei / YaHei UI，当前未做子集化），构建时以 LZ4 压缩后嵌入 EXE，启动时只解压并注册一次；UI 不依赖目标机器安装字体，且与 Slint 预览路径使用的系统默认中文字形一致。原单份 SimSun 宋体已归档至 `assets/fonts/retired/simsun.ttf`。
+工程复用了参考项目的 Slint 实现及已验证的 Slint 1.18 software renderer、Winit 0.30.2 和 Win7 兼容 vendor patch。`assets/fonts/MiSans-Regular.ttf` 是内置正文字体（MiSans，免费商用，8.12 MB），`assets/fonts/DejaVuSans.ttf`只作符号回退（0.76 MB，补 MiSans 缺的 `⚠ ⌘ ☑ ☐ ☁ ⊞ ⊟ ✦ ◉ ❖`），两者构建时以 LZ4 压缩后嵌入 EXE，启动时解压并注册一次，注册顺序决定优先级：两款都覆盖的字符由 MiSans 出字形。UI 因此不依赖目标机器装了什么字体；MiSans 的自然行高（1.33em）与原先内嵌的微软雅黑（1.36em）相差 2%，正文行距常量无需重调。许可、来源与维护约束见 `assets/fonts/NOTICE.md`。
 
 有离线 SDK 时运行：
 

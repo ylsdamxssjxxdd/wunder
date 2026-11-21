@@ -23,7 +23,7 @@ ENTRIES = [
     ("ag_model_key_hint", "留空继承默认", "Empty inherits the default"),
     ("ag_workdir_container", "工作目录容器", "Working directory container"),
     ("ag_container_prefix", "容器 #", "Container #"),
-    ("ag_permission_mode", "权限模式", "Permission mode"),
+    ("ag_permission_mode", "权限审批", "Permission approval"),
     ("ag_permission_note", "执行命令、写入文件与桌面控制是否需要确认", "Whether commands, file writes and desktop control need confirmation"),
     ("ag_permission_suggest", "建议（每步确认）", "Suggest (confirm each step)"),
     ("ag_permission_auto_edit", "自动编辑（命令需确认）", "Auto edit (confirm commands)"),

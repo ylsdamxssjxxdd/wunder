@@ -20,3 +20,7 @@ The local AI workbench and the default entry point for individual users: it runs
 - **Chat page**: the left column holds the task and thread tree, the working directory (local file tree, usage bar, cloud workspaces) and the settings entry; the right column holds the header (workspace / thread name), the timeline and the composer. With no thread selected the right side shows a welcome page.
 - **Settings, 12 categories**: General, Local runtime, Account, Models, MCP servers, Skills, Agent settings, Companions, Scheduled tasks, Memory fragments, Channels, Archived threads. Help sits inside General; the category list is searchable.
 - **Panels and dialogs**: interactive terminal, tool management (built-in / MCP / skills / knowledge base), companions, workspaces, working directory, thread trajectory, subagent details, channels, schedules, expert data, patch diff cards, screenshot overlay, tray and notifications, remote-command approval.
+
+## Fonts
+
+The interface sets its copy in MiSans, a free-for-commercial-use typeface from Xiaomi, with DejaVu Sans behind it for symbols MiSans does not carry. Both faces ship inside the executable, so the target machine needs no installed Chinese font, and any character both faces cover is drawn by MiSans. This keeps the desktop and Android Chinese typesetting identical, and keeps the glyphs independent of the system language setting.

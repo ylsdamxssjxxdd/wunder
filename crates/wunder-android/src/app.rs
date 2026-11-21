@@ -1078,6 +1078,11 @@ fn wire_callbacks(
     let weak = ui.as_weak();
     ui.on_send(move || {
         let Some(ui) = weak.upgrade() else { return };
+        // 安卓的英文会停在输入法的组合区（屏幕上带下划线），直到遇到分隔符才
+        // 提交给 `text`。发送前先把组合区落进正文：否则 `draft` 是空的，消息
+        // 会丢掉用户明明看得见的那几个字母，发送键也一直是语音键。
+        #[cfg(target_os = "android")]
+        i_slint_core::items::commit_focused_preedit(ui.window());
         let draft = ui.get_draft().to_string();
         let draft = draft.trim().to_string();
         // 只挂了附件、正文空着也能发：文件提示块本身就是这条消息的内容。

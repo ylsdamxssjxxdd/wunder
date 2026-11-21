@@ -581,12 +581,13 @@ fn profile_brush(color: &str) -> slint::Color {
 
 // The mark printed on the profile avatar bubble. The desktop ships no avatar
 // artwork: `avatar_icon` is either `initial` or a `qq-avatar-NNNN` key whose web
-// image set has no desktop counterpart, and the Unicode symbols the old mapping
-// chose (✦ ◉ ❖) are absent from the bundled Microsoft YaHei (`assets/fonts/
-// msyh.ttc`), so they rendered as tofu. The signed-in name's first character is
-// the one mark that always draws; an empty name leaves the bubble to the Slint
-// side, which shows a neutral placeholder until the profile has loaded and the
-// shared "me" label only once an identity is actually known.
+// image set has no desktop counterpart. The Unicode symbols the old mapping
+// chose (✦ ◉ ❖) had no glyph in the face the shell then bundled and rendered as
+// tofu; the bundled DejaVu Sans fallback now covers them, but the signed-in
+// name's first character stays the mark because it is the one glyph that is
+// always distinct per user. An empty name leaves the bubble to the Slint side,
+// which shows a neutral placeholder until the profile has loaded and the shared
+// "me" label only once an identity is actually known.
 fn profile_glyph(username: &str) -> String {
     match username.trim().chars().next() {
         Some(first) => first.to_uppercase().collect(),

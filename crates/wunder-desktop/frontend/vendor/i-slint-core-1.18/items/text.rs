@@ -2346,6 +2346,43 @@ impl TextInput {
         }
     }
 
+    /// Commits the input method's composition into the text right now, and clears the
+    /// composition.
+    ///
+    /// Android keeps a word in the composition until a separator arrives, so `text` can stay
+    /// empty while the user already sees letters under the IME's underline. A shell that hands
+    /// the draft to the engine — the send button, above all — calls this first so the message
+    /// carries what the user typed, and so the draft stops looking empty. Mirrors what `FocusOut`
+    /// does on Android, without the keyboard going away. Returns false when nothing is composing.
+    pub fn commit_preedit(
+        self: Pin<&Self>,
+        window_adapter: &Rc<dyn WindowAdapter>,
+        self_rc: &ItemRc,
+    ) -> bool {
+        let preedit_text = self.preedit_text();
+        if preedit_text.is_empty() {
+            return false;
+        }
+        let mut text = String::from(self.text());
+        let cursor_position = self.cursor_position(&text);
+        text.insert_str(cursor_position, &preedit_text);
+        // Clear the composition before publishing the text, so the IME is told
+        // about a plain caret rather than the range that just collapsed.
+        self.preedit_text.set(Default::default());
+        self.set_text_internal(text.into());
+        let new_pos = (cursor_position + preedit_text.len()) as i32;
+        self.anchor_position_byte_offset.set(new_pos);
+        self.set_cursor_position(
+            new_pos,
+            false,
+            TextChangeNotify::TriggerCallbacks,
+            window_adapter,
+            self_rc,
+        );
+        Self::FIELD_OFFSETS.edited().apply_pin(self).call(&());
+        true
+    }
+
     /// Returns the `text` property with the IME composition (preedit) inserted at the cursor, and
     /// the byte range that composition occupies within the returned string. The range is empty
     /// when no composition is in progress, in which case the text is returned unchanged.
@@ -2819,6 +2856,21 @@ pub unsafe extern "C" fn slint_textinput_redo(
         let self_rc = ItemRc::new(self_component.clone(), self_index);
         text_input.redo(window_adapter, &self_rc);
     }
+}
+
+/// Commit whatever the input method is composing in the focused `TextInput`
+/// into its text, right away. Returns false when no input has focus or nothing
+/// is composing.
+///
+/// A shell calls this before reading a draft it is about to send: the Android
+/// IME keeps an English word in the composition until a separator arrives, so
+/// `text` can be empty while the user already sees the letters.
+pub fn commit_focused_preedit(window: &crate::api::Window) -> bool {
+    let window_inner = WindowInner::from_pub(window);
+    let Some(item) = window_inner.focus_item.borrow().upgrade() else { return false };
+    let Some(input) = item.downcast::<TextInput>() else { return false };
+    let window_adapter = window_inner.window_adapter();
+    input.as_pin_ref().commit_preedit(&window_adapter, &item)
 }
 
 pub fn slint_text_item_fontmetrics(

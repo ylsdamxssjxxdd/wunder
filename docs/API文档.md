@@ -293,7 +293,7 @@ wunder 是一个**泛用型人工智能操作系统**（wunder = 模型 + 拘束
   - `PUT /wunder/chat/sessions/{session_id}/goal`：请求体支持 `objective/token_budget/status`；设置或恢复 active 时会尝试启动续跑；响应 `data` 额外包含 `user_round`（/goal 命令用户轮次号，Set/Resume 时有值），供前端把本地命令气泡对齐到持久化轮次。
   - `DELETE /wunder/chat/sessions/{session_id}/goal`：清除当前目标。
 - `chat/ws` 新增 `goal.get / goal.set / goal` 消息类型；响应类型为 `goal`。
-- `POST /wunder/chat/sessions/{session_id}/cancel` 在终止当前会话运行时会同步清除目标态，并返回 `goal_cleared`。若最近一轮用户消息之后尚无可见智能体回复，服务端会追加一条可恢复的 assistant 取消标记，刷新后仍能看到该轮次已被用户终止；响应会返回 `marker_persisted` 表示本次是否新写入该标记。取消结算会同时收敛 monitor、目标续跑、队列任务、运行中任务和 `agent_thread` 状态，响应额外包含 `queued_tasks_cancelled`、`running_tasks_marked_cancelled`、`thread_status_reset`、`settlement_event_id`。
+- `POST /wunder/chat/sessions/{session_id}/cancel` 在终止当前会话运行时会同步清除目标态，并返回 `goal_cleared`。若最近一轮用户消息之后尚无可见智能体回复，服务端会追加一条可恢复的 assistant 取消标记，刷新后仍能看到该轮次已被用户终止；响应会返回 `marker_persisted` 表示本次是否新写入该标记。取消结算会收敛 monitor、目标续跑与队列任务；本进程仍在执行的 `running` 轮次和任务行不在此处落终态，由执行器在下一个取消检查点自行结算（线程在此期间对外表现为运行中/正在停止，不会提前显示已停止），响应额外包含 `queued_tasks_cancelled`、`running_tasks_marked_cancelled`、`thread_status_reset`、`settlement_event_id`。
 - 目标事件：`goal_updated / goal_cleared / goal_continuation_started / goal_budget_limited / goal_continuation_ready`。
 - 目标续跑通过隐藏内部用户消息触发，不改写 frozen system prompt；目标在 `paused / budget_limited / complete` 状态下停止自动续跑。
 

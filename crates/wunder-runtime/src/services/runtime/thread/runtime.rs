@@ -887,6 +887,17 @@ impl ThreadRuntime {
 
         let mut queued_tasks_cancelled = 0usize;
         let mut running_tasks_marked_cancelled = 0usize;
+        // A stop request arrives while the executor is usually still inside a
+        // tool call: it cannot end before that call returns. Writing this
+        // process's running task and turn as cancelled right now is what made a
+        // stopped thread look settled while its tools kept writing — and the
+        // composer reads that status to decide whether the thread is busy, so
+        // the next message went out, the engine parked it behind work that had
+        // never stopped, and the window painted a「排队中」bubble the user never
+        // asked for. The executor owns that terminal: it sees the cancellation
+        // at its next checkpoint and settles both rows itself. Anything this
+        // process is not executing still settles here.
+        let executor_here = self.has_local_execution(cleaned_session);
         for task_session_id in std::iter::once(cleaned_session)
             .chain(descendant_session_ids.iter().map(String::as_str))
         {
@@ -898,6 +909,13 @@ impl ThreadRuntime {
             }
             let thread_id = format!("thread_{task_session_id}");
             for status in [TASK_STATUS_PENDING, TASK_STATUS_RETRY, TASK_STATUS_RUNNING] {
+                // The run this process is executing settles its own task row.
+                if executor_here
+                    && task_session_id == cleaned_session
+                    && status == TASK_STATUS_RUNNING
+                {
+                    continue;
+                }
                 loop {
                     let store = self.user_store.clone();
                     let thread = thread_id.clone();
@@ -952,11 +970,19 @@ impl ThreadRuntime {
             if preserve_root_queue && thread == cleaned_session {
                 continue;
             }
-            turns_cancelled += self
-                .orchestrator
-                .committer
-                .cancel_active_turns(cleaned_user, thread, source)
-                .await?;
+            // Same rule as the task ledger: the running turn of a run this
+            // process still owns is settled by that executor, not here.
+            turns_cancelled += if executor_here && thread == cleaned_session {
+                self.orchestrator
+                    .committer
+                    .cancel_parked_turns(cleaned_user, thread, source)
+                    .await?
+            } else {
+                self.orchestrator
+                    .committer
+                    .cancel_active_turns(cleaned_user, thread, source)
+                    .await?
+            };
         }
         let settlement_event_id = if preserve_root_queue {
             0
@@ -964,7 +990,14 @@ impl ThreadRuntime {
             self.emit_thread_status_event(
                 cleaned_session,
                 cleaned_user,
-                "cancelled",
+                // A thread whose own executor is still winding down is not
+                // cancelled yet: it reports「正在停止」and only becomes terminal
+                // when the executor settles its turn.
+                if executor_here {
+                    "cancelling"
+                } else {
+                    "cancelled"
+                },
                 source,
                 queued_tasks_cancelled,
                 running_tasks_marked_cancelled,
@@ -973,13 +1006,8 @@ impl ThreadRuntime {
         };
         let _ = self.queue_tx.try_send(());
 
-        let has_active_executor = self
-            .active_runtime_sessions
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .contains(cleaned_session);
         if !preserve_root_queue
-            && !has_active_executor
+            && !executor_here
             && !self
                 .has_live_session_lock(cleaned_user, cleaned_session)
                 .await
@@ -3034,6 +3062,155 @@ mod tests {
             0
         );
         assert!(!wake.has_changed().unwrap());
+    }
+
+    /// 停止不替执行器写终态：本进程仍在跑这一轮时，只有排队轮次落定，
+    /// 运行中的轮次与任务行留给执行器。否则线程会在工具仍在返回结果时对外
+    /// 显示「已停止」，输入框据此判定空闲，把新消息提交给引擎再被挂进队列。
+    #[tokio::test]
+    async fn stop_leaves_the_running_turn_to_its_executor() {
+        use crate::state::{AppState, AppStateInitOptions};
+        let root = tempfile::tempdir().unwrap();
+        let mut config = crate::config::Config::default();
+        config.storage.backend = "sqlite".into();
+        config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
+        config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
+        let store = ConfigStore::new(root.path().join("config.yaml"));
+        store
+            .update(|current| *current = config.clone())
+            .await
+            .unwrap();
+        let state = AppState::new_with_options(
+            store,
+            config,
+            AppStateInitOptions::cli_default().with_start_thread_runtime(false),
+        )
+        .unwrap();
+        let user = "fixture-user";
+        let session = "fixture-thread";
+        let accepted = state
+            .storage
+            .accept_thread_turn(user, session, &json!({"content":"fixture input"}))
+            .unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap().to_string();
+        state
+            .storage
+            .update_thread_turn(user, session, &turn, "running", "", &json!({}))
+            .unwrap();
+        // The queue still holds a turn behind this one: a stop clears those.
+        state
+            .storage
+            .insert_agent_task(&AgentTaskRecord {
+                task_id: "fixture-parked".to_string(),
+                thread_id: format!("thread_{session}"),
+                user_id: user.to_string(),
+                agent_id: "fixture".to_string(),
+                session_id: session.to_string(),
+                status: TASK_STATUS_PENDING.to_string(),
+                request_payload: json!({
+                    "user_id": user, "session_id": session, "question": "parked",
+                    "config_overrides": { "__thread_log_turn_id": "fixture-parked-turn" },
+                }),
+                request_id: None,
+                retry_count: 0,
+                retry_at: 0.0,
+                created_at: 0.0,
+                updated_at: 0.0,
+                started_at: None,
+                finished_at: None,
+                last_error: None,
+            })
+            .unwrap();
+        // The run this process is executing: its ledger row stays `running`
+        // until the executor itself settles it.
+        let running = AgentTaskRecord {
+            task_id: "fixture-running".to_string(),
+            thread_id: format!("thread_{session}"),
+            user_id: user.to_string(),
+            agent_id: "fixture".to_string(),
+            session_id: session.to_string(),
+            status: TASK_STATUS_RUNNING.to_string(),
+            request_payload: json!({
+                "user_id": user, "session_id": session, "question": "fixture input",
+                "config_overrides": { "__thread_log_turn_id": turn },
+            }),
+            request_id: None,
+            retry_count: 0,
+            retry_at: 0.0,
+            created_at: 0.0,
+            updated_at: 0.0,
+            started_at: Some(0.0),
+            finished_at: None,
+            last_error: None,
+        };
+        state.storage.insert_agent_task(&running).unwrap();
+        state
+            .monitor
+            .register(session, user, "fixture", "fixture running", false);
+        let runtime = &state.kernel.thread_runtime;
+        // A lease in this process is what "the executor is still running" means.
+        let lease = runtime
+            .try_acquire_start_lease(session, &turn)
+            .await
+            .expect("execution lease");
+
+        let settled = runtime
+            .cancel_session_activity(user, session, "user_stop")
+            .await
+            .unwrap();
+        assert_eq!(
+            settled.turns_cancelled, 0,
+            "the running turn must stay open until its executor stops"
+        );
+        assert_eq!(settled.queued_tasks_cancelled, 1);
+        assert_eq!(
+            settled.running_tasks_marked_cancelled, 0,
+            "the executor settles its own task row"
+        );
+        let turns = state
+            .storage
+            .list_thread_turns(user, session, None, 12)
+            .unwrap();
+        assert_eq!(
+            turns[0]["status"], "running",
+            "a stop must not report a thread idle while its tools still run"
+        );
+        let record = state.monitor.get_record(session).unwrap();
+        assert_eq!(record["status"], "cancelling");
+        assert_eq!(
+            state
+                .storage
+                .get_agent_task("fixture-running")
+                .unwrap()
+                .unwrap()
+                .status,
+            TASK_STATUS_RUNNING
+        );
+
+        // The executor reaches its cancellation checkpoint: it settles the run
+        // exactly the way `run_task` does, and only now does the thread read as
+        // stopped.
+        runtime
+            .fail_task(&running, "cancelled".into(), TASK_STATUS_CANCELLED)
+            .await
+            .unwrap();
+        let turns = state
+            .storage
+            .list_thread_turns(user, session, None, 12)
+            .unwrap();
+        assert_eq!(turns[0]["status"], "cancelled");
+        let record = state.monitor.get_record(session).unwrap();
+        assert_eq!(record["status"], "cancelled");
+        assert_eq!(
+            state
+                .storage
+                .get_agent_task("fixture-running")
+                .unwrap()
+                .unwrap()
+                .status,
+            TASK_STATUS_CANCELLED
+        );
+        drop(lease);
     }
 
     #[tokio::test]

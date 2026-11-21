@@ -56,7 +56,7 @@ Desktop, Android and the CLI are local forms that run on their own without the S
 - How the system is assembled: [Architecture](topic:concepts-architecture)
 - Key mechanics: [Agent Loop](topic:concepts-core-agent-loop)
 
-<!-- topic id="forms-desktop-ui" block="forms" title="Interface" group="Desktop" keywords="Desktop Interface" -->
+<!-- topic id="forms-desktop-ui" block="forms" title="Interface" group="Desktop" keywords="Desktop Interface,Fonts" -->
 
 The local AI workbench and the default entry point for individual users: it runs on your own computer, calls the engine natively in-process, occupies no port and needs no local HTTP/WebSocket hop — and no Server has to be deployed first.
 
@@ -67,8 +67,12 @@ The local AI workbench and the default entry point for individual users: it runs
 
 - **Two pages only**: Chat and Settings. Every other capability is a panel or dialog on demand, and does not change the two-column layout.
 - **Chat page**: the left column holds the task and thread tree, the working directory (local file tree, usage bar, cloud workspaces) and the settings entry; the right column holds the header (workspace / thread name), the timeline and the composer. With no thread selected the right side shows a welcome page.
-- **Settings, 11 categories**: General, Runtime, Account, Models, Tool management, Agent, Companions, Scheduled tasks, Memory fragments, Channels, Archived threads. Help sits inside General; the category list is searchable.
+- **Settings, 12 categories**: General, Local runtime, Account, Models, MCP servers, Skills, Agent settings, Companions, Scheduled tasks, Memory fragments, Channels, Archived threads. Help sits inside General; the category list is searchable.
 - **Panels and dialogs**: interactive terminal, tool management (built-in / MCP / skills / knowledge base), companions, workspaces, working directory, thread trajectory, subagent details, channels, schedules, expert data, patch diff cards, screenshot overlay, tray and notifications, remote-command approval.
+
+## Fonts
+
+The interface sets its copy in MiSans, a free-for-commercial-use typeface from Xiaomi, with DejaVu Sans behind it for symbols MiSans does not carry. Both faces ship inside the executable, so the target machine needs no installed Chinese font, and any character both faces cover is drawn by MiSans. This keeps the desktop and Android Chinese typesetting identical, and keeps the glyphs independent of the system language setting.
 
 <!-- topic id="forms-desktop-deploy" block="forms" title="Deployment" group="Desktop" keywords="Desktop Deployment,OS and installer" -->
 
@@ -88,6 +92,7 @@ The local AI workbench and the default entry point for individual users: it runs
 | --- | --- |
 | Root | the install root (`WUNDER_HOME`; `~/.wunder` by default, marked by `.wunder-home`) |
 | Workspace | `/workspace` |
+| Temp directory | `/temp` (override with `WUNDER_DESKTOP_TEMP_ROOT` or `--temp-root`) |
 | Desktop settings | `/config/desktop.settings.json` |
 | Sessions and tool logs | local SQLite |
 
@@ -137,7 +142,7 @@ Components follow the supplement, not the app version. Moving machines means cop
 
 ## Checking it after install
 
-1. Settings opens the tool manager, which means the component directory was found.
+1. Settings opens MCP servers or Skills, which means the component directory was found.
 2. Ask for `python -V` or `git --version` in a chat; matching the table above means the path is wired.
 3. If it will not run, check which install root the process used — a non-empty `WUNDER_HOME` wins over the install-root marker.
 
@@ -201,7 +206,7 @@ The cloud AI workbench, delivered with the Server: once the Server is deployed, 
 *Cloud: the single-page app in a browser — left column, timeline and composer.*
 
 - **Three columns**: the left column holds new tasks, search, the workspace and thread tree, the working directory and the settings entry; the right column holds the chat header, timeline and composer; overlays carry file preview, online editing and companions.
-- **10 settings categories**: General, Account, Tool management, Agent, Companions, Scheduled tasks, Memory fragments, Channels, My devices, Archived threads. Tool management splits into built-in / MCP / skills / knowledge base; My devices is the device-interlink entry, and command approvals pop up inline in the timeline.
+- **10 settings categories**: General, Account, Tool management, Agent settings, Companions, Scheduled tasks, Memory fragments, Channels, My devices, Archived threads. Tool management splits into built-in / MCP / skills / knowledge base; My devices is the device-interlink entry, and command approvals pop up inline in the timeline.
 - **Composer**: message input (slash commands work too), attachments, send / stop, model switching, approval mode (suggest / auto-edit / full-auto, full-auto by default) and thinking level (grey follows the model; empty / half / full).
 - **Timeline**: each reply folds its thinking, tool batches and interim prints under "work process"; the latest turn is expanded by default. States are running / waiting (needs your input or approval) / done.
 - **Slash commands**: `/new`, `/stop`, `/compact`, `/help`, `/goal`.
@@ -409,6 +414,9 @@ The Desktop's Android form: it lives on your phone, calls the same engine in-pro
 *Android: the Desktop's phone form — chat on the left, settings and permissions on the right.*
 
 - **Single column**: the session drawer and model entry at the top, the timeline in the middle, the composer and plus panel at the bottom, reusing the Desktop's interface components.
+- **Type in place**: the composer card is the editor — tapping it raises the keyboard in place and the card grows with the draft (about six lines, then it scrolls inside) instead of opening a separate page.
+- **Plus panel**: above the keyboard, with Preset questions / Upload file / Take photo — presets fill the draft with the active agent's template, upload opens the system picker, and a photo is saved into the workspace `temp/chat_media/source` and attached to the composer, so the next message tells the model about it.
+- **Hold to talk**: with an empty composer, the right-hand key is the microphone. Hold it and a strip appears above the card (red dot, timer, "Release to transcribe, slide up to cancel"); releasing puts the text straight into the composer for editing, and sliding up a row before releasing drops the clip. Recognition uses the speech model configured in Settings; without one it falls back to the phone's own recognizer, marked "On-device recognition" on the strip, and only asks you to add a model when neither is available.
 - **Settings**: models, appearance, archive, local runtime, permissions, online update and help.
 - **Permissions**: notification, microphone, overlay, accessibility service, battery optimization and app-install state in one place; tapping jumps to the matching system page and the list refreshes on return.
 - Narrow screens unfold complex capabilities on demand, with the same interaction habits as the Desktop.
@@ -733,7 +741,9 @@ When you know the path, read that range: give a start and end line, reading one 
 `文本编辑` (English alias `edit`) provides literal replacement, insertion, creation, and patches:
 
 - Default replacement requires `file_path`, a non-empty `old_string`, and `new_string`. The original must match once; set `replace_all=true` to replace every occurrence. `command=str_replace` uses the same rules.
-- Preserve spaces and indentation, and omit displayed line numbers. Only LF/CRLF differences are normalized to the target file's uniform newline style.
+- Copy the original as-is (without displayed line numbers). Matching loosens in steps: exact, then ignoring trailing whitespace, then a uniform block-indent shift, then in-line whitespace, finally all whitespace. The receipt's `match` field names the tier used. Only whitespace differences are tolerated; different values, identifiers, quotes, or case still return the nearest fragments instead of guessing. LF/CRLF differences are normalized to the file's newline style.
+- Batch replacement: `file_path` plus an `edits` array of `{old_string, new_string, replace_all?}` steps, applied in order to one in-memory copy and written once. `on_miss=stop` (default) writes nothing unless every step matches but reports every miss with its nearest fragments; `on_miss=continue` writes the matched steps and reports the misses.
+- Range replacement: `file_path` + `start_line` + `end_line` + `new_string` (1-based, inclusive), mutually exclusive with `old_string`. Line numbers drift after edits, so an optional `anchor` (the current first line of that range) relocates the whole range and reports the applied range in `range` plus the offset in `range_shift`; a missing or ambiguous anchor fails instead of guessing.
 - Deletion requires an explicit `new_string=""`; missing or incorrectly typed text fails validation. Legacy `path`, `old_str`, and `new_str` remain accepted; aliases and canonical fields must agree when both are supplied.
 - Insert with `command=insert`, `file_path`, `insert_line`, and `new_string`. Insert after an existing 1-based line; 0 prepends. A terminal newline does not add a phantom line. Insertion follows the file's newline style and does not add another blank line when the input already ends in a newline.
 - Create with `command=create`, `file_path`, and `file_text`; existing targets are rejected. Read with `command=view` and `file_path`; optional `view_range=[start,end]` uses `end=-1` for EOF.
@@ -951,7 +961,25 @@ Pass a file path:
 }
 ```
 
-For a GIF you can add a frame interval; for a video you can set how many frames to take per second:
+For a GIF you can read one exact frame; indices are 0-based and match the numbers stamped on contact-sheet cells:
+
+```json
+{
+  "path": "captures/pelican.gif",
+  "frame": 12
+}
+```
+
+To read several frames at once, pass an array (up to 8):
+
+```json
+{
+  "path": "captures/pelican.gif",
+  "frames": [0, 6, 12]
+}
+```
+
+Sampling by interval still works; for video you set how many frames to take per second:
 
 ```json
 {
@@ -967,19 +995,59 @@ For a GIF you can add a frame interval; for a video you can set how many frames 
 }
 ```
 
+To see the whole motion first, pass `sheet`: it works for GIFs and video and returns one labelled contact sheet of at most 4 columns and 16 cells. For a long animation, `frame_start` pages the sheet from a later frame.
+
+```json
+{
+  "path": "captures/demo.mp4",
+  "sheet": true
+}
+```
+
 ## Handling by material type
 
 - A static image enters the context as image input unchanged; the model only needs the path, and the intent to look comes from the current conversation.
-- A GIF is not handed to the model whole: by default only the first frame is taken, and if you give a frame interval it samples frames at that interval.
+- A GIF is not handed to the model whole: without frame arguments it returns a labelled contact sheet (no longer just the first frame). `frame` / `frames` read exact frames, `frame_step` samples at an interval.
 - A video is organized into a series of image frames; if the video has an audio track, the transcript is attached as well.
+- With `sheet: true` the frames are not returned one by one: the whole clip is sampled into a single contact sheet. For video the sampling is capped at 16 frames, cells are laid out in rows, and each frame is scaled to fit without stretching.
+- Cell aspect follows the real frame aspect (16:9 stays 16:9), so no picture band is cropped to fit a fixed cell; each cell is stamped with its 0-based frame index.
+
+## Comparing two images
+
+To judge how a new version differs from the previous one, put the other image in `compare_with`:
+
+```json
+{
+  "path": "renders/v2.png",
+  "compare_with": "renders/v1.png"
+}
+```
+
+The default is one side-by-side image. Add `compare_mode: "diff"` to get three panels (left image, red diff heatmap, right image) plus SSIM, mean absolute difference, and the changed-pixel ratio:
+
+```json
+{
+  "path": "renders/v2.png",
+  "compare_with": "renders/v1.png",
+  "compare_mode": "diff"
+}
+```
+
+GIF frames compare too: pick the left frame with `frame` and, when the right side is also an animation, pick its frame with `compare_frame`.
 
 ## Return value
 
 The result states the material's type and size, but that only means the material is ready, not that the model has analyzed it: once it is ready, ask about it.
 
+A contact sheet also reports `sheet.columns`, `sheet.rows`, `sheet.cell_width`, `sheet.cell_height`, and `sheet.frame_indices`, the row-major source frame index of each cell; for video the `warnings` also state roughly which second cell k falls on.
+
+Reading by frame index reports `frame_scope`: total frames, total duration, and each frame's index, timestamp, and saved path. A diff comparison reports `compare.metrics` (`ssim`, `mean_abs_diff`, `changed_ratio`).
+
 ## Errors
 
 Look at the result first: whether the path resolved to a real file, whether the material type is right, and whether the byte size is what you expect. A wrong path or an unsupported material type reports an error directly.
+
+A crop (`crop` / `crop_xyxy`) that runs past the image edge is clamped to the boundary and the actual region is reported; only a crop that starts completely outside the image is an error.
 
 <!-- topic id="tools-multimodal-generation" block="tools" title="Generation" group="Multimodal" keywords="Multimodal Generation,Model dependencies,Arguments" -->
 
@@ -1035,7 +1103,8 @@ Video generation is issued in synchronous mode.
 The three generation tools write artifacts into the current workspace:
 
 - An explicit output path → write to that relative path; add an extension based on the response type when missing.
-- No output path → `generated_media/_.`, where the type prefix is `speech` / `image` / `video`.
+- No output path → `temp/generated_media/_.`, where the type prefix is `speech` / `image` / `video`.
+- The default is workspace scratch space; pass `path` explicitly (e.g. `deliverables/cover.png`) when the artifact must stay as a deliverable.
 - Default extensions: speech `wav`, image `png`, video `mp4`.
 - After writing, return the external presentation path and the workspace-relative path.
 
@@ -1115,7 +1184,7 @@ The `wait` action reads desktop windows and screen state. Give a wait duration (
 
 - **Actions are real input injection with no rollback.** `left_hold` and `left_release` must be used in pairs, or the mouse state may be left dangling; `drag_drop` is press, smooth move, release.
 - Coordinates change with resolution; normalized coordinates only guarantee consistency between one observation and the action that follows it, so observe again after switching screens or changing resolution.
-- A screenshot is also saved to the user's container directory; a persistence failure only logs a warning and does not affect the result.
+- A screenshot is also copied into the user container at `temp/desktop_control//`; a persistence failure only logs a warning and does not affect the result.
 - The screenshot directory keeps frames by count, holding only the most recent few (3 by default), so temporary files do not pile up without bound.
 - Authorization follows least privilege: it needs an explicit user switch, it does not silently capture the screen in the background, and it does not expose system capabilities to a remote party.
 
@@ -1145,7 +1214,8 @@ When dispatching, you can also specify:
 
 - `label`: a recognizable name for the child thread.
 - `agent_id`, `model`: override the subagent or the model it uses; both are checked against the current user's agent ownership.
-- `run_timeout_seconds`: the timeout of a single run; in a synchronous dispatch it is also the wait duration.
+- `run_timeout_seconds`: the time limit of a single run; it no longer doubles as the parent's synchronous wait duration.
+- `run_in_background`: `true` by default — the call returns `accepted` immediately and completion auto-wakes the parent thread; set it to `false` only when this turn's next step needs the result, which blocks the turn until the child finishes.
 - `fork_turns`: copy the most recent rounds of user context, 0–16, 0 by default.
 - `context_summary`: attach a background summary.
 - `cleanup`: how to wrap up, `keep` (the default) or `delete` (runtime state is cleaned up and the child is closed; its history remains inspectable).
@@ -1156,14 +1226,14 @@ The copied context and background summary are reference data and never change th
 
 ## Single and batch dispatch
 
-- One: when the timeout is 0 or negative it returns at once and runs in the background; when it is positive it waits synchronously for a result, sending progress every 5 seconds and returning a timeout if the wait expires.
+- One: asynchronous by default — it returns `accepted` (with `session_id`/`run_id`) at once and auto-wakes the parent with the result when the child finishes; the parent can keep working or end the turn and must not poll, `sleep`, or create scheduled jobs to wait. Set `run_in_background=false` only when this turn's next step needs the result; that path sends progress every 5 seconds, and the child's own `run_timeout_seconds` settles it as `timeout` when it expires.
 - A batch: context is prepared for every task first, and if any single preparation fails the whole batch is not dispatched (no half batch is left behind). It then dispatches one by one, reclaiming any that fails to start and marking it failed. The completion condition follows the strategy: run all in parallel / review then merge → wait for all; first success → finished at the first success. Once it finishes early, the remaining branches are kept by default, or interrupted by default under the first-success strategy.
 
 ## Waiting, reporting, and interrupting
 
 A wait subscribes to the completion signal first, and when there is no signal it polls at a fixed interval that settles around one second (between 0.2 and 5 seconds). A wait can end for three reasons: the completion condition is met, it times out, or the parent thread receives a message.
 
-When a child thread is running its current turn and its mailbox is open, a message sent to it goes straight into that turn; otherwise it starts a new one, and sending a message to itself raises an error. When a child reports back, an idle parent thread is woken automatically to receive it, and submitting the same message again does not enqueue it a second time.
+When a child thread is running its current turn and its mailbox is open, a message sent to it goes straight into that turn; otherwise it starts a new one, and sending a message to itself raises an error. When a child reports back while the parent is running a turn, the report is injected into the next model round of that turn as a hidden observation instead of creating a user bubble; an idle parent is woken with a new turn. Background dispatch completions use the same path and carry a "report to the user, do not poll again" hint in the wake payload. Submitting the same message again does not enqueue it a second time.
 
 An interrupt only requests cancellation of the run and does not change session state; a close sets the session state to closed and cancels the run along with it, and can also cascade to its descendants; a resume sets the state back to active.
 

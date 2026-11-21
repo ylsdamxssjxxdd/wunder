@@ -1878,23 +1878,6 @@ export component SettingsPage inherits Rectangle {
                                     }
                                 }
                             }
-                            // Permission mode: the runtime gate reads it on
-                            // every turn. Full auto is the default; the other
-                            // two pause the turn with an in-chat approval card.
-                            SettingsCard {
-                                SettingRow { label: I18n.ag_permission_mode; note: I18n.ag_permission_note; last: true;
-                                    ComboBox {
-                                        width: 168px; height: 38px;
-                                        model: [I18n.ag_permission_suggest, I18n.ag_permission_auto_edit, I18n.ag_permission_full_auto];
-                                        current-index: root.selected-agent-approval-mode == "suggest" ? 0
-                                            : root.selected-agent-approval-mode == "auto_edit" ? 1 : 2;
-                                        selected(_) => {
-                                            root.selected-agent-approval-mode = self.current-index == 0 ? "suggest"
-                                                : self.current-index == 1 ? "auto_edit" : "full_auto";
-                                        }
-                                    }
-                                }
-                            }
                             // Tool selection as cards, grouped by type with a
                             // per-group select-all. Filtering happens natively
                             // because Slint strings have no substring test.
@@ -2001,6 +1984,23 @@ export component SettingsPage inherits Rectangle {
                                         label: I18n.stc_agent_question_add; primary: true;
                                         enabled: !root.agent-question-draft.is-empty;
                                         clicked => { root.add-agent-question(); }
+                                    }
+                                }
+                            }
+                            // 权限审批: the runtime gate reads it on every
+                            // turn. Full auto is the default; the other two
+                            // pause the turn with an in-chat approval card.
+                            SettingsCard {
+                                SettingRow { label: I18n.ag_permission_mode; note: I18n.ag_permission_note; last: true;
+                                    ComboBox {
+                                        width: 168px; height: 38px;
+                                        model: [I18n.ag_permission_suggest, I18n.ag_permission_auto_edit, I18n.ag_permission_full_auto];
+                                        current-index: root.selected-agent-approval-mode == "suggest" ? 0
+                                            : root.selected-agent-approval-mode == "auto_edit" ? 1 : 2;
+                                        selected(_) => {
+                                            root.selected-agent-approval-mode = self.current-index == 0 ? "suggest"
+                                                : self.current-index == 1 ? "auto_edit" : "full_auto";
+                                        }
                                     }
                                 }
                             }

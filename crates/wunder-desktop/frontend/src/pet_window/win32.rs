@@ -15,7 +15,8 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::Instant;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, CreateDIBSection, CreateFontW, DeleteDC, DeleteObject, DrawTextW, GetDC,
+    AddFontMemResourceEx, CreateCompatibleDC, CreateDIBSection, CreateFontW, DeleteDC,
+    DeleteObject, DrawTextW, GetDC,
     GetDeviceCaps, ReleaseDC, SelectObject, SetBkMode, SetTextColor, BITMAPINFO, BITMAPINFOHEADER,
     BI_RGB, BLENDFUNCTION, DIB_RGB_COLORS, DT_CALCRECT, DT_END_ELLIPSIS, DT_WORDBREAK, HFONT,
     LOGPIXELSX, RGBQUAD, TRANSPARENT,
@@ -420,11 +421,44 @@ unsafe fn show_menu(
     }
 }
 
+/// The face the speech bubble draws with.
+///
+/// GDI has no access to Slint's font collection, so the bundled MiSans is handed
+/// to this process once via `AddFontMemResourceEx` and then referenced by name.
+/// The bytes are `'static` (the same decompressed blob the Slint UI uses), which
+/// is what lets GDI keep reading them for the process lifetime. If Windows
+/// rejects the registration the bubble falls back to the system Chinese face
+/// rather than drawing tofu — it is only a few words above the sprite.
+fn bubble_face() -> &'static [u16] {
+    thread_local! {
+        static FACE: std::cell::OnceCell<Vec<u16>> = const { std::cell::OnceCell::new() };
+    }
+    FACE.with(|slot| {
+        slot.get_or_init(|| {
+            let bytes = crate::bundled_font::misans();
+            let mut loaded: u32 = 0;
+            let handle = unsafe {
+                AddFontMemResourceEx(
+                    bytes.as_ptr().cast(),
+                    bytes.len() as u32,
+                    std::ptr::null(),
+                    &loaded,
+                )
+            };
+            if handle != 0 && loaded > 0 {
+                wide("MiSans")
+            } else {
+                wide("Microsoft YaHei")
+            }
+        })
+    })
+}
+
 fn bubble_font(dpi: f64) -> HFONT {
     FONT.with(|slot| {
         let mut slot = slot.borrow_mut();
         if slot.is_none() {
-            let face = wide("Microsoft YaHei");
+            let face = bubble_face();
             unsafe {
                 *slot = Some(CreateFontW(
                     -((BUBBLE_FONT_LOGICAL as f64 * dpi).round() as i32),

@@ -152,14 +152,17 @@ export global Theme {
     // Leading for body copy, as a multiple of the face's *natural* line height.
     //
     // Slint's `line-height-factor` multiplies the font's ascent+descent, not the
-    // font size, and the faces in play disagree on that ratio: Microsoft YaHei
-    // (Windows, the bundled desktop face) is ~1.36em, WenQuanYi Micro Hei (the
-    // Android rootfs face) is ~1.17em. At the default of 1 the answer body
-    // inherits those bare metrics, which is what made a wrapped paragraph read
-    // cramped. 1.25 puts the desktop body at ~1.7em — the 云端版 renders
-    // `.markdown-body` at 1.65 — and still keeps the phone near Material's 1.5.
+    // font size, and the faces in play disagree on that ratio: MiSans (the
+    // bundled desktop face, and the face the phone draws in on Xiaomi devices)
+    // is ~1.33em, WenQuanYi Micro Hei (the Android rootfs face) is ~1.17em. At
+    // the default of 1 the answer body inherits those bare metrics, which is
+    // what made a wrapped paragraph read cramped. 1.25 puts the desktop body at
+    // ~1.66em — the 云端版 renders `.markdown-body` at 1.65 — and still keeps
+    // the phone near Material's 1.5. MiSans replaced Microsoft YaHei (1.36em)
+    // precisely because the ratio barely moves, so this leading needs no
+    // retuning.
     //
-    // Headings deliberately do not use it: at 23px their natural 1.36em is
+    // Headings deliberately do not use it: at 23px their natural 1.33em is
     // already looser than the web's 1.25 heading leading.
     out property <float> prose-line: 1.25;
     out property <length> font-code: 12.5px * font-scale;
@@ -168,9 +171,10 @@ export global Theme {
     out property <length> font-h3: 16px * font-scale;
     out property <length> font-h4: 14.5px * font-scale;
     out property <length> radius-block: 8px;
-    // Prose face. The shell bundles Microsoft YaHei for gb2312 coverage; code
-    // falls back to the monospace stack above.
-    out property <string> font-ui: "Microsoft YaHei";
+    // Prose face. The shell bundles MiSans for gb2312 coverage, with DejaVu
+    // Sans registered behind it for the symbols MiSans has no glyph for; code
+    // falls back to the monospace stack below.
+    out property <string> font-ui: "MiSans";
 
     // Monospace stack for diff cards and tool output previews.
     out property <string> font-mono: "Consolas";

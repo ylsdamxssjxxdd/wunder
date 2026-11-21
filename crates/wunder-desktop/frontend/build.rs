@@ -22,16 +22,24 @@ fn main() {
     ] {
         println!("cargo:rerun-if-changed=assets/icons/{icon}");
     }
-    println!("cargo:rerun-if-changed=assets/fonts/msyh.ttc");
+    // Bundled faces: MiSans carries the UI copy, DejaVu Sans only supplies the
+    // symbols MiSans has no glyph for. Both are compressed into the executable
+    // so the shell never depends on fonts installed on the target machine.
+    for font in ["MiSans-Regular.ttf", "DejaVuSans.ttf"] {
+        println!("cargo:rerun-if-changed=assets/fonts/{font}");
+    }
     // Window, tray and notification icons are embedded from these assets.
     println!("cargo:rerun-if-changed=assets/app-icon.png");
     println!("cargo:rerun-if-changed=assets/app-icon-32.png");
     println!("cargo:rerun-if-changed=assets/app-icon.rgba");
-    let raw = std::fs::read("assets/fonts/msyh.ttc").expect("read bundled Microsoft YaHei");
-    let compressed = lz4_flex::compress_prepend_size(&raw);
     let out_dir = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
-    std::fs::write(out_dir.join("msyh.ttc.lz4"), compressed)
-        .expect("write compressed Microsoft YaHei");
+    for font in ["MiSans-Regular.ttf", "DejaVuSans.ttf"] {
+        let raw = std::fs::read(format!("assets/fonts/{font}"))
+            .unwrap_or_else(|error| panic!("read bundled {font}: {error}"));
+        let compressed = lz4_flex::compress_prepend_size(&raw);
+        std::fs::write(out_dir.join(format!("{font}.lz4")), compressed)
+            .unwrap_or_else(|error| panic!("write compressed {font}: {error}"));
+    }
     generate_file_icons(&out_dir);
     generate_avatar_assets(&out_dir);
     embed_windows_exe_icon();

@@ -854,29 +854,43 @@ fn fit_and_center_main_window(app: &MainWindow) {
     );
 }
 
-/// Register the compressed Microsoft YaHei before the first text layout.
-/// The bundled TTC keeps the UI independent of fonts installed on the target
-/// machine while matching the system default CJK face the preview path uses.
+/// Register the bundled faces before the first text layout.
+///
+/// MiSans carries the UI copy: it is the face the phone shell draws in, it is
+/// licenced for embedding, and its natural line height (1.33em) sits within 1%
+/// of the Microsoft YaHei the layout tokens were tuned on — so the transcript
+/// leading keeps working without retuning.
+///
+/// DejaVu Sans is appended behind it as a pure glyph fallback. MiSans ships no
+/// glyph for `⚠ ⌘ ☑ ☐ ☁ ⊞ ⊟ ✦ ◉ ❖` (nor did the YaHei it replaces), and every
+/// one of those rendered as tofu. MiSans still wins every character both faces
+/// cover, Latin included, because the generic family list is ordered.
 pub(crate) fn register_bundled_font() -> Result<(), Box<dyn std::error::Error>> {
     use slint::fontique_011::fontique;
 
     let mut collection = slint::fontique_011::shared_collection();
     startup_point("font_collection_ready");
-    let bytes = bundled_font::yahei_ttc();
+    let text = bundled_font::misans();
+    let symbols = bundled_font::dejavu();
     startup_point("font_decompressed");
     let registered =
-        collection.register_fonts(fontique::Blob::new(std::sync::Arc::new(bytes)), None);
+        collection.register_fonts(fontique::Blob::new(std::sync::Arc::new(text)), None);
+    // A missing symbol face is not fatal: the shell then keeps the pre-existing
+    // gaps instead of failing to start over a decorative glyph.
+    let fallback = collection.register_fonts(fontique::Blob::new(std::sync::Arc::new(symbols)), None);
     startup_point("font_registered");
     let families: Vec<_> = registered.iter().map(|(family, _)| *family).collect();
     if families.is_empty() {
-        return Err("内嵌 Microsoft YaHei 注册失败".into());
+        return Err("内嵌 MiSans 注册失败".into());
     }
+    let mut chain = families.clone();
+    chain.extend(fallback.iter().map(|(family, _)| *family));
     for generic in [
         fontique::GenericFamily::SansSerif,
         fontique::GenericFamily::SystemUi,
         fontique::GenericFamily::UiSansSerif,
     ] {
-        collection.set_generic_families(generic, families.iter().copied());
+        collection.set_generic_families(generic, chain.iter().copied());
     }
     collection.append_fallbacks(
         fontique::FallbackKey::new(fontique::Script::from_str_unchecked("Hani"), None),
@@ -886,16 +900,66 @@ pub(crate) fn register_bundled_font() -> Result<(), Box<dyn std::error::Error>> 
 }
 
 mod bundled_font {
-    static YAHEI_LZ4: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/msyh.ttc.lz4"));
+    static MISANS_LZ4: &[u8] =
+        include_bytes!(concat!(env!("OUT_DIR"), "/MiSans-Regular.ttf.lz4"));
+    static DEJAVU_LZ4: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/DejaVuSans.ttf.lz4"));
 
-    pub fn yahei_ttc() -> &'static [u8] {
+    /// UI copy. Decompressed once, on the first call, and kept for the process
+    /// lifetime because fontique borrows the bytes.
+    pub fn misans() -> &'static [u8] {
         static DECOMPRESSED: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
         DECOMPRESSED
             .get_or_init(|| {
-                lz4_flex::decompress_size_prepended(YAHEI_LZ4)
-                    .expect("内嵌 Microsoft YaHei 解压失败")
+                lz4_flex::decompress_size_prepended(MISANS_LZ4).expect("内嵌 MiSans 解压失败")
             })
             .as_slice()
+    }
+
+    /// Symbol fallback face, same lifecycle as [`misans`].
+    pub fn dejavu() -> &'static [u8] {
+        static DECOMPRESSED: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+        DECOMPRESSED
+            .get_or_init(|| {
+                lz4_flex::decompress_size_prepended(DEJAVU_LZ4).expect("内嵌 DejaVu Sans 解压失败")
+            })
+            .as_slice()
+    }
+}
+
+#[cfg(test)]
+mod bundled_font_tests {
+    //! The bundled faces are the only source of glyphs on a machine with no CJK
+    //! font installed, so a silently failed registration would ship a shell of
+    //! empty boxes. These assertions run against the real embedded blobs.
+
+    use super::register_bundled_font;
+    use slint::fontique_011::fontique;
+
+    #[test]
+    fn bundled_faces_register_in_priority_order() {
+        register_bundled_font().expect("register bundled fonts");
+
+        let mut collection = slint::fontique_011::shared_collection();
+        let text = collection.family_id("MiSans").expect("MiSans family");
+        let symbols = collection
+            .family_id("DejaVu Sans")
+            .expect("DejaVu Sans family");
+
+        // Asking the chain for a symbol MiSans has no glyph for must reach the
+        // DejaVu face; that is the whole reason it is bundled.
+        let mut cache = fontique::SourceCache::default();
+        let mut query = collection.query(&mut cache);
+        query.set_families([text, symbols]);
+        let mut covered = false;
+        query.matches_with(|font| {
+            if font.charmap().is_some_and(|charmap| charmap.map('⚠').is_some()) {
+                covered = true;
+                fontique::QueryStatus::Stop
+            } else {
+                fontique::QueryStatus::Continue
+            }
+        });
+        assert!(covered, "⚠ has no glyph in the bundled face chain");
     }
 }
 

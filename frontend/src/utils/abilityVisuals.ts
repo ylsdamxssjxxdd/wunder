@@ -39,6 +39,21 @@ type AbilityRule = {
 const ABILITY_RULES: AbilityRule[] = [
   { keywords: ['用户世界工具', 'user_world', 'user world'], icon: 'fa-earth-asia', tone: 'general' },
   { keywords: ['桌面控制'], icon: 'fa-computer-mouse', tone: 'general' },
+  {
+    keywords: ['手机控制', 'phone_control', 'phone control', 'mobile_control'],
+    icon: 'fa-mobile-screen',
+    tone: 'general'
+  },
+  {
+    keywords: ['安卓屏幕', 'android_screen', 'android screen', 'screen_capture'],
+    icon: 'fa-display',
+    tone: 'general'
+  },
+  {
+    keywords: ['安卓通知', 'android_notifications', 'android notifications', 'notification_listener'],
+    icon: 'fa-bell',
+    tone: 'general'
+  },
   { keywords: ['渠道工具', 'channel_tool', 'channel tool', 'channel_send', 'channel_contacts'], icon: 'fa-comments', tone: 'general' },
   {
     keywords: ['最终回复', 'final response', 'final answer', 'final reply', 'final_response'],
@@ -281,24 +296,23 @@ export const resolveAbilityVisual = (input: AbilityVisualInput): AbilityVisualMe
   if (nameOverride) {
     return nameOverride;
   }
-  const resolvedName = cleanText(input.name).toLowerCase();
-  const resolvedHint = cleanText(input.hint).toLowerCase();
-  const resolvedDescription = cleanText(input.description).toLowerCase();
-  const resolvedText = `${resolvedName} ${resolvedHint} ${resolvedDescription}`;
+  // 读图/图像生成的专属图标只按工具身份判定：读取文件的描述会写明
+  // 「图片请用 read_image」，把描述算进来会让读取文件也变成眼睛图标。
+  const resolvedNameText = `${cleanText(input.name)} ${cleanText(input.runtimeName)}`.toLowerCase();
   if (
-    resolvedText.includes('read_image') ||
-    resolvedText.includes('view_image') ||
-    resolvedText.includes('读图工具') ||
-    resolvedText.includes('view image')
+    resolvedNameText.includes('read_image') ||
+    resolvedNameText.includes('view_image') ||
+    resolvedNameText.includes('读图工具') ||
+    resolvedNameText.includes('view image')
   ) {
     return { icon: 'fa-eye', tone: 'search' };
   }
   if (
-    resolvedText.includes('generate_image') ||
-    resolvedText.includes('text_to_image') ||
-    resolvedText.includes('image generation') ||
-    resolvedText.includes('图像生成') ||
-    resolvedText.includes('绘图生成')
+    resolvedNameText.includes('generate_image') ||
+    resolvedNameText.includes('text_to_image') ||
+    resolvedNameText.includes('image generation') ||
+    resolvedNameText.includes('图像生成') ||
+    resolvedNameText.includes('绘图生成')
   ) {
     return { icon: 'fa-paintbrush', tone: 'search' };
   }

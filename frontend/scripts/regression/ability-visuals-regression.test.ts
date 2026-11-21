@@ -102,6 +102,47 @@ test('glob tool uses the folder tree icon across canonical and runtime names', (
   });
 });
 
+test('read file ignores read_image wording in its description', () => {
+  const description =
+    '以有界、面向任务的方式读取本地纯文本 UTF-8 文件。仅限文本文件；不支持 docx/xlsx，图片请用 read_image。';
+  assert.deepEqual(resolveAbilityVisual({ name: '读取文件', description, kind: 'tool' }), {
+    icon: 'fa-file-lines',
+    tone: 'file'
+  });
+  assert.deepEqual(resolveAbilityVisual({ name: '读图工具', description, kind: 'tool' }), {
+    icon: 'fa-eye',
+    tone: 'search'
+  });
+});
+
+test('canonical builtin titles share the desktop and Android glyph table', () => {
+  const cases: Array<[string, string, string]> = [
+    ['执行命令', 'fa-terminal', 'terminal'],
+    ['命令会话', 'fa-terminal', 'terminal'],
+    ['读取文件', 'fa-file-lines', 'file'],
+    ['列出文件', 'fa-folder-open', 'file'],
+    ['写入文件', 'fa-file-circle-plus', 'file'],
+    ['编辑', 'fa-file-pen', 'file'],
+    ['应用补丁', 'fa-pen-to-square', 'file'],
+    ['文件名匹配', 'fa-folder-tree', 'file'],
+    ['网页抓取', 'fa-globe', 'search'],
+    ['网页搜索', 'fa-magnifying-glass', 'general'],
+    ['浏览器', 'fa-window-maximize', 'search'],
+    ['读图工具', 'fa-eye', 'search'],
+    ['图像生成', 'fa-paintbrush', 'search'],
+    ['桌面控制', 'fa-computer-mouse', 'general'],
+    ['手机控制', 'fa-mobile-screen', 'general'],
+    ['安卓屏幕', 'fa-display', 'general'],
+    ['安卓通知', 'fa-bell', 'general'],
+    ['计划任务', 'fa-clock', 'automation'],
+    ['技能调用', 'fa-book-open', 'skill']
+  ];
+  for (const [name, icon, tone] of cases) {
+    assert.deepEqual(resolveAbilityVisual({ name, kind: 'tool' }), { icon, tone }, name);
+    assert.equal(resolveToolIconClass({ name }), icon, name);
+  }
+});
+
 test('web fetch keeps the globe even when its description mentions browser', () => {
   const description =
     '抓取单个公开网页 URL 并提取正文。登录、注册、填表或点击等交互任务直接使用 browser 的 action=navigate，不先抓取页面。';

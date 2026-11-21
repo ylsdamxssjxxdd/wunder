@@ -345,20 +345,61 @@ impl ThreadLogCommitter {
         }
         Ok(changed)
     }
+    /// Turn states that are waiting rather than executing: admitted but not
+    /// started yet, parked behind the thread's own run, or parked on the user.
+    const PARKED_TURN_STATUSES: [&'static str; 4] =
+        ["accepted", "queued", "waiting_input", "waiting_approval"];
+    /// Every state a stop settles, including the turn the executor is running.
+    const ACTIVE_TURN_STATUSES: [&'static str; 5] = [
+        "accepted",
+        "queued",
+        "running",
+        "waiting_input",
+        "waiting_approval",
+    ];
+
+    /// Settle every state a stop owns, including the turn being executed.
+    /// Callers whose own process is still running that turn use
+    /// [`Self::cancel_parked_turns`] instead: the executor writes its terminal.
     pub(crate) async fn cancel_active_turns(
         &self,
         user: &str,
         session: &str,
         source: &str,
     ) -> Result<usize> {
+        self.cancel_turns_in_statuses(user, session, source, &Self::ACTIVE_TURN_STATUSES)
+            .await
+    }
+
+    /// Settle only the turns nobody is executing, leaving the running one to
+    /// its executor.
+    ///
+    /// A stop request arrives while the executor is still inside a tool call
+    /// and cannot end before that call returns. Writing its turn as
+    /// `cancelled` here would report the thread as settled while its tools keep
+    /// writing: the composer reads that status to decide whether it is busy, so
+    /// the next message went out, the engine parked it behind work that never
+    /// stopped, and the window painted a「排队中」bubble nobody asked for. The
+    /// executor writes that terminal itself once it observes the cancellation.
+    pub(crate) async fn cancel_parked_turns(
+        &self,
+        user: &str,
+        session: &str,
+        source: &str,
+    ) -> Result<usize> {
+        self.cancel_turns_in_statuses(user, session, source, &Self::PARKED_TURN_STATUSES)
+            .await
+    }
+
+    async fn cancel_turns_in_statuses(
+        &self,
+        user: &str,
+        session: &str,
+        source: &str,
+        statuses: &[&str],
+    ) -> Result<usize> {
         let mut total = 0;
-        for status in [
-            "accepted",
-            "queued",
-            "running",
-            "waiting_input",
-            "waiting_approval",
-        ] {
+        for status in statuses.iter().copied() {
             loop {
                 let admissions = self.threads.admission_store()?;
                 let id = session.to_owned();

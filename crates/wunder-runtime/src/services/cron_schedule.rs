@@ -51,7 +51,7 @@ pub fn parse_schedule_text(input: &str) -> Result<ParsedScheduleText> {
     }
 
     Err(anyhow!(
-        "unsupported schedule text: {raw}. Recurring: 'every 5 minutes' / '每 5 分钟' / 'daily at 9am' / '每天 09:00' / '每周一 10:30' / cron such as '0 9 * * *'. One-shot: '3 分钟后' / 'in 30 minutes' / schedule.at in ISO 8601"
+        "unsupported schedule text: {raw}. Recurring: 'every 5 minutes' / '每 5 分钟' / 'daily at 9am' / '每天 09:00' / '每周一 10:30' / '每月 5 日 09:00' / '每年 1 月 1 日 09:00' / cron such as '0 9 1 * *'. One-shot: '3 分钟后' / 'in 30 minutes' / schedule.at in ISO 8601"
     ))
 }
 
@@ -152,6 +152,12 @@ fn normalize_localized_schedule_text(raw: &str) -> Option<String> {
         }
     }
 
+    // Yearly / monthly on a fixed day of the month, with an optional time:
+    // 每年 1 月 1 日 09:00 / 每月 5 号 8:30.
+    if let Some(expr) = normalize_calendar_day(&compact) {
+        return Some(expr);
+    }
+
     // Daily / working days / weekends at a fixed time.
     for (labels, prefix) in [
         (&["每天", "每日"][..], "daily at "),
@@ -173,7 +179,8 @@ fn normalize_localized_schedule_text(raw: &str) -> Option<String> {
         "每小时" | "每小时一次" => Some("hourly"),
         "每天" | "每日" => Some("daily"),
         "每周" | "每星期" => Some("weekly"),
-        "每月" => Some("monthly"),
+        "每月" | "每个月" => Some("monthly"),
+        "每年" => Some("yearly"),
         "工作日" | "每个工作日" => Some("weekdays at 09:00"),
         "周末" | "每周末" => Some("weekends at 09:00"),
         _ => None,
@@ -201,6 +208,55 @@ fn normalize_localized_schedule_text(raw: &str) -> Option<String> {
         _ => return None,
     };
     Some(format!("every {digits} {unit}"))
+}
+
+/// Yearly (`每年1月1日`) and monthly (`每月5号`) days, with an optional clock
+/// time. Returned as a cron expression so downstream code keeps one format.
+fn normalize_calendar_day(compact: &str) -> Option<String> {
+    if let Some(rest) = compact.strip_prefix("每年") {
+        let (month, rest) = take_number(rest)?;
+        let rest = rest.strip_prefix('月')?;
+        let (day, rest) = take_number(rest)?;
+        let rest = strip_day_suffix(rest);
+        if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+            return None;
+        }
+        let (hour, minute) = normalize_optional_time(rest)?;
+        return Some(format!("{minute} {hour} {day} {month} *"));
+    }
+    let rest = compact
+        .strip_prefix("每月")
+        .or_else(|| compact.strip_prefix("每个月"))?;
+    let (day, rest) = take_number(rest)?;
+    if !(1..=31).contains(&day) {
+        return None;
+    }
+    let (hour, minute) = normalize_optional_time(strip_day_suffix(rest))?;
+    Some(format!("{minute} {hour} {day} * *"))
+}
+
+/// `日` / `号` are optional day markers; anything else is the time part.
+fn strip_day_suffix(text: &str) -> &str {
+    text.strip_prefix('日')
+        .or_else(|| text.strip_prefix('号'))
+        .unwrap_or(text)
+}
+
+/// An empty tail means midnight; otherwise it must parse as a clock time.
+fn normalize_optional_time(text: &str) -> Option<(u32, u32)> {
+    if text.trim().is_empty() {
+        return Some((0, 0));
+    }
+    normalize_cjk_time(text)
+}
+
+fn take_number(input: &str) -> Option<(u32, &str)> {
+    let digits: String = input.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    let value = digits.parse::<u32>().ok()?;
+    Some((value, &input[digits.len()..]))
 }
 
 /// Parse `HH:MM`, `H点`, `H点M分`, `H点半`, and 上午/下午 prefixes into a
@@ -456,6 +512,7 @@ fn parse_simple_keywords(input: &str) -> Result<Option<String>> {
         "daily" => "0 0 * * *",
         "weekly" => "0 0 * * 0",
         "monthly" => "0 0 1 * *",
+        "yearly" | "annually" => "0 0 1 1 *",
         _ => return Ok(None),
     };
     Ok(Some(expr.to_string()))
@@ -595,6 +652,40 @@ mod tests {
             ParsedScheduleText::Cron("0 0 * * *".to_string())
         );
         assert!(parse_schedule_text("随便什么时候").is_err());
+    }
+
+    #[test]
+    fn test_parse_schedule_text_calendar_days() {
+        assert_eq!(
+            parse_schedule_text("每年 1 月 1 日 09:00").unwrap(),
+            ParsedScheduleText::Cron("0 9 1 1 *".to_string())
+        );
+        assert_eq!(
+            parse_schedule_text("每年1月1号").unwrap(),
+            ParsedScheduleText::Cron("0 0 1 1 *".to_string())
+        );
+        assert_eq!(
+            parse_schedule_text("每月 5 日 08:30").unwrap(),
+            ParsedScheduleText::Cron("30 8 5 * *".to_string())
+        );
+        assert_eq!(
+            parse_schedule_text("每月15号下午3点").unwrap(),
+            ParsedScheduleText::Cron("0 15 15 * *".to_string())
+        );
+        assert_eq!(
+            parse_schedule_text("每月").unwrap(),
+            ParsedScheduleText::Cron("0 0 1 * *".to_string())
+        );
+        assert_eq!(
+            parse_schedule_text("每年").unwrap(),
+            ParsedScheduleText::Cron("0 0 1 1 *".to_string())
+        );
+        assert_eq!(
+            parse_schedule_text("yearly").unwrap(),
+            ParsedScheduleText::Cron("0 0 1 1 *".to_string())
+        );
+        // An impossible day must not silently become the 1st.
+        assert!(parse_schedule_text("每月 32 日 09:00").is_err());
     }
 
     #[test]

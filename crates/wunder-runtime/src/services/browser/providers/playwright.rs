@@ -103,7 +103,7 @@ pub fn playwright_tool_specs() -> Vec<ToolSpec> {
     let defs = json!({
         "x": {"type":"string","minLength":1},
         "i": {"type":"integer","minimum":0},
-        "u": {"type":"string","minLength":1,"description":"Absolute http(s) URL."},
+        "u": {"type":"string","minLength":1,"description":"Absolute http(s) URL. Not for workspace files: pass path instead."},
         "m": {"type":"integer","minimum":1,"maximum":120000},
         "h": {"type":"integer","minimum":1,"maximum":40000},
         "n": {"type":"integer","minimum":0,"maximum":120000},
@@ -123,7 +123,7 @@ pub fn playwright_tool_specs() -> Vec<ToolSpec> {
     vec![ToolSpec {
         name: TOOL_BROWSER.to_string(),
         title: None,
-        description: "Built-in browser automation, already bundled — no install. Usual flow: navigate -> observe_refs -> click/type -> observe_text or screenshot, re-observing after changes. click/hover take one of ref, selector or visible text; type needs text (overwrites); select needs value; press needs key. drag: from_ref+to_ref, or from_x/from_y/to_x/to_y for canvas orbit; scroll: delta_x/delta_y is a real wheel event; console reads the tab's console output and uncaught errors. timeout_ms defaults to 5s; wait needs wait_ms or a selector/text/url/load_state condition. navigate takes url, or path to preview a workspace file over http://wunder.preview with no server. tabs_* manage tabs; target_id picks one. screenshot attaches a PNG plus a frame summary (blank/colors/luma). Observations default to 12000 chars.".to_string(),
+        description: "Built-in browser automation, already bundled — no install. Usual flow: navigate -> observe_refs -> click/type -> observe_text or screenshot, re-observing after changes. click/hover take one of ref, selector or visible text; type needs text (overwrites); select needs value; press needs key. drag: from_ref+to_ref, or from_x/from_y/to_x/to_y for canvas orbit; scroll: delta_x/delta_y is a real wheel event; console reads the tab's console output and uncaught errors. timeout_ms defaults to 5s; wait needs wait_ms or a selector/text/url/load_state condition. navigate takes an absolute url, or path (workspace-relative) to preview a file over http://wunder.preview with no server; a relative path passed as url is opened as a preview when that file exists, otherwise it errors with the url/path split. tabs_* manage tabs; target_id picks one. screenshot attaches a PNG plus a frame summary (blank/colors/luma). Observations default to 12000 chars.".to_string(),
         input_schema: json!({
             "type":"object",
             "$defs": defs,
@@ -728,19 +728,26 @@ async fn dispatch_operation(
     match operation {
         OP_NAVIGATE => {
             let mut call_args = Map::new();
-            match opt_str(args, "path") {
-                Some(relative) => {
-                    // 工作区页面走预览域名由 bridge 从磁盘直接应答：不需要
-                    // 自建 HTTP 服务，也不依赖 file:// 是否被允许。
-                    let relative = workspace_relative_path(&relative)?;
-                    let root = context.workspace.workspace_root(context.workspace_id);
-                    call_args.insert("preview_root".to_string(), json!(root.to_string_lossy()));
-                    call_args.insert("preview_path".to_string(), json!(relative));
-                }
-                None => {
-                    let url = required_str(args, "url")?;
-                    call_args.insert("url".to_string(), json!(url));
-                }
+            // 工作区页面走预览域名由 bridge 从磁盘直接应答：不需要自建 HTTP
+            // 服务，也不依赖 file:// 是否被允许。把工作区相对路径填进 `url`
+            // 是常见误用，文件确实存在就按预览打开，否则给出 url/path 分工。
+            let preview_path = match opt_str(args, "path") {
+                Some(relative) => Some(workspace_relative_path(&relative)?),
+                None => match opt_str(args, "url") {
+                    Some(url) if !has_url_scheme(&url) => {
+                        Some(preview_path_from_schemeless_url(&url, context)?)
+                    }
+                    _ => None,
+                },
+            };
+            if let Some(relative) = &preview_path {
+                let root = context.workspace.workspace_root(context.workspace_id);
+                call_args.insert("preview_root".to_string(), json!(root.to_string_lossy()));
+                call_args.insert("preview_path".to_string(), json!(relative));
+            } else if let Some(url) = opt_str(args, "url") {
+                call_args.insert("url".to_string(), json!(url));
+            } else {
+                return Err(anyhow!("Missing required parameter 'url'"));
             }
             copy_opt(args, &mut call_args, "timeout_ms");
             copy_opt(args, &mut call_args, "target_id");
@@ -748,7 +755,7 @@ async fn dispatch_operation(
             let data = service
                 .execute(&scope, "navigate", &Value::Object(call_args))
                 .await?;
-            let label = match opt_str(args, "path") {
+            let label = match preview_path {
                 Some(relative) => format!("Opened workspace page {relative}."),
                 None => format!("Navigated to {}.", opt_str(args, "url").unwrap_or_default()),
             };
@@ -1110,6 +1117,35 @@ fn workspace_relative_path(raw: &str) -> Result<String> {
     Ok(normalized)
 }
 
+/// `url` 是否已经写明协议（`https://`、`about:` 等）。`localhost:3000` 不算：
+/// 它多半是漏了协议，交给路径兜底并给出更明确的提示。
+fn has_url_scheme(value: &str) -> bool {
+    if let Some((scheme, _)) = value.split_once("://") {
+        return !scheme.trim().is_empty();
+    }
+    match value.split_once(':') {
+        Some((scheme, _)) => matches!(
+            scheme.trim().to_ascii_lowercase().as_str(),
+            "about" | "data" | "blob" | "file" | "mailto" | "javascript" | "chrome" | "view-source"
+        ),
+        None => false,
+    }
+}
+
+/// 把误填进 `url` 的工作区相对路径改判成预览路径；文件不存在时直接把
+/// url/path 的分工告诉调用方，而不是让驱动抛出 “relative URL without a base”。
+fn preview_path_from_schemeless_url(url: &str, context: &ToolContext<'_>) -> Result<String> {
+    if let Ok(relative) = workspace_relative_path(url) {
+        let root = context.workspace.workspace_root(context.workspace_id);
+        if root.join(&relative).is_file() {
+            return Ok(relative);
+        }
+    }
+    Err(anyhow!(
+        "browser navigate needs an absolute URL such as https://example.com; to open a workspace page pass path='<workspace-relative file>' instead of url (got: {url})"
+    ))
+}
+
 fn opt_str(args: &Value, key: &str) -> Option<String> {
     args.get(key)
         .and_then(Value::as_str)
@@ -1151,9 +1187,9 @@ fn normalize_image_mime(format: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        browser_action_allowed_fields, copy_snapshot_args, normalize_image_mime, truncate_chars,
-        validate_batch_steps, validate_browser_action, workspace_relative_path, PlaywrightProvider,
-        BROWSER_ACTIONS, TOOL_BROWSER, TOOL_NAMES,
+        browser_action_allowed_fields, copy_snapshot_args, has_url_scheme, normalize_image_mime,
+        truncate_chars, validate_batch_steps, validate_browser_action, workspace_relative_path,
+        PlaywrightProvider, BROWSER_ACTIONS, TOOL_BROWSER, TOOL_NAMES,
     };
     use crate::services::browser::provider::BrowserProvider;
     use serde_json::{json, Value};
@@ -1507,5 +1543,18 @@ mod tests {
         let missing = validate_browser_action(&json!({"action": "navigate"}))
             .expect_err("navigate needs url or path");
         assert!(missing.to_string().contains("url"), "{missing}");
+    }
+
+    #[test]
+    fn schemeless_urls_are_reported_as_paths_to_use_path() {
+        // A workspace-relative path in `url` is the common mistake: it must be
+        // detected before the driver answers "relative URL without a base".
+        assert!(!has_url_scheme("temp/index.html"));
+        assert!(!has_url_scheme("index.html"));
+        assert!(!has_url_scheme("localhost:3000"));
+        assert!(has_url_scheme("https://example.com"));
+        assert!(has_url_scheme("http://127.0.0.1:8080/a.html"));
+        assert!(has_url_scheme("about:blank"));
+        assert!(has_url_scheme("data:text/html,hi"));
     }
 }

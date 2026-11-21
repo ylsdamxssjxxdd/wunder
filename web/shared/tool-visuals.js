@@ -1,6 +1,9 @@
 const TOOL_ICON_RULES = [
   { keywords: ["用户世界工具", "user_world", "user world"], icon: "fa-earth-asia" },
   { keywords: ["桌面控制", "desktop_control", "desktop control"], icon: "fa-computer-mouse" },
+  { keywords: ["手机控制", "phone_control", "phone control", "mobile_control"], icon: "fa-mobile-screen" },
+  { keywords: ["安卓屏幕", "android_screen", "android screen", "screen_capture"], icon: "fa-display" },
+  { keywords: ["安卓通知", "android_notifications", "android notifications", "notification_listener"], icon: "fa-bell" },
   { keywords: ["计划面板", "计划看板", "update_plan", "plan board"], icon: "fa-table-columns" },
   { keywords: ["问询面板", "question_panel", "ask_panel", "question panel"], icon: "fa-circle-question" },
   { keywords: ["目标态", "目标工具", "goal", "goal mode"], icon: "fa-bullseye" },

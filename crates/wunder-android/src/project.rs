@@ -686,10 +686,16 @@ pub(crate) fn tool_label(tool: &str) -> String {
         "" => "工具",
         "读取文件" | "read_file" | "read files" => "读取",
         "写入文件" | "write_file" => "写入",
-        "文本编辑" | "编辑文件" | "apply_patch" | "应用补丁" | "edit_file" | "edit_file2"
-        | "text_editor" | "text_edit" | "str_replace_editor" | "str_replace_based_edit_tool" => {
-            "编辑"
-        }
+        "文本编辑"
+        | "编辑文件"
+        | "apply_patch"
+        | "应用补丁"
+        | "edit_file"
+        | "edit_file2"
+        | "text_editor"
+        | "text_edit"
+        | "str_replace_editor"
+        | "str_replace_based_edit_tool" => "编辑",
         "列出文件" | "list_files" | "list_file" => "列出",
         "文件名匹配" | "glob" | "glob_files" => "匹配",
         "搜索内容" | "search_content" | "search_files" => "搜索",
@@ -733,78 +739,10 @@ pub(crate) fn tool_label_for_entry(entry: &NativeWorkflowEntry) -> String {
     tool_label(&entry.title)
 }
 
-/// Icon key resolved by the shared `ToolIcons` global. This mirrors the common
-/// rules of 桌面版's `tool_icons::workflow_icon`; unknown tools fall back to the
-/// toolbox glyph already used by the desktop.
+/// Icon key resolved by the shared `ToolIcons` global. Android reuses the
+/// desktop resolver so the folded rows show exactly the same glyphs as 桌面版.
 pub(crate) fn tool_icon_key(tool: &str) -> &'static str {
-    let text = tool.trim().to_lowercase();
-    if text.contains("compact") || tool.contains("压缩") {
-        return "compress";
-    }
-    if text.contains("phone_control")
-        || text.contains("phone control")
-        || text.contains("mobile_control")
-        || tool.contains("手机控制")
-    {
-        return "smartphone";
-    }
-    if text.contains("browser") || tool.contains("浏览器") {
-        return "window-maximize";
-    }
-    if text.contains("question_panel") || text.contains("ask_panel") || tool.contains("问询") {
-        return "circle-question";
-    }
-    if text.contains("update_plan") || text.contains("plan_update") || tool.contains("计划") {
-        return "table-columns";
-    }
-    if text.contains("skill_") || tool.contains("技能") {
-        return "book-open";
-    }
-    if text.contains("memory") || tool.contains("记忆") {
-        return "memory";
-    }
-    if text.contains("subagent") || text.contains("蜂群") || tool.contains("子智能体") {
-        return "diagram-project";
-    }
-    if text.contains("web_search")
-        || text.contains("search_content")
-        || text.contains("search_files")
-        || tool.contains("搜索")
-    {
-        return "magnifying-glass";
-    }
-    if text.contains("web_fetch") || text.contains("fetch") || tool.contains("抓取") {
-        return "globe";
-    }
-    if text.contains("glob") || tool.contains("文件名匹配") {
-        return "folder-tree";
-    }
-    if text.contains("list_file")
-        || text.contains("list_files")
-        || text.contains("read_file")
-        || text.contains("read files")
-        || tool.contains("读取")
-        || tool.contains("列出")
-    {
-        return "file-lines";
-    }
-    if text.contains("write_file")
-        || text.contains("edit_file")
-        || text.contains("apply_patch")
-        || text.contains("text_editor")
-        || tool.contains("写入")
-        || tool.contains("编辑")
-        || tool.contains("补丁")
-    {
-        return "file-pen";
-    }
-    if text.contains("shell") || text.contains("command") || tool.contains("命令") {
-        return "terminal";
-    }
-    if text.contains("read_image") || text.contains("view_image") || tool.contains("读图") {
-        return "eye";
-    }
-    "toolbox"
+    wunder_desktop::tool_icons::workflow_icon(tool)
 }
 
 /// Resource target for the chip in the header; only file-like tools expose the
@@ -869,7 +807,11 @@ fn glyph_width(ch: char) -> f32 {
             | 0xFFE0..=0xFFE6
             | 0x20000..=0x2FFFD
     );
-    if wide { 12.0 } else { 6.2 }
+    if wide {
+        12.0
+    } else {
+        6.2
+    }
 }
 
 pub(crate) fn fit_chip_label(label: &str, narrow: bool) -> String {
@@ -1775,9 +1717,41 @@ mod tests {
     }
 
     #[test]
+    fn read_file_and_read_image_rows_use_distinct_icons() {
+        assert_eq!(tool_icon_key("读取文件"), "file-lines");
+        assert_eq!(tool_icon_key("read_file"), "file-lines");
+        assert_eq!(tool_icon_key("读图工具"), "eye");
+        assert_eq!(tool_icon_key("read_image"), "eye");
+    }
+
+    #[test]
     fn phone_control_rows_use_the_smartphone_icon() {
         assert_eq!(tool_icon_key("手机控制"), "smartphone");
         assert_eq!(tool_icon_key("phone_control"), "smartphone");
+    }
+
+    #[test]
+    fn workflow_icons_share_the_desktop_glyph_table() {
+        for (name, icon) in [
+            ("执行命令", "terminal"),
+            ("命令会话", "terminal"),
+            ("编辑", "file-pen"),
+            ("应用补丁", "pen-to-square"),
+            ("列出文件", "folder-open"),
+            ("写入文件", "file-circle-plus"),
+            ("定时任务", "clock"),
+            ("桌面控制", "computer-mouse"),
+            ("网页抓取", "globe"),
+            ("网页搜索", "magnifying-glass"),
+            ("浏览器", "window-maximize"),
+            ("计划任务", "clock"),
+            ("技能调用", "book-open"),
+            ("手机控制", "smartphone"),
+            ("安卓屏幕", "display"),
+            ("安卓通知", "bell"),
+        ] {
+            assert_eq!(tool_icon_key(name), icon, "{name}");
+        }
     }
 
     #[test]
@@ -1894,10 +1868,7 @@ mod tests {
         // The tool name is its own verb phrase, so no 正在执行工具… wrapper.
         assert_eq!(bar.summary, "执行");
         // 执行命令的输出跑起来就先铺开，读者不用先点一下。
-        assert!(
-            bar.process_children[0].open,
-            "运行中的命令条目自动展开输出"
-        );
+        assert!(bar.process_children[0].open, "运行中的命令条目自动展开输出");
         // A settled call leaves the phase phrase in place.
         if let Some(tool) = live.tool_mut("call-1") {
             tool.state = "completed".into();
@@ -1908,10 +1879,7 @@ mod tests {
             .find(|row| row.kind == KIND_PROCESS)
             .expect("process bar");
         assert_eq!(bar.summary, "正在执行工具…");
-        assert!(
-            !bar.process_children[0].open,
-            "命令结束后自动收起"
-        );
+        assert!(!bar.process_children[0].open, "命令结束后自动收起");
     }
 
     #[test]

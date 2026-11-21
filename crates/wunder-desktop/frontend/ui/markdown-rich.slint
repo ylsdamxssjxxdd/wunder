@@ -62,7 +62,8 @@ component ListItemBlock inherits Rectangle {
     // Half of the leading the body gets on top of the bare font metrics: the
     // first line's glyphs are pushed down by this much, so the bullet and the
     // task box ride with them instead of sitting on the box's top edge.
-    // 0.68 is half of Microsoft YaHei's natural line-height ratio (1.36em); the
+    // 0.68 is half of MiSans's natural line-height ratio (1.33em; it replaced
+    // Microsoft YaHei's 1.36em, so this constant still rounds right); the
     // phone's WenQuanYi is 1.17em, where being 1px high is invisible.
     private property <length> lead-half: (Theme.prose-line - 1) * Theme.font-body * root.font-scale * 0.68;
 

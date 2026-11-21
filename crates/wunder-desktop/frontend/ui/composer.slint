@@ -1683,13 +1683,17 @@ export component Composer inherits Rectangle {
     private property <bool> command-keys:
         !root.mobile && !root.plus-open && !root.command-dismissed && root.draft == "/";
     // 云端版同款发送门禁: allow attachment-only and answered-inquiry sends.
-    private property <bool> send-enabled:
-        ((root.draft != "" || root.attachments.length > 0 || root.inquiry-ready) && !root.send-blocked);
+    // 输入法的组合区也算正文：安卓上英文单词在遇到分隔符之前一直停在组合区
+    // （屏幕上带下划线），`draft` 里还是空的——只看 draft 会让发送键在这段
+    // 时间里退回成语音键。发送时 Rust 会先把组合区落进正文再取 draft。
+    private property <bool> has-payload:
+        root.draft != "" || editor.preedit-text != ""
+        || root.attachments.length > 0 || root.inquiry-ready;
+    private property <bool> send-enabled: root.has-payload && !root.send-blocked;
     // Keep Stop only when there is no user payload to submit. While a reply is
     // streaming, a draft, attachment, or answered inquiry must keep Send
     // visible so the next turn can enter the queue.
-    private property <bool> stop-action: root.generating && root.draft == ""
-        && root.attachments.length == 0 && !root.inquiry-ready;
+    private property <bool> stop-action: root.generating && !root.has-payload;
     // The native Winit filter uses these window-local rectangles to dismiss
     // popovers without putting a full-window TouchArea above the real controls.
     // Keeping the geometry in Slint means DPI and responsive layout changes do
