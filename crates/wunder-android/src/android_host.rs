@@ -49,6 +49,9 @@ pub enum PickedFiles {
     },
     ToolFiles(Vec<String>),
     SkillArchive(String),
+    /// The host refused the request (no camera app, provider refused the
+    /// grant, …). Carries a message the shell shows as a toast.
+    Failed(String),
 }
 
 /// Install the host once per process and ask for notification permission on
@@ -179,6 +182,38 @@ pub fn pick_attachment_files(dir: &str) {
     });
 }
 
+/// In-app camera. The shot lands in the app cache first; the result travels
+/// back through the pick queue so the engine copies it into the workspace
+/// exactly like an uploaded file (and attaches it to the thread).
+pub fn take_photo(dir: &str) {
+    if let Ok(mut pending) = PENDING_PICK.lock() {
+        *pending = Some(PickTarget::Workspace {
+            dir: dir.to_string(),
+            attach: true,
+        });
+    }
+    let Some(host) = HOST.get() else {
+        return;
+    };
+    let Ok(mut env) = host.vm.attach_current_thread() else {
+        return;
+    };
+    if let Err(error) = env.call_static_method(&host.ui_bridge, "takePhoto", "()V", &[]) {
+        clear_java_exception(&mut env);
+        log::error!("open the camera: {error}");
+    }
+}
+
+/// Whether a pick or capture is still waiting for its result. The UI tick
+/// drains results every frame while one is in flight, so a photo lands in the
+/// composer without the up-to-a-second delay of the idle poll.
+pub fn pick_pending() -> bool {
+    PENDING_PICK
+        .lock()
+        .map(|pending| pending.is_some())
+        .unwrap_or(false)
+}
+
 /// Open the picker for text files of the tool resource being browsed.
 pub fn pick_tool_files() {
     open_picker(PickTarget::ToolFiles);
@@ -293,6 +328,13 @@ pub fn take_picked() -> Option<PickedFiles> {
     // The picker answered (including "cancelled" as an empty list); the target
     // must not leak into the next pick.
     PENDING_PICK.lock().ok().and_then(|mut pending| pending.take());
+    // Java reports a refusal as one sentinel entry: `!<message>`. Real staged
+    // paths are absolute, so the prefix cannot collide with a file name.
+    if let Some(message) = files.first().filter(|path| path.starts_with('!')) {
+        return Some(PickedFiles::Failed(
+            message.trim_start_matches('!').to_string(),
+        ));
+    }
     if files.is_empty() {
         return None;
     }
@@ -355,8 +397,35 @@ pub fn stop_voice() -> String {
     call_string("stopVoice")
 }
 
-/// Drain capture events: `recording`, `denied`, `done|<path>` or
-/// `error|<message>`.
+/// Abandon the clip in flight; nothing is written or transcribed.
+pub fn cancel_voice() -> String {
+    call_string("cancelVoice")
+}
+
+/// Whether the phone has a speech recognizer to fall back to when no ASR
+/// model is configured.
+pub fn system_voice_available() -> bool {
+    call_string("systemVoiceAvailable") == "1"
+}
+
+/// Start the phone's own recognizer. The text arrives as
+/// `system|done|<text>` through [`take_voice_events`].
+pub fn start_system_voice() -> String {
+    call_string("startSystemVoice")
+}
+
+/// Ask the system recognizer to finish and return what it heard.
+pub fn stop_system_voice() -> String {
+    call_string("stopSystemVoice")
+}
+
+/// Abandon the system recognition; no result is published.
+pub fn cancel_system_voice() -> String {
+    call_string("cancelSystemVoice")
+}
+
+/// Drain capture events: `recording`, `denied`, `cancelled`, `done|<path>`,
+/// `error|<message>`, `system|done|<text>` or `system|error|<message>`.
 pub fn take_voice_events() -> Vec<String> {
     call_string_array("takeVoiceEvents")
 }

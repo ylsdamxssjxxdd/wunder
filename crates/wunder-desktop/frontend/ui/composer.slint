@@ -1437,13 +1437,11 @@ export component Composer inherits Rectangle {
     in property <bool> busy: false;
     // Phone shells (安卓版) route the plus button straight to their file picker:
     // the desktop cascade is too small for touch, and a phone messenger's plus
-    // is understood as "attach".
+    // is understood as "attach". The card itself stays an editor on phones —
+    // a tap focuses it and raises the keyboard in place; the card grows with
+    // the draft and scrolls inside once it reaches the host's height cap.
     in property <bool> mobile: false;
     callback mobile-plus-toggled();
-    // 手机端折叠态输入卡只是入口：开启后整张卡片不接收文字输入，点一下就
-    // 请宿主打开全屏输入页（键盘长在那一页上）。
-    in property <bool> mobile-page-trigger: false;
-    callback mobile-page-requested();
     // A live 问询面板 that already carries an answer unlocks the send button and
     // the send key with an empty draft: the answers themselves are the message.
     // One answered question is enough (the web client's gate) — a user may type
@@ -1528,6 +1526,15 @@ export component Composer inherits Rectangle {
     callback send();
     callback remove-attachment(int);
     callback record-voice();
+    // 手机端按住说话：按下开录、松手转写、上滑取消。桌面版的 record-voice
+    // 仍是点按切换的旧手感，两者共用录音/识别状态的显示。
+    callback voice-hold-start();
+    callback voice-hold-end();
+    callback voice-hold-cancel();
+    // 识别中：麦克风键留在原位但按不动，等文本回到草稿。
+    in property <bool> voice-busy: false;
+    // 手指已上滑到取消区：录音条据此换成红色的“松开取消”。
+    out property <bool> voice-cancel-armed: false;
     callback launch-cli();
     callback screenshot();
     callback paste-image() -> bool;
@@ -1570,18 +1577,25 @@ export component Composer inherits Rectangle {
     // Mobile keeps its touch band.
     private property <length> action-row-height: root.mobile ? 40px : 36px;
     // ---- 输入区随草稿行数增高 ----
-    // 基准高度按两行文本给定；每多一行按内容实际需要增高，到上限后由编辑器
+    // 基准高度按一行文本给定；每多一行按内容实际需要增高，到上限后由编辑器
     // 内部滚动（TextEditBase 的 ScrollView 负责跟随光标）。inset 是编辑器
     // 自身上下内边距（scroll-view-padding × 2）。
-    private property <length> editor-min-height: root.mobile ? 44px : 70px;
+    //
+    // 上限由宿主给：手机键盘弹起后整页只剩半屏，输入卡不能把对话挤没，
+    // 所以安卓版按剩余高度算一个比 200px 小得多的值传进来。
+    in property <length> editor-max-height: 200px;
+    private property <length> editor-min-height: root.mobile ? 46px : 70px;
     private property <length> editor-inset: (root.mobile ? 11px : 14px) * 2;
-    private property <length> editor-max-height: root.mobile ? 132px : 200px;
     private property <length> editor-box-height: min(
         root.editor-max-height,
         max(root.editor-min-height, editor.text-preferred-height + root.editor-inset)
     );
     private property <length> editor-growth: root.editor-box-height - root.editor-min-height;
-    height: (root.mobile ? 70px : 136px) + root.editor-growth
+    // 手机卡片的高度就是「上下内边距 + 一行编辑器/按钮里更高的一侧」，
+    // 不留固定基准里的余量：卡片多高，编辑器就多高，行数一变立刻贴合。
+    private property <length> mobile-card-height:
+        18px + max(root.action-row-height, root.editor-box-height);
+    height: (root.mobile ? root.mobile-card-height : 136px + root.editor-growth)
         + (root.attachments.length > 0 ? 36px : 0px)
         + (root.branch-name != "" ? 22px : 0px) + root.queue-height;
     private property <bool> plus-open: false;
@@ -1751,7 +1765,9 @@ export component Composer inherits Rectangle {
             Rectangle {
                 horizontal-stretch: 1;
                 vertical-stretch: 1;
-                min-height: root.mobile ? 44px : 0px;
+                // 布局里的子元素高度由布局按 min/preferred 分配，根上的 `height`
+                // 绑定在布局中不起作用：手机卡片要长高，必须把下限写在这里。
+                min-height: root.mobile ? root.editor-box-height : 0px;
                 background: transparent;
                 border-width: 0px;
                 editor := TextEditBase {
@@ -1768,9 +1784,14 @@ export component Composer inherits Rectangle {
                 foreground: Theme.text;
                 placeholder-text: I18n.cp_input_placeholder;
                 placeholder-color: Theme.muted;
-                selection-background-color: Theme.accent-soft;
-                selection-foreground-color: Theme.text;
-                font-size: 14px; font-family: "SimSun";
+                // 手机端光标由选区背景色绘制（桌面用文本色），浅色选区会让
+                // 光标在白底上消失，所以触摸端一律用深色选区配白字；字号
+                // 跟正文同一档 16px，触摸端比桌面的 14px 更好读。
+                selection-background-color: root.mobile ? Theme.accent-ink : Theme.accent-soft;
+                selection-foreground-color: root.mobile ? #ffffff : Theme.text;
+                cursor-width: root.mobile ? 2px : 1px;
+                font-size: root.mobile ? Theme.font-xl : 14px;
+                font-family: root.mobile ? "" : "SimSun";
                 wrap: word-wrap;
                 paste-image() => { return root.paste-image(); }
                 edited => {
@@ -1897,13 +1918,63 @@ export component Composer inherits Rectangle {
                 can-drop(event) => { return DragAction.copy; }
                 dropped(event) => { root.file-drop(event); return DragAction.copy; }
             }
-            // 手机端折叠态输入卡不是编辑区，而是全屏输入页的入口：这一层
-            // 盖住编辑器，点一下只转成一次 mobile-page-requested。
-            if root.mobile && root.mobile-page-trigger : TouchArea {
-                clicked => { root.mobile-page-requested(); }
             }
+            // 手机上没有草稿可发时，右侧这颗键就是麦克风：按住说话，松手
+            // 转写，手指往上滑过一格松手即放弃这次录音。有字时仍是发送键，
+            // 窄屏不挤两个按钮。
+            if root.mobile && !root.stop-action && !root.send-enabled : Rectangle {
+                width: 40px;
+                height: 40px;
+                Rectangle {
+                    x: 2px;
+                    y: 2px;
+                    width: 36px;
+                    height: 36px;
+                    border-radius: Theme.radius-md;
+                    background: root.voice-cancel-armed
+                        ? Theme.danger
+                        : (mic-touch.pressed ? Theme.accent-ink : Theme.surface);
+                    border-width: 1px;
+                    border-color: mic-touch.pressed ? Theme.accent-ink : Theme.border-strong;
+                    Image {
+                        x: 9px;
+                        y: 9px;
+                        width: 18px;
+                        height: 18px;
+                        source: @image-url("../assets/icons/lc-mic.svg");
+                        colorize: mic-touch.pressed ? #ffffff : Theme.text-secondary;
+                        image-fit: contain;
+                    }
+                    accessible-role: button;
+                    accessible-label: I18n.cp_voice_hold;
+                    mic-touch := TouchArea {
+                        enabled: !root.voice-busy;
+                        mouse-cursor: pointer;
+                        pointer-event(event) => {
+                            if (event.button != PointerEventButton.left) {
+                                return;
+                            }
+                            if (event.kind == PointerEventKind.down) {
+                                root.voice-cancel-armed = false;
+                                root.voice-hold-start();
+                            } else if (event.kind == PointerEventKind.up) {
+                                // 松手位置在按钮上方一格以上即取消。
+                                let cancelled = self.mouse-y < -56px;
+                                root.voice-cancel-armed = false;
+                                if (cancelled) {
+                                    root.voice-hold-cancel();
+                                } else {
+                                    root.voice-hold-end();
+                                }
+                            }
+                        }
+                        moved => {
+                            root.voice-cancel-armed = self.pressed && self.mouse-y < -56px;
+                        }
+                    }
+                }
             }
-            if root.mobile : Rectangle {
+            if root.mobile && (root.stop-action || root.send-enabled) : Rectangle {
                 width: 40px;
                 height: 40px;
                 mobile-send-btn := Rectangle {

@@ -791,6 +791,26 @@ fn wire_callbacks(
         #[cfg(target_os = "android")]
         crate::android_host::pick_attachment_files("");
     });
+    // 拍照：相机的输出先落进应用缓存，再由引擎搬进工作区的
+    // temp/chat_media/source，和上传一样挂到这条对话上。
+    ui.on_take_photo(move || {
+        #[cfg(target_os = "android")]
+        crate::android_host::take_photo(crate::engine::CHAT_MEDIA_SOURCE);
+    });
+    // 按住说话：按下开录、松手结束、上滑取消。手机上不保留桌面版那种
+    // 「再点一次停止」的切换，按住/松手更接近聊天软件的手感。
+    let sender = commands.clone();
+    ui.on_voice_start(move || {
+        let _ = sender.send(Command::VoiceStart);
+    });
+    let sender = commands.clone();
+    ui.on_voice_stop(move || {
+        let _ = sender.send(Command::VoiceStop);
+    });
+    let sender = commands.clone();
+    ui.on_voice_cancel(move || {
+        let _ = sender.send(Command::VoiceCancel);
+    });
     let sender = commands.clone();
     ui.on_remove_attachment(move |index| {
         let _ = sender.send(Command::RemoveUpload(index.max(0) as usize));
@@ -2131,6 +2151,11 @@ fn start_tick(
     // 输入框附件卡的键：(上传修订号, 本机/云端)。切到云端时也要重投影一次，
     // 否则本机线程的附件卡会跟着挂到云端会话的输入框上。
     let mut last_uploads: (u64, i32) = (0, -1);
+    // 加号面板预设问题的键：(预设修订号, 本机/云端)：云端线程没有本机智能体。
+    let mut last_presets: (u64, i32) = (0, -1);
+    // 语音投影的键：(修订号, 识别路线)。计时另外单独比较，避免每帧重写。
+    let mut last_voice: (u64, i32) = (0, -1);
+    let mut last_voice_elapsed = String::new();
     let mut last_rows = 0u64;
     let mut last_live = 0u64;
     let mut last_live_active = false;
@@ -2195,6 +2220,12 @@ fn start_tick(
     let mut last_activity = 0u64;
     let mut editor_was_open = false;
     let mut last_ime = -1.0f32;
+    // 输入法高度在弹出/收起时会逐帧动画（WindowInsetsAnimation 每帧回调一次）。
+    // 跟着每一帧改 `ime-height` 会让整页（尤其是聊天列表）连续重排，看起来
+    // 就是键盘一动就卡。这里只认「连续两拍都没变」的值：动画中间帧一律丢弃，
+    // 键盘落定后一次性移到最终位置，整段动画只有一次布局。
+    let mut ime_candidate = 0.0f32;
+    let mut ime_steady_ticks = 0u8;
     #[cfg(target_os = "android")]
     let mut last_back: Option<Instant> = None;
     let mut host_ticks = 0u32;
@@ -2213,9 +2244,16 @@ fn start_tick(
             .virtual_keyboard(i_slint_core::InternalToken)
             .map(|(_origin, size)| size.height)
             .unwrap_or(0.0);
-        if (ime - last_ime).abs() > 0.5 {
-            ui.set_ime_height(ime);
-            last_ime = ime;
+        if (ime - ime_candidate).abs() > 0.5 {
+            // 还在动画：记下这一帧，等它稳定下来再落布局。
+            ime_candidate = ime;
+            ime_steady_ticks = 0;
+        } else {
+            ime_steady_ticks = ime_steady_ticks.saturating_add(1);
+        }
+        if ime_steady_ticks >= 1 && (ime_candidate - last_ime).abs() > 0.5 {
+            ui.set_ime_height(ime_candidate);
+            last_ime = ime_candidate;
         }
         // 首装引导的液面动画相位：只在引导页打开时推进，页面关闭后不再产生
         // 任何属性更新。相位单调递增（以 4s 波浪周期为单位），不取模：气泡
@@ -2280,7 +2318,13 @@ fn start_tick(
         // Move their results into the engine queue from the UI tick so the
         // JNI callbacks never touch Slint or the engine state directly.
         #[cfg(target_os = "android")]
-        if ui.get_workspace_open() || ui.get_settings_page() == 7 || host_ticks % 30 == 0 {
+        if ui.get_workspace_open()
+            || ui.get_settings_page() == 7
+            // 抓拍/选文件期间每 ~100ms 收一次结果：照片回到输入框不该等
+            // 空闲轮询的那一秒，也不必每帧都过一遍 JNI。
+            || (crate::android_host::pick_pending() && host_ticks % 3 == 0)
+            || host_ticks % 30 == 0
+        {
             if let Some(picked) = crate::android_host::take_picked() {
                 match picked {
                     crate::android_host::PickedFiles::Workspace { dir, files, attach } => {
@@ -2291,6 +2335,12 @@ fn start_tick(
                     }
                     crate::android_host::PickedFiles::SkillArchive(path) => {
                         let _ = commands.send(Command::ImportSkill { path });
+                    }
+                    crate::android_host::PickedFiles::Failed(message) => {
+                        if let Ok(mut state) = shared.lock() {
+                            state.notify(message);
+                            state.touch();
+                        }
                     }
                 }
             }
@@ -2344,25 +2394,46 @@ fn start_tick(
                 let _ = commands.send(command);
             }
         }
-        // Voice results are posted by Java workers; poll them
-        // often enough that the capture strip reacts within a frame or two.
+        // Voice results are posted by Java workers (recorder and the system
+        // recognizer share one queue). Polling every 6 ticks keeps the strip
+        // and the transcribed draft within ~200 ms of the device.
         #[cfg(target_os = "android")]
         if host_ticks % 6 == 0 {
             for event in crate::android_host::take_voice_events() {
-                if event == "recording" {
-                    let _ = commands.send(Command::VoiceStarted);
-                } else if event == "denied" {
-                    let _ = commands.send(Command::VoiceFailed {
-                        message: "录音权限被拒绝".into(),
-                    });
-                } else if let Some(path) = event.strip_prefix("done|") {
-                    let _ = commands.send(Command::VoiceFinished {
-                        path: path.to_string(),
-                    });
-                } else if let Some(message) = event.strip_prefix("error|") {
-                    let _ = commands.send(Command::VoiceFailed {
-                        message: format!("录音失败：{message}"),
-                    });
+                match event.as_str() {
+                    "recording" => {
+                        let _ = commands.send(Command::VoiceStarted);
+                    }
+                    "system|listening" => {
+                        let _ = commands.send(Command::VoiceSystemStarted);
+                    }
+                    "denied" => {
+                        let _ = commands.send(Command::VoiceFailed {
+                            message: "录音权限被拒绝".into(),
+                        });
+                    }
+                    "cancelled" => {
+                        let _ = commands.send(Command::VoiceCancelled);
+                    }
+                    event => {
+                        if let Some(path) = event.strip_prefix("done|") {
+                            let _ = commands.send(Command::VoiceFinished {
+                                path: path.to_string(),
+                            });
+                        } else if let Some(text) = event.strip_prefix("system|done|") {
+                            let _ = commands.send(Command::VoiceText {
+                                text: text.to_string(),
+                            });
+                        } else if let Some(message) = event.strip_prefix("system|error|") {
+                            let _ = commands.send(Command::VoiceFailed {
+                                message: format!("语音识别：{message}"),
+                            });
+                        } else if let Some(message) = event.strip_prefix("error|") {
+                            let _ = commands.send(Command::VoiceFailed {
+                                message: format!("录音失败：{message}"),
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -2372,7 +2443,13 @@ fn start_tick(
         #[cfg(target_os = "android")]
         if host_ticks % 3 == 0 {
             for _ in 0..crate::android_host::take_back_requests() {
-                if !handle_back(&ui, &shared, &mut last_back) {
+                // 录音中按返回：先丢掉这段录音，返回键不继续关页面，
+                // 免得用户带着一条看不见的录音条离开聊天页。
+                if ui.get_voice_phase() != 0 {
+                    let _ = commands.send(Command::VoiceCancel);
+                    continue;
+                }
+                if !handle_back(&ui, &shared, &mut last_back, ime) {
                     crate::android_host::finish_activity();
                     break;
                 }
@@ -2475,6 +2552,42 @@ fn start_tick(
                 Vec::new()
             };
             ui.set_attachments(ModelRc::from(Rc::new(VecModel::from(cards))));
+        }
+
+        // 加号面板的预设问题跟着智能体投影走，云端线程不显示本机预设。
+        let presets_key = (state.preset_rev, state.target);
+        if presets_key != last_presets {
+            last_presets = presets_key;
+            let questions: Vec<slint::SharedString> = if state.target == 0 {
+                state
+                    .preset_questions
+                    .iter()
+                    .map(|question| question.as_str().into())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            ui.set_preset_questions(ModelRc::from(Rc::new(VecModel::from(questions))));
+        }
+
+        // 语音：录音条自己走秒，所以计时每帧算、只在文本变化时写入；
+        // 阶段与识别路线按修订号投影，避免每帧覆盖 Slint 侧状态。
+        let voice_key = (state.voice_rev, state.voice_route);
+        if voice_key != last_voice {
+            last_voice = voice_key;
+            ui.set_voice_phase(state.voice_phase);
+            ui.set_voice_system(state.voice_route == 2);
+        }
+        let voice_elapsed = match (state.voice_phase, state.voice_started) {
+            (1, Some(started)) => {
+                let seconds = started.elapsed().as_secs().min(120);
+                format!("{:02}:{:02}", seconds / 60, seconds % 60)
+            }
+            _ => String::new(),
+        };
+        if voice_elapsed != last_voice_elapsed {
+            last_voice_elapsed = voice_elapsed;
+            ui.set_voice_elapsed(last_voice_elapsed.as_str().into());
         }
 
         if state.rev != last_rev {
@@ -3529,18 +3642,15 @@ fn handle_back(
     ui: &MobileWindow,
     shared: &Arc<Mutex<Shared>>,
     last_back: &mut Option<Instant>,
+    ime_now: f32,
 ) -> bool {
-    // 全屏输入页：返回键直接回到聊天。这一页本身就是为键盘生的，关页即收
-    // 键盘，一次按下就够，不必让输入法先吃掉一次。
-    if ui.get_input_page_open() {
-        ui.set_input_page_open(false);
-        crate::android_host::hide_keyboard();
-        *last_back = None;
-        return true;
-    }
     // The IME owns the first Back while the keyboard is up, matching every
-    // Android input surface. The UI tick keeps `ime-height` current.
-    if ui.get_ime_height() > 0.5 {
+    // Android input surface. The UI tick keeps `ime-height` current; the
+    // composer keeps Slint's text focus, so the next tap re-opens the keyboard
+    // through the backend's ensure-focus path. `ime_now` is the raw rect, so a
+    // Back pressed while the keyboard is still animating is claimed by the IME
+    // instead of arming the double-Back exit.
+    if ui.get_ime_height() > 0.5 || ime_now > 0.5 {
         crate::android_host::hide_keyboard();
         *last_back = None;
         return true;
@@ -3582,6 +3692,13 @@ fn handle_back(
         ui.set_rename_open(false);
     } else if ui.get_model_sheet_open() {
         ui.set_model_sheet_open(false);
+    } else if ui.get_plus_sheet_open() {
+        // 加号面板是两层：先回三个入口，再收起整张面板。
+        if ui.get_plus_sheet_page() > 0 {
+            ui.set_plus_sheet_page(0);
+        } else {
+            ui.set_plus_sheet_open(false);
+        }
     } else if ui.get_trajectory_open() {
         if ui.get_trajectory_expanded() >= 0 {
             ui.set_trajectory_expanded(-1);
@@ -3997,6 +4114,12 @@ pub fn install_preview_data(
         slint::SharedString::from("总结当前进度"),
         slint::SharedString::from("检查最近的改动"),
     ]))));
+    // 加号面板的预设问题走同一份智能体预设，预览里也给几条便于评审面板。
+    ui.set_preset_questions(ModelRc::from(Rc::new(VecModel::from(vec![
+        slint::SharedString::from("把这份周报的结论改成三条要点，语气收紧一点。"),
+        slint::SharedString::from("总结当前进度"),
+        slint::SharedString::from("检查最近的改动"),
+    ]))));
 
     // Cron / memory fixtures for layout review.
     ui.set_settings_cron_workspaces(ModelRc::from(Rc::new(VecModel::from(vec![
@@ -4383,11 +4506,23 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
         "drawer" => {
             ui.set_drawer_open(true);
         }
-        // 全屏输入页：带一段真草稿，方便看大字号输入区的排版。
-        "compose" => {
-            ui.set_draft("把这份周报的结论改成三条要点，语气收紧一点。".into());
-            ui.set_input_page_open(true);
+        // 加号面板：`plus` 是三个入口，`plus-presets` 展开第二页的预设问题列表。
+        "plus" => {
+            ui.set_plus_sheet_open(true);
         }
+        "plus-presets" => {
+            ui.set_plus_sheet_page(1);
+            ui.set_plus_sheet_open(true);
+        }
+        // 输入卡就地编辑：带一段多行草稿，方便看卡片随行数长高的样子。
+        "compose" => {
+            ui.set_draft(
+                "把这份周报的结论改成三条要点，语气收紧一点。\n第二条保留数据口径，别改数字。"
+                    .into(),
+            );
+        }
+        // 空草稿的输入卡：右侧那颗键此时是麦克风，用来评审核按住说话的布局。
+        "compose-empty" => {}
         "workspace-sheet" => {
             ui.set_drawer_open(true);
             ui.set_workspace_sheet_open(true);

@@ -120,6 +120,15 @@
             android:exported="false"
             android:grantUriPermissions="true" />
 
+        <!-- Camera output: the shot is written into the app cache through this
+             authority (granted per-intent to the camera app), then moved into
+             the workspace. Never exported on its own. -->
+        <provider
+            android:name=".PhotoProvider"
+            android:authorities="${applicationId}.camera"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <!-- Final status of an online-update install session. Explicitly
              addressed by the PendingIntent; never exported. -->
         <receiver

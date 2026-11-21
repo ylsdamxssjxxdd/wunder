@@ -13,7 +13,6 @@ import { TimelineView } from "../../../crates/wunder-desktop/frontend/ui/timelin
 import { Composer, GoalBanner, InquiryPanel, ModelSetupBanner, StatusDock } from "../../../crates/wunder-desktop/frontend/ui/composer.slint";
 import { Action, FormField, ConfirmDialog } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
 import { MobileSettings } from "settings.slint";
-import { ComposePage } from "compose_page.slint";
 import { MobileToast } from "toast.slint";
 import { EnvSetupPage } from "env_setup.slint";
 import { TrajectoryPage, TrajectoryItem, TrajectoryAudit, TrajectorySegment, TrajectoryBar } from "trajectory.slint";
@@ -69,6 +68,31 @@ component SheetAction inherits Rectangle {
             overflow: elide;
         }
     }
+}
+
+// 加号面板第二页的一行预设问题。问题通常是一整句话，允许折两行，点一下
+// 就把整句填进草稿。
+component PresetRow inherits Rectangle {
+    in property <string> question;
+    callback picked();
+    height: Math.max(44px, preset-label.preferred-height + 20px);
+    border-radius: Theme.radius-sm;
+    background: preset-touch.has-hover ? Theme.hover : transparent;
+    preset-touch := TouchArea {
+        clicked => { root.picked(); }
+    }
+    preset-label := Text {
+        x: 14px;
+        y: 10px;
+        width: parent.width - 28px;
+        text: root.question;
+        color: Theme.text;
+        font-size: Theme.font-md;
+        wrap: word-wrap;
+        overflow: elide;
+    }
+    accessible-role: list-item;
+    accessible-label: root.question;
 }
 
 // Direct row action in the drawer. Thread rows show rename / trajectory /
@@ -340,6 +364,12 @@ export component MobileWindow inherits Window {
     in-out property <bool> file-delete-open: false;
     in-out property <bool> file-move-open: false;
 
+    // 语音：0 空闲、1 录音中、2 识别中。识别路线由引擎决定——配了 ASR
+    // 模型就自录转写，没配则用手机自带识别，录音条上会标出来。
+    in-out property <int> voice-phase: 0;
+    in-out property <string> voice-elapsed: "";
+    in property <bool> voice-system: false;
+
     // ---- workspaces --------------------------------------------------
     in-out property <bool> workspaces-open: false;
     // The picker's topmost sheet (0 none / 1 row menu / 2 editor / 3 delete);
@@ -358,11 +388,16 @@ export component MobileWindow inherits Window {
 
     // ---- composer ----------------------------------------------------
     in-out property <string> draft: "";
-    // 全屏输入页：聊天页底部那张输入卡点一下就进这里，键盘也长在这里。
-    in-out property <bool> input-page-open: false;
-    // 输入页发送门禁：正文或附件有其一即可发送（与折叠态一致）。
-    private property <bool> input-page-send-enabled:
-        root.draft != "" || root.attachments.length > 0;
+    // 加号面板：触摸端没有桌面那套悬停级联，点加号在键盘上方弹一张小面板，
+    // 三个入口——预设问题 / 上传文件 / 拍照。第二页是预设问题列表。
+    in-out property <bool> plus-sheet-open: false;
+    in-out property <int> plus-sheet-page: 0;
+    // 当前智能体的预设问题（engine 投影，最多 12 条）。
+    in property <[string]> preset-questions: [];
+    // 输入卡的高度上限：键盘弹起后整页只剩半屏，输入卡最多吃掉剩余高度的
+    // 四分之一左右（约 6 行），再长就在编辑器内部滚动，不把对话挤没。
+    private property <length> editor-max-height:
+        min(154px, max(88px, (root.height - root.ime-height) * 0.28));
     in property <bool> generating: false;
     in property <bool> stopping: false;
     // 运行中键入、还没交给引擎的消息。它们停在输入框上沿的待发条里，
@@ -613,6 +648,12 @@ export component MobileWindow inherits Window {
     callback upload-workspace(string);
     // 聊天页「上传文件」：文件上传后还挂在输入框上，随下一条消息告知模型。
     callback attach-files();
+    // 拍照：照片落到工作区 temp/chat_media/source，同样挂在输入框上。
+    callback take-photo();
+    // 按住说话：按下开录、松手转写、上滑取消。
+    callback voice-start();
+    callback voice-stop();
+    callback voice-cancel();
     callback download-workspace(string);
     callback load-more-workspace(string, int);
     callback workspace-rename(string, string);
@@ -842,26 +883,24 @@ export component MobileWindow inherits Window {
         }
     }
 
-    // 折叠态输入卡被点中：直接进全屏输入页（编辑器在页面自己的 init 里
-    // 要焦点，键盘随之弹出）。
-    function open-input-page() {
-        root.input-page-open = true;
+    // ---- 加号面板 ------------------------------------------------------
+    // 打开时不收键盘：面板就浮在键盘上沿，选完预设问题后编辑器仍在原焦点
+    // 上，键盘不会来回弹一次。
+    function open-plus-sheet() {
+        root.plus-sheet-page = 0;
+        root.plus-sheet-open = true;
     }
 
-    // 回到聊天：先关页再收键盘。关页会销毁获得焦点的编辑器，输入法不会
-    // 被 Slint 的焦点再顶起来。
-    function close-input-page() {
-        root.input-page-open = false;
-        root.keyboard-dismiss();
+    function close-plus-sheet() {
+        root.plus-sheet-open = false;
+        root.plus-sheet-page = 0;
     }
 
-    function submit-input-page() {
-        if !root.input-page-send-enabled {
-            return;
-        }
-        root.input-page-open = false;
-        root.keyboard-dismiss();
-        root.send();
+    // 预设问题只填草稿，不直接发送：手机上常要在模板上再补两句。
+    function pick-preset(question: string) {
+        root.close-plus-sheet();
+        root.draft = question;
+        composer.focus-editor();
     }
 
     function show-workspace-sheet() {
@@ -1099,8 +1138,13 @@ export component MobileWindow inherits Window {
                 // 单选答案会自动翻到下一题，最后一题答完全部有答案时直接提交（与
                 // 桌面版、云端版同一条引导流程）；提交键留给自由文本与多选题。
                 // 展开全部时用内部滚动兜住高度，不让面板把输入区挤出屏幕。
+                // 键盘弹起时按「键盘之上还剩多少」收紧：面板 + 输入卡 + 顶栏
+                // 三者不能超过可视区，否则输入卡会落到键盘下面。
                 if root.inquiry-total > 0 : Rectangle {
-                    height: min(root.height * 0.46, inquiry-stack.preferred-height);
+                    height: min(
+                        min(root.height * 0.46, (root.height - root.ime-height) * 0.5),
+                        inquiry-stack.preferred-height
+                    );
                     background: transparent;
                     inquiry-scroll := ScrollView {
                         width: 100%;
@@ -1151,12 +1195,70 @@ export component MobileWindow inherits Window {
                     }
                 }
 
+                // 录音条：按住麦克风时贴在输入卡上方，显示计时与「松手转写」；
+                // 手指滑到取消区时整条转红，松手即丢弃这段录音。识别中把
+                // 提示换成「识别中」，避免用户以为还在录。
+                if root.voice-phase > 0 : Rectangle {
+                    height: 34px;
+                    border-radius: Theme.radius-md;
+                    background: composer.voice-cancel-armed ? #FEF2F2 : Theme.panel;
+                    border-width: 1px;
+                    border-color: composer.voice-cancel-armed ? Theme.danger : Theme.border;
+                    // 三个元素绝对定位：录音条只有一行，交给布局反而容易被
+                    // 「居中」吃掉左右留白，这里直接算坐标更可控。
+                    Rectangle {
+                        x: 12px;
+                        y: (parent.height - 7px) / 2;
+                        width: 7px;
+                        height: 7px;
+                        border-radius: 3.5px;
+                        background: root.voice-phase == 2 ? Theme.muted : Theme.danger;
+                    }
+                    Text {
+                        x: 27px;
+                        y: 0px;
+                        width: parent.width - 91px;
+                        height: parent.height;
+                        text: root.voice-phase == 2
+                            ? I18n.cp_transcribing
+                            : (composer.voice-cancel-armed
+                                ? I18n.cp_voice_cancel_hint
+                                : I18n.cp_voice_hint
+                                    + (root.voice-system ? " · " + I18n.cp_voice_system : ""));
+                        color: composer.voice-cancel-armed ? Theme.danger : Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    Text {
+                        x: parent.width - 76px;
+                        y: 0px;
+                        width: 64px;
+                        height: parent.height;
+                        text: root.voice-phase == 1 ? root.voice-elapsed : "";
+                        color: Theme.danger;
+                        font-size: Theme.font-xs;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        horizontal-alignment: right;
+                    }
+                }
+
                 composer := Composer {
                     mobile: true;
-                    // 手机上的加号就是上传附件，不再展开功能面板。
-                    mobile-plus-toggled() => { root.attach-files(); }
-                    mobile-page-trigger: true;
-                    mobile-page-requested() => { root.open-input-page(); }
+                    // 语音：右侧那颗键在没有草稿时就是麦克风。录音条已经
+                    // 贴在输入卡上方，Composer 自己的小胶囊不必重复显示，
+                    // 所以 recording/transcribing 保持不变，只用 voice-busy
+                    // 管住「识别中不能再次按下」。
+                    voice-busy: root.voice-phase == 2;
+                    voice-hold-start() => { root.voice-start(); }
+                    voice-hold-end() => { root.voice-stop(); }
+                    voice-hold-cancel() => { root.voice-cancel(); }
+                    // 手机上的加号是一个面板：预设问题 / 上传文件 / 拍照。
+                    mobile-plus-toggled() => { root.open-plus-sheet(); }
+                    // 输入卡就是编辑区：点一下直接获得焦点、弹出键盘，卡片
+                    // 随草稿行数长高，上限按键盘之上的剩余高度算。
+                    editor-max-height: root.editor-max-height;
                     draft <=> root.draft;
                     busy: root.loading;
                     // 目标续跑期间也显示停止按钮，与桌面版一致。
@@ -1180,7 +1282,12 @@ export component MobileWindow inherits Window {
                     show-host-hud: false;
                     show-cli-action: false;
                     branch-name: root.branch-name;
-                    send() => { root.send(); }
+                    send() => {
+                        // 发送即回到最新：用户可能翻着历史打字，消息落在尾部
+                        // 却看不见。
+                        root.follow-output = true;
+                        root.send();
+                    }
                     stop() => { root.stop(); }
                     select-model(index, key) => { root.select-model(index, key); }
                     open-model-settings() => { root.open-model-settings(); }
@@ -2243,6 +2350,127 @@ export component MobileWindow inherits Window {
         canceled => { root.decide-approval(root.settings-approval-id, false); }
     }
 
+    // ---- 加号面板 ----------------------------------------------------
+    // 键盘不收起：面板浮在键盘上沿，选完预设问题后编辑器还在原焦点上，
+    // 键盘不会来回弹一次。第二页是预设问题列表，第二层返回在标题行里。
+    if root.plus-sheet-open : Rectangle {
+        width: 100%;
+        height: parent.height - root.ime-height;
+        background: Theme.overlay;
+        TouchArea {
+            clicked => { root.close-plus-sheet(); }
+        }
+
+        Rectangle {
+            x: 8px;
+            // 键盘收起时面板要避开手势条；键盘在时那条安全区已经在键盘里了。
+            y: parent.height - self.height - 8px
+                - (root.ime-height > 0px ? 0px : root.inset-bottom);
+            width: parent.width - 16px;
+            height: min(sheet-body.preferred-height + 16px, parent.height - root.inset-top - 16px);
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            drop-shadow-color: #00000033;
+            drop-shadow-blur: 24px;
+            // 卡片自己吃掉点击：点在行间空隙时不能穿到遮罩上把面板关掉。
+            TouchArea { clicked => { } }
+
+            sheet-body := VerticalLayout {
+                padding: 8px;
+                spacing: 2px;
+
+                if root.plus-sheet-page == 0 : VerticalLayout {
+                    spacing: 2px;
+                    Text {
+                        height: 28px;
+                        text: I18n.cp_add_to_chat;
+                        color: Theme.muted;
+                        font-size: Theme.font-xs;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    SheetAction {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-wand-sparkles.svg");
+                        label: I18n.ag_preset_questions;
+                        clicked => { root.plus-sheet-page = 1; }
+                    }
+                    SheetAction {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/paperclip.svg");
+                        label: I18n.cp_more_upload;
+                        clicked => {
+                            root.close-plus-sheet();
+                            root.attach-files();
+                        }
+                    }
+                    SheetAction {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-camera.svg");
+                        label: I18n.cp_take_photo;
+                        clicked => {
+                            root.close-plus-sheet();
+                            root.take-photo();
+                        }
+                    }
+                }
+
+                if root.plus-sheet-page == 1 : VerticalLayout {
+                    spacing: 2px;
+                    Rectangle {
+                        height: 36px;
+                        HorizontalLayout {
+                            padding-left: 2px;
+                            padding-right: 8px;
+                            spacing: 4px;
+                            cross-axis-alignment: center;
+                            Action {
+                                width: 32px;
+                                height: 32px;
+                                icon-size: 16px;
+                                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-left.svg");
+                                label: I18n.traj_back;
+                                clicked => { root.plus-sheet-page = 0; }
+                            }
+                            Text {
+                                horizontal-stretch: 1;
+                                text: I18n.ag_preset_questions;
+                                color: Theme.text;
+                                font-size: Theme.font-md;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                    if root.preset-questions.length == 0 : Text {
+                        height: 48px;
+                        text: I18n.cp_preset_empty;
+                        color: Theme.muted;
+                        font-size: Theme.font-md;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    if root.preset-questions.length > 0 : preset-scroll := ScrollView {
+                        height: min(
+                            min(264px, (root.height - root.ime-height) * 0.42),
+                            preset-column.preferred-height
+                        );
+                        horizontal-scrollbar-policy: always-off;
+                        vertical-scrollbar-policy: as-needed;
+                        content-width: self.visible-width;
+                        content-height: max(self.visible-height, preset-column.preferred-height);
+                        preset-column := VerticalLayout {
+                            width: preset-scroll.visible-width;
+                            spacing: 2px;
+                            for question[index] in root.preset-questions : PresetRow {
+                                question: question;
+                                picked() => { root.pick-preset(question); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ---- session action sheet --------------------------------------
     // ---- model picker sheet -----------------------------------------
     if root.model-sheet-open : Rectangle {
@@ -3000,23 +3228,6 @@ export component MobileWindow inherits Window {
         retry() => {
             root.load-trajectory(root.trajectory-session-id, root.trajectory-session-title);
         }
-    }
-
-    // ---- 全屏输入页 --------------------------------------------------
-    // 聊天页底部那张输入卡在手机上太窄，点一下就整屏进入这一页：顶部只有
-    // 返回与发送，下面全是输入区。
-    if root.input-page-open : ComposePage {
-        x: 0px;
-        y: 0px;
-        width: 100%;
-        height: root.height - root.ime-height;
-        inset-top: root.inset-top;
-        inset-bottom: root.inset-bottom;
-        ime-height: root.ime-height;
-        draft <=> root.draft;
-        attachments: root.attachments;
-        close() => { root.close-input-page(); }
-        send() => { root.submit-input-page(); }
     }
 
     // ---- 首次运行环境部署引导 ---------------------------------------

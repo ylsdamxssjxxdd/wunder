@@ -13,6 +13,35 @@ fn main() {
     if let Ok(text) = std::env::var("WUNDER_PREVIEW_TOAST") {
         ui.set_toast(text.into());
     }
+    // `WUNDER_PREVIEW_DRAFT=<text>` seeds the input card (`\n` starts a new
+    // line) so its growth with the draft can be reviewed; `WUNDER_PREVIEW_IME`
+    // reserves a keyboard of that many pixels, which is the layout the phone
+    // shows while typing.
+    if let Ok(text) = std::env::var("WUNDER_PREVIEW_DRAFT") {
+        ui.set_draft(text.replace("\\n", "\n").into());
+    }
+    if let Ok(value) = std::env::var("WUNDER_PREVIEW_IME") {
+        if let Ok(px) = value.trim().parse::<f32>() {
+            ui.set_ime_height(px);
+        }
+    }
+    // `WUNDER_PREVIEW_VOICE=<recording|system|transcribing>` paints the voice
+    // strip without a microphone, so its wording and height can be reviewed.
+    if let Ok(value) = std::env::var("WUNDER_PREVIEW_VOICE") {
+        match value.trim() {
+            "recording" => {
+                ui.set_voice_phase(1);
+                ui.set_voice_elapsed("00:07".into());
+            }
+            "system" => {
+                ui.set_voice_phase(1);
+                ui.set_voice_system(true);
+                ui.set_voice_elapsed("00:03".into());
+            }
+            "transcribing" => ui.set_voice_phase(2),
+            _ => {}
+        }
+    }
     // `WUNDER_PREVIEW_SNAPSHOT=<file.ppm>` renders one frame and quits; the
     // phone window cannot be grabbed by the desktop screenshot tools.
     if let Ok(path) = std::env::var("WUNDER_PREVIEW_SNAPSHOT") {

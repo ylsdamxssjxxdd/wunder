@@ -32,6 +32,10 @@ ENTRIES = [
     ("cp_more", "更多", "More"),
     ("cp_more_new_thread", "新建线程", "New thread"),
     ("cp_more_upload", "上传文件", "Upload file"),
+    # 触摸端加号面板：桌面用悬停级联，手机上换成一个底部小面板。
+    ("cp_add_to_chat", "添加到对话", "Add to chat"),
+    ("cp_take_photo", "拍照", "Take photo"),
+    ("cp_preset_empty", "暂无预设问题", "No preset questions"),
     ("cp_more_workspace", "打开工作区文件夹", "Open workspace folder"),
 
     # ---- model picker (§8.3) ----
@@ -39,6 +43,11 @@ ENTRIES = [
     ("cp_model_pick", "切换模型", "Switch model"),
     ("cp_model_context", "上下文 Token", "Context tokens"),
     ("cp_voice_input", "语音输入", "Voice input"),
+    # 触摸端按住说话：录音条上的提示与无障碍标签。
+    ("cp_voice_hold", "按住说话", "Hold to talk"),
+    ("cp_voice_hint", "松手转写，上滑取消", "Release to transcribe, slide up to cancel"),
+    ("cp_voice_cancel_hint", "松开取消", "Release to cancel"),
+    ("cp_voice_system", "系统识别", "On-device recognition"),
     ("cp_open_cli", "打开命令行", "Open CLI"),
     ("cp_model_search", "搜索模型", "Search models"),
     ("cp_model_empty", "还没有可用模型。请到「设置 → 模型设置」添加。", "No models yet. Add one in Settings → Models."),

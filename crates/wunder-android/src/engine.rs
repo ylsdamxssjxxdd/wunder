@@ -131,6 +131,11 @@ pub enum Command {
         /// 随下一条消息一并告知模型；工作目录页的上传只落盘、不挂提示。
         attach: bool,
     },
+    /// 拍照：照片先落在应用缓存，这里把它搬进工作区的 temp 目录并挂到
+    /// 当前对话上，与「上传文件」同一条提示链路。
+    UploadPhoto {
+        path: String,
+    },
     /// 撤回一条还没随消息发出的待上传文件（输入框上的附件卡）。
     RemoveUpload(usize),
     /// A system share / VIEW payload drained from `IntentBridge`.
@@ -158,10 +163,17 @@ pub enum Command {
         ok: bool,
         name: String,
     },
-    VoiceToggle,
+    VoiceStart,
+    VoiceStop,
+    VoiceCancel,
     VoiceStarted,
+    VoiceSystemStarted,
+    VoiceCancelled,
     VoiceFinished {
         path: String,
+    },
+    VoiceText {
+        text: String,
     },
     VoiceFailed {
         message: String,
@@ -984,6 +996,11 @@ pub struct Shared {
     pub voice_rev: u64,
     /// 0 idle, 1 recording, 2 transcribing.
     pub voice_phase: i32,
+    /// 本次录音的识别路线：1 = 自录 + ASR 模型，2 = 手机自带识别，
+    /// 0 = 空闲。决定松手时该停哪条链路、取消时该丢哪一份音频。
+    pub voice_route: i32,
+    /// 录音开始的时刻，UI 用它在录音条上走计时。
+    pub voice_started: Option<Instant>,
     /// Text produced off the UI thread (voice transcription) and appended to
     /// the draft by the UI tick, so a late result never overwrites typing.
     pub pending_draft: Option<String>,
@@ -1565,6 +1582,7 @@ fn run(
             Command::UploadWorkspace { dir, files, attach } => {
                 upload_workspace(&desktop, &shared, &dir, &files, attach);
             }
+            Command::UploadPhoto { path } => upload_photo(&desktop, &shared, &path),
             Command::RemoveUpload(index) => forget_upload(&shared, index),
             Command::SharedIntent { text, url, files } => {
                 let has_text = !text.trim().is_empty();
@@ -1630,11 +1648,16 @@ fn run(
                     notify(&shared, format!("保存 {name} 失败"));
                 }
             }
-            Command::VoiceToggle => toggle_voice(&desktop, &shared),
-            Command::VoiceStarted => set_voice_phase(&shared, 1),
+            Command::VoiceStart => start_voice(&desktop, &shared),
+            Command::VoiceStop => end_voice(&shared),
+            Command::VoiceCancel => cancel_voice(&shared),
+            Command::VoiceStarted => begin_voice(&shared, 1),
+            Command::VoiceSystemStarted => begin_voice(&shared, 2),
+            Command::VoiceCancelled => reset_voice(&shared),
             Command::VoiceFinished { path } => finish_voice(&desktop, &shared, path),
+            Command::VoiceText { text } => finish_system_voice(&shared, text),
             Command::VoiceFailed { message } => {
-                set_voice_phase(&shared, 0);
+                reset_voice(&shared);
                 notify(&shared, message);
             }
             Command::Send(text) => {
@@ -6275,6 +6298,54 @@ fn upload_workspace(
     files: &[String],
     attach: bool,
 ) {
+    upload_workspace_at(desktop, shared, dir, files, attach, true, "个文件");
+}
+
+/// 相机照片的落地目录。与运行时共享的中间产物约定同源
+/// (`wunder_runtime::services::workspace_temp::CHAT_MEDIA_SOURCE`)：聊天里
+/// 收进来的图片素材都落在工作区的 temp 下，不进用户自己的目录。
+pub const CHAT_MEDIA_SOURCE: &str = "temp/chat_media/source";
+
+/// 拍照回来的那张照片：先保证 `temp/chat_media/source` 存在，再走与上传
+/// 完全相同的「搬进工作区 + 挂到输入框」链路。不刷新工作目录页——用户正在
+/// 浏览的目录不该因为拍了一张照被切走。
+fn upload_photo(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, path: &str) {
+    let root = match active_workspace_root(desktop, shared) {
+        Ok(root) => root,
+        Err(error) => {
+            notify(shared, format!("无法读取工作区设置：{error}"));
+            let _ = std::fs::remove_file(path);
+            return;
+        }
+    };
+    if let Err(error) = std::fs::create_dir_all(std::path::Path::new(&root).join(CHAT_MEDIA_SOURCE))
+    {
+        notify(shared, format!("无法创建 temp 目录：{error}"));
+        let _ = std::fs::remove_file(path);
+        return;
+    }
+    upload_workspace_at(
+        desktop,
+        shared,
+        CHAT_MEDIA_SOURCE,
+        &[path.to_string()],
+        true,
+        false,
+        "张照片",
+    );
+}
+
+/// Shared body of the two upload paths. `reload` keeps the working-directory
+/// page in sync for picker uploads; `noun` only shapes the toast.
+fn upload_workspace_at(
+    desktop: &NativeDesktop,
+    shared: &Arc<Mutex<Shared>>,
+    dir: &str,
+    files: &[String],
+    attach: bool,
+    reload: bool,
+    noun: &str,
+) {
     if files.is_empty() {
         return;
     }
@@ -6341,20 +6412,24 @@ fn upload_workspace(
             let _ = std::fs::remove_dir(parent);
         }
     }
-    load_workspace(desktop, shared, dir);
+    if reload {
+        load_workspace(desktop, shared, dir);
+    }
+    // `noun` 是「量词 + 名词」：中文里「1 个文件」和「1 张照片」量词不同，
+    // 这里由调用方给整段，避免再分叉一套文案。
     if failed == 0 {
         if attach && uploaded > 0 {
             notify(
                 shared,
-                format!("已上传 {uploaded} 个文件，发送消息时会一并告知模型"),
+                format!("已上传 {uploaded} {noun}，发送消息时会一并告知模型"),
             );
         } else {
-            notify(shared, format!("已上传 {uploaded} 个文件"));
+            notify(shared, format!("已上传 {uploaded} {noun}"));
         }
     } else if uploaded == 0 {
-        notify(shared, format!("上传失败（{failed} 个文件）"));
+        notify(shared, format!("上传失败（{failed} {noun}）"));
     } else {
-        notify(shared, format!("已上传 {uploaded} 个，{failed} 个失败"));
+        notify(shared, format!("已上传 {uploaded} {noun}，还有 {failed} 个失败"));
     }
 }
 
@@ -6471,6 +6546,57 @@ fn host_stop_voice() -> String {
     "failed:unsupported".into()
 }
 
+#[cfg(target_os = "android")]
+fn host_cancel_voice() -> String {
+    crate::android_host::cancel_voice()
+}
+
+#[cfg(not(target_os = "android"))]
+fn host_cancel_voice() -> String {
+    "failed:unsupported".into()
+}
+
+/// 设备自带识别能否兜底（没有配置 ASR 模型时才用）。
+#[cfg(target_os = "android")]
+fn host_system_voice_available() -> bool {
+    crate::android_host::system_voice_available()
+}
+
+#[cfg(not(target_os = "android"))]
+fn host_system_voice_available() -> bool {
+    false
+}
+
+#[cfg(target_os = "android")]
+fn host_start_system_voice() -> String {
+    crate::android_host::start_system_voice()
+}
+
+#[cfg(not(target_os = "android"))]
+fn host_start_system_voice() -> String {
+    "failed:unsupported".into()
+}
+
+#[cfg(target_os = "android")]
+fn host_stop_system_voice() -> String {
+    crate::android_host::stop_system_voice()
+}
+
+#[cfg(not(target_os = "android"))]
+fn host_stop_system_voice() -> String {
+    "failed:unsupported".into()
+}
+
+#[cfg(target_os = "android")]
+fn host_cancel_system_voice() -> String {
+    crate::android_host::cancel_system_voice()
+}
+
+#[cfg(not(target_os = "android"))]
+fn host_cancel_system_voice() -> String {
+    "failed:unsupported".into()
+}
+
 fn set_voice_phase(shared: &Arc<Mutex<Shared>>, phase: i32) {
     if let Ok(mut state) = shared.lock() {
         if state.voice_phase == phase {
@@ -6482,37 +6608,135 @@ fn set_voice_phase(shared: &Arc<Mutex<Shared>>, phase: i32) {
     }
 }
 
-fn toggle_voice(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
+/// 开始录音。优先自录 + 已配置的 ASR 模型（质量稳定、音频可复用）；没有
+/// 模型时退回设备自带识别（免配置，但只给文本）。两条都不可用就明确提示。
+fn start_voice(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
     let phase = shared.lock().map(|state| state.voice_phase).unwrap_or(0);
-    if phase == 2 {
+    if phase != 0 {
         return;
     }
-    if phase == 1 {
-        let status = host_stop_voice();
-        if let Some(error) = status.strip_prefix("failed:") {
-            set_voice_phase(shared, 0);
-            notify(shared, format!("停止录音失败：{error}"));
-        } else {
-            // The Java capture thread publishes the WAV path next; showing
-            // "transcribing" now covers the device teardown gap.
-            set_voice_phase(shared, 2);
+    if desktop.has_asr_model() {
+        match host_start_voice().as_str() {
+            "recording" => begin_voice(shared, 1),
+            "permission" => notify(shared, "请在系统提示中允许录音权限"),
+            status => notify(shared, format!("无法开始录音：{status}")),
         }
         return;
     }
-    if !desktop.has_asr_model() {
-        notify(shared, "请先在设置中配置默认语音识别模型");
+    if host_system_voice_available() {
+        match host_start_system_voice().as_str() {
+            "listening" => {
+                begin_voice(shared, 2);
+                notify(shared, "未配置语音识别模型，本次用手机自带识别");
+            }
+            "permission" => notify(shared, "请在系统提示中允许录音权限"),
+            status => notify(shared, format!("系统识别不可用：{status}")),
+        }
         return;
     }
-    match host_start_voice() {
-        status if status == "recording" => set_voice_phase(shared, 1),
-        status if status == "permission" => {
-            notify(shared, "请在系统提示中允许录音权限");
+    notify(
+        shared,
+        "请先在设置中配置语音识别模型（这台设备也没有可用的系统识别）",
+    );
+}
+
+fn begin_voice(shared: &Arc<Mutex<Shared>>, route: i32) {
+    if let Ok(mut state) = shared.lock() {
+        // 权限放行后 Java 会再报一次“已开始”，不能把计时器重置回 0。
+        if state.voice_phase == 1 {
+            return;
         }
-        status => notify(shared, format!("无法开始录音：{status}")),
+        state.voice_phase = 1;
+        state.voice_route = route;
+        state.voice_started = Some(Instant::now());
+        state.voice_rev = state.voice_rev.wrapping_add(1);
+        state.touch();
     }
 }
 
+/// 松手停止：自录路线等 Java 写完 WAV 再转写；系统识别路线等它回文本。
+fn end_voice(shared: &Arc<Mutex<Shared>>) {
+    let (phase, route) = shared
+        .lock()
+        .map(|state| (state.voice_phase, state.voice_route))
+        .unwrap_or((0, 0));
+    if phase != 1 {
+        return;
+    }
+    let status = if route == 2 {
+        host_stop_system_voice()
+    } else {
+        host_stop_voice()
+    };
+    if let Some(error) = status.strip_prefix("failed:") {
+        // 录音到 120 秒会自行收尾、系统识别也可能先一步结束：这两种
+        // "not recording / not listening" 都属于松手晚了一拍的正常竞态，
+        // 结果会随后续事件落地，不再弹一条让人以为出事了的提示。
+        let racing = error == "not recording" || error == "not listening";
+        reset_voice(shared);
+        if !racing {
+            notify(shared, format!("停止录音失败：{error}"));
+        }
+        return;
+    }
+    set_voice_phase(shared, 2);
+}
+
+/// 上滑取消：不写文件、不转写，直接把状态收回去。
+fn cancel_voice(shared: &Arc<Mutex<Shared>>) {
+    let route = shared.lock().map(|state| state.voice_route).unwrap_or(0);
+    match route {
+        2 => {
+            let _ = host_cancel_system_voice();
+        }
+        1 => {
+            let _ = host_cancel_voice();
+        }
+        _ => {}
+    }
+    reset_voice(shared);
+}
+
+fn reset_voice(shared: &Arc<Mutex<Shared>>) {
+    if let Ok(mut state) = shared.lock() {
+        let changed = state.voice_phase != 0;
+        state.voice_phase = 0;
+        state.voice_route = 0;
+        state.voice_started = None;
+        if changed {
+            state.voice_rev = state.voice_rev.wrapping_add(1);
+            state.touch();
+        }
+    }
+}
+
+/// 系统识别兜底拿到了文本：与模型转写走同一条「填进输入区」的落地。
+fn finish_system_voice(shared: &Arc<Mutex<Shared>>, text: String) {
+    if let Ok(mut state) = shared.lock() {
+        state.voice_phase = 0;
+        state.voice_route = 0;
+        state.voice_started = None;
+        state.voice_rev = state.voice_rev.wrapping_add(1);
+        if text.trim().is_empty() {
+            state.notify("语音识别没有返回文字");
+        } else {
+            state.pending_draft = Some(text);
+            state.notify("语音已转写到输入区，可编辑后发送");
+        }
+        state.touch();
+    }
+}
 fn finish_voice(desktop: &Arc<NativeDesktop>, shared: &Arc<Mutex<Shared>>, path: String) {
+    // 用户在上滑取消之后，捕获线程仍可能把已经写完的 WAV 报上来；路线
+    // 已被清空就说明这段录音不要了，删掉文件、不要转写。
+    if shared
+        .lock()
+        .map(|state| state.voice_route != 1)
+        .unwrap_or(true)
+    {
+        let _ = std::fs::remove_file(&path);
+        return;
+    }
     set_voice_phase(shared, 2);
     let desktop = Arc::clone(desktop);
     let worker_shared = shared.clone();
@@ -6535,6 +6759,8 @@ fn finish_voice(desktop: &Arc<NativeDesktop>, shared: &Arc<Mutex<Shared>>, path:
                 return;
             };
             state.voice_phase = 0;
+            state.voice_route = 0;
+            state.voice_started = None;
             state.voice_rev = state.voice_rev.wrapping_add(1);
             match result {
                 Ok(text) if !text.trim().is_empty() => {

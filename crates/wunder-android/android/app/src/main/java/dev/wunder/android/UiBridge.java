@@ -19,6 +19,7 @@ import android.media.AudioRecord;
 import android.media.MediaRecorder;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Environment;
 import android.os.PowerManager;
 import android.os.SystemClock;
@@ -26,6 +27,9 @@ import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.provider.Settings;
+import android.speech.RecognitionListener;
+import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
 import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.MimeTypeMap;
@@ -41,9 +45,11 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.security.MessageDigest;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
@@ -63,6 +69,7 @@ public final class UiBridge {
     private static final int REQUEST_STORAGE_PERMISSION = 0x5703;
     private static final int REQUEST_SAVE_FILE = 0x5702;
     private static final int REQUEST_RECORD_AUDIO = 0x5703;
+    private static final int REQUEST_TAKE_PHOTO = 0x5704;
     // 桌面版 caps one drop at twenty files; keep the same bound on the phone.
     private static final int MAX_PICKED = 20;
     // Same capture contract as the desktop recorder: 16 kHz mono PCM WAV,
@@ -74,6 +81,8 @@ public final class UiBridge {
     private static WeakReference<Activity> activity = new WeakReference<>(null);
     private static String pendingSaveSource;
     private static String pendingSaveName;
+    /** Where the in-flight camera capture must write, or null. */
+    private static File pendingCameraFile;
     // Results wait here until the engine's UI tick polls them. Java must not
     // call into the native library: NativeActivity loads it through the
     // framework class loader, so app classes cannot resolve its JNI symbols.
@@ -94,7 +103,17 @@ public final class UiBridge {
     private static String installResult;
     private static volatile boolean voiceRecording;
     private static volatile boolean voiceStopRequested;
+    private static volatile boolean voiceCancelRequested;
     private static boolean pendingVoicePermission;
+    // System speech recognition (RecognizerIntent). Used only when no ASR model
+    // is configured: the phone's own recognizer costs nothing to set up, but
+    // only returns text and depends on the device's language pack.
+    private static boolean pendingSystemVoice;
+    private static SpeechRecognizer speechRecognizer;
+    private static volatile boolean systemListening;
+    // 用户主动取消时吞掉随后的 onError：cancel() 会回一个 ERROR_CLIENT，
+    // 那不是故障，不该在界面弹提示。
+    private static volatile boolean systemCancelled;
 
     private UiBridge() {}
 
@@ -677,6 +696,56 @@ public final class UiBridge {
     }
 
     /**
+     * Start the in-app camera. The shot is written into the app cache through
+     * {@link PhotoProvider}, so no storage permission is involved and nothing
+     * lands in the gallery; the staged path then travels back through the pick
+     * queue and the engine moves it into the workspace temp directory.
+     */
+    public static void takePhoto() {
+        Activity current = activity.get();
+        if (current == null) {
+            publishPick(new ArrayList<>());
+            return;
+        }
+        current.runOnUiThread(() -> {
+            // 一次只开一台相机：第二次点击不能覆盖上一张的落盘目标。
+            if (pendingCameraFile != null) {
+                return;
+            }
+            File target;
+            Uri output;
+            try {
+                File root = new File(current.getCacheDir(), "wunder-camera");
+                //noinspection ResultOfMethodCallIgnored
+                root.mkdirs();
+                String stamp = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
+                        .format(new Date());
+                target = new File(root, "photo-" + stamp + ".jpg");
+                output = PhotoProvider.uriFor(current, target);
+            } catch (Exception error) {
+                publishPick(singlePath("!无法准备拍照文件"));
+                return;
+            }
+            Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, output);
+            intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            // Some OEM camera apps only honour the grant carried on the clip
+            // data, not the extra output URI alone.
+            intent.setClipData(ClipData.newRawUri("wunder-photo", output));
+            pendingCameraFile = target;
+            try {
+                current.startActivityForResult(intent, REQUEST_TAKE_PHOTO);
+            } catch (Exception error) {
+                pendingCameraFile = null;
+                //noinspection ResultOfMethodCallIgnored
+                target.delete();
+                publishPick(singlePath("!没有可用的相机应用"));
+            }
+        });
+    }
+
+    /**
      * Begin a voice clip. The permission prompt is asynchronous; the granted
      * callback starts the recorder and publishes "recording", which the Rust
      * tick consumes.
@@ -694,6 +763,7 @@ public final class UiBridge {
         if (current.checkSelfPermission(Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
             pendingVoicePermission = true;
+            pendingSystemVoice = false;
             current.runOnUiThread(() -> current.requestPermissions(
                     new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_RECORD_AUDIO));
             return "permission";
@@ -713,7 +783,87 @@ public final class UiBridge {
         return "stopping";
     }
 
-    /** Drain capture events: recording / denied / done|path / error|message. */
+    /**
+     * Drop the clip in flight. Nothing is written and nothing is transcribed:
+     * the user slid up to cancel. The capture thread still publishes
+     * {@code cancelled} so the Rust side can settle its state.
+     */
+    public static String cancelVoice() {
+        synchronized (voiceLock) {
+            if (!voiceRecording) {
+                return "failed:not recording";
+            }
+            voiceCancelRequested = true;
+            voiceStopRequested = true;
+        }
+        return "cancelled";
+    }
+
+    /** Whether this device has a speech recognizer we can fall back to. */
+    public static String systemVoiceAvailable() {
+        Activity current = activity.get();
+        if (current == null) {
+            return "0";
+        }
+        try {
+            return SpeechRecognizer.isRecognitionAvailable(current) ? "1" : "0";
+        } catch (Throwable ignored) {
+            return "0";
+        }
+    }
+
+    /**
+     * Start the phone's own recognizer. Chosen by Rust only when no ASR model
+     * is configured; it returns text but no audio, so nothing is transcribable
+     * a second time.
+     *
+     * @return {@code listening}, {@code permission}, or {@code failed:<reason>}
+     */
+    public static String startSystemVoice() {
+        Activity current = activity.get();
+        if (current == null) {
+            return "failed:no activity";
+        }
+        if (current.checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            pendingVoicePermission = true;
+            pendingSystemVoice = true;
+            current.runOnUiThread(() -> current.requestPermissions(
+                    new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_RECORD_AUDIO));
+            return "permission";
+        }
+        current.runOnUiThread(() -> beginSystemListening(current));
+        return "listening";
+    }
+
+    /** Ask the recognizer to finish; the text arrives as {@code system|done|}. */
+    public static String stopSystemVoice() {
+        Activity current = activity.get();
+        if (current == null || speechRecognizer == null) {
+            return "failed:not listening";
+        }
+        current.runOnUiThread(() -> {
+            SpeechRecognizer recognizer = speechRecognizer;
+            if (recognizer != null) {
+                recognizer.stopListening();
+            }
+        });
+        return "stopping";
+    }
+
+    /** Abandon the recognition in progress; no result is published. */
+    public static String cancelSystemVoice() {
+        Activity current = activity.get();
+        if (current == null) {
+            return "failed:no activity";
+        }
+        systemCancelled = true;
+        current.runOnUiThread(UiBridge::releaseRecognizer);
+        return "cancelled";
+    }
+
+    /** Drain capture events: recording / denied / done|path / error|message,
+     *  plus cancelled and system|done|text / system|error|message. */
     public static String[] takeVoiceEvents() {
         synchronized (queueLock) {
             if (voiceEvents.isEmpty()) {
@@ -730,18 +880,155 @@ public final class UiBridge {
             return;
         }
         pendingVoicePermission = false;
+        boolean system = pendingSystemVoice;
+        pendingSystemVoice = false;
         boolean granted = grantResults.length > 0
                 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
         if (!granted) {
-            publishVoice("denied");
+            publishVoice(system ? "system|error|录音权限被拒绝" : "denied");
             return;
         }
         Activity current = activity.get();
         if (current == null) {
-            publishVoice("error:界面已关闭");
+            publishVoice(system ? "system|error|界面已关闭" : "error:界面已关闭");
             return;
         }
-        startVoiceThread(current.getApplicationContext());
+        if (system) {
+            beginSystemListening(current);
+        } else {
+            startVoiceThread(current.getApplicationContext());
+        }
+    }
+
+    /**
+     * Create the recognizer on the UI thread (the framework requires it) and
+     * start one utterance. On-device recognition is preferred where the
+     * platform exposes it, so an offline phone still works.
+     */
+    private static void beginSystemListening(Activity current) {
+        if (systemListening) {
+            return;
+        }
+        try {
+            releaseRecognizer();
+            boolean onDevice = Build.VERSION.SDK_INT >= 33
+                    && SpeechRecognizer.isOnDeviceRecognitionAvailable(current);
+            SpeechRecognizer recognizer = onDevice
+                    ? SpeechRecognizer.createOnDeviceSpeechRecognizer(current)
+                    : SpeechRecognizer.createSpeechRecognizer(current);
+            recognizer.setRecognitionListener(new SystemListener());
+            Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE,
+                    Locale.getDefault().toLanguageTag());
+            intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+            intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
+            // 只有真走 on-device 时才要求离线：老机器上强制离线会直接
+            // 撞上“语言包不可用”，宁可让它用在线服务识别。
+            intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, onDevice);
+            systemCancelled = false;
+            speechRecognizer = recognizer;
+            systemListening = true;
+            recognizer.startListening(intent);
+            publishVoice("system|listening");
+        } catch (Throwable failure) {
+            releaseRecognizer();
+            publishVoice("system|error|"
+                    + (failure.getMessage() == null ? "系统识别不可用" : failure.getMessage()));
+        }
+    }
+
+    private static void releaseRecognizer() {
+        systemListening = false;
+        SpeechRecognizer recognizer = speechRecognizer;
+        speechRecognizer = null;
+        if (recognizer == null) {
+            return;
+        }
+        try {
+            recognizer.cancel();
+        } catch (Throwable ignored) {
+        }
+        try {
+            recognizer.destroy();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** Turns recognizer callbacks into the same event queue as the recorder. */
+    private static final class SystemListener implements RecognitionListener {
+        @Override
+        public void onReadyForSpeech(Bundle params) {
+        }
+
+        @Override
+        public void onBeginningOfSpeech() {
+        }
+
+        @Override
+        public void onRmsChanged(float rmsDb) {
+        }
+
+        @Override
+        public void onBufferReceived(byte[] buffer) {
+        }
+
+        @Override
+        public void onEndOfSpeech() {
+        }
+
+        @Override
+        public void onError(int error) {
+            boolean cancelled = systemCancelled;
+            releaseRecognizer();
+            if (cancelled) {
+                return;
+            }
+            publishVoice("system|error|" + systemErrorText(error));
+        }
+
+        @Override
+        public void onResults(Bundle results) {
+            releaseRecognizer();
+            ArrayList<String> matches = results == null
+                    ? null
+                    : results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+            String best = matches == null || matches.isEmpty() ? "" : matches.get(0);
+            publishVoice("system|done|" + (best == null ? "" : best.replace('\n', ' ')));
+        }
+
+        @Override
+        public void onPartialResults(Bundle partialResults) {
+        }
+
+        @Override
+        public void onEvent(int eventType, Bundle params) {
+        }
+    }
+
+    private static String systemErrorText(int error) {
+        switch (error) {
+            case SpeechRecognizer.ERROR_NO_MATCH:
+                return "没有听清";
+            case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
+                return "没有听到声音";
+            case SpeechRecognizer.ERROR_NETWORK:
+            case SpeechRecognizer.ERROR_NETWORK_TIMEOUT:
+                return "识别服务需要联网，当前不可用";
+            case SpeechRecognizer.ERROR_SERVER:
+            case SpeechRecognizer.ERROR_SERVER_DISCONNECTED:
+                return "识别服务暂时不可用";
+            case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS:
+                return "录音权限被拒绝";
+            case SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED:
+            case SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE:
+                return "设备缺少当前语言的识别包";
+            case SpeechRecognizer.ERROR_CLIENT:
+                return "识别已中断";
+            default:
+                return "系统识别失败（" + error + "）";
+        }
     }
 
     private static void startVoiceThread(Context context) {
@@ -751,6 +1038,7 @@ public final class UiBridge {
             }
             voiceRecording = true;
             voiceStopRequested = false;
+            voiceCancelRequested = false;
             publishVoice("recording");
             new Thread(() -> recordVoice(context), "wunder-voice").start();
         }
@@ -795,6 +1083,11 @@ public final class UiBridge {
                 recorder.release();
             }
             voiceRecording = false;
+        }
+        // 上滑取消就不写 WAV：用户不要这段录音，缓存里也不该留。
+        if (voiceCancelRequested) {
+            publishVoice("cancelled");
+            return;
         }
         if (error != null && pcm.size() == 0) {
             publishVoice("error|" + error);
@@ -934,9 +1227,37 @@ public final class UiBridge {
             stagePickedFiles(current, resultCode, data);
         } else if (requestCode == REQUEST_PICK_DIRECTORY) {
             stagePickedDirectory(current, resultCode, data);
+        } else if (requestCode == REQUEST_TAKE_PHOTO) {
+            stageCameraPhoto();
         } else if (requestCode == REQUEST_SAVE_FILE) {
             finishSave(current, resultCode, data);
         }
+    }
+
+    /**
+     * Hand the captured file to the engine. A few ROMs answer with
+     * {@code RESULT_CANCELED} after writing the full image, so the file itself
+     * is the source of truth: bytes on disk mean the shot happened.
+     */
+    private static void stageCameraPhoto() {
+        File file = pendingCameraFile;
+        pendingCameraFile = null;
+        boolean captured = file != null && file.isFile() && file.length() > 0;
+        if (!captured) {
+            if (file != null) {
+                //noinspection ResultOfMethodCallIgnored
+                file.delete();
+            }
+            publishPick(new ArrayList<>());
+            return;
+        }
+        publishPick(singlePath(file.getAbsolutePath()));
+    }
+
+    private static ArrayList<String> singlePath(String value) {
+        ArrayList<String> list = new ArrayList<>();
+        list.add(value);
+        return list;
     }
 
     private static void stagePickedDirectory(Activity current, int resultCode, Intent data) {
