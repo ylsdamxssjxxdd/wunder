@@ -395,7 +395,16 @@ impl NativeDesktop {
         };
         let tools = self
             .runtime
-            .block_on(wunder_server::mcp::fetch_tools(&config, &mcp))?;
+            .block_on(wunder_server::mcp::fetch_tools(&config, &mcp))
+            .map_err(|err| {
+                // 精简构建（未带 mcp feature）里 runtime 只会返回英文技术错误，
+                // 这里换成用户能理解的说明，正常发布物不会走到这个分支。
+                if wunder_server::mcp::ENABLED {
+                    err
+                } else {
+                    anyhow!("当前构建未包含 MCP 支持，无法连接 MCP 服务器")
+                }
+            })?;
         server.tool_specs = tools
             .into_iter()
             .map(serde_json::to_value)

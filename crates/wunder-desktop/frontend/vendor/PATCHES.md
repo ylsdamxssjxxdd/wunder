@@ -72,6 +72,17 @@ Ported from the 1.17.1 patch set with these upstream changes:
   the partial-render physical-pixel margin are unchanged and still local;
   the margin hunk needed `scale_factor().get()` because 1.18 returns a typed
   `euclid::Scale`.
+- Inline-code capsules are painted per parley glyph run, and parley starts a new
+  run whenever the selected face changes. One `Style::Code` span that mixes
+  scripts — or one whose characters fall back one at a time because the generic
+  `Monospace` family is unmapped — therefore came out as a row of little boxes
+  instead of one background. `textlayout/sharedparley/draw.rs` now accumulates
+  the runs of one span into a single capsule and closes it only when the span
+  ends, the line ends, or a run from outside the span interrupts. The shells
+  also map `GenericFamily::Monospace` to a face that is actually in their
+  collection (desktop: the bundled UI chain; Android: the system's
+  `RobotoMono` / `DroidSansMono` files, else the UI chain), so inline code no
+  longer resolves per character.
 - `i-slint-renderer-software` 1.18 added subpixel-bin offsets to
   `render_vector_glyph` and a struct `GlyphCacheKey`; the exact-size bitmap
   strike preference (never stretch a nearby strike, skip zero-width SimSun

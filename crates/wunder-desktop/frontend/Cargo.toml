@@ -13,7 +13,9 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
-wunder-desktop = { path = "..", default-features = false, features = ["sqlite-storage", "desktop-control", "web-fetch"] }
+# MCP 是桌面版工具页的既有能力（新增/连接/刷新工具列表），构建时必须带 mcp，
+# 否则运行时会退化为 “mcp feature is disabled; rebuild with --features mcp”。
+wunder-desktop = { path = "..", default-features = false, features = ["sqlite-storage", "desktop-control", "web-fetch", "mcp"] }
 wunder-runtime = { path = "../../wunder-runtime", default-features = false, features = ["sqlite-storage"] }
 slint = { version = "=1.18.0", default-features = false, features = [
   "backend-winit",

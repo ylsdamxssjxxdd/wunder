@@ -24,6 +24,9 @@ mod disabled {
         Router::new().route("/wunder/mcp", any(mcp_disabled_handler))
     }
 
+    /// 本构建没有编译 mcp feature，外部 MCP 端点不可用。
+    pub const ENABLED: bool = false;
+
     async fn mcp_disabled_handler() -> impl IntoResponse {
         (
             StatusCode::NOT_IMPLEMENTED,

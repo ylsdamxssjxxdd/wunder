@@ -38,6 +38,10 @@ const MCP_SERVER_NAME: &str = "wunder";
 const MCP_EXECUTE_TOOL_NAME: &str = "excute";
 const MCP_DOC2MD_TOOL_NAME: &str = "doc2md";
 const MCP_USER_ID: &str = "wunder";
+
+/// 编译期是否真正带上了外部 MCP 端点能力（rmcp）。
+/// 关闭时 `mcp` 模块退化为静态 tool_specs stub，调用方据此给出可读提示。
+pub const ENABLED: bool = true;
 const MCP_INSTRUCTIONS: &str = "调用 wunder 智能体执行任务或解析文档并返回结果。";
 const MCP_EXECUTE_DESCRIPTION: &str = "执行 wunder 智能体任务并返回最终回复。";
 const MCP_DOC2MD_DESCRIPTION: &str = "解析文档并返回 Markdown 文本。";

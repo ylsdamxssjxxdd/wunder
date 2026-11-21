@@ -14,6 +14,12 @@ use std::{
 
 static CAPTURE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
+/// How long the selector gives the window manager to size its surface before
+/// verifying it against the frozen frame. A fullscreen request for a window
+/// that already exists is applied as a normal property change, so it lands
+/// within a frame or two; the check is only a safety net.
+const SELECTOR_SETTLE: u64 = 120;
+
 /// Proof that the freshly hidden main window is really off the captured
 /// screen. `region` is the window's screen rectangle clipped to the capture
 /// monitor; `reference` holds the downscaled screen pixels of that region from
@@ -462,7 +468,7 @@ pub fn run_hide_probe(app: &MainWindow) -> Result<(), Box<dyn std::error::Error>
             PENDING.with(|pending| {
                 let borrowed = pending.borrow();
                 match borrowed.as_ref() {
-                    Some((frame, _)) => {
+                    Some(frame) => {
                         println!(
                             "probe: frozen frame {}x{} — dumping",
                             frame.width, frame.height
@@ -595,10 +601,11 @@ fn dump_frame_png(frame: &screen_capture::ScreenCapture, name: &str) {
 
 thread_local! {
     static OVERLAY: RefCell<Option<ScreenshotOverlay>> = const { RefCell::new(None) };
-    /// The frozen frame plus the exact scale its logical selection space was
-    /// built with. Cropping reuses that factor so a selection can never be
-    /// rescaled against a different one.
-    static PENDING: RefCell<Option<(screen_capture::ScreenCapture, f32)>> = const { RefCell::new(None) };
+    /// The frozen frame the selector is drawing over, kept only while the
+    /// selector is open. The selector returns the crop rectangle already
+    /// converted to this frame's physical pixels, so no scale factor has to be
+    /// remembered (and none can go stale between showing and confirming).
+    static PENDING: RefCell<Option<screen_capture::ScreenCapture>> = const { RefCell::new(None) };
 }
 
 /// Install the workbench screenshot shortcuts: F1 hides the window first, F2
@@ -724,34 +731,56 @@ fn show_selector(app: slint::Weak<MainWindow>, frame: screen_capture::ScreenCapt
         overlay.set_screen_image(slint::Image::from_rgba8(
             slint::SharedPixelBuffer::clone_from_slice(&frame.rgba, width, height),
         ));
+        // The selector converts its logical selection to these physical pixels
+        // with its own laid-out size, so a stale DPI report cannot turn a
+        // selection into a fraction of itself.
+        overlay.set_frame_width(width as i32);
+        overlay.set_frame_height(height as i32);
         overlay.set_sel_x(0.0);
         overlay.set_sel_y(0.0);
         overlay.set_sel_w(0.0);
         overlay.set_sel_h(0.0);
         // A borderless top-level window whose size is merely requested can be
-        // constrained to the Windows work area. That makes a 1600 px capture
-        // render into a 1516 px selector: the preview is scaled and the real
-        // taskbar remains outside the dimming layer. Fullscreen owns the whole
-        // monitor, including the taskbar strip; the physical placement below
-        // selects the same monitor whose pixels were frozen.
+        // constrained to the work area. That makes a 1600 px capture render
+        // into a 1516 px selector: the preview is scaled and the real taskbar
+        // remains outside the dimming layer. Fullscreen owns the whole monitor,
+        // including the taskbar strip; the physical placement below selects the
+        // same monitor whose pixels were frozen.
         let window = overlay.window();
+        // Show windowed at the frame rectangle first, then ask for fullscreen
+        // on the mapped window: window managers ignore fullscreen hints sent
+        // while the window is unmapped, which is exactly what the reused
+        // selector hit on its second and later captures (the dialog then came
+        // back as the previous 1860x1011 window and the preview was squeezed).
+        window.set_fullscreen(false);
         window.set_position(slint::PhysicalPosition::new(origin_x, origin_y));
         window.set_size(slint::PhysicalSize::new(width, height));
-        window.set_fullscreen(true);
-        PENDING.with(|pending| *pending.borrow_mut() = Some((frame, 1.0)));
+        PENDING.with(|pending| *pending.borrow_mut() = Some(frame));
         overlay
             .show()
             .map_err(|error| format!("无法显示截图选区：{error}"))?;
-        // The full-screen transition can select the monitor only after its
-        // native surface exists. Its scale factor therefore has to be read
-        // after `show`, then shared by selection and crop conversion.
-        let scale = window.scale_factor().max(1.0);
-        overlay.set_screen_width(width as f32 / scale);
-        overlay.set_screen_height(height as f32 / scale);
-        PENDING.with(|pending| {
-            if let Some(slot) = pending.borrow_mut().as_mut() {
-                slot.1 = scale;
+        window.set_fullscreen(true);
+        // Safety net: if the window manager still refuses, place the surface on
+        // the frame rectangle exactly. It may clamp that to the work area, but
+        // the selector maps through its own size, so the crop still matches
+        // what the dimmed preview showed.
+        let weak = overlay.as_weak();
+        slint::Timer::single_shot(std::time::Duration::from_millis(SELECTOR_SETTLE), move || {
+            let Some(overlay) = weak.upgrade() else {
+                return;
+            };
+            let window = overlay.window();
+            let size = window.size();
+            if size.width == width && size.height == height {
+                return;
             }
+            println!(
+                "selector: surface {}x{} != frame {}x{}, placing it exactly",
+                size.width, size.height, width, height
+            );
+            window.set_fullscreen(false);
+            window.set_position(slint::PhysicalPosition::new(origin_x, origin_y));
+            window.set_size(slint::PhysicalSize::new(width, height));
         });
         window.request_redraw();
         Ok(())
@@ -762,6 +791,9 @@ fn show_selector(app: slint::Weak<MainWindow>, frame: screen_capture::ScreenCapt
     }
 }
 
+/// `x`/`y`/`width`/`height` are already in the frozen frame's physical pixels:
+/// the selector maps its own logical selection against its laid-out size, so
+/// this side never converts by a scale factor.
 fn finish_selection(app: slint::Weak<MainWindow>, x: i32, y: i32, width: i32, height: i32) {
     if width < 1 || height < 1 {
         hide_selector();
@@ -769,17 +801,11 @@ fn finish_selection(app: slint::Weak<MainWindow>, x: i32, y: i32, width: i32, he
     }
     let frame = PENDING.with(|pending| pending.borrow_mut().take());
     hide_selector();
-    let Some((frame, scale)) = frame else {
+    let Some(frame) = frame else {
         report(&app, "截图失败：选区画面已失效".to_owned());
         return;
     };
-    let (width, height, rgba) = crop(
-        &frame,
-        (x as f32 * scale).round() as i32,
-        (y as f32 * scale).round() as i32,
-        (width as f32 * scale).round() as i32,
-        (height as f32 * scale).round() as i32,
-    );
+    let (width, height, rgba) = crop(&frame, x, y, width, height);
     std::thread::spawn(move || {
         let result = save_attachment(width, height, &rgba);
         // The clipboard is an independent delivery path: the picture the user
@@ -819,6 +845,11 @@ fn add_attachment(
 fn hide_selector() {
     OVERLAY.with(|slot| {
         if let Some(overlay) = slot.borrow().as_ref() {
+            // Leave fullscreen *while the window is still mapped*: a window
+            // manager ignores window-state changes on an unmapped window, and
+            // the toolkit would then believe the next capture's fullscreen
+            // request was already satisfied.
+            overlay.window().set_fullscreen(false);
             let _ = overlay.hide();
         }
     });

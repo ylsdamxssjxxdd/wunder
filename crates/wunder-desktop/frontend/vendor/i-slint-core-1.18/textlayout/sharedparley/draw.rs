@@ -292,6 +292,30 @@ impl TextParagraph {
 
         // Capsules only under lines that are drawn: lines past the visible-extent cut
         // (`overflow: elide` height limit or `max-lines`) don't render their glyphs either.
+        //
+        // One capsule covers one code span, not one glyph run. Parley starts a new run
+        // whenever the selected face changes, so a span that mixes CJK with Latin -- or
+        // one whose characters fall back one at a time -- arrives as several runs; a
+        // capsule per run then paints that span as a row of separate boxes. The runs of
+        // a span are therefore accumulated into a single rectangle, closed when the
+        // span ends, when the line ends, or when a run from outside the span interrupts.
+        let mut capsules: alloc::vec::Vec<(f32, f32, f32, f32)> = alloc::vec::Vec::new();
+        // The capsule under construction: (code range, left, right, top, height).
+        let mut open: Option<(usize, f32, f32, f32, f32)> = None;
+
+        fn close(
+            open: &mut Option<(usize, f32, f32, f32, f32)>,
+            out: &mut alloc::vec::Vec<(f32, f32, f32, f32)>,
+        ) {
+            if let Some((_, left, right, top, height)) = open.take() {
+                out.push((left, right, top, height));
+            }
+        }
+
+        // Runs of the same span abut within rounding error; a real break (whitespace,
+        // the end of the span) leaves a whole space between them.
+        const RUN_JOIN_TOLERANCE: f32 = 0.5;
+
         for line in self.layout.lines().take(last_drawn + 1) {
             for item in line.items() {
                 let parley::PositionedLayoutItem::GlyphRun(glyph_run) = item else {
@@ -305,13 +329,15 @@ impl TextParagraph {
                 // `Style::Code` pushes its own FontFamily + FontSize, which forces a
                 // run boundary, so a code run is always fully contained in one of the
                 // recorded ranges — a single containment check is enough.
-                let is_code = self
+                let code_range = self
                     .code_ranges
                     .iter()
-                    .any(|cr| cr.start <= run_range.start && run_range.end <= cr.end);
-                if !is_code {
+                    .position(|cr| cr.start <= run_range.start && run_range.end <= cr.end);
+                let Some(code_range) = code_range else {
+                    // Prose between two spans must not glue them into one capsule.
+                    close(&mut open, &mut capsules);
                     continue;
-                }
+                };
 
                 let metrics = run.metrics();
                 let ascent = metrics.ascent;
@@ -335,30 +361,49 @@ impl TextParagraph {
                 // the horizontal extent of the rendered run. The underlying text is
                 // not modified, so selection, hit-testing and copy/paste keep working
                 // on the underlying characters.
+                let bg_left = glyph_run.offset();
                 let bg_width = glyph_run.advance().max(0.0);
                 if bg_width <= 0.0 {
                     continue;
                 }
-                let bg_left = glyph_run.offset();
-
-                let bg_rect = PhysicalRect::new(
-                    PhysicalPoint::from_lengths(
-                        PhysicalLength::new(bg_left),
-                        PhysicalLength::new(bg_top) + para_y,
-                    ),
-                    PhysicalSize::new(bg_width, bg_height),
-                );
-                let radius = PhysicalLength::new(bg_height * 0.22)
-                    .max(MIN_RADIUS * scale_factor)
-                    .min(MAX_RADIUS * scale_factor);
-                let Some(fill_brush) = item_renderer.platform_brush_for_color(&fill) else {
-                    continue;
+                let bg_right = bg_left + bg_width;
+                let joins_open = match open {
+                    Some((range, _, right, _, _)) => {
+                        range == code_range && bg_left <= right + RUN_JOIN_TOLERANCE
+                    }
+                    None => false,
                 };
-                let border_brush = item_renderer
-                    .platform_brush_for_color(&border)
-                    .map(|brush| RectangleBorder { brush, width: border_width });
-                item_renderer.fill_rectangle(bg_rect, fill_brush, radius, border_brush);
+                if joins_open {
+                    if let Some((_, _, right, _, _)) = &mut open {
+                        *right = (*right).max(bg_right);
+                    }
+                } else {
+                    close(&mut open, &mut capsules);
+                    open = Some((code_range, bg_left, bg_right, bg_top, bg_height));
+                }
             }
+            // A capsule never continues on the next line.
+            close(&mut open, &mut capsules);
+        }
+
+        for (bg_left, bg_right, bg_top, bg_height) in capsules {
+            let bg_rect = PhysicalRect::new(
+                PhysicalPoint::from_lengths(
+                    PhysicalLength::new(bg_left),
+                    PhysicalLength::new(bg_top) + para_y,
+                ),
+                PhysicalSize::new((bg_right - bg_left).max(1.0), bg_height),
+            );
+            let radius = PhysicalLength::new(bg_height * 0.22)
+                .max(MIN_RADIUS * scale_factor)
+                .min(MAX_RADIUS * scale_factor);
+            let Some(fill_brush) = item_renderer.platform_brush_for_color(&fill) else {
+                continue;
+            };
+            let border_brush = item_renderer
+                .platform_brush_for_color(&border)
+                .map(|brush| RectangleBorder { brush, width: border_width });
+            item_renderer.fill_rectangle(bg_rect, fill_brush, radius, border_brush);
         }
     }
 

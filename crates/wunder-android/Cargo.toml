@@ -29,7 +29,8 @@ pulldown-cmark = "0.10"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 serde_json = "1"
 log = "0.4"
-wunder-desktop = { path = "../wunder-desktop", default-features = false, features = ["sqlite-storage"] }
+# 安卓版设置页同样提供 MCP 服务器管理与连接，构建需与桌面版一致带 mcp。
+wunder-desktop = { path = "../wunder-desktop", default-features = false, features = ["sqlite-storage", "mcp"] }
 
 # The Android backend brings its own Skia renderer; the desktop preview keeps
 # the winit + software pair so the mobile layout can be inspected without a

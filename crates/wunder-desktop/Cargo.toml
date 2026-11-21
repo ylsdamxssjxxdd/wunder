@@ -9,7 +9,9 @@ name = "wunder_desktop"
 path = "lib.rs"
 
 [features]
-default = ["sqlite-storage", "web-fetch"]
+# 桌面版是本地 AI 工作台，MCP 是随产品交付的能力：默认构建必须带 mcp，
+# 只有显式 default-features = false 的精简构建才会退化为静态 tool_specs。
+default = ["sqlite-storage", "web-fetch", "mcp"]
 desktop-control = ["wunder-runtime/desktop-control"]
 doc2md = ["wunder-runtime/doc2md"]
 host-metrics = ["wunder-runtime/host-metrics"]

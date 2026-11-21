@@ -29,6 +29,15 @@ const SYSTEM_CJK_FACES: &[&str] = &[
 /// 系统拉丁字体。找不到就只用 CJK 字体里的拉丁字形，不影响中文。
 const SYSTEM_LATIN_FACES: &[&str] = &["Roboto-Regular.ttf", "RobotoFlex-Regular.ttf"];
 
+/// 系统等宽字体。行内代码在 Slint 里走通用字族 Monospace，见 `install()`。
+const SYSTEM_MONO_FACES: &[&str] = &[
+    "RobotoMono-Regular.ttf",
+    "RobotoMono-Regular.otf",
+    "DroidSansMono.ttf",
+    "NotoSansMono-Regular.ttf",
+    "CutiveMono.ttf",
+];
+
 /// 安卓系统自带的彩色 emoji 字体（按常见程度排序）。
 const SYSTEM_EMOJI_FACES: &[&str] = &[
     "NotoColorEmoji.ttf",
@@ -96,6 +105,7 @@ pub fn install() {
         latin = register_first(&mut collection, &dir, SYSTEM_LATIN_FACES).into_iter().collect();
     }
     let emoji = register_first(&mut collection, &dir, SYSTEM_EMOJI_FACES);
+    let mono = register_first(&mut collection, &dir, SYSTEM_MONO_FACES);
 
     // 通用字族：拉丁在前、汉字在后，缺字时才落到 emoji。
     let mut generic_families = latin.into_iter().collect::<Vec<_>>();
@@ -109,6 +119,21 @@ pub fn install() {
         if let Some(emoji) = emoji {
             collection.append_generic_families(generic, core::iter::once(emoji));
         }
+    }
+
+    // 行内代码走的是通用字族 Monospace（Slint 的 `Style::Code`），不是字族名。
+    // 不指定它，排版会逐字符走脚本回退：字母落到正文字体、数字落到符号字体，
+    // 一个标识符被切成好几段字形，渲染层再按每段各画一个圆角底纹，看起来就是
+    // 被一格一格框住。系统没有等宽字体时退回正文字族，至少整段只用一个字体。
+    match mono {
+        Some(mono) => collection.set_generic_families(
+            fontique::GenericFamily::Monospace,
+            core::iter::once(mono),
+        ),
+        None => collection.set_generic_families(
+            fontique::GenericFamily::Monospace,
+            generic_families.iter().copied(),
+        ),
     }
 
     // 汉字脚本回退：简体优先简体字形，繁体优先繁体字形。

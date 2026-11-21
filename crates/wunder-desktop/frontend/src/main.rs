@@ -899,6 +899,21 @@ pub(crate) fn register_bundled_font() -> Result<(), Box<dyn std::error::Error>> 
     ] {
         collection.set_generic_families(generic, chain.iter().copied());
     }
+    // Inline code is shaped through the generic Monospace family (Slint's
+    // `Style::Code`), not through a family name. Left unmapped, parley resolves
+    // every character on its own through the script fallbacks: a hex id came
+    // out as alternating UI-face letters and symbol-face digits, each fragment
+    // its own glyph run — and the renderer draws one inline-code capsule per
+    // run, so the id read as a row of little boxes. This shell already carries
+    // a complete UI chain that covers Latin, Han and symbols, so pointing the
+    // generic at it keeps a whole span in one family. (No monospace face is
+    // installed on these targets — the collection is built from the bundled
+    // blobs alone — so code reads as UI text on a capsule, which is what
+    // `Theme.font-mono` ends up resolving to anyway.)
+    collection.set_generic_families(
+        fontique::GenericFamily::Monospace,
+        chain.iter().copied(),
+    );
     // Emoji are drawn, not substituted: naming the face for the emoji generic
     // family is what stops a codepoint from falling through to a bitmap-only
     // system font the software renderer cannot rasterise.
