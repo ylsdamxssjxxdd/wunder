@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  启动页的“空图标”：108dp 见方、完全透明。
+
+  系统 splash 的 windowSplashScreenAnimatedIcon 直指颜色资源
+  （@android:color/transparent）时，AOSP 会把它当 ColorDrawable 画成空白；
+  但部分 ROM 在这条路径上拿不到固有尺寸就回退成应用图标，并把图标放大到
+  屏幕中间——用户看到的就是“图标突然放到很大”的那一下。给一张尺寸正常的
+  透明矢量，既保留“什么都不画”的意图，也不再给系统回退的理由。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,0h108v108h-108z" />
+</vector>

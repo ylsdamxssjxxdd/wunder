@@ -185,12 +185,24 @@ public class WunderSmokeTest {
                 Drawable drawable = icon.resourceId == 0
                         ? null
                         : resources.getDrawable(icon.resourceId, theme);
-                if (!(drawable instanceof ColorDrawable)) {
-                    fail("splash icon should be a transparent colour drawable: " + drawable);
+                if (drawable == null) {
+                    fail("splash icon should resolve to a transparent drawable");
                     return;
                 }
-                assertEquals("splash icon must be fully transparent",
-                        0, ((ColorDrawable) drawable).getColor());
+                if (drawable instanceof ColorDrawable) {
+                    assertEquals("splash icon must be fully transparent",
+                            0, ((ColorDrawable) drawable).getColor());
+                } else {
+                    // A sized transparent vector: ROMs that ask the splash
+                    // icon for an intrinsic size no longer fall back to the
+                    // launcher icon (the blown-up "flash" on launch).
+                    assertEquals("splash icon must be the blank vector",
+                            "wunder_splash_icon",
+                            resources.getResourceEntryName(icon.resourceId));
+                    assertTrue("blank vector must report a size",
+                            drawable.getIntrinsicWidth() > 0
+                                    && drawable.getIntrinsicHeight() > 0);
+                }
             });
         }
     }

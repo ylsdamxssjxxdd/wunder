@@ -741,19 +741,13 @@ fn string_contains_history_elision(text: &str) -> bool {
 }
 
 /// 旧版标记是一整句 `[wunder] <数字> characters of this argument were omitted ...`。
-/// 只在标记与数字紧邻、数字后面紧跟说明句时判定，避免把引用这些文字的
-/// 代码或文档当成占位符（它们通常把两段文字隔开很远）。
-///
-/// 旧版投影最多保留 320 字符头部，所以真正的占位符不会很长；超过 4 KiB 的
-/// 正文即使引用过整句标记，也是源码或文档，不是模型复制的历史参数。
+/// 只在标记与数字紧邻、数字后面紧跟说明句时判定；旧版投影总是把这一句
+/// **追加在参数末尾**，所以只在尾部窗口里找，正文中间引用整句不会误判。
 fn contains_legacy_elision_marker(text: &str) -> bool {
     const TAG: &str = "[wunder]";
     const PHRASE: &str = "characters of this argument were omitted from model history";
-    const MAX_MARKER_BYTES: usize = 4_096;
-    if text.len() > MAX_MARKER_BYTES {
-        return false;
-    }
-    let mut rest = text;
+    const TAIL_CHARS: usize = 512;
+    let mut rest = tail_chars(text, TAIL_CHARS);
     while let Some(index) = rest.find(TAG) {
         let after = &rest[index + TAG.len()..];
         let gap_len = after
@@ -769,6 +763,15 @@ fn contains_legacy_elision_marker(text: &str) -> bool {
         rest = after;
     }
     false
+}
+
+/// 取字符串末尾至多 `count` 个字符（按字符边界截断）。
+fn tail_chars(text: &str, count: usize) -> &str {
+    let mut start = text.len();
+    for (index, _) in text.char_indices().rev().take(count) {
+        start = index;
+    }
+    &text[start..]
 }
 
 fn extract_tool_call_id(item: &Value) -> Option<String> {
