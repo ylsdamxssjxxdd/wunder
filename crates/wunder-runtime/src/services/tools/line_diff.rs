@@ -10,11 +10,12 @@
 //! - 计数（`added_lines`/`deleted_lines`/`hunks`）永远反映真实变更；被块上限或
 //!   行预算裁掉的行只累加进 `diff_lines_omitted`，前端不得从预览行数推算变更量。
 //!
-//! 算法刻意保持最小且线性：公共前缀/后缀裁剪 → 中间整块「先删后增」；等长的
-//! 中间段再按对齐位置切成若干区域；字面替换走已知字节区间，一个区间一个块。
-//! 没有外部 diff 依赖，最坏 O(旧行数 + 新行数)，且行文本借用原文切片不复制。
+//! 算法不依赖外部 diff：先裁公共首尾行，再用「两侧都只出现一次」的行作锚点
+//! 递归切分，确实找不到锚点才退回粗粒度区域。行文本借用原文切片不复制；扫描量
+//! 有总预算兜底，病态内容不会退化成平方级。
 
 use serde_json::{json, Map, Value};
+use std::collections::HashMap;
 
 /// 单次工具调用最多输出的块数；超出的块整块折进 `diff_lines_omitted`。
 const MAX_DIFF_BLOCKS: usize = 12;
@@ -227,38 +228,6 @@ fn build_line_index(content: &str) -> LineIndex<'_> {
     index
 }
 
-fn common_prefix_len(old: &[&str], new: &[&str]) -> usize {
-    old.iter().zip(new).take_while(|(a, b)| a == b).count()
-}
-
-fn common_suffix_len(old: &[&str], new: &[&str]) -> usize {
-    old.iter()
-        .rev()
-        .zip(new.iter().rev())
-        .take_while(|(a, b)| a == b)
-        .count()
-}
-
-/// 区域内再裁公共首尾行，只留下真正变化的行。
-fn trim_region(old: &[&str], new: &[&str], mut region: Region) -> Region {
-    region = clamp_region(old, new, region);
-    while region.old_len > 0 && region.new_len > 0 && old[region.old_start] == new[region.new_start]
-    {
-        region.old_start += 1;
-        region.old_len -= 1;
-        region.new_start += 1;
-        region.new_len -= 1;
-    }
-    while region.old_len > 0
-        && region.new_len > 0
-        && old[region.old_start + region.old_len - 1] == new[region.new_start + region.new_len - 1]
-    {
-        region.old_len -= 1;
-        region.new_len -= 1;
-    }
-    region
-}
-
 /// 区间一律夹到真实行数内：输入再离谱也只可能少报，不会越界或 panic。
 fn clamp_region(old: &[&str], new: &[&str], region: Region) -> Region {
     let old_start = region.old_start.min(old.len());
@@ -305,7 +274,7 @@ pub(super) fn diff_added_file(content: &str) -> LineDiff {
     diff
 }
 
-/// 覆盖写：公共前缀/后缀裁剪后，中间整块先删后增；等长中间段按对齐位置切块。
+/// 覆盖写：按真实对齐切成变更区域，再交给有界块渲染。
 pub(super) fn diff_replaced(before: &str, after: &str) -> LineDiff {
     let old = build_line_index(before);
     let new = build_line_index(after);
@@ -322,25 +291,100 @@ pub(super) fn diff_replaced(before: &str, after: &str) -> LineDiff {
 /// 时用它重算完整文本。两处必须是同一份算法，否则模型看到的 diff 会和
 /// `diff_blocks` 对不上。
 fn changed_regions(old: &[&str], new: &[&str]) -> Vec<Region> {
-    let prefix = common_prefix_len(old, new);
-    let suffix = common_suffix_len(&old[prefix..], &new[prefix..]);
-    let old_mid = old.len() - suffix - prefix;
-    let new_mid = new.len() - suffix - prefix;
-    if old_mid == 0 && new_mid == 0 {
-        return Vec::new();
-    }
-    if old_mid != new_mid {
-        return vec![Region {
-            old_start: prefix,
-            old_len: old_mid,
-            new_start: prefix,
-            new_len: new_mid,
-        }];
-    }
+    split_regions(old, new, 0, old.len(), 0, new.len())
+}
+
+/// 把两个行区间切成升序、互不重叠的变更区域。
+///
+/// 直接在中间段做「先删后增」会把「改一行 + 后面插入两行」报成删掉/新增几百行，
+/// 所以先裁公共首尾行，再用两侧都只出现一次的行当锚点递归切分；只有确实没有
+/// 锚点时才退回粗粒度（等长按位置切连续不等段，不等长整段）。`pending` 用显式
+/// 栈而不是递归，避免超长文件把调用栈打穿。
+fn split_regions(
+    old: &[&str],
+    new: &[&str],
+    old_from: usize,
+    old_to: usize,
+    new_from: usize,
+    new_to: usize,
+) -> Vec<Region> {
     let mut regions = Vec::new();
+    // 扫描预算：每轮按剩余行数扣减，超预算的区间退回粗粒度。没有它，极端内容
+    // （例如整份倒序）会退化成平方级扫描。
+    let mut budget = (old_to - old_from + new_to - new_from).saturating_mul(4) + 4096;
+    let mut pending = vec![(old_from, old_to, new_from, new_to)];
+    while let Some((mut old_start, mut old_end, mut new_start, mut new_end)) = pending.pop() {
+        while old_start < old_end && new_start < new_end && old[old_start] == new[new_start] {
+            old_start += 1;
+            new_start += 1;
+        }
+        while old_start < old_end && new_start < new_end && old[old_end - 1] == new[new_end - 1] {
+            old_end -= 1;
+            new_end -= 1;
+        }
+        if old_start == old_end && new_start == new_end {
+            continue;
+        }
+        let old_len = old_end - old_start;
+        let new_len = new_end - new_start;
+        if old_len == 0 || new_len == 0 {
+            regions.push(Region {
+                old_start,
+                old_len,
+                new_start,
+                new_len,
+            });
+            continue;
+        }
+        let anchors = if old_len + new_len <= budget {
+            budget -= old_len + new_len;
+            unique_anchors(old, new, old_start, old_end, new_start, new_end)
+        } else {
+            Vec::new()
+        };
+        if anchors.is_empty() {
+            if old_len == new_len {
+                push_positional_runs(old, new, old_start, new_start, old_len, &mut regions);
+            } else {
+                regions.push(Region {
+                    old_start,
+                    old_len,
+                    new_start,
+                    new_len,
+                });
+            }
+            continue;
+        }
+        // 锚点本身是未变更行，两侧在锚点处切开；倒序入栈保证输出按旧侧行号升序。
+        let mut ranges = Vec::with_capacity(anchors.len() + 1);
+        let (mut prev_old, mut prev_new) = (old_start, new_start);
+        for (anchor_old, anchor_new) in anchors {
+            ranges.push((prev_old, anchor_old, prev_new, anchor_new));
+            prev_old = anchor_old + 1;
+            prev_new = anchor_new + 1;
+        }
+        ranges.push((prev_old, old_end, prev_new, new_end));
+        for range in ranges.into_iter().rev() {
+            if range.0 < range.1 || range.2 < range.3 {
+                pending.push(range);
+            }
+        }
+    }
+    regions
+}
+
+/// 等长的中间段没有锚点时，按对齐位置把连续不等的位置合成区域。
+fn push_positional_runs(
+    old: &[&str],
+    new: &[&str],
+    old_start: usize,
+    new_start: usize,
+    len: usize,
+    regions: &mut Vec<Region>,
+) {
     let mut run: Option<Region> = None;
-    for offset in 0..old_mid {
-        if old[prefix + offset] == new[prefix + offset] {
+    for offset in 0..len {
+        if old[old_start + offset] == new[new_start + offset] {
             if let Some(region) = run.take() {
                 regions.push(region);
             }
@@ -353,9 +397,9 @@ fn changed_regions(old: &[&str], new: &[&str]) -> Vec<Region> {
             }
             None => {
                 run = Some(Region {
-                    old_start: prefix + offset,
+                    old_start: old_start + offset,
                     old_len: 1,
-                    new_start: prefix + offset,
+                    new_start: new_start + offset,
                     new_len: 1,
                 })
             }
@@ -364,7 +408,70 @@ fn changed_regions(old: &[&str], new: &[&str]) -> Vec<Region> {
     if let Some(region) = run {
         regions.push(region);
     }
-    regions
+}
+
+#[derive(Clone, Copy, Default)]
+struct AnchorStat {
+    old_count: u32,
+    new_count: u32,
+    new_index: usize,
+}
+
+/// 两侧都恰好出现一次的行作为锚点，按旧侧顺序取新侧下标的最长递增子序列：
+/// 只有相对顺序一致的锚点才能把两侧安全地切开。
+fn unique_anchors(
+    old: &[&str],
+    new: &[&str],
+    old_start: usize,
+    old_end: usize,
+    new_start: usize,
+    new_end: usize,
+) -> Vec<(usize, usize)> {
+    let mut stats: HashMap<&str, AnchorStat> = HashMap::new();
+    for line in &old[old_start..old_end] {
+        stats.entry(*line).or_default().old_count += 1;
+    }
+    for (offset, line) in new[new_start..new_end].iter().enumerate() {
+        if let Some(stat) = stats.get_mut(*line) {
+            stat.new_count += 1;
+            stat.new_index = new_start + offset;
+        }
+    }
+    let mut pairs = Vec::new();
+    for (offset, line) in old[old_start..old_end].iter().enumerate() {
+        let Some(stat) = stats.get(*line) else {
+            continue;
+        };
+        if stat.old_count == 1 && stat.new_count == 1 {
+            pairs.push((old_start + offset, stat.new_index));
+        }
+    }
+    longest_increasing_pairs(pairs)
+}
+
+/// 对 (旧侧下标, 新侧下标) 取新侧下标的最长递增子序列，返回其中的锚点对。
+fn longest_increasing_pairs(pairs: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+    let mut tails: Vec<usize> = Vec::new();
+    let mut parent: Vec<Option<usize>> = vec![None; pairs.len()];
+    for (index, &(_, new_index)) in pairs.iter().enumerate() {
+        let slot = tails.partition_point(|&tail| pairs[tail].1 < new_index);
+        if slot > 0 {
+            parent[index] = Some(tails[slot - 1]);
+        }
+        if slot == tails.len() {
+            tails.push(index);
+        } else {
+            tails[slot] = index;
+        }
+    }
+    let mut chain = Vec::with_capacity(tails.len());
+    let mut cursor = tails.last().copied();
+    while let Some(index) = cursor {
+        chain.push(pairs[index]);
+        cursor = parent[index];
+    }
+    chain.reverse();
+    chain
 }
 
 /// 字面替换：`offsets` 是 `before` 中每个被替换区间的字节起点（升序、互不重叠），
@@ -405,17 +512,19 @@ pub(super) fn diff_literal_replaces(
                 .saturating_sub(new_start)
                 + 1
         };
-        let region = trim_region(
+        // 命中区间的行范围通常比真实变更大：一次替换可能只改其中一行、其余是
+        // 插入，所以同样按锚点切分，计数只反映真实改动。
+        let regions = split_regions(
             &old.texts,
             &new.texts,
-            Region {
-                old_start,
-                old_len,
-                new_start,
-                new_len,
-            },
+            old_start,
+            old_start + old_len,
+            new_start,
+            new_start + new_len,
         );
-        diff.push_region(&old.texts, &new.texts, region);
+        for region in regions {
+            diff.push_region(&old.texts, &new.texts, region);
+        }
         delta += replacement.len() as isize - needle_len as isize;
     }
     (diff, None)
@@ -960,6 +1069,60 @@ mod tests {
         assert_eq!(block.lines[1].old_line, None);
         assert_eq!(block.lines[1].new_line, Some(3));
         assert_eq!(block.lines[2].new_line, Some(4));
+    }
+
+    #[test]
+    fn a_far_apart_edit_and_insert_are_counted_by_real_changes() {
+        // 回归：顶部改一行 + 底部插入两行，曾经因为中间段长度不等被整段算成
+        // 「先删后增」，把几十行以内的真实改动报成几百行（桌面版 +358/-356）。
+        let mut before = String::new();
+        let mut after = String::new();
+        for index in 0..400 {
+            before.push_str(&format!("line {index}\n"));
+        }
+        for index in 0..400 {
+            if index == 10 {
+                after.push_str("changed 10\n");
+            } else {
+                after.push_str(&format!("line {index}\n"));
+            }
+            if index == 300 {
+                after.push_str("inserted a\ninserted b\n");
+            }
+        }
+        let diff = diff_replaced(&before, &after);
+        assert_eq!(diff.deleted_lines, 1);
+        assert_eq!(diff.added_lines, 3);
+        assert_eq!(diff.hunks, 2);
+        assert_eq!(diff.omitted_lines, 0);
+
+        let text = unified_diff("x.txt", &before, &after, &diff).text;
+        assert!(text.contains("-line 10\n+changed 10"), "{text}");
+        assert!(text.contains("+inserted a\n+inserted b"), "{text}");
+        assert!(!text.contains("-line 200"), "{text}");
+    }
+
+    #[test]
+    fn a_wide_literal_replace_reports_only_real_changes() {
+        // 一次 old_string 覆盖整段、实际只改一行并在后面插入两行：计数按真实变更。
+        let before: String = (0..50).map(|index| format!("row {index}\n")).collect();
+        let mut after = String::new();
+        for index in 0..50 {
+            if index == 2 {
+                after.push_str("ROW 2\n");
+            } else {
+                after.push_str(&format!("row {index}\n"));
+            }
+            if index == 40 {
+                after.push_str("extra a\nextra b\n");
+            }
+        }
+        let (diff, unavailable) =
+            diff_literal_replaces(&before, &after, &[0], before.len(), &after);
+        assert!(unavailable.is_none());
+        assert_eq!(diff.deleted_lines, 1);
+        assert_eq!(diff.added_lines, 3);
+        assert_eq!(diff.hunks, 2);
     }
 
     #[test]

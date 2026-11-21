@@ -280,6 +280,8 @@ pub enum Command {
     },
     ToolServerConnected {
         name: String,
+        /// 拉回来的工具条数，成功后用于告诉用户“连接到了什么”。
+        tools: usize,
         error: String,
     },
     OpenToolEditor {
@@ -784,6 +786,8 @@ pub struct ToolsView {
     pub directory: String,
     pub files: Vec<MobileToolFile>,
     pub has_more: bool,
+    /// 正在连接的 MCP 服务名：对应卡片展开区显示转圈并禁用按钮。
+    pub connecting: String,
     pub error: String,
 }
 
@@ -2131,20 +2135,31 @@ fn run(
                 delete_tool_resource(&desktop, &shared, tab, &name);
             }
             Command::ConnectToolServer { name } => {
+                // 连接要真的去拉远端工具列表：先把“正在连接”投影到工具页，
+                // 否则拉取期间界面只有按钮变灰，看起来像没响应。
+                set_tools_connecting(&shared, &name);
                 let sender = sender.clone();
                 let api = desktop.clone();
                 thread::spawn(move || {
-                    let error = api
-                        .connect_tool_server(&name)
-                        .err()
-                        .map(|error| format!("{error}"))
-                        .unwrap_or_default();
-                    let _ = sender.send(Command::ToolServerConnected { name, error });
+                    let outcome = api.connect_tool_server(&name);
+                    let (tools, error) = match outcome {
+                        Ok(count) => (count, String::new()),
+                        Err(error) => (0, format!("{error}")),
+                    };
+                    let _ = sender.send(Command::ToolServerConnected { name, tools, error });
                 });
             }
-            Command::ToolServerConnected { name, error } => {
+            Command::ToolServerConnected { name, tools, error } => {
+                set_tools_connecting(&shared, "");
                 if error.is_empty() {
-                    notify(&shared, "MCP 服务已连接");
+                    notify(
+                        &shared,
+                        if tools > 0 {
+                            format!("已连接 MCP 服务器，共 {tools} 个工具")
+                        } else {
+                            "已连接 MCP 服务器，未返回工具".to_string()
+                        },
+                    );
                     refresh_tools(&desktop, &shared);
                     load_server_tools(&desktop, &shared, &name);
                 } else {
@@ -4458,14 +4473,30 @@ fn refresh_tools(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
             return;
         }
     };
-    let tools = ToolsView {
+    let mut tools = ToolsView {
         servers: manager.servers.into_iter().map(mobile_resource).collect(),
         skills: manager.skills.into_iter().map(mobile_resource).collect(),
         bases: manager.bases.into_iter().map(mobile_resource).collect(),
         ..ToolsView::default()
     };
     if let Ok(mut state) = shared.lock() {
+        // 重读资源列表不该抹掉正在进行中的连接：连接成功后刷新时，
+        // 由 ToolServerConnected 自己清掉这一项。
+        tools.connecting = state.tools.connecting.clone();
         state.tools = tools;
+        state.tools_rev = state.tools_rev.wrapping_add(1);
+        state.touch();
+    }
+}
+
+/// 投影工具页的“正在连接”状态。传空串即收起转圈；失败路径也必须清掉，
+/// 否则卡片会一直停在连接中。
+fn set_tools_connecting(shared: &Arc<Mutex<Shared>>, name: &str) {
+    if let Ok(mut state) = shared.lock() {
+        if state.tools.connecting == name {
+            return;
+        }
+        state.tools.connecting = name.to_string();
         state.tools_rev = state.tools_rev.wrapping_add(1);
         state.touch();
     }

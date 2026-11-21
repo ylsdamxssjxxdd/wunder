@@ -13,6 +13,7 @@ import { MobileFormField } from "form_field.slint";
 import { ModelPresets } from "../../../crates/wunder-desktop/frontend/ui/model_presets.slint";
 import { TextEditBase } from "../../../crates/wunder-desktop/frontend/ui/textedit-base.slint";
 import { ToolIcons } from "../../../crates/wunder-desktop/frontend/ui/tool_icons.slint";
+import { DotSpinner } from "../../../crates/wunder-desktop/frontend/ui/spinner.slint";
 import { MobileTool, MobileToolGroup, MobileToolResource, MobileToolFile, MobileMcpDraft, MobileKnowledgeDraft } from "tools_model.slint";
 import { MobileCronJob, MobileCronDraft, MobileCronRun, MobileMemory, MobileMemoryDraft, MobileDevice } from "automation_model.slint";
 import { MobileChannelAccount, MobileChannelCatalog, MobileChannelBinding, MobileChannelLog, MobileChannelDraft } from "channel_model.slint";
@@ -865,6 +866,8 @@ component ToolFileSheet inherits Rectangle {
 component ToolsPage inherits Rectangle {
     in property <length> inset-top: 0px;
     in property <length> inset-bottom: 0px;
+    // 正在连接的 MCP 服务名：该卡片展开区显示转圈 + 说明，按钮同时禁用。
+    in property <string> connecting: "";
     // 单一类别页面：mode 1 = MCP 服务，2 = 技能（由设置首页的两个入口传入）。
     in property <int> mode: 1;
     in property <[MobileToolResource]> servers: [];
@@ -931,6 +934,7 @@ component ToolsPage inherits Rectangle {
                 icon-size: 16px;
                 icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/rotate-right.svg");
                 label: I18n.common_refresh;
+                enabled: root.connecting == "";
                 clicked => { root.refresh(); }
             }
         }
@@ -1018,11 +1022,27 @@ component ToolsPage inherits Rectangle {
                                     padding-top: 8px;
                                     padding-bottom: 4px;
                                     spacing: 8px;
-                                    Action { width: 84px; height: 30px; icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/plug.svg"); label: I18n.tm_connect; show-label: true; primary: true; clicked => { root.connect-server(server.name); } }
-                                    Action { width: 68px; height: 30px; label: I18n.tm_edit; show-label: true; clicked => { root.open-editor(1, index); } }
-                                    Action { width: 68px; height: 30px; label: I18n.common_delete; show-label: true; danger: true; clicked => { root.pending-tab = 1; root.pending-name = server.name; root.confirm-delete = true; } }
+                                    Action { width: 84px; height: 30px; icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/plug.svg"); label: I18n.tm_connect; show-label: true; primary: true; enabled: root.connecting == ""; clicked => { root.connect-server(server.name); } }
+                                    Action { width: 68px; height: 30px; label: I18n.tm_edit; show-label: true; enabled: root.connecting == ""; clicked => { root.open-editor(1, index); } }
+                                    Action { width: 68px; height: 30px; label: I18n.common_delete; show-label: true; danger: true; enabled: root.connecting == ""; clicked => { root.pending-tab = 1; root.pending-name = server.name; root.confirm-delete = true; } }
                                 }
-                                if root.server-tools.length == 0 : Text {
+                                // 连接要真的去拉远端工具列表，转圈 + 说明比按钮变灰更能说明
+                                // “点了之后在等什么”；成功后工具列表接替这一行。
+                                if root.connecting == server.name : HorizontalLayout {
+                                    height: 30px;
+                                    padding-top: 4px;
+                                    spacing: 8px;
+                                    DotSpinner { size: 14px; tint: Theme.accent-ink; }
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: I18n.tm_connecting;
+                                        color: Theme.muted;
+                                        font-size: Theme.font-xs;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                    }
+                                }
+                                if root.server-tools.length == 0 && root.connecting != server.name : Text {
                                     height: 34px;
                                     text: I18n.tm_mcp_tools_tip;
                                     color: Theme.muted;
@@ -5355,6 +5375,8 @@ export component MobileSettings inherits Rectangle {
     in property <[MobileToolFile]> tool-files: [];
     in property <string> tool-directory: "";
     in property <bool> tool-has-more: false;
+    // 正在连接的 MCP 服务名：工具页对应卡片显示转圈，避免把等待当卡死。
+    in property <string> tool-connecting: "";
     in property <int> tool-editor-kind: 0;
     in property <bool> tool-editor-new: false;
     in property <string> tool-editor-error: "";
@@ -5911,6 +5933,7 @@ export component MobileSettings inherits Rectangle {
             files: root.tool-files;
             directory: root.tool-directory;
             has-more: root.tool-has-more;
+            connecting: root.tool-connecting;
             editor-kind: root.tool-editor-kind;
             editor-new: root.tool-editor-new;
             editor-error: root.tool-editor-error;

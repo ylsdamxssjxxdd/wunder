@@ -373,7 +373,9 @@ impl NativeDesktop {
             .collect())
     }
 
-    pub fn connect_tool_server(&self, name: &str) -> Result<()> {
+    /// 连接 MCP 服务器并拉取工具列表；返回拿到的工具条数，供界面确认这次连接
+    /// 真的拉到了什么（连接是外网请求，只有一句「完成」等于没有反馈）。
+    pub fn connect_tool_server(&self, name: &str) -> Result<usize> {
         let mut payload = self.state().user_tool_store.load_user_tools(self.user_id());
         let server = payload
             .mcp_servers
@@ -405,6 +407,7 @@ impl NativeDesktop {
                     anyhow!("当前构建未包含 MCP 支持，无法连接 MCP 服务器")
                 }
             })?;
+        let tool_count = tools.len();
         server.tool_specs = tools
             .into_iter()
             .map(serde_json::to_value)
@@ -413,7 +416,7 @@ impl NativeDesktop {
         self.state()
             .user_tool_store
             .update_mcp_servers(self.user_id(), payload.mcp_servers)?;
-        Ok(())
+        Ok(tool_count)
     }
 
     /// 创建或更新一个 MCP 服务器（对话框草稿），与云端版保存路径一致：

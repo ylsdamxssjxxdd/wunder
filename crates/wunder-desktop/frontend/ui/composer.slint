@@ -5,6 +5,7 @@ import { HostHud } from "host_hud.slint";
 import { ListView, ScrollView } from "std-widgets.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { TextFieldActivation, TextFieldMenu } from "text_field.slint";
+import { DotSpinner } from "spinner.slint";
 import { DragPreview } from "drag_row.slint";
 
 // The slash commands the composer offers. One source for both flyout
@@ -20,19 +21,8 @@ export global CommandOptions {
     ];
 }
 
-// Six-dot spinner shared by the status dock and the model trigger; the
-// software renderer has no transform-rotate, so the dot ring is rotated
-// mathematically with the web's 1.48s period (same approach as RuntimeBadge).
-component DockSpinner inherits Rectangle {
-    in property <color> tint: Theme.accent-ink;
-    width: 12px; height: 12px;
-    private property <angle> phase: mod(animation-tick(), 1480ms) / 1480ms * 360deg;
-    for offset in [{x: 0.0, y: -4.1}, {x: 3.55, y: -2.05}, {x: 3.55, y: 2.05}, {x: 0.0, y: 4.1}, {x: -3.55, y: 2.05}, {x: -3.55, y: -2.05}] : Rectangle {
-        x: (parent.width - 3.4px) / 2 + (offset.x * cos(root.phase) - offset.y * sin(root.phase)) * 1px;
-        y: (parent.height - 3.4px) / 2 + (offset.x * sin(root.phase) + offset.y * cos(root.phase)) * 1px;
-        width: 3.4px; height: 3.4px; border-radius: 1.7px; background: root.tint;
-    }
-}
+// 六点转圈的类型已抽到 spinner.slint（工具页也用它），这里保留原名。
+component DockSpinner inherits DotSpinner { }
 
 // §8.3 model switcher, 对齐云端版 ChatComposer: the model button and the context
 // gauge are one control — the trigger's brain glyph fills with the used share

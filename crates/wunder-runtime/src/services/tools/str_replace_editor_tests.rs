@@ -296,29 +296,26 @@ fn update_action_numbers_both_sides_for_an_overwrite_shape() {
     );
     assert_eq!(data["updated"], json!(1));
     assert_eq!(data["added"], json!(0));
-    assert_eq!(data["deleted_lines"], json!(2));
-    assert_eq!(data["added_lines"], json!(3));
+    // 真实改动只有 beta→BETA 与追加 DELTA；gamma 未变，不能算进删除/新增。
+    assert_eq!(data["deleted_lines"], json!(1));
+    assert_eq!(data["added_lines"], json!(2));
     let file = &data["files"][0];
     assert_eq!(file["action"], json!("update"));
-    let rows = file["diff_blocks"][0]["lines"].as_array().expect("rows");
-    let deletes: Vec<&Value> = rows
-        .iter()
-        .filter(|row| row["kind"] == json!("delete"))
-        .collect();
-    let adds: Vec<&Value> = rows
-        .iter()
-        .filter(|row| row["kind"] == json!("add"))
-        .collect();
-    assert_eq!(deletes.len(), 2);
-    assert_eq!(adds.len(), 3);
-    for (index, row) in deletes.iter().enumerate() {
-        assert_eq!(row["old_line"], json!(index + 2));
-        assert!(row["new_line"].is_null());
-    }
-    for (index, row) in adds.iter().enumerate() {
-        assert_eq!(row["new_line"], json!(index + 2));
-        assert!(row["old_line"].is_null());
-    }
+    let blocks = file["diff_blocks"].as_array().expect("blocks");
+    assert_eq!(blocks.len(), 2);
+    let replaced = blocks[0]["lines"].as_array().expect("rows");
+    assert_eq!(replaced.len(), 2);
+    assert_eq!(replaced[0]["kind"], json!("delete"));
+    assert_eq!(replaced[0]["old_line"], json!(2));
+    assert!(replaced[0]["new_line"].is_null());
+    assert_eq!(replaced[1]["kind"], json!("add"));
+    assert_eq!(replaced[1]["new_line"], json!(2));
+    assert!(replaced[1]["old_line"].is_null());
+    let appended = blocks[1]["lines"].as_array().expect("rows");
+    assert_eq!(appended.len(), 1);
+    assert_eq!(appended[0]["kind"], json!("add"));
+    assert_eq!(appended[0]["new_line"], json!(4));
+    assert!(appended[0]["old_line"].is_null());
 }
 
 #[test]

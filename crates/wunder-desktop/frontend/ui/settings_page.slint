@@ -759,6 +759,7 @@ export component SettingsPage inherits Rectangle {
     in-out property <string> tool-manager-status;
     in-out property <bool> tools-loading: false;
     in-out property <bool> tools-working: false;
+    in-out property <string> tools-busy;
     in-out property <int> tools-tab: 1;
     in-out property <int> tools-selected: -1;
     in-out property <[ToolResource]> tools-servers;
@@ -1821,6 +1822,7 @@ export component SettingsPage inherits Rectangle {
                     // `tools-tab` 固定，导航切换时先改类别再刷新资源列表。
                     if root.settings-tab == 2 || root.settings-tab == 15 : ToolsPage {
                         loading: root.tools-loading; working: root.tools-working; status: root.tool-manager-status;
+                        busy: root.tools-busy;
                         servers: root.tools-servers; skills: root.tools-skill-resources;
                         files: root.tools-files; file-rows: root.tools-file-rows; server-tools: root.tools-server-tools;
                         tab: root.tools-tab; selected <=> root.tools-selected;

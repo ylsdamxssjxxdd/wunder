@@ -3362,6 +3362,7 @@ fn start_tick(
             ))));
             ui.set_settings_tool_directory(state.tools.directory.as_str().into());
             ui.set_settings_tool_has_more(state.tools.has_more);
+            ui.set_settings_tool_connecting(state.tools.connecting.as_str().into());
             last_tools = state.tools_rev;
         }
 

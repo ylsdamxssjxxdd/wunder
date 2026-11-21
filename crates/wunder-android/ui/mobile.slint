@@ -564,6 +564,7 @@ export component MobileWindow inherits Window {
     in property <[MobileToolFile]> settings-tool-files: [];
     in property <string> settings-tool-directory: "";
     in property <bool> settings-tool-has-more: false;
+    in property <string> settings-tool-connecting: "";
     in property <int> settings-tool-editor-kind: 0;
     in property <bool> settings-tool-editor-new: false;
     in property <string> settings-tool-editor-error: "";
@@ -2012,6 +2013,7 @@ export component MobileWindow inherits Window {
             tool-files: root.settings-tool-files;
             tool-directory: root.settings-tool-directory;
             tool-has-more: root.settings-tool-has-more;
+            tool-connecting: root.settings-tool-connecting;
             tool-editor-kind: root.settings-tool-editor-kind;
             tool-editor-new: root.settings-tool-editor-new;
             tool-editor-error: root.settings-tool-editor-error;

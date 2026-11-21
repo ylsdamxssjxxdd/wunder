@@ -4,6 +4,7 @@ import { ToolText, ToolButton } from "tools_widgets.slint";
 import { I18n } from "i18n.slint";
 import { ModalDialog, ConfirmDialog, FormField } from "components.slint";
 import { TextFieldActivation } from "text_field.slint";
+import { DotSpinner } from "spinner.slint";
 // ContextMenuArea/Menu/MenuItem are builtin elements in Slint 1.18: no std-widgets import.
 import { ScrollView, ListView, LineEdit, TextEdit, Button, ComboBox } from "std-widgets.slint";
 
@@ -207,6 +208,9 @@ export component ToolsPage inherits Rectangle {
     min-width: 0px; min-height: 0px; preferred-width: 1304px; preferred-height: 748px;
     in property <bool> loading;
     in property <bool> working;
+    // 进行中的操作文案（连接 MCP、读取工具列表等）。由原生侧按当前操作写入，
+    // 工具区据此显示转圈与说明，用户能看出「点了之后在等什么」。
+    in property <string> busy;
     in property <string> status;
     // 只保留 MCP 与技能两类；知识库与管理员开放工具页已从客户端引导中移除。
     in property <[ToolResource]> servers;
@@ -348,6 +352,26 @@ export component ToolsPage inherits Rectangle {
                             if root.server-tools.length == 0 : ToolText {
                                 x: 10px; y: 10px; width: parent.width - 20px; height: 20px;
                                 text: I18n.tm_select_tool; color: Theme.muted; font-size: Theme.font-sm;
+                            }
+                            // 连接 MCP、读取工具列表这类操作要等网络，盖一层
+                            // 转圈 + 当前动作说明，点击后立刻有可见反馈。
+                            if root.working : Rectangle {
+                                width: parent.width; height: parent.height;
+                                border-radius: Theme.radius-md;
+                                background: Theme.surface;
+                                DotSpinner {
+                                    size: 16px;
+                                    tint: Theme.accent-ink;
+                                    x: (parent.width - self.width) / 2;
+                                    y: max(0px, (parent.height - self.height) / 2 - 12px);
+                                }
+                                ToolText {
+                                    x: 12px; width: parent.width - 24px; height: 18px;
+                                    y: max(0px, parent.height / 2 + 8px);
+                                    horizontal-alignment: center;
+                                    text: root.busy != "" ? root.busy : I18n.tl_loading;
+                                    color: Theme.muted; font-size: Theme.font-xs;
+                                }
                             }
                         }
                     }

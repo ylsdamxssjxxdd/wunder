@@ -323,6 +323,8 @@ export component MainWindow inherits Window {
     in-out property <bool> agents-loading: false;
     in-out property <bool> tools-loading: false;
     in-out property <bool> tools-working: false;
+    // 工具页进行中的操作文案；只服务于工具页的转圈提示，不进 Toast。
+    in-out property <string> tools-busy: "";
     in-out property <int> tools-tab: 1;
     in-out property <int> tools-selected: -1;
     in-out property <[ToolResource]> tools-servers;
@@ -1929,6 +1931,7 @@ export component MainWindow inherits Window {
         // ---- embedded category state (§9.2) ----
         tool-manager-status: root.status;
         tools-loading: root.tools-loading; tools-working: root.tools-working;
+        tools-busy: root.tools-busy;
         tools-tab <=> root.tools-tab; tools-selected <=> root.tools-selected;
         tools-servers: root.tools-servers; tools-skill-resources: root.tools-skill-resources;
         tools-server-tools: root.tools-server-tools;

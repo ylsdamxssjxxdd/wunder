@@ -1,0 +1,22 @@
+// 六点转圈：软件渲染器没有 transform-rotate，用三角函数逐帧摆点，
+// 与云端版 1.48s 一圈的节奏一致。状态坞、工具页共用这一个实现。
+import { Theme } from "theme.slint";
+
+export component DotSpinner inherits Rectangle {
+    in property <color> tint: Theme.accent-ink;
+    // 视觉盒子边长；锚点与点径按 12px 基准等比缩放。
+    in property <length> size: 12px;
+    width: root.size;
+    height: root.size;
+    private property <float> k: root.size / 12px;
+    private property <length> dot: 3.4px * root.k;
+    private property <angle> phase: mod(animation-tick(), 1480ms) / 1480ms * 360deg;
+    for offset in [{x: 0.0, y: -4.1}, {x: 3.55, y: -2.05}, {x: 3.55, y: 2.05}, {x: 0.0, y: 4.1}, {x: -3.55, y: 2.05}, {x: -3.55, y: -2.05}] : Rectangle {
+        x: (parent.width - root.dot) / 2 + (offset.x * cos(root.phase) - offset.y * sin(root.phase)) * 1px * root.k;
+        y: (parent.height - root.dot) / 2 + (offset.x * sin(root.phase) + offset.y * cos(root.phase)) * 1px * root.k;
+        width: root.dot;
+        height: root.dot;
+        border-radius: root.dot / 2;
+        background: root.tint;
+    }
+}

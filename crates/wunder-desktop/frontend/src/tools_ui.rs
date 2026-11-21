@@ -82,6 +82,18 @@ fn selected(app: &MainWindow) -> Option<(ToolResourceKind, String)> {
 fn error(app: &MainWindow, error: impl std::fmt::Display) {
     crate::native_pages::show_error(app, format!("工具操作失败：{error}"));
 }
+/// 工具页里看得见的进行中文案。`status` 是 Toast 通道，而且以「正在」开头的
+/// 进度会被有意静默，所以耗时操作的说明单独走 `tools-busy`，由工具区转圈显示。
+fn busy(app: &MainWindow, zh: &str, en: &str) {
+    app.set_tools_busy((if app.get_ui_zh() { zh } else { en }).into());
+}
+/// 操作结束：同时撤掉进行中文案，避免下次转圈时还挂着上一次的说明。
+fn idle(app: &MainWindow) {
+    app.set_tools_working(false);
+    if !app.get_tools_busy().is_empty() {
+        app.set_tools_busy("".into());
+    }
+}
 fn apply(app: &MainWindow, catalog: Vec<ToolRecord>, manager: NativeToolManager) {
     // 分类卡片只喂给智能体的工具选择器；MCP 与技能页直接读资源列表。
     app.set_tools(model(catalog.into_iter().map(card).collect()));
@@ -179,6 +191,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let Some((kind, name)) = selected(&app) else {
             return;
         };
+        busy(&app, "正在读取工具…", "Loading tools…");
         app.set_tools_working(true);
         let gen = gen.clone();
         let weak = weak.clone();
@@ -191,7 +204,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                     .map(Selection::Files)
             };
             let _ = weak.upgrade_in_event_loop(move |app| {
-                app.set_tools_working(false);
+                idle(&app);
                 if gen.load(Ordering::Relaxed) != token {
                     return;
                 }
@@ -232,6 +245,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         } else {
             path.to_string()
         };
+        busy(
+            &app,
+            if directory { "正在读取目录…" } else { "正在打开文件…" },
+            if directory { "Loading folder…" } else { "Opening file…" },
+        );
         app.set_tools_working(true);
         let weak = weak.clone();
         let api = file_api.clone();
@@ -244,7 +262,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                     .map(FileResult::Text)
             };
             let _ = weak.upgrade_in_event_loop(move |app| {
-                app.set_tools_working(false);
+                idle(&app);
                 if selected(&app) != Some((kind, name)) {
                     return;
                 }
@@ -281,11 +299,12 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let directory = app.get_tools_directory().to_string();
         let api = more_api.clone();
         let weak = weak.clone();
+        busy(&app, "正在读取目录…", "Loading folder…");
         app.set_tools_working(true);
         std::thread::spawn(move || {
             let result = api.tool_resource_files(kind, &name, &directory, offset);
             let _ = weak.upgrade_in_event_loop(move |app| {
-                app.set_tools_working(false);
+                idle(&app);
                 if selected(&app) != Some((kind, name)) || app.get_tools_directory() != directory {
                     return;
                 }
@@ -311,14 +330,27 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let directory = app.get_tools_directory().to_string();
         let api = action_api.clone();
         let weak = weak.clone();
+        let (busy_zh, busy_en) = match operation.as_str() {
+            "delete" => ("正在删除…", "Deleting…"),
+            "connect" => ("正在连接 MCP 服务器…", "Connecting to the MCP server…"),
+            "export" => ("正在导出…", "Exporting…"),
+            "upload" => ("正在上传文件…", "Uploading file…"),
+            "file" | "save" => ("正在保存…", "Saving…"),
+            _ => ("处理中…", "Working…"),
+        };
+        busy(&app, busy_zh, busy_en);
         app.set_tools_working(true);
         std::thread::spawn(move || {
             let result = match operation.as_str() {
-                "delete" => api.delete_tool_resource(kind, &current),
+                "delete" => api.delete_tool_resource(kind, &current).map(|()| 0usize),
                 "connect" => api.connect_tool_server(&current),
-                "export" => api.export_tool_skill(&current, &name),
-                "save" => api.save_tool_resource(kind, &current, &name, &value, false),
-                "file" => api.save_tool_resource(kind, &current, &name, &value, true),
+                "export" => api.export_tool_skill(&current, &name).map(|()| 0usize),
+                "save" => api
+                    .save_tool_resource(kind, &current, &name, &value, false)
+                    .map(|()| 0usize),
+                "file" => api
+                    .save_tool_resource(kind, &current, &name, &value, true)
+                    .map(|()| 0usize),
                 "upload" => (|| {
                     let source = std::path::Path::new(name.as_str());
                     if std::fs::metadata(source)?.len() > 2 * 1024 * 1024 {
@@ -331,14 +363,22 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                         .ok_or_else(|| anyhow::anyhow!("文件名无效"))?;
                     let target = std::path::Path::new(&directory).join(filename);
                     api.save_tool_resource(kind, &current, &target.to_string_lossy(), &text, true)
+                        .map(|()| 0usize)
                 })(),
                 _ => Err(anyhow::anyhow!("未知操作")),
             };
             let _ = weak.upgrade_in_event_loop(move |app| {
-                app.set_tools_working(false);
+                idle(&app);
                 match result {
-                    Ok(()) => {
-                        app.set_status("工具操作完成".into());
+                    Ok(tool_count) => {
+                        // 连接会真的去拉远端工具列表；把条数回报出来，
+                        // 用户点完就知道连上没有、拿到几个工具。
+                        let message = if operation == "connect" {
+                            format!("已连接 MCP 服务器，共 {tool_count} 个工具")
+                        } else {
+                            "工具操作完成".to_string()
+                        };
+                        app.set_status(message.into());
                         if operation != "save" && operation != "export" {
                             app.invoke_refresh_tools();
                         }
@@ -372,13 +412,14 @@ fn install_dialog_actions(app: &MainWindow, api: &Arc<NativeDesktop>) {
             description: dialog.get_mcp_description().to_string(),
             headers: dialog.get_mcp_headers().to_string(),
         };
+        busy(&app, "正在保存 MCP 服务器…", "Saving MCP server…");
         app.set_tools_working(true);
         let weak = weak.clone();
         let api = save_api.clone();
         std::thread::spawn(move || {
             let result = api.save_mcp_server(&draft);
             let _ = weak.upgrade_in_event_loop(move |app| {
-                app.set_tools_working(false);
+                idle(&app);
                 match result {
                     Ok(()) => {
                         app.set_status("工具操作完成".into());
@@ -414,13 +455,14 @@ fn install_dialog_actions(app: &MainWindow, api: &Arc<NativeDesktop>) {
             chunk_overlap: dialog.get_kb_chunk_overlap().to_string(),
             ragflow_dataset_id: dialog.get_kb_dataset_id().to_string(),
         };
+        busy(&app, "正在保存知识库…", "Saving knowledge base…");
         app.set_tools_working(true);
         let weak = weak.clone();
         let api = kb_api.clone();
         std::thread::spawn(move || {
             let result = api.save_knowledge_base(&draft);
             let _ = weak.upgrade_in_event_loop(move |app| {
-                app.set_tools_working(false);
+                idle(&app);
                 match result {
                     Ok(()) => {
                         app.set_status("工具操作完成".into());
@@ -468,13 +510,14 @@ fn install_dialog_actions(app: &MainWindow, api: &Arc<NativeDesktop>) {
         let dialog = app.global::<ToolsDialog>();
         let raw = dialog.get_mcp_paste().to_string();
         dialog.set_mcp_paste_error("".into());
+        busy(&app, "正在导入 MCP 配置…", "Importing MCP config…");
         app.set_tools_working(true);
         let weak = weak.clone();
         let api = paste_api.clone();
         std::thread::spawn(move || {
             let result = api.import_mcp_servers(&raw);
             let _ = weak.upgrade_in_event_loop(move |app| {
-                app.set_tools_working(false);
+                idle(&app);
                 let dialog = app.global::<ToolsDialog>();
                 match result {
                     Ok(count) => {
@@ -503,14 +546,14 @@ fn install_dialog_actions(app: &MainWindow, api: &Arc<NativeDesktop>) {
         let Some(archive) = crate::file_dialog::pick_skill_archive() else {
             return;
         };
+        busy(&app, "正在导入技能包…", "Importing skill archive…");
         app.set_tools_working(true);
-        app.set_status("正在导入技能包…".into());
         let weak = weak.clone();
         let api = import_api.clone();
         std::thread::spawn(move || {
             let result = api.import_tool_resource(ToolResourceKind::Skill, &archive);
             let _ = weak.upgrade_in_event_loop(move |app| {
-                app.set_tools_working(false);
+                idle(&app);
                 match result {
                     Ok(()) => {
                         app.set_status("工具操作完成".into());
@@ -696,11 +739,12 @@ fn toggle_skill_directory(app: &MainWindow, api: &Arc<NativeDesktop>, name: &str
     let key = path.to_string();
     let api = api.clone();
     let weak = app.as_weak();
+    busy(app, "正在读取目录…", "Loading folder…");
     app.set_tools_working(true);
     std::thread::spawn(move || {
         let result = api.tool_resource_files(ToolResourceKind::Skill, &name, &directory, offset);
         let _ = weak.upgrade_in_event_loop(move |app| {
-            app.set_tools_working(false);
+            idle(&app);
             if selected(&app) != Some((ToolResourceKind::Skill, name)) {
                 return;
             }

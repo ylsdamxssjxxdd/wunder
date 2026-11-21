@@ -9,6 +9,7 @@ ENTRIES = [
     ('tm_no_detail', '暂无详情', 'No details'),
     ('tm_connect', '连接', 'Connect'),
     ('tm_mcp_tools_tip', '连接后可查看工具列表，并按需启用', 'Connect to view available tools'),
+    ('tm_connecting', '正在连接 MCP 服务器…', 'Connecting to MCP server…'),
     ('tm_select_tool', '选择工具', 'Select a tool'),
     ('tm_skill_tip', '从技能目录读取可用技能，并支持直接编辑文件。上传支持常见压缩包格式，部分格式依赖本机解压器。', 'Read skills from their directories and edit files. Archive support depends on the local extractor.'),
     ('tm_no_skills', '暂无技能', 'No skills'),
