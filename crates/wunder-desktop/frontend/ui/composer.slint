@@ -1462,37 +1462,78 @@ component PresetFlyout inherits Rectangle {
     }
 }
 
-// 输入框上的一张附件卡。桌面版与手机版共用同一张卡片，只有排布方式不同。
-component AttachmentChip inherits Rectangle {
+// 输入框上的一张附件缩略图。截图/图片直接给出预览；普通文件或解码失败的
+// 图片用文件图标加文件名占位。两种形态同尺寸，横向条带只占固定的一行。
+component AttachmentThumb inherits Rectangle {
+    in property <image> preview;
     in property <string> label;
-    // 手机屏窄：桌面的 220px 卡片两张就顶出屏幕，手机上用更窄的宽度让两张
-    // 常常能并排放下，再多就靠条带横向滑动。
-    in property <length> chip-width: 220px;
+    // 手机屏窄，缩略图也收一档，避免附件把输入区顶得太高。
+    in property <length> thumb-width: 96px;
+    in property <length> thumb-height: 72px;
     callback remove();
-    width: root.chip-width;
-    height: 28px;
+    width: root.thumb-width;
+    height: root.thumb-height;
     border-radius: Theme.radius-sm;
     background: Theme.accent-soft;
     border-width: 1px;
     border-color: Theme.border;
-    Text {
-        x: 8px;
-        width: parent.width - 34px;
+    clip: true;
+    accessible-role: image;
+    accessible-label: root.label;
+
+    if root.preview.width > 0 : Image {
+        width: parent.width;
         height: parent.height;
-        text: root.label;
-        color: Theme.text;
-        font-size: Theme.font-xs;
-        vertical-alignment: center;
-        overflow: elide;
+        source: root.preview;
+        image-fit: cover;
     }
-    Action {
-        x: parent.width - 27px;
-        y: 2px;
-        width: 24px;
-        height: 24px;
-        icon: @image-url("../assets/icons/xmark.svg");
-        label: I18n.cp_remove_attachment;
-        clicked => { root.remove(); }
+    if root.preview.width <= 0 : Rectangle {
+        Image {
+            x: (parent.width - 20px) / 2;
+            y: (parent.height - 20px) / 2 - 8px;
+            width: 20px;
+            height: 20px;
+            source: @image-url("../assets/icons/file-lines.svg");
+            colorize: Theme.muted;
+            image-fit: contain;
+        }
+        Text {
+            x: 6px;
+            y: (parent.height - 20px) / 2 + 12px;
+            width: parent.width - 12px;
+            height: 16px;
+            text: root.label;
+            color: Theme.text-secondary;
+            font-size: Theme.font-2xs;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+    // 移除徽标：压在缩略图右上角，深色底保证浅色截图上也能看清。
+    remove-badge := Rectangle {
+        x: parent.width - 24px;
+        y: 3px;
+        width: 20px;
+        height: 20px;
+        border-radius: 10px;
+        background: remove-touch.has-hover ? #000000B3 : #00000073;
+        accessible-role: button;
+        accessible-label: I18n.cp_remove_attachment;
+        accessible-action-default => { root.remove(); }
+        Image {
+            x: 5px;
+            y: 5px;
+            width: 10px;
+            height: 10px;
+            source: @image-url("../assets/icons/xmark.svg");
+            colorize: #ffffff;
+            image-fit: contain;
+        }
+        remove-touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.remove(); }
+        }
     }
 }
 
@@ -1659,8 +1700,13 @@ export component Composer inherits Rectangle {
     // 不留固定基准里的余量：卡片多高，编辑器就多高，行数一变立刻贴合。
     private property <length> mobile-card-height:
         18px + max(root.action-row-height, root.editor-box-height);
+    // 附件条带固定一行：缩略图 + 10px 横向滚动条。高度不随附件数量
+    // 增长，多出来的附件在本行内横向滚动。
+    private property <length> attachment-thumb-width: root.mobile ? 72px : 96px;
+    private property <length> attachment-thumb-height: root.mobile ? 60px : 72px;
+    private property <length> attachment-strip-height: root.attachment-thumb-height + 10px;
     height: (root.mobile ? root.mobile-card-height : 136px + root.editor-growth)
-        + (root.attachments.length > 0 ? 36px : 0px)
+        + (root.attachments.length > 0 ? root.attachment-strip-height + 6px : 0px)
         + (root.branch-name != "" ? 22px : 0px) + root.queue-height;
     private property <bool> plus-open: false;
     private property <bool> model-open: false;
@@ -1736,7 +1782,7 @@ export component Composer inherits Rectangle {
     if !root.mobile : Rectangle {
         x: 0px;
         y: 8px + (root.queue-open ? root.queue-height + 6px : 0px)
-            + (root.attachments.length > 0 ? 36px : 0px);
+            + (root.attachments.length > 0 ? root.attachment-strip-height + 6px : 0px);
         width: parent.width;
         height: max(0px, root.height - self.y - 10px);
         border-radius: 16px;
@@ -1762,33 +1808,30 @@ export component Composer inherits Rectangle {
             remove(queue-id) => { root.queue-remove(queue-id); }
             move-by(queue-id, delta) => { root.queue-move-by(queue-id, delta); }
         }
-        // 附件卡：桌面版一字排开、留出右侧空白；手机屏窄，横排几张就会
-        // 顶出屏幕，所以手机改用可横向滑动的条带，卡片固定宽度不会被压成
-        // 一条线，也不会盖住发送键。
+        // 附件缩略图：桌面版与手机版共用一条固定高度的横向滚动带。
+        // 之前桌面端把卡片一字排开且不滚动，窗口一窄或附件一多，后面的
+        // 就永远够不到；这里统一交给 ScrollView，滚轮拖动或滚动条都能
+        // 翻到最后一张。
         if root.attachments.length > 0 : Rectangle {
-            height: 30px;
+            height: root.attachment-strip-height;
             background: transparent;
-            if root.mobile : ScrollView {
+            ScrollView {
                 width: parent.width;
-                height: 30px;
-                horizontal-scrollbar-policy: always-off;
+                height: parent.height;
+                horizontal-scrollbar-policy: as-needed;
                 vertical-scrollbar-policy: always-off;
+                mouse-drag-pan-enabled: true;
                 HorizontalLayout {
                     spacing: 6px;
-                    for attachment[index] in root.attachments : AttachmentChip {
+                    padding-right: 2px;
+                    for attachment[index] in root.attachments : AttachmentThumb {
+                        preview: attachment.preview;
                         label: attachment.name;
-                        chip-width: 172px;
+                        thumb-width: root.attachment-thumb-width;
+                        thumb-height: root.attachment-thumb-height;
                         remove() => { root.remove-attachment(index); }
                     }
                 }
-            }
-            if !root.mobile : HorizontalLayout {
-                spacing: 6px;
-                for attachment[index] in root.attachments : AttachmentChip {
-                    label: attachment.name;
-                    remove() => { root.remove-attachment(index); }
-                }
-                Rectangle { horizontal-stretch: 1; }
             }
         }
         // Desktop shares one card surface with the action row below the editor;

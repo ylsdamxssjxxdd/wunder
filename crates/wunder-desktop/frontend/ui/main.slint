@@ -134,9 +134,21 @@ export component MainWindow inherits Window {
     // 模型删除确认框的开合由窗口持有：原生冒烟据此截图核对文案。
     in-out property <bool> model-delete-open: false;
     in-out property <length> sidebar-width: Theme.sidebar-width;
-    // 侧栏折叠（对齐云端版）：拖窄到阈值以内或点分线中点的按钮后整列退场，
-    // 主区左上角浮出恢复入口；展开时沿用收起前的宽度，折叠状态跨启动保留。
+    // 侧栏折叠（对齐云端版）：拖窄到阈值以内后整列退场；展开时沿用收起前的
+    // 宽度，折叠状态跨启动保留。窄窗下不再让这一列参与布局：宽度不足时自动
+    // 收起，用户从左上角入口唤出时浮在聊天区之上（`sidebar-peek`），点一下
+    // 遮罩即退回。
     in-out property <bool> sidebar-collapsed: false;
+    private property <bool> sidebar-overlay: root.width < Theme.sidebar-overlay-width;
+    private property <bool> sidebar-peek: false;
+    private property <bool> sidebar-shown:
+        !root.sidebar-collapsed && (!root.sidebar-overlay || root.sidebar-peek);
+    // 浮层宽度永远给主区留出点击退出的位置；停靠时就是用户拖出来的宽度。
+    private property <length> sidebar-visual-width: root.sidebar-overlay
+        ? min(root.sidebar-width, max(180px, root.width - 56px))
+        : root.sidebar-width;
+    // 跨过断点就回到「按宽度自动收起」：变窄时侧栏自动退场，变宽时重新停靠。
+    changed sidebar-overlay => { root.sidebar-peek = false; }
 
     in-out property <bool> expert-loading;
     in-out property <bool> expert-saving;
@@ -1208,7 +1220,7 @@ export component MainWindow inherits Window {
     // window's title strip, so every y carries the titlebar offset.
     out property <length> split-close-x: split_workspace.close-x;
     out property <length> split-close-y: split_workspace.close-y;
-    out property <length> settings-button-x: root.sidebar-width / 2;
+    out property <length> settings-button-x: root.sidebar-visual-width / 2;
     out property <length> settings-button-y: Theme.titlebar-height + sidebar_view.height - 20px;
     out property <length> settings-back-x: (root.width - min(1080px, root.width - 72px)) / 2
         + min(1080px, root.width - 72px) - 22px;
@@ -1280,475 +1292,480 @@ export component MainWindow inherits Window {
         y: Theme.titlebar-height + (root.startup-banner-open ? 26px : 0px);
         width: parent.width;
         height: max(0px, parent.height - Theme.titlebar-height - (root.startup-banner-open ? 26px : 0px));
-        HorizontalLayout {
-            spacing: 0px;
-            sidebar_view := Sidebar {
-                // 收起时整列退场：只设 visible 不足以让出宽度（不可见元素仍会
-                // 带着内容最小宽度参与布局），必须同时把宽度钉到 0。
-                visible: !root.sidebar-collapsed;
-                min-width: root.sidebar-collapsed ? 0px : root.sidebar-width;
-                max-width: root.sidebar-collapsed ? 0px : root.sidebar-width;
-                rows: root.sidebar-rows;
-                active-thread-id: root.active-session-id;
-                // Signed-in identity travels from the profile projection so the
-                // sidebar never owns a second copy of the avatar state.
-                user-initial: root.profile.avatar-glyph;
-                user-color: root.profile.avatar-brush;
-                // The avatar stays a placeholder until the profile projection
-                // lands, so a fresh launch never shows an identity it does not
-                // know yet.
-                user-ready: root.profile-ready;
-                // Cloud quota badge (§6.1): blank hides the pill, warn marks
-                // a balance at or below 10% of the daily grant.
-                cloud-quota-text: root.cloud-logged-in ? root.cloud-balance : "";
-                cloud-quota-warn: root.cloud-quota-warn;
-                cloud-quota-expired: root.cloud-connection == "expired";
-                cloud-quota-reconnecting: root.cloud-connection == "reconnecting";
-                // The sidebar hosts the device selector: local (this 桌面版) is
-                // always present, cloud appears once an account is signed in.
-                cloud-available: root.cloud-logged-in;
-                local-workspace-count: root.workspaces.length;
-                busy: root.creating-session || root.session-loading || root.chat-loading;
-                select-row(index) => { root.select-row(index); }
-                select-device(device) => { root.select-device(device); }
-                new-cloud-thread => { root.cloud-new-thread(); }
-                workspace-menu(workspace, action) => { root.workspace-menu(workspace, action); }
-                new-workspace => { root.new-workspace(); }
-                move-row(index, travel) => { root.move-row(index, travel); }
-                drop-thread-to-chat(index) => { root.drop-thread-on-split(index); }
-                open-thread-split(index) => { root.open-thread-in-split(index); }
-                archive-thread(id) => {
-                    root.archive-thread(id);
-                }
-                rename-request(payload, title) => {
-                    root.thread-rename-cloud-id = "";
-                    root.thread-rename-payload = payload;
-                    root.thread-rename-title = title;
-                    root.thread-rename-draft = title;
-                    root.thread-rename-open = true;
-                }
-                open-trajectory(index) => { root.open-trajectory(index); }
-                cloud-rename-request(id, title) => {
-                    root.thread-rename-cloud-id = id;
-                    root.thread-rename-title = title;
-                    root.thread-rename-draft = title;
-                    root.thread-rename-open = true;
-                }
-                cloud-archive-request(id) => {
-                    root.cloud-archive-thread(id);
-                }
-                cloud-open-trajectory(id) => { root.cloud-open-trajectory(id); }
-                selection-mode: root.sidebar-selection-mode;
-                selected-count: root.sidebar-selected-count;
-                archivable-count: root.sidebar-archivable-count;
-                begin-selection => { root.sidebar-begin-selection(); }
-                exit-selection => { root.sidebar-exit-selection(); }
-                toggle-selection(index) => { root.sidebar-toggle-selection(index); }
-                select-all-threads => { root.sidebar-select-all(); }
-                archive-selected => { root.sidebar-archive-selected(); }
-                open-settings => { root.settings-open = true; root.settings-active-panel = 0; root.refresh-settings(); }
-                // Working-directory region: model and actions live on the
-                // window shell, the sidebar only forwards.
-                file-rows: root.ws-file-rows;
-                file-loading: root.ws-file-loading;
-                file-error: root.ws-file-error;
-                file-offline: root.ws-file-offline;
-                file-busy: root.ws-file-busy;
-                file-active-path: root.ws-file-active-path;
-                file-active-index: root.ws-file-active-index;
-                file-key(action) => { root.ws-file-key(action); }
-                split-ratio <=> root.sidebar-split-ratio;
-                layout-changed => { root.sidebar-layout-changed(); }
-                file-local: root.ws-file-local;
-                file-toggle(index) => { root.ws-file-toggle(index); }
-                file-pick(index, ctrl, shift) => { root.ws-file-pick(index, ctrl, shift); }
-                file-refresh => { root.ws-file-refresh(); }
-                file-selection-action(action) => { root.ws-file-selection-action(action); }
-                file-search-edit(text) => { root.ws-file-search-edit(text); }
-                file-search-accept(text) => { root.ws-file-search-accept(text); }
-                file-search-cancel => { root.ws-file-search-cancel(); }
-                file-search-open <=> root.ws-file-search-open;
-                file-search-query <=> root.ws-file-search-query;
-                file-search-busy: root.ws-file-search-busy;
-                file-search-active: root.ws-file-search-active;
-                file-selected-count: root.ws-file-selected-count;
-                file-connect => { root.settings-open = true; root.settings-active-panel = 13; root.refresh-settings(); }
-                file-menu(index, action) => { root.ws-file-menu(index, action); }
-                file-drag-begin(index) => { root.ws-file-drag-begin(index); }
-                file-drag-hover(index) => { root.ws-file-drag-hover(index); }
-                file-drag-drop(index) => { root.ws-file-drag-drop(index); }
-                file-dragging: root.ws-file-dragging;
-                file-drop-path: root.ws-file-drop-path;
-                file-drop-root: root.ws-file-drop-root;
-                file-drop(event) => { root.ws-file-drop(event); }
-            }
-            // Sidebar width drag handle: a 6px hit strip around a hairline
-            // marker. Only hover and drag earn the 2px accent pill; painting
-            // the whole strip would read as a divider, not an affordance.
-            Rectangle {
-                width: root.sidebar-collapsed ? 0px : 6px;
-                visible: !root.sidebar-collapsed;
-                background: transparent;
+        // 主区整行：停靠时让出侧栏宽度，收起或窄窗浮层时铺满整行。
+        // 侧栏不再作为这一行的布局子项，否则窄窗下它会把聊天列挤到不可用。
+        chat_area := Rectangle {
+            x: root.sidebar-shown && !root.sidebar-overlay ? root.sidebar-width + 6px : 0px;
+            width: parent.width - self.x;
+            height: parent.height;
+            clip: true;
+            HorizontalLayout {
+                spacing: 0px;
                 Rectangle {
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
-                    width: resize-touch.has-hover || resize-touch.pressed ? 2px : 0px;
-                    height: resize-touch.pressed ? 40px : 32px;
-                    border-radius: 1px;
-                    background: Theme.accent;
+                    horizontal-stretch: root.split-count == 1 ? 1 : 0;
+                    max-width: root.split-count == 1 ? root.width : 0px;
+                    // 分屏时这列要真正收成 0：`max-width` 拦不住内容的最小宽度，
+                    // 不显式放开 `min-width` 的话，隐藏的单视图列会按最宽的表单
+                    // 撑出一条空白，左侧窗格就被顶到侧栏右边一段距离之外。
+                    min-width: 0px;
+                    visible: root.split-count == 1;
+                    background: Theme.chat;
+                    VerticalLayout {
+                        spacing: 0px;
+                        // The transcript owns the full column height: the web form
+                        // dropped the top bar, so the workspace/thread identity it
+                        // carried lives only in the sidebar now.
+                        // The transcript holder is a small wrapper so the timeline
+                        // stays reachable from outside: a `public function` cannot
+                        // name an element that an `if` may remove, so the two views
+                        // toggle on `visible` instead of being conditionally built.
+                        follow_view := Rectangle {
+                            vertical-stretch: 1;
+                            out property <length> scroll-y: timeline_view.scroll-y;
+                            public function scroll-to-end() { timeline_view.scroll-to-end(); }
+                            timeline_view := TimelineView {
+                                visible: true;
+                                rows: root.timeline;
+                                loading: root.chat-loading || root.session-loading || !root.threads-ready
+                                    || (root.cloud-chat-active && root.cloud-thread-busy);
+                                loading-text: root.session-loading ? (I18n.zh ? "正在打开线程，读取历史记录…" : "Opening thread and reading history…")
+                                    : root.chat-loading || !root.threads-ready ? (root.startup-note != "" ? root.startup-note : I18n.st_runtime_loading)
+                                    : root.cloud-chat-active && root.cloud-thread-busy ? (I18n.zh ? "正在打开线程，读取历史记录…" : "Opening thread and reading history…")
+                                    : I18n.st_runtime_loading;
+                                greeting: root.cloud-chat-active ? root.cloud-greeting
+                                    : root.agents.length > 0 ? root.agents[0].description : "";
+                                greeting-loading: root.prompt-preview-loading;
+                                preview-prompt => { root.open-prompt-preview(); }
+                                turn-marks: root.turn-marks;
+                                follow-output <=> root.follow-output;
+                                scroll-restore-revision: root.timeline-scroll-restore;
+                                scroll-restore-y: root.timeline-scroll-y;
+                                scroll-restore-tail: root.timeline-scroll-tail;
+                                spinning: root.busy;
+                                stream-revision: root.stream-updates;
+                                toggle(index) => { root.timeline-toggle(index); }
+                                process-page(index, direction) => { root.timeline-process-page(index, direction); }
+                                load-older => { root.timeline-load-older(); }
+                                copy-text(text) => { root.copy-raw(text); }
+                                copy-original(id) => { root.cloud-copy-original(id); }
+                                fork-thread(round) => { root.fork-thread(root.active-session-id, round); }
+                                open-resource(id) => { root.timeline-open(id); }
+                                show-context-menu(x, y, selected) => {
+                                    TextMenuState.anchor-x = x;
+                                    TextMenuState.anchor-y = y;
+                                    TextMenuState.has-selection = selected;
+                                    TextMenuState.open = true;
+                                }
+                            }
+                        }
+                        // Status dock: the plan capsule sits between the timeline
+                        // and the goal banner; its checklist card overlaps the
+                        // timeline via negative y. It shows up only while the plan
+                        // tool has steps — the turn's phase text already reads on
+                        // the timeline rows, and queue position is folded into the
+                        // timeline too, so the old banners are gone.
+                        // The input band follows the transcript's full available width.
+                        // Its 14px side inset also aligns the status dock, goal banner
+                        // and inquiry card with the composer card.
+                        Rectangle {
+                            height: input-band.preferred-height;
+                            input-band := VerticalLayout {
+                                width: parent.width;
+                                x: (parent.width - self.width) / 2;
+                                padding-left: 14px;
+                                padding-right: 14px;
+                                spacing: 0px;
+                                // 首次配置引导：本地聊天还没有任何真实模型。云端线程
+                                // 走自己的模型目录，不显示。用 visible 而不是 if，
+                                // 原生 smoke 检查要读它的窗口坐标做真实点击。
+                                setup-banner := ModelSetupBanner {
+                                    visible: root.needs-model-setup && !root.cloud-chat-active;
+                                    setup => { root.setup-first-model(); }
+                                }
+                                if root.activity-steps-total > 0 : StatusDock {
+                                    running: root.activity-running;
+                                    plan-complete: root.activity-plan-complete;
+                                    steps-done: root.activity-steps-done;
+                                    steps-total: root.activity-steps-total;
+                                    plan-explanation: root.activity-plan-explanation;
+                                    plan-steps: root.activity-plan-steps;
+                                    current-step: root.activity-plan-current;
+                                    current-position: root.activity-plan-position;
+                                    expanded <=> root.activity-plan-expanded;
+                                    dismiss => { root.activity-plan-dismiss(); }
+                                }
+                                if root.goal-visible && root.goal-objective != "" : GoalBanner {
+                                    objective: root.goal-objective;
+                                    elapsed: root.goal-elapsed;
+                                    phase: root.goal-phase;
+                                    activation: root.goal-activation;
+                                    rounds: root.goal-rounds;
+                                    paused: root.goal-paused;
+                                    editing <=> root.goal-editing;
+                                    edit-draft <=> root.goal-edit-draft;
+                                    save(text) => { root.goal-save(text); }
+                                    pause-toggle => { root.goal-pause-toggle(); }
+                                    clear => { root.goal-clear(); }
+                                }
+                                if root.approval-visible && root.approval-session == root.active-session-id : ApprovalPanel {
+                                    kind: root.approval-kind;
+                                    summary: root.approval-summary;
+                                    pending: root.approval-pending;
+                                    decide(decision) => { root.approval-decide(decision); }
+                                }
+                                if root.inquiry-visible && root.inquiry-session == root.active-session-id : InquiryPanel {
+                                    questions: root.inquiry-questions;
+                                    page: root.inquiry-page;
+                                    total: root.inquiry-total;
+                                    expanded: root.inquiry-expanded;
+                                    option-clicked(row, option) => { root.inquiry-option-clicked(row, option); }
+                                    other-edited(row, text) => { root.inquiry-other-edited(row, text); }
+                                    no-preference(row) => { root.inquiry-no-preference(row); }
+                                    use-recommended(row) => { root.inquiry-use-recommended(row); }
+                                    page-move(delta) => { root.inquiry-page-move(delta); }
+                                    expanded-toggle => { root.inquiry-expanded-toggle(); }
+                                }
+                                composer := Composer {
+                                    draft <=> root.draft; busy: root.command-pending || root.session-loading || root.creating-session || (root.chat-loading && !root.busy) || (root.cloud-chat-active && root.cloud-thread-busy);
+                                // 窄窗先让出硬件读数，再没有空间才让模型触发器收窄；
+                                // 动作行本身永远不该因为读数而溢出。
+                                show-host-hud: root.width >= Theme.host-hud-min-width;
+                                launch-cli => { root.launch-cli(); }
+                                send-key: root.runtime-send-key;
+                                context-usage: root.context-usage; context-known: root.context-known; context-counts: root.context-counts; context-compacted: root.context-compacted;
+                                models: root.cloud-chat-active ? root.cloud-thread-models : root.composer-models;
+                                // The local built-in agent owns the saved quick prompts; a
+                                // cloud thread keeps its service-side composer scope.
+                                preset-questions: root.cloud-chat-active ? [] : root.selected-agent-preset-questions;
+                                model-catalogue-count: root.cloud-chat-active ? root.cloud-thread-models.length : root.model-catalogue-count;
+                                cloud-ready: root.cloud-logged-in && !root.cloud-expired;
+                                model-name: root.selected-model-key != "" ? root.selected-model-key : root.selected-agent-model;
+                                model-key: root.selected-model-key;
+                                model-saving: root.saving;
+                                select-model(index, key) => { root.select-thread-model(key); }
+                                open-model-settings => { root.settings-open = true; root.settings-active-panel = 1; root.refresh-settings(); }
+                                branch-name: root.active-workspace-branch;
+                                host-cpu: root.host-cpu; host-memory: root.host-memory;
+                                host-net: root.host-net; host-disk: root.host-disk;
+                                host-cpu-text: root.host-cpu-text; host-memory-text: root.host-memory-text;
+                                host-net-text: root.host-net-text; host-disk-text: root.host-disk-text;
+                                host-link: root.host-link;
+                                host-net-rx: root.host-net-rx; host-net-tx: root.host-net-tx;
+                                host-disk-read: root.host-disk-read; host-disk-write: root.host-disk-write;
+                                host-memory-used: root.host-memory-used; host-memory-total: root.host-memory-total;
+                                host-cores: root.host-cores;
+                                running-tasks: root.running-tasks;
+                                running-task-count: root.running-task-count;
+                                toggle-task(id) => { root.toggle-task(id); }
+                                terminate-task(id) => { root.terminate-task(id); }
+                                subagent-items: root.subagent-items;
+                                subagent-count: root.subagent-count;
+                                subagent-running-count: root.subagent-running-count;
+                                open-subagent(id) => { root.dock-open-subagent(id); }
+                                stop-subagent(id) => { root.dock-stop-subagent(id); }
+                                attachments: root.pending-attachments;
+                                inquiry-ready: root.inquiry-ready;
+                                queue-turns: root.queue-turns;
+                                queue-overflow: root.queue-overflow;
+                                queue-interject(queue-id) => { root.queue-interject(queue-id); }
+                                queue-edit(queue-id) => { root.queue-edit(queue-id); }
+                                queue-remove(queue-id) => { root.queue-remove(queue-id); }
+                                queue-move-by(queue-id, delta) => { root.queue-move-by(queue-id, delta); }
+                                recall-history(direction, cursor-offset, anchor-offset, draft) => {
+                                    return root.recall-history(direction, cursor-offset, anchor-offset, draft);
+                                }
+                                generating: root.busy || root.goal-active; stopping: root.stopping; stop => { root.stop-generation(); }
+                                recording: root.recording; transcribing: root.transcribing; recording-elapsed: root.recording-elapsed; recording-pulse: root.recording-pulse;
+                                send => { root.send-message(); }
+                                screenshot() => { root.capture-screenshot(); }
+                                paste-image() => { return root.paste-image(); }
+                                file-drop(event) => { root.composer-file-drop(event); }
+                                record-voice => { root.record-voice(); }
+                                remove-attachment(index) => { root.remove-attachment(index); }
+                                }
+                            }
+                        }
+                    }
                 }
-                resize-touch := TouchArea {
-                    mouse-cursor: ew-resize;
-                    // `mouse-x` is local to this handle. Resizing moves the
-                    // handle itself, so using it as the drag origin feeds the
-                    // new sidebar width back into the next delta and makes the
-                    // divider shake. Track the window-relative pointer instead.
-                    // Windows 上这个窗口坐标改由追踪通道（真实光标位置）提供：
-                    // 事件流会在按住几像素后断掉，`absolute-position` 又滞后一
-                    // 帧，两者叠加的表现就是「拖一点就停、宽度追不上光标」。
-                    property <length> start-absolute-x;
-                    property <length> start-width;
-                    property <bool> dragging-width: false;
-                    // 追踪通道的全局属性不能直接 `changed`，先绑到本地再观察。
-                    property <length> chase-x: PointerChase.pointer-x;
-                    property <int> chase-finish: PointerChase.finish-serial;
-                    pointer-event(event) => {
-                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
-                            root.sidebar-width = clamp(root.sidebar-width, 170px, 420px);
-                            start-width = root.sidebar-width;
-                            start-absolute-x = self.absolute-position.x + self.mouse-x;
-                            PointerChase.pointer-x = start-absolute-x;
-                            dragging-width = true;
-                            PointerChase.holding = PointerChase.enabled;
-                            PointerChase.begin();
-                        }
-                        if event.kind == PointerEventKind.move && dragging-width && !PointerChase.enabled {
-                            // 按住期间指针可能移出 6px 把手，捕获的 move 事件
-                            // 仍然可靠；与 `moved` 一起兜住 Linux 上的拖动。
-                            if !root.apply-sidebar-width(
-                                start-width,
-                                start-absolute-x,
-                                self.absolute-position.x + self.mouse-x,
-                            ) {
-                                // 拖到阈值以内：侧栏已经收起，把手随之退场，
-                                // 这一轮手势必须在这里收尾，别让追踪通道空转。
-                                dragging-width = false;
-                                PointerChase.holding = false;
-                            }
-                        }
-                        if (event.kind == PointerEventKind.up && event.button == PointerEventButton.left)
-                            || event.kind == PointerEventKind.cancel {
-                            // 主键还按着说明这条松开是合成的（Win7 抢抓取时会
-                            // 补一条），宽度继续跟手，等追踪通道报真正的松手。
-                            if !PointerChase.enabled || !PointerChase.primary-held() {
-                                dragging-width = false;
-                                PointerChase.holding = false;
-                            }
-                        }
+                split_workspace := ChatSplitWorkspace {
+                    horizontal-stretch: root.split-count > 1 ? 1 : 0;
+                    max-width: root.split-count > 1 ? root.width : 0px;
+                    // 与单视图列同理：单视图时它也必须真的收成 0，否则窗格内容
+                    // 的最小宽度会在右侧留下一条没有归属的空白。
+                    min-width: 0px;
+                    visible: root.split-count > 1;
+                    count <=> root.split-count;
+                    column-ratio <=> root.split-column-ratio;
+                    row-ratio <=> root.split-row-ratio;
+                    session-0 <=> root.split-session-0; session-1 <=> root.split-session-1;
+                    session-2 <=> root.split-session-2; session-3 <=> root.split-session-3;
+                    title-0 <=> root.split-title-0; title-1 <=> root.split-title-1;
+                    title-2 <=> root.split-title-2; title-3 <=> root.split-title-3;
+                    rows-0: root.split-rows-0; rows-1: root.split-rows-1;
+                    rows-2: root.split-rows-2; rows-3: root.split-rows-3;
+                    queue-0: root.split-queue-0; queue-1: root.split-queue-1;
+                    queue-2: root.split-queue-2; queue-3: root.split-queue-3;
+                    queue-overflow-0: root.split-queue-overflow-0;
+                    queue-overflow-1: root.split-queue-overflow-1;
+                    queue-overflow-2: root.split-queue-overflow-2;
+                    queue-overflow-3: root.split-queue-overflow-3;
+                    draft-0 <=> root.split-draft-0; draft-1 <=> root.split-draft-1;
+                    draft-2 <=> root.split-draft-2; draft-3 <=> root.split-draft-3;
+                    loading-0: root.split-loading-0; loading-1: root.split-loading-1;
+                    loading-2: root.split-loading-2; loading-3: root.split-loading-3;
+                    busy-0: root.split-busy-0; busy-1: root.split-busy-1;
+                    busy-2: root.split-busy-2; busy-3: root.split-busy-3;
+                    active-session: root.active-session-id;
+                    stream-revision: root.stream-updates;
+                    models: root.cloud-chat-active ? root.cloud-thread-models : root.composer-models;
+                    model-count: root.cloud-chat-active ? root.cloud-thread-models.length : root.model-catalogue-count;
+                    model-name: root.selected-model-key != "" ? root.selected-model-key : root.selected-agent-model;
+                    model-key: root.selected-model-key;
+                    model-names: root.split-model-names;
+                    model-keys: root.split-model-keys;
+                    contexts: root.split-contexts;
+                    attachments: root.pending-attachments;
+                    send-key: root.runtime-send-key;
+                    layout-changed(count) => { root.split-layout(count); }
+                    close-pane(slot) => { root.split-close(slot); }
+                    activate-pane(slot) => { root.split-activate(slot); }
+                    send-pane(slot) => { root.split-send(slot); }
+                    stop-pane(slot) => { root.split-stop(slot); }
+                    toggle-row(slot, index) => { root.split-toggle-row(slot, index); }
+                    process-page(slot, index, direction) => { root.split-process-page(slot, index, direction); }
+                    select-pane-model(slot, key) => { root.split-select-model(slot, key); }
+                    fork-thread(session, round) => { root.fork-thread(session, round); }
+                    copy-text(text) => { root.copy-raw(text); }
+                    open-resource(id) => { root.timeline-open(id); }
+                }
+            }
+        }
+        Rectangle {
+            x: root.sidebar-visual-width;
+            y: 0px;
+            width: root.sidebar-shown ? 6px : 0px;
+            height: parent.height;
+            z: root.sidebar-overlay ? 260 : 2;
+            visible: root.sidebar-shown;
+            background: transparent;
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: resize-touch.has-hover || resize-touch.pressed ? 2px : 0px;
+                height: resize-touch.pressed ? 40px : 32px;
+                border-radius: 1px;
+                background: Theme.accent;
+            }
+            resize-touch := TouchArea {
+                mouse-cursor: ew-resize;
+                // `mouse-x` is local to this handle. Resizing moves the
+                // handle itself, so using it as the drag origin feeds the
+                // new sidebar width back into the next delta and makes the
+                // divider shake. Track the window-relative pointer instead.
+                // Windows 上这个窗口坐标改由追踪通道（真实光标位置）提供：
+                // 事件流会在按住几像素后断掉，`absolute-position` 又滞后一
+                // 帧，两者叠加的表现就是「拖一点就停、宽度追不上光标」。
+                property <length> start-absolute-x;
+                property <length> start-width;
+                property <bool> dragging-width: false;
+                // 追踪通道的全局属性不能直接 `changed`，先绑到本地再观察。
+                property <length> chase-x: PointerChase.pointer-x;
+                property <int> chase-finish: PointerChase.finish-serial;
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                        root.sidebar-width = clamp(root.sidebar-width, 170px, 420px);
+                        start-width = root.sidebar-width;
+                        start-absolute-x = self.absolute-position.x + self.mouse-x;
+                        PointerChase.pointer-x = start-absolute-x;
+                        dragging-width = true;
+                        PointerChase.holding = PointerChase.enabled;
+                        PointerChase.begin();
                     }
-                    moved => {
-                        // 非 Windows 保持原来的几何路径；Windows 交给追踪通道，
-                        // 免得鼠标位置与滞后一帧的布局坐标互相拉扯。
-                        if !PointerChase.enabled && self.pressed {
-                            // Linux 等平台没有光标追踪通道，必须从事件流本身
-                            // 取当前窗口坐标；否则 pointer-x 停留在按下时的
-                            // 起点，宽度只会被夹到最小值。
-                            if !root.apply-sidebar-width(
-                                start-width,
-                                start-absolute-x,
-                                self.absolute-position.x + self.mouse-x,
-                            ) {
-                                dragging-width = false;
-                                PointerChase.holding = false;
-                            }
-                        }
-                    }
-                    changed chase-x => {
-                        if dragging-width && !root.apply-sidebar-width(
+                    if event.kind == PointerEventKind.move && dragging-width && !PointerChase.enabled {
+                        // 按住期间指针可能移出 6px 把手，捕获的 move 事件
+                        // 仍然可靠；与 `moved` 一起兜住 Linux 上的拖动。
+                        if !root.apply-sidebar-width(
                             start-width,
                             start-absolute-x,
-                            PointerChase.pointer-x,
+                            self.absolute-position.x + self.mouse-x,
+                        ) {
+                            // 拖到阈值以内：侧栏已经收起，把手随之退场，
+                            // 这一轮手势必须在这里收尾，别让追踪通道空转。
+                            dragging-width = false;
+                            PointerChase.holding = false;
+                        }
+                    }
+                    if (event.kind == PointerEventKind.up && event.button == PointerEventButton.left)
+                        || event.kind == PointerEventKind.cancel {
+                        // 主键还按着说明这条松开是合成的（Win7 抢抓取时会
+                        // 补一条），宽度继续跟手，等追踪通道报真正的松手。
+                        if !PointerChase.enabled || !PointerChase.primary-held() {
+                            dragging-width = false;
+                            PointerChase.holding = false;
+                        }
+                    }
+                }
+                moved => {
+                    // 非 Windows 保持原来的几何路径；Windows 交给追踪通道，
+                    // 免得鼠标位置与滞后一帧的布局坐标互相拉扯。
+                    if !PointerChase.enabled && self.pressed {
+                        // Linux 等平台没有光标追踪通道，必须从事件流本身
+                        // 取当前窗口坐标；否则 pointer-x 停留在按下时的
+                        // 起点，宽度只会被夹到最小值。
+                        if !root.apply-sidebar-width(
+                            start-width,
+                            start-absolute-x,
+                            self.absolute-position.x + self.mouse-x,
                         ) {
                             dragging-width = false;
                             PointerChase.holding = false;
                         }
                     }
-                    changed chase-finish => {
-                        if dragging-width {
-                            dragging-width = false;
-                            PointerChase.holding = false;
-                        }
+                }
+                changed chase-x => {
+                    if dragging-width && !root.apply-sidebar-width(
+                        start-width,
+                        start-absolute-x,
+                        PointerChase.pointer-x,
+                    ) {
+                        dragging-width = false;
+                        PointerChase.holding = false;
                     }
                 }
-                // 分线中点的收起按钮（对齐云端版）：平时隐形，指针进入分线
-                // 或按钮本身时才出现；按钮比 6px 分线略宽，向聊天区一侧伸出
-                // 半列，避免在分线里挤成一根针。不可见时不占位、不拦截事件。
-                Rectangle {
-                    x: (parent.width - 18px) / 2;
-                    y: (parent.height - 32px) / 2;
-                    width: 18px;
-                    height: 32px;
-                    visible: resize-touch.has-hover || resize-touch.pressed || collapse-touch.has-hover;
-                    border-radius: 6px;
-                    border-width: 1px;
-                    border-color: collapse-touch.has-hover ? Theme.accent-soft : Theme.border;
-                    background: Theme.surface;
-                    Image {
-                        x: (parent.width - 10px) / 2;
-                        y: (parent.height - 10px) / 2;
-                        width: 10px; height: 10px;
-                        source: @image-url("../assets/icons/chevron-left.svg");
-                        colorize: collapse-touch.has-hover ? Theme.accent-ink : Theme.muted;
-                    }
-                    collapse-touch := TouchArea {
-                        mouse-cursor: pointer;
-                        accessible-role: button; accessible-label: I18n.ui_collapse_sidebar;
-                        Tooltip { text: @markdown("\{I18n.ui_collapse_sidebar}"); }
-                        clicked => {
-                            root.sidebar-collapsed = true;
-                            root.sidebar-layout-changed();
-                        }
+                changed chase-finish => {
+                    if dragging-width {
+                        dragging-width = false;
+                        PointerChase.holding = false;
                     }
                 }
             }
-            Rectangle {
-                horizontal-stretch: root.split-count == 1 ? 1 : 0;
-                max-width: root.split-count == 1 ? root.width : 0px;
-                // 分屏时这列要真正收成 0：`max-width` 拦不住内容的最小宽度，
-                // 不显式放开 `min-width` 的话，隐藏的单视图列会按最宽的表单
-                // 撑出一条空白，左侧窗格就被顶到侧栏右边一段距离之外。
-                min-width: 0px;
-                visible: root.split-count == 1;
-                background: Theme.chat;
-                VerticalLayout {
-                    spacing: 0px;
-                    // The transcript owns the full column height: the web form
-                    // dropped the top bar, so the workspace/thread identity it
-                    // carried lives only in the sidebar now.
-                    // The transcript holder is a small wrapper so the timeline
-                    // stays reachable from outside: a `public function` cannot
-                    // name an element that an `if` may remove, so the two views
-                    // toggle on `visible` instead of being conditionally built.
-                    follow_view := Rectangle {
-                        vertical-stretch: 1;
-                        out property <length> scroll-y: timeline_view.scroll-y;
-                        public function scroll-to-end() { timeline_view.scroll-to-end(); }
-                        timeline_view := TimelineView {
-                            visible: true;
-                            rows: root.timeline;
-                            loading: root.chat-loading || root.session-loading || !root.threads-ready
-                                || (root.cloud-chat-active && root.cloud-thread-busy);
-                            loading-text: root.session-loading ? (I18n.zh ? "正在打开线程，读取历史记录…" : "Opening thread and reading history…")
-                                : root.chat-loading || !root.threads-ready ? (root.startup-note != "" ? root.startup-note : I18n.st_runtime_loading)
-                                : root.cloud-chat-active && root.cloud-thread-busy ? (I18n.zh ? "正在打开线程，读取历史记录…" : "Opening thread and reading history…")
-                                : I18n.st_runtime_loading;
-                            greeting: root.cloud-chat-active ? root.cloud-greeting
-                                : root.agents.length > 0 ? root.agents[0].description : "";
-                            greeting-loading: root.prompt-preview-loading;
-                            preview-prompt => { root.open-prompt-preview(); }
-                            turn-marks: root.turn-marks;
-                            follow-output <=> root.follow-output;
-                            scroll-restore-revision: root.timeline-scroll-restore;
-                            scroll-restore-y: root.timeline-scroll-y;
-                            scroll-restore-tail: root.timeline-scroll-tail;
-                            spinning: root.busy;
-                            stream-revision: root.stream-updates;
-                            toggle(index) => { root.timeline-toggle(index); }
-                            process-page(index, direction) => { root.timeline-process-page(index, direction); }
-                            load-older => { root.timeline-load-older(); }
-                            copy-text(text) => { root.copy-raw(text); }
-                            copy-original(id) => { root.cloud-copy-original(id); }
-                            fork-thread(round) => { root.fork-thread(root.active-session-id, round); }
-                            open-resource(id) => { root.timeline-open(id); }
-                            show-context-menu(x, y, selected) => {
-                                TextMenuState.anchor-x = x;
-                                TextMenuState.anchor-y = y;
-                                TextMenuState.has-selection = selected;
-                                TextMenuState.open = true;
-                            }
-                        }
-                    }
-                    // Status dock: the plan capsule sits between the timeline
-                    // and the goal banner; its checklist card overlaps the
-                    // timeline via negative y. It shows up only while the plan
-                    // tool has steps — the turn's phase text already reads on
-                    // the timeline rows, and queue position is folded into the
-                    // timeline too, so the old banners are gone.
-                    // The input band follows the transcript's full available width.
-                    // Its 14px side inset also aligns the status dock, goal banner
-                    // and inquiry card with the composer card.
-                    Rectangle {
-                        height: input-band.preferred-height;
-                        input-band := VerticalLayout {
-                            width: parent.width;
-                            x: (parent.width - self.width) / 2;
-                            padding-left: 14px;
-                            padding-right: 14px;
-                            spacing: 0px;
-                            // 首次配置引导：本地聊天还没有任何真实模型。云端线程
-                            // 走自己的模型目录，不显示。用 visible 而不是 if，
-                            // 原生 smoke 检查要读它的窗口坐标做真实点击。
-                            setup-banner := ModelSetupBanner {
-                                visible: root.needs-model-setup && !root.cloud-chat-active;
-                                setup => { root.setup-first-model(); }
-                            }
-                            if root.activity-steps-total > 0 : StatusDock {
-                                running: root.activity-running;
-                                plan-complete: root.activity-plan-complete;
-                                steps-done: root.activity-steps-done;
-                                steps-total: root.activity-steps-total;
-                                plan-explanation: root.activity-plan-explanation;
-                                plan-steps: root.activity-plan-steps;
-                                current-step: root.activity-plan-current;
-                                current-position: root.activity-plan-position;
-                                expanded <=> root.activity-plan-expanded;
-                                dismiss => { root.activity-plan-dismiss(); }
-                            }
-                            if root.goal-visible && root.goal-objective != "" : GoalBanner {
-                                objective: root.goal-objective;
-                                elapsed: root.goal-elapsed;
-                                phase: root.goal-phase;
-                                activation: root.goal-activation;
-                                rounds: root.goal-rounds;
-                                paused: root.goal-paused;
-                                editing <=> root.goal-editing;
-                                edit-draft <=> root.goal-edit-draft;
-                                save(text) => { root.goal-save(text); }
-                                pause-toggle => { root.goal-pause-toggle(); }
-                                clear => { root.goal-clear(); }
-                            }
-                            if root.approval-visible && root.approval-session == root.active-session-id : ApprovalPanel {
-                                kind: root.approval-kind;
-                                summary: root.approval-summary;
-                                pending: root.approval-pending;
-                                decide(decision) => { root.approval-decide(decision); }
-                            }
-                            if root.inquiry-visible && root.inquiry-session == root.active-session-id : InquiryPanel {
-                                questions: root.inquiry-questions;
-                                page: root.inquiry-page;
-                                total: root.inquiry-total;
-                                expanded: root.inquiry-expanded;
-                                option-clicked(row, option) => { root.inquiry-option-clicked(row, option); }
-                                other-edited(row, text) => { root.inquiry-other-edited(row, text); }
-                                no-preference(row) => { root.inquiry-no-preference(row); }
-                                use-recommended(row) => { root.inquiry-use-recommended(row); }
-                                page-move(delta) => { root.inquiry-page-move(delta); }
-                                expanded-toggle => { root.inquiry-expanded-toggle(); }
-                            }
-                            composer := Composer {
-                                draft <=> root.draft; busy: root.command-pending || root.session-loading || root.creating-session || (root.chat-loading && !root.busy) || (root.cloud-chat-active && root.cloud-thread-busy);
-                            launch-cli => { root.launch-cli(); }
-                            send-key: root.runtime-send-key;
-                            context-usage: root.context-usage; context-known: root.context-known; context-counts: root.context-counts; context-compacted: root.context-compacted;
-                            models: root.cloud-chat-active ? root.cloud-thread-models : root.composer-models;
-                            // The local built-in agent owns the saved quick prompts; a
-                            // cloud thread keeps its service-side composer scope.
-                            preset-questions: root.cloud-chat-active ? [] : root.selected-agent-preset-questions;
-                            model-catalogue-count: root.cloud-chat-active ? root.cloud-thread-models.length : root.model-catalogue-count;
-                            cloud-ready: root.cloud-logged-in && !root.cloud-expired;
-                            model-name: root.selected-model-key != "" ? root.selected-model-key : root.selected-agent-model;
-                            model-key: root.selected-model-key;
-                            model-saving: root.saving;
-                            select-model(index, key) => { root.select-thread-model(key); }
-                            open-model-settings => { root.settings-open = true; root.settings-active-panel = 1; root.refresh-settings(); }
-                            branch-name: root.active-workspace-branch;
-                            host-cpu: root.host-cpu; host-memory: root.host-memory;
-                            host-net: root.host-net; host-disk: root.host-disk;
-                            host-cpu-text: root.host-cpu-text; host-memory-text: root.host-memory-text;
-                            host-net-text: root.host-net-text; host-disk-text: root.host-disk-text;
-                            host-link: root.host-link;
-                            host-net-rx: root.host-net-rx; host-net-tx: root.host-net-tx;
-                            host-disk-read: root.host-disk-read; host-disk-write: root.host-disk-write;
-                            host-memory-used: root.host-memory-used; host-memory-total: root.host-memory-total;
-                            host-cores: root.host-cores;
-                            running-tasks: root.running-tasks;
-                            running-task-count: root.running-task-count;
-                            toggle-task(id) => { root.toggle-task(id); }
-                            terminate-task(id) => { root.terminate-task(id); }
-                            subagent-items: root.subagent-items;
-                            subagent-count: root.subagent-count;
-                            subagent-running-count: root.subagent-running-count;
-                            open-subagent(id) => { root.dock-open-subagent(id); }
-                            stop-subagent(id) => { root.dock-stop-subagent(id); }
-                            attachments: root.pending-attachments;
-                            inquiry-ready: root.inquiry-ready;
-                            queue-turns: root.queue-turns;
-                            queue-overflow: root.queue-overflow;
-                            queue-interject(queue-id) => { root.queue-interject(queue-id); }
-                            queue-edit(queue-id) => { root.queue-edit(queue-id); }
-                            queue-remove(queue-id) => { root.queue-remove(queue-id); }
-                            queue-move-by(queue-id, delta) => { root.queue-move-by(queue-id, delta); }
-                            recall-history(direction, cursor-offset, anchor-offset, draft) => {
-                                return root.recall-history(direction, cursor-offset, anchor-offset, draft);
-                            }
-                            generating: root.busy || root.goal-active; stopping: root.stopping; stop => { root.stop-generation(); }
-                            recording: root.recording; transcribing: root.transcribing; recording-elapsed: root.recording-elapsed; recording-pulse: root.recording-pulse;
-                            send => { root.send-message(); }
-                            screenshot() => { root.capture-screenshot(); }
-                            paste-image() => { return root.paste-image(); }
-                            file-drop(event) => { root.composer-file-drop(event); }
-                            record-voice => { root.record-voice(); }
-                            remove-attachment(index) => { root.remove-attachment(index); }
-                            }
-                        }
-                    }
-                }
+        }
+        sidebar_view := Sidebar {
+            // 停靠时占一列，窄窗时浮在主区之上。浮层不参与布局，
+            // x/width 必须显式给出；只靠 visible 会留下内容最小宽度。
+            x: 0px;
+            y: 0px;
+            width: root.sidebar-visual-width;
+            height: parent.height;
+            z: root.sidebar-overlay ? 210 : 1;
+            visible: root.sidebar-shown;
+            clip: true;
+            border-width: root.sidebar-overlay ? 1px : 0px;
+            border-color: Theme.border;
+            drop-shadow-color: root.sidebar-overlay ? #00000038 : transparent;
+            drop-shadow-blur: root.sidebar-overlay ? 18px : 0px;
+            drop-shadow-offset-x: root.sidebar-overlay ? 4px : 0px;
+            rows: root.sidebar-rows;
+            active-thread-id: root.active-session-id;
+            // Signed-in identity travels from the profile projection so the
+            // sidebar never owns a second copy of the avatar state.
+            user-initial: root.profile.avatar-glyph;
+            user-color: root.profile.avatar-brush;
+            // The avatar stays a placeholder until the profile projection
+            // lands, so a fresh launch never shows an identity it does not
+            // know yet.
+            user-ready: root.profile-ready;
+            // Cloud quota badge (§6.1): blank hides the pill, warn marks
+            // a balance at or below 10% of the daily grant.
+            cloud-quota-text: root.cloud-logged-in ? root.cloud-balance : "";
+            cloud-quota-warn: root.cloud-quota-warn;
+            cloud-quota-expired: root.cloud-connection == "expired";
+            cloud-quota-reconnecting: root.cloud-connection == "reconnecting";
+            // The sidebar hosts the device selector: local (this 桌面版) is
+            // always present, cloud appears once an account is signed in.
+            cloud-available: root.cloud-logged-in;
+            local-workspace-count: root.workspaces.length;
+            busy: root.creating-session || root.session-loading || root.chat-loading;
+            select-row(index) => { root.select-row(index); }
+            select-device(device) => { root.select-device(device); }
+            new-cloud-thread => { root.cloud-new-thread(); }
+            workspace-menu(workspace, action) => { root.workspace-menu(workspace, action); }
+            new-workspace => { root.new-workspace(); }
+            move-row(index, travel) => { root.move-row(index, travel); }
+            drop-thread-to-chat(index) => { root.drop-thread-on-split(index); }
+            open-thread-split(index) => { root.open-thread-in-split(index); }
+            archive-thread(id) => {
+                root.archive-thread(id);
             }
-            split_workspace := ChatSplitWorkspace {
-                horizontal-stretch: root.split-count > 1 ? 1 : 0;
-                max-width: root.split-count > 1 ? root.width : 0px;
-                // 与单视图列同理：单视图时它也必须真的收成 0，否则窗格内容
-                // 的最小宽度会在右侧留下一条没有归属的空白。
-                min-width: 0px;
-                visible: root.split-count > 1;
-                count <=> root.split-count;
-                column-ratio <=> root.split-column-ratio;
-                row-ratio <=> root.split-row-ratio;
-                session-0 <=> root.split-session-0; session-1 <=> root.split-session-1;
-                session-2 <=> root.split-session-2; session-3 <=> root.split-session-3;
-                title-0 <=> root.split-title-0; title-1 <=> root.split-title-1;
-                title-2 <=> root.split-title-2; title-3 <=> root.split-title-3;
-                rows-0: root.split-rows-0; rows-1: root.split-rows-1;
-                rows-2: root.split-rows-2; rows-3: root.split-rows-3;
-                queue-0: root.split-queue-0; queue-1: root.split-queue-1;
-                queue-2: root.split-queue-2; queue-3: root.split-queue-3;
-                queue-overflow-0: root.split-queue-overflow-0;
-                queue-overflow-1: root.split-queue-overflow-1;
-                queue-overflow-2: root.split-queue-overflow-2;
-                queue-overflow-3: root.split-queue-overflow-3;
-                draft-0 <=> root.split-draft-0; draft-1 <=> root.split-draft-1;
-                draft-2 <=> root.split-draft-2; draft-3 <=> root.split-draft-3;
-                loading-0: root.split-loading-0; loading-1: root.split-loading-1;
-                loading-2: root.split-loading-2; loading-3: root.split-loading-3;
-                busy-0: root.split-busy-0; busy-1: root.split-busy-1;
-                busy-2: root.split-busy-2; busy-3: root.split-busy-3;
-                active-session: root.active-session-id;
-                stream-revision: root.stream-updates;
-                models: root.cloud-chat-active ? root.cloud-thread-models : root.composer-models;
-                model-count: root.cloud-chat-active ? root.cloud-thread-models.length : root.model-catalogue-count;
-                model-name: root.selected-model-key != "" ? root.selected-model-key : root.selected-agent-model;
-                model-key: root.selected-model-key;
-                model-names: root.split-model-names;
-                model-keys: root.split-model-keys;
-                contexts: root.split-contexts;
-                attachments: root.pending-attachments;
-                send-key: root.runtime-send-key;
-                layout-changed(count) => { root.split-layout(count); }
-                close-pane(slot) => { root.split-close(slot); }
-                activate-pane(slot) => { root.split-activate(slot); }
-                send-pane(slot) => { root.split-send(slot); }
-                stop-pane(slot) => { root.split-stop(slot); }
-                toggle-row(slot, index) => { root.split-toggle-row(slot, index); }
-                process-page(slot, index, direction) => { root.split-process-page(slot, index, direction); }
-                select-pane-model(slot, key) => { root.split-select-model(slot, key); }
-                fork-thread(session, round) => { root.fork-thread(session, round); }
-                copy-text(text) => { root.copy-raw(text); }
-                open-resource(id) => { root.timeline-open(id); }
+            rename-request(payload, title) => {
+                root.thread-rename-cloud-id = "";
+                root.thread-rename-payload = payload;
+                root.thread-rename-title = title;
+                root.thread-rename-draft = title;
+                root.thread-rename-open = true;
+            }
+            open-trajectory(index) => { root.open-trajectory(index); }
+            cloud-rename-request(id, title) => {
+                root.thread-rename-cloud-id = id;
+                root.thread-rename-title = title;
+                root.thread-rename-draft = title;
+                root.thread-rename-open = true;
+            }
+            cloud-archive-request(id) => {
+                root.cloud-archive-thread(id);
+            }
+            cloud-open-trajectory(id) => { root.cloud-open-trajectory(id); }
+            selection-mode: root.sidebar-selection-mode;
+            selected-count: root.sidebar-selected-count;
+            archivable-count: root.sidebar-archivable-count;
+            begin-selection => { root.sidebar-begin-selection(); }
+            exit-selection => { root.sidebar-exit-selection(); }
+            toggle-selection(index) => { root.sidebar-toggle-selection(index); }
+            select-all-threads => { root.sidebar-select-all(); }
+            archive-selected => { root.sidebar-archive-selected(); }
+            open-settings => { root.settings-open = true; root.settings-active-panel = 0; root.refresh-settings(); }
+            // Working-directory region: model and actions live on the
+            // window shell, the sidebar only forwards.
+            file-rows: root.ws-file-rows;
+            file-loading: root.ws-file-loading;
+            file-error: root.ws-file-error;
+            file-offline: root.ws-file-offline;
+            file-busy: root.ws-file-busy;
+            file-active-path: root.ws-file-active-path;
+            file-active-index: root.ws-file-active-index;
+            file-key(action) => { root.ws-file-key(action); }
+            split-ratio <=> root.sidebar-split-ratio;
+            layout-changed => { root.sidebar-layout-changed(); }
+            file-local: root.ws-file-local;
+            file-toggle(index) => { root.ws-file-toggle(index); }
+            file-pick(index, ctrl, shift) => { root.ws-file-pick(index, ctrl, shift); }
+            file-refresh => { root.ws-file-refresh(); }
+            file-selection-action(action) => { root.ws-file-selection-action(action); }
+            file-search-edit(text) => { root.ws-file-search-edit(text); }
+            file-search-accept(text) => { root.ws-file-search-accept(text); }
+            file-search-cancel => { root.ws-file-search-cancel(); }
+            file-search-open <=> root.ws-file-search-open;
+            file-search-query <=> root.ws-file-search-query;
+            file-search-busy: root.ws-file-search-busy;
+            file-search-active: root.ws-file-search-active;
+            file-selected-count: root.ws-file-selected-count;
+            file-connect => { root.settings-open = true; root.settings-active-panel = 13; root.refresh-settings(); }
+            file-menu(index, action) => { root.ws-file-menu(index, action); }
+            file-drag-begin(index) => { root.ws-file-drag-begin(index); }
+            file-drag-hover(index) => { root.ws-file-drag-hover(index); }
+            file-drag-drop(index) => { root.ws-file-drag-drop(index); }
+            file-dragging: root.ws-file-dragging;
+            file-drop-path: root.ws-file-drop-path;
+            file-drop-root: root.ws-file-drop-root;
+            file-drop(event) => { root.ws-file-drop(event); }
+        }
+        // 窄窗浮层的点击遮罩：侧栏浮在主区上时，点空白处就退回。
+        if root.sidebar-overlay && root.sidebar-shown : Rectangle {
+            x: root.sidebar-visual-width;
+            y: 0px;
+            width: parent.width - root.sidebar-visual-width;
+            height: parent.height;
+            z: 200;
+            background: #000000;
+            opacity: 0.16;
+            close-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.sidebar-peek = false; }
             }
         }
         // 收起后的恢复入口（对齐云端版）：侧栏整列退场后，聊天区拿到左上角，
-        // 这颗常驻小按钮浮在那里，点击就按收起前的宽度把侧栏展开。
-        if root.sidebar-collapsed : Rectangle {
+        // 这颗常驻小按钮浮在那里；宽窗恢复停靠，窄窗则以浮层唤出。
+        if !root.sidebar-shown : Rectangle {
             x: 12px;
             y: 12px;
             z: 120;
@@ -1771,6 +1788,8 @@ export component MainWindow inherits Window {
                 Tooltip { text: @markdown("\{I18n.ui_expand_sidebar}"); }
                 clicked => {
                     root.sidebar-collapsed = false;
+                    // 窄窗下唤出的是浮层；宽窗直接恢复停靠。
+                    root.sidebar-peek = root.sidebar-overlay;
                     root.sidebar-layout-changed();
                 }
             }
@@ -1779,8 +1798,8 @@ export component MainWindow inherits Window {
 
     // 拖拽浮标只属于侧栏会话树（scope 0）：设置页拖模型行时不该在聊天区飘
     // 一个「任务」似的标签。
-    if DragPreview.active && DragPreview.scope == 0 && DragPreview.pointer-x >= root.sidebar-width + 6px : Rectangle {
-        x: clamp(DragPreview.pointer-x + 10px, root.sidebar-width + 8px, root.width - 188px);
+    if DragPreview.active && DragPreview.scope == 0 && DragPreview.pointer-x >= root.sidebar-visual-width + 6px : Rectangle {
+        x: clamp(DragPreview.pointer-x + 10px, root.sidebar-visual-width + 8px, root.width - 188px);
         y: clamp(DragPreview.pointer-y - 12px, Theme.titlebar-height + 8px, root.height - 34px);
         width: 180px; height: 26px; z: 180;
         border-radius: Theme.radius-md; background: Theme.surface;

@@ -30,7 +30,7 @@
     <div v-else-if="!rows.length" class="workspace-files-state is-empty">
       <i class="fa-regular fa-folder-open" aria-hidden="true"></i>
       <span class="workspace-files-state-text">{{ props.emptyText || t('messenger.filesArea.empty') }}</span>
-      <span class="workspace-files-state-hint">{{ props.emptyHint || t('messenger.filesArea.emptyHint') }}</span>
+      <span class="workspace-files-state-hint">{{ props.emptyHint || defaultEmptyHint }}</span>
     </div>
 
     <div v-else class="workspace-files-rows" :style="rowsStyle">
@@ -259,6 +259,12 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+// 触屏没有「拖拽文件」这种操作习惯，空态提示改为指向上传按钮。
+const defaultEmptyHint = computed(() =>
+  typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
+    ? t('messenger.filesArea.emptyHintTouch')
+    : t('messenger.filesArea.emptyHint')
+);
 
 const scrollerRef = ref<HTMLElement | null>(null);
 const scrollTop = ref(0);

@@ -429,7 +429,7 @@ pub fn pick_attachments() -> Result<Vec<String>, String> {
 /// Reads one picked file into the composer's attachment shape: a `data:` URL
 /// plus the detected content type. Files above the cap are skipped by the
 /// caller so one huge pick cannot balloon the message.
-pub fn read_attachment(path: &str) -> Option<crate::ChatAttachment> {
+pub fn read_attachment(path: &str) -> Option<crate::image_attachment::AttachmentDraft> {
     use base64::Engine;
     const MAX_ATTACHMENT_BYTES: u64 = 8 * 1024 * 1024;
     let path_buf = std::path::PathBuf::from(path);
@@ -443,11 +443,13 @@ pub fn read_attachment(path: &str) -> Option<crate::ChatAttachment> {
     }
     let bytes = std::fs::read(&path_buf).ok()?;
     let mime = attachment_mime(&path_buf);
+    let preview = crate::image_attachment::thumbnail_from_bytes(mime, &bytes);
     let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    Some(crate::ChatAttachment {
-        name: name.into(),
+    Some(crate::image_attachment::AttachmentDraft {
+        name,
         mime_type: mime.into(),
-        data_url: format!("data:{mime};base64,{encoded}").into(),
+        data_url: format!("data:{mime};base64,{encoded}"),
+        preview,
     })
 }
 

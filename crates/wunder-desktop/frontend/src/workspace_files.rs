@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use wunder_desktop::native::{CloudOpOutcome, NativeInterlinkEntry, NativeInterlinkListing};
 use wunder_desktop::NativeDesktop;
 
@@ -134,6 +134,9 @@ static DRAG_MOVE: RefCell<Option<DragMove>> = const { RefCell::new(None) };
 /// The interlink façade, parked once at install so pointer-driven gestures
 /// (the drag leaving the window) can reach it without extra plumbing.
 static DESKTOP: RefCell<Option<Arc<NativeDesktop>>> = const { RefCell::new(None) };
+    /// When the last completion settle was issued; repeated terminal reports
+    /// from one settlement fold into it instead of listing the tree again.
+    static COMPLETION_REFRESH_AT: Cell<Option<Instant>> = const { Cell::new(None) };
     /// Search debounce timer plus the serial of the latest issued query;
     /// stale results only land when their serial still matches.
     static SEARCH_TIMER: RefCell<Timer> = RefCell::new(Timer::default());
@@ -192,8 +195,26 @@ pub(crate) fn set_target(app: &MainWindow, api: Arc<NativeDesktop>, target: Targ
     }
 }
 
+/// Completion refreshes fan in here: the live pump, the durable observer and
+/// the thread-status projection all report the same settlement, and one
+/// settle per settlement is enough.
+const COMPLETION_COALESCE: Duration = Duration::from_millis(500);
+
 /// Coalesced refresh after an execution writes files; no per-token scans.
 pub(crate) fn execution_finished(app: &MainWindow, api: Arc<NativeDesktop>) {
+    let due = COMPLETION_REFRESH_AT.with(|slot| {
+        let now = Instant::now();
+        match slot.get() {
+            Some(last) if now.duration_since(last) < COMPLETION_COALESCE => false,
+            _ => {
+                slot.set(Some(now));
+                true
+            }
+        }
+    });
+    if !due {
+        return;
+    }
     settle(app, api.clone());
     // Final artifacts can land just after the terminal frame. One trailing
     // settle per completed execution guarantees the panel ends on the
@@ -207,6 +228,18 @@ pub(crate) fn execution_finished(app: &MainWindow, api: Arc<NativeDesktop>) {
             }
         },
     );
+}
+
+/// A turn reported its settled phase. Every completion path (foreground
+/// stream, durable observer, background work ending, an opened finished
+/// thread) passes through the thread-status projection, so refreshing here
+/// guarantees the working directory shows the committed artifacts after the
+/// agent finishes even when no live stream was pumped by this window.
+pub(crate) fn note_execution_finished(app: &MainWindow) {
+    let Some(api) = DESKTOP.with(|slot| slot.borrow().clone()) else {
+        return;
+    };
+    execution_finished(app, api);
 }
 
 /// Push the target's chrome: the local flag swaps cloud-only actions out, the

@@ -198,8 +198,18 @@ export global Theme {
     out property <length> dock-width: 284px;
     out property <length> header-height: 56px;
     out property <length> middle-header-height: 80px;
-    out property <length> min-window-width: 880px;
-    out property <length> min-window-height: 700px;
+    // The shell has to survive a narrow, short window (a docked panel beside
+    // another app): below the overlay breakpoint the sidebar floats instead of
+    // eating the chat column, so these floors are set by the chat card itself,
+    // not by a docked tree.
+    out property <length> min-window-width: 360px;
+    out property <length> min-window-height: 360px;
+    // Below this width the sidebar stops sharing the row and becomes an
+    // overlay: the chat keeps the full width and the tree is summoned on top.
+    out property <length> sidebar-overlay-width: 760px;
+    // The hardware readout is the first thing to yield on a narrow composer:
+    // plus + model + send must still fit without eliding either control.
+    out property <length> host-hud-min-width: 640px;
     // Frameless workbench chrome strip height; the main content starts below it.
     out property <length> titlebar-height: 28px;
     out property <length> dock-breakpoint: 1100px;

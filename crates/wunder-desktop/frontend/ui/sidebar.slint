@@ -460,11 +460,16 @@ export component Sidebar inherits Rectangle {
     callback file-key(int);
     in-out property <float> split-ratio: 0.6;
     callback layout-changed();
+    // 窗口变矮时先收起工作目录区：线程树和底部设置入口必须保持可用，
+    // 文件面板不该把设置行挤出窗口。收起后树直接拿到整段剩余高度。
+    private property <bool> files-region: root.height >= 480px;
     private property <length> split-track: max(1px, root.height - 95px - (root.selection-mode ? 70px : 0px));
     // 两段高度先算成值再钉死：ListView 的内容最小高度会把「首选高度」顶开，
-    // 只写 height 时布局仍按最小高度分配，工作目录面板被压到只剩头部、设置行
-    // 被挤出窗口。min/max 同时钉住才是固定高度。
-    private property <length> tree-height: max(1px, min(root.split-track - 1px, root.split-track * clamp(root.split-ratio, 0.3, 0.8)));
+    // 只写 height 时布局仍按最小高度分配。窗口很矮时直接收起文件区，
+    // 让树拿满剩余高度，底部设置入口始终留在窗口内。
+    private property <length> tree-height: !root.files-region
+        ? max(1px, root.height - 87px - (root.selection-mode ? 70px : 0px))
+        : max(1px, min(root.split-track - 1px, root.split-track * clamp(root.split-ratio, 0.3, 0.8)));
     callback file-toggle(int);
     callback file-refresh();
     callback file-connect();
@@ -595,11 +600,15 @@ export component Sidebar inherits Rectangle {
             // 的内容最小高度仍会把它撑满整列，把下面的工作目录面板挤扁。
             min-height: root.tree-height;
             max-height: root.tree-height;
+            preferred-height: root.tree-height;
             // The sticky header replica below is a sibling of the tree and
             // slides out above its top edge when the next group arrives; the
             // frame must clip it so it never paints over the device row.
             clip: true;
             tree := ListView {
+                // 列表自身默认的最小高度会顶开外层钉死的高度，把工作目录区
+                // 和底部设置行一起往下挤；把下限放回 0 才受外框控制。
+                min-height: 0px;
                 horizontal-scrollbar-policy: always-off;
                 for row[ri] in root.rows : Rectangle {
                     height: row.kind == 1 || row.kind == 3 ? SidebarMetrics.thread-height : SidebarMetrics.group-height;
@@ -868,7 +877,7 @@ export component Sidebar inherits Rectangle {
         // region, as on the web: dragging up grows the files region. The
         // delta never reads the sidebar height, so the window's vertical
         // layout stays acyclic.
-        Rectangle {
+        if root.files-region : Rectangle {
             height: 8px;
             Rectangle {
                 y: 3px; width: parent.width; height: 1px;
@@ -908,9 +917,10 @@ export component Sidebar inherits Rectangle {
         }
         // Working-directory region: the cloud workspace tree. Actions flow
         // through to the window shell like every other sidebar callback.
-        WorkspaceFilesPanel {
+        if root.files-region : WorkspaceFilesPanel {
             min-height: root.split-track - root.tree-height;
             max-height: root.split-track - root.tree-height;
+            preferred-height: root.split-track - root.tree-height;
             rows: root.file-rows;
             loading: root.file-loading;
             error: root.file-error;
@@ -942,10 +952,19 @@ export component Sidebar inherits Rectangle {
             drop-path: root.file-drop-path;
             drop-root: root.file-drop-root;
         }
+    }
+    // 设置入口钉在侧栏底部：窗口很矮时，列表内容的最小高度会把最后一个
+    // 流式行推到窗口外，底部入口必须自己占位而不是排队。
+    Rectangle {
+        y: root.height - 41px;
+        width: parent.width;
+        height: 41px;
+        z: 5;
+        background: Theme.sidebar;
         Rectangle { height: 1px; background: Theme.border; }
         // Settings button: 4px 上气口 + 32px 行 + 4px 下气口，与树里的行同高同留白。
         Rectangle {
-            height: 40px;
+            height: 40px; y: 1px;
             HorizontalLayout {
                 padding-left: SidebarMetrics.gutter; padding-right: SidebarMetrics.gutter;
                 padding-top: 4px; padding-bottom: 4px;
@@ -1007,6 +1026,7 @@ export component Sidebar inherits Rectangle {
             }
         }
     }
+
     // Device menu overlay: the outside touch closes it; the two rows switch
     // between this local 桌面版 and the signed-in cloud workspace.
     if root.device-menu-open && root.cloud-available : TouchArea {

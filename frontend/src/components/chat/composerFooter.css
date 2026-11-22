@@ -448,6 +448,81 @@
   font-weight: 600;
 }
 
+/* 手机「+」面板第一页的三个入口（对齐安卓版）：整行可点，高度按触屏放宽。 */
+.composer-plus-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mz-text, #1f2329);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-plus-action:active {
+  background: var(--mz-hover, #f1efec);
+}
+
+.composer-plus-action-icon {
+  flex: 0 0 18px;
+  width: 18px;
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: 14px;
+  text-align: center;
+}
+
+.composer-plus-action-caret {
+  margin-left: auto;
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: 10px;
+}
+
+/* 预设问题第二页：返回键 + 标题同一行，和安卓版 plus sheet 的第二页一致。 */
+.composer-plus-page-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 2px 4px;
+}
+
+.composer-plus-back-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--mz-text-secondary, #3d3d3d);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.composer-plus-back-btn:active {
+  background: var(--mz-hover, #f1efec);
+}
+
+.composer-plus-page-title {
+  color: var(--mz-text, #1f2329);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* 手机「+」的两个隐藏输入：只负责调起系统选择器，不参与布局。 */
+.composer-file-input {
+  display: none;
+}
+
 .composer-panel-item {
   display: flex;
   align-items: center;

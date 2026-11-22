@@ -1785,11 +1785,13 @@ impl NativeDesktop {
         {
             return Err(anyhow!("线程不存在"));
         }
-        self.desktop
-            .state
-            .workspace
-            .save_session_reasoning_effort(self.user_id(), session_id, value)
-            .map_err(Into::into)
+        let saved = self.desktop.state.workspace.save_session_reasoning_effort(
+            self.user_id(),
+            session_id,
+            value,
+        )?;
+        self.invalidate_chat_snapshot(session_id);
+        Ok(saved)
     }
 
     /// Pins the thread's model override (empty clears it). The model key is
@@ -1829,8 +1831,9 @@ impl NativeDesktop {
                 self.user_id(),
                 session_id,
                 (!model_key.is_empty()).then_some(model_key),
-            )
-            .map_err(Into::into)
+            )?;
+        self.invalidate_chat_snapshot(session_id);
+        Ok(())
     }
 
     pub fn get_session(&self, session_id: &str) -> Result<(NativeSession, Vec<NativeMessage>)> {
@@ -1944,6 +1947,16 @@ impl NativeDesktop {
         let mut cache = self.chat_snapshot_cache.lock().ok()?;
         cache.retain(|_, entry| entry.cached_at.elapsed() <= CHAT_SNAPSHOT_CACHE_TTL);
         cache.get(session_id).map(|entry| entry.snapshot.clone())
+    }
+
+    /// Drop one thread's cached open snapshot after a write it carries. The
+    /// composer restores the thread model and reasoning effort from that
+    /// snapshot, so a switch away and back inside the cache TTL would
+    /// otherwise resurrect the values from before the write.
+    fn invalidate_chat_snapshot(&self, session_id: &str) {
+        if let Ok(mut cache) = self.chat_snapshot_cache.lock() {
+            cache.remove(session_id.trim());
+        }
     }
 
     fn store_chat_snapshot(&self, session_id: &str, snapshot: NativeChatSnapshot) {

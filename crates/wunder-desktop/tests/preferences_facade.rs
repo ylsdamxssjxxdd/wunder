@@ -213,6 +213,39 @@ fn session_model_override_persists_through_the_native_facade() {
         .is_err());
 }
 
+/// Opening a thread caches its snapshot for quick switches. A thread setting
+/// written afterwards must invalidate that copy, or switching away and back
+/// restores the pre-write model label and reasoning effort.
+#[test]
+fn cached_open_snapshot_does_not_resurrect_old_thread_settings() {
+    let _serial = serial();
+    let runtime = start_isolated().expect("isolated runtime");
+    let session = runtime.create_session(None).expect("create session");
+
+    let first = runtime
+        .open_chat_snapshot(&session.id)
+        .expect("initial open");
+    assert_eq!(first.session.session_model_name, None);
+    assert_eq!(first.session.reasoning_effort, "default");
+
+    runtime
+        .set_session_model(&session.id, "test-model")
+        .expect("pin model");
+    runtime
+        .save_session_reasoning_effort(&session.id, "high")
+        .expect("save reasoning effort");
+
+    let reopened = runtime
+        .open_chat_snapshot(&session.id)
+        .expect("reopen after settings write");
+    assert_eq!(
+        reopened.session.session_model_name.as_deref(),
+        Some("test-model"),
+        "cached snapshot flipped the thread back to the default model"
+    );
+    assert_eq!(reopened.session.reasoning_effort, "high");
+}
+
 #[test]
 fn diagnostics_export_is_secret_free() {
     let _serial = serial();

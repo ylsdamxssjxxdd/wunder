@@ -7,6 +7,28 @@
     @dragleave="handleDragLeave"
     @drop="handleDrop"
   >
+    <!-- 手机「+」面板的两个入口：上传文件走系统文件选择（可多选），拍照走相机。
+         输入必须常驻 DOM（`phoneLayout` 期间），iOS 才允许在点击手势里直接 .click()。 -->
+    <input
+      v-if="phoneLayout"
+      ref="phoneFileInputRef"
+      class="composer-file-input"
+      type="file"
+      multiple
+      tabindex="-1"
+      @change="handlePhoneFileInputChange"
+    />
+    <input
+      v-if="phoneLayout"
+      ref="phonePhotoInputRef"
+      class="composer-file-input"
+      type="file"
+      accept="image/*"
+      capture="environment"
+      tabindex="-1"
+      @change="handlePhoneFileInputChange"
+    />
+
     <div v-if="showUploadArea" class="upload-preview" data-testid="chat-composer-attachments">
       <div class="upload-preview-list">
         <div
@@ -158,8 +180,8 @@
             </button>
 
             <div v-if="plusPanelVisible" ref="plusPanelRef" class="composer-panel composer-panel--plus" @click.stop>
-              <!-- 只有一栏：点「+」直接铺出该智能体的预设问题，点一项就填入草稿；
-                   输入 `/` 时同一栏让位给命令建议。没有命令/审批/语音行，选问题只需一次点击。 -->
+              <!-- 桌面只有一栏：点「+」直接铺出该智能体的预设问题，点一项就填入草稿；
+                   输入 `/` 时同一栏让位给命令建议。 -->
               <div v-if="commandSuggestionsVisible" class="composer-plus-suggestions" role="listbox">
                 <button
                   v-for="(item, index) in commandSuggestions"
@@ -177,8 +199,38 @@
                 </button>
                 <div class="command-menu-hint">{{ t('chat.commandMenu.hint') }}</div>
               </div>
+              <!-- 手机对齐安卓版：第一页三个入口（预设问题 / 上传文件 / 拍照），
+                   预设问题再进第二页列表，返回键在第二页标题行。 -->
+              <template v-else-if="phoneLayout && phonePlusPage === 0">
+                <div class="composer-panel-title">{{ t('chat.composer.addToChat') }}</div>
+                <button class="composer-plus-action" type="button" @click="openPhonePresetPage">
+                  <i class="fa-solid fa-wand-magic-sparkles composer-plus-action-icon" aria-hidden="true"></i>
+                  <span>{{ t('chat.commandMenu.presetQuestions') }}</span>
+                  <i class="fa-solid fa-chevron-right composer-plus-action-caret" aria-hidden="true"></i>
+                </button>
+                <button class="composer-plus-action" type="button" @click="pickPhoneFiles">
+                  <i class="fa-solid fa-paperclip composer-plus-action-icon" aria-hidden="true"></i>
+                  <span>{{ t('chat.composer.uploadFile') }}</span>
+                </button>
+                <button class="composer-plus-action" type="button" @click="pickPhonePhoto">
+                  <i class="fa-solid fa-camera composer-plus-action-icon" aria-hidden="true"></i>
+                  <span>{{ t('chat.composer.takePhoto') }}</span>
+                </button>
+              </template>
               <template v-else>
-                <div class="composer-panel-title">{{ t('chat.commandMenu.presetQuestions') }}</div>
+                <div v-if="phoneLayout" class="composer-plus-page-head">
+                  <button
+                    class="composer-plus-back-btn"
+                    type="button"
+                    :title="t('chat.commandMenu.presetQuestions')"
+                    :aria-label="t('chat.commandMenu.presetQuestions')"
+                    @click="phonePlusPage = 0"
+                  >
+                    <i class="fa-solid fa-chevron-left" aria-hidden="true"></i>
+                  </button>
+                  <span class="composer-plus-page-title">{{ t('chat.commandMenu.presetQuestions') }}</span>
+                </div>
+                <div v-else class="composer-panel-title">{{ t('chat.commandMenu.presetQuestions') }}</div>
                 <ComposerPresetQuestions
                   v-if="presetQuestionItems.length"
                   :items="presetQuestionItems"
@@ -196,7 +248,8 @@
             <!-- 右组（对齐桌面 composer.slint:637-663）：模型 + 上下文占用 → 发送/停止。
                  占用统计不再单独占一个图标位：触发器上的大脑就是占用图标（按占用率填充），
                  数字与进度在浮层里展开。数据仍取自**唯一**一份投影 sessionContextUsage.ts。 -->
-            <div ref="modelMenuAnchorRef" class="composer-anchor">
+            <!-- 手机把模型入口移到顶部标题区（对齐安卓版），输入区不再占模型位。 -->
+            <div v-if="!phoneLayout" ref="modelMenuAnchorRef" class="composer-anchor">
               <button
                 class="composer-model-trigger"
                 type="button"
@@ -377,6 +430,14 @@ const props = defineProps({
   reasoningEffort: {
     type: String,
     default: 'default'
+  },
+  /**
+   * 手机布局（云端版 <= 720px）：模型入口上移到顶部标题区，输入区「+」改为
+   * 预设问题 / 上传文件 / 拍照三入口，对齐安卓版。
+   */
+  phoneLayout: {
+    type: Boolean,
+    default: false
   }
 });
 
@@ -404,6 +465,10 @@ const dragCounter = ref(0);
 const modelMenuAnchorRef = ref<HTMLElement | null>(null);
 const plusMenuAnchorRef = ref<HTMLElement | null>(null);
 const plusPanelRef = ref<HTMLElement | null>(null);
+// 手机「+」的两个隐藏输入：文件（多选）与相机（单张照片）。
+const phoneFileInputRef = ref<HTMLInputElement | null>(null);
+const phonePhotoInputRef = ref<HTMLInputElement | null>(null);
+const phonePlusPage = ref(0);
 const modelMenuVisible = ref(false);
 const plusMenuVisible = ref(false);
 const modelSwitching = ref(false);
@@ -1926,9 +1991,9 @@ const processImageFile = async (file: File): Promise<ComposerDraftAttachment> =>
  * every other file goes through the existing converter, and both end up as
  * ordinary composer attachments (the payload contract for `send` is untouched).
  *
- * 入口状态：`+ 更多 / 回形针`两个入口随 0.5.0 桌面对齐一并移除，云端语义下文件
- * 走左栏工作目录区（上传 + 引用到聊天）。整条管线与 chip 渲染暂时保留（无 UI 入口），
- * 交由主智能体决定是重新挂载入口还是整体移除，避免静默丢能力。
+ * 入口状态：桌面 `+ 更多 / 回形针`随 0.5.0 桌面对齐移除，云端语义下桌面文件
+ * 走左栏工作目录区（上传 + 引用到聊天）；手机 `+` 面板重新挂载本管线
+ * （上传文件 / 拍照），与安卓版一致，文件作为输入卡附件随下一条消息发送。
  */
 const ingestAttachmentFiles = async (files: File[]) => {
   const list = (Array.isArray(files) ? files : []).filter(Boolean);
@@ -2082,9 +2147,48 @@ const togglePlusMenu = () => {
   const next = !plusPanelVisible.value;
   closeOtherPanels('plus');
   plusMenuVisible.value = next;
+  // 每次打开手机面板都回到第一页（预设问题 / 上传文件 / 拍照）。
+  if (next) phonePlusPage.value = 0;
   // 收起时把 `/` 唤出的建议也一起收掉，下次点「+」还是预设问题。
   if (!next) commandMenuDismissed.value = true;
 };
+
+// ------------------------------------------------- phone plus panel actions
+const openPhonePresetPage = () => {
+  phonePlusPage.value = 1;
+};
+
+// 面板先收起再点隐藏输入：同一个点击手势里调用，iOS/Android 都会直接调起选择器。
+const pickPhoneFiles = () => {
+  closeComposerPanels();
+  phoneFileInputRef.value?.click();
+};
+
+const pickPhonePhoto = () => {
+  closeComposerPanels();
+  phonePhotoInputRef.value?.click();
+};
+
+const handlePhoneFileInputChange = async (event: Event) => {
+  const input = event.target as HTMLInputElement | null;
+  const files = Array.from(input?.files || []);
+  // 立刻清空 value，同一文件连续选两次也会重新触发 change。
+  if (input) input.value = '';
+  if (!files.length) return;
+  if (composerBusy.value > 0) {
+    ElMessage.warning(chatBusyMessage.value);
+    return;
+  }
+  await ingestAttachmentFiles(files);
+};
+
+// 旋转/拉宽进入手机布局时，输入区模型浮层不能悬空留着（锚点会被移除）。
+watch(
+  () => props.phoneLayout,
+  (isPhone) => {
+    if (isPhone) closeComposerPanels();
+  }
+);
 
 // ------------------------------------------------------------- model switching
 const reloadModelCatalog = async () => {

@@ -2754,6 +2754,7 @@ fn start_tick(
                         name: file.name.as_str().into(),
                         mime_type: slint::SharedString::new(),
                         data_url: slint::SharedString::new(),
+                        preview: slint::Image::default(),
                     })
                     .collect()
             } else {

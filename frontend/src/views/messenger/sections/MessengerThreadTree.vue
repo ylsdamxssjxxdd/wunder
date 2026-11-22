@@ -13,6 +13,7 @@
         :class="{
           'is-active': activeSessionId === item.id,
           'is-menu-open': openMenuId === item.id,
+          'is-actions-revealed': revealId === item.id,
           'is-selecting': selectionMode,
           'is-dragging': dragId === item.id,
           'is-drop-before': dropTarget?.id === item.id && dropTarget.position === 'before',
@@ -23,6 +24,10 @@
         :aria-selected="activeSessionId === item.id ? 'true' : 'false'"
         @mouseenter="handleRowHover(item.id)"
         @mouseleave="hoverId = ''"
+        @pointerdown="startRevealActions(item, $event)"
+        @pointerup="cancelReveal"
+        @pointercancel="cancelReveal"
+        @pointerleave="cancelReveal"
         @contextmenu.prevent.stop="openMenu(item, $event)"
         @dragstart="handleDragStart($event, item.id)"
         @dragover="handleDragOver($event, item.id)"
@@ -259,8 +264,30 @@ const emptyLabel = computed(() => t('messenger.tasks.empty'));
 // 行内动作按钮按需挂载：只为悬停行或右键菜单所属行渲染，避免每行都挂三个按钮。
 const hoverId = ref('');
 const openMenuId = ref('');
+// 触屏没有 hover：长按线程行 450ms 展开与鼠标悬停同一组动作按钮。
+const revealId = ref('');
+const revealTimer = ref<number | null>(null);
+const revealFired = ref(false);
+const cancelReveal = () => {
+  if (revealTimer.value !== null) {
+    window.clearTimeout(revealTimer.value);
+    revealTimer.value = null;
+  }
+};
+const startRevealActions = (item: TaskListItem, event: PointerEvent) => {
+  if (revealId.value && revealId.value !== item.id) revealId.value = '';
+  if (event.pointerType === 'mouse') return;
+  cancelReveal();
+  revealFired.value = false;
+  revealTimer.value = window.setTimeout(() => {
+    revealTimer.value = null;
+    revealFired.value = true;
+    revealId.value = item.id;
+    hoverId.value = item.id;
+  }, 450);
+};
 const shouldRenderActions = (id: string): boolean =>
-  openMenuId.value ? openMenuId.value === id : hoverId.value === id;
+  openMenuId.value ? openMenuId.value === id : hoverId.value === id || revealId.value === id;
 const handleRowHover = (id: string) => {
   hoverId.value = id;
   // 注意：菜单打开期间（openMenuId 非空）绝不在别的行 mouseenter 时清它——
@@ -436,6 +463,12 @@ const toggleSelectAll = () => {
 };
 
 const handleRowClick = (item: { id: string; state?: string; locked?: boolean }) => {
+  cancelReveal();
+  // 长按已经展开行内动作，抬手产生的这次点击不再进入线程。
+  if (revealFired.value) {
+    revealFired.value = false;
+    return;
+  }
   if (selectionMode.value) {
     toggleSelected(item);
     return;
@@ -549,6 +582,11 @@ onBeforeUnmount(() => {
 }
 
 .mz-thread-row.is-menu-open .mz-thread-action {
+  opacity: 1;
+}
+
+/* 触屏长按后行内动作保持可见，直到点按其他行。 */
+.mz-thread-row.is-actions-revealed .mz-thread-action {
   opacity: 1;
 }
 

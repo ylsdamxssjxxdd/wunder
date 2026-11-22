@@ -6,6 +6,7 @@
     :class="{
       'messenger-view--embedded-chat': isEmbeddedChatRoute,
       'messenger-view--drawer-open': sidebarDrawerOpen,
+      'messenger-view--phone': isPhoneLayout,
       'messenger-view--action-blocked': isMessengerInteractionBlocked
     }"
     :style="sidebarWidthStyle"
@@ -15,7 +16,7 @@
         v-show="!isEmbeddedChatRoute && !sidebarCollapsed"
         :controller="controller"
         :announcement-unread="announcementUnread"
-        @new-task="startNewSession"
+        @new-task="handleNewTask"
         @select-workspace="selectWorkspace"
         @open-thread="openThread"
         @open-local-thread="openLocalThread"
@@ -62,9 +63,50 @@
         @dragleave="singleDropActive = false"
         @drop="handleSingleSplitDrop"
       >
+        <!-- 手机浏览器：顶部条复用安卓版「左抽屉 / 中间标题 + 模型 / 右新建」的结构，
+             替代桌面浮层入口，避免汉堡按钮压住消息和右上角回到顶部。 -->
+        <header v-if="isPhoneLayout && !isEmbeddedChatRoute" class="messenger-mobile-head">
+          <button
+            class="messenger-mobile-head-btn"
+            type="button"
+            :title="t('messenger.sidebar.toggle')"
+            :aria-label="t('messenger.sidebar.toggle')"
+            @click="expandSidebar"
+          >
+            <i class="fa-solid fa-bars" aria-hidden="true"></i>
+          </button>
+          <!-- 顶部标题区只保留模型（对齐安卓版）：点击呼出模型面板，线程标题不再占位。 -->
+          <button
+            class="messenger-mobile-head-model"
+            type="button"
+            :disabled="phoneModelChipDisabled"
+            :title="phoneModelChipTitle"
+            :aria-label="phoneModelChipTitle"
+            :aria-expanded="phoneModelSheetOpen"
+            @click="phoneModelSheetOpen = true"
+          >
+            <ContextUsageIcon
+              class="messenger-mobile-head-model-usage"
+              :ratio="phoneContextUsage.ratio"
+              :compacted="phoneContextUsage.compacted"
+            />
+            <span class="messenger-mobile-head-model-label">{{ phoneHeaderModelLabel }}</span>
+            <i class="fa-solid fa-chevron-down messenger-mobile-head-model-caret" aria-hidden="true"></i>
+          </button>
+          <button
+            class="messenger-mobile-head-btn"
+            type="button"
+            :disabled="phoneNewTaskDisabled"
+            :title="t('chat.newSession')"
+            :aria-label="t('chat.newSession')"
+            @click="handleNewTask"
+          >
+            <i class="fa-solid fa-pen-to-square" aria-hidden="true"></i>
+          </button>
+        </header>
         <!-- 壳体不再有顶部条：窄视口抽屉入口 / 折叠后的展开入口与「回到顶部」都挂在主区浮层上。 -->
         <button
-          v-if="(isSidebarDrawer && !sidebarDrawerOpen) || sidebarCollapsed"
+          v-if="!isPhoneLayout && ((isSidebarDrawer && !sidebarDrawerOpen) || sidebarCollapsed)"
           class="messenger-sidebar-open"
           type="button"
           :title="t('messenger.sidebar.toggle')"
@@ -84,7 +126,7 @@
           <i class="fa-solid fa-angles-up" aria-hidden="true"></i>
         </button>
         <MessengerChatSplitView
-          v-if="splitCount !== 1"
+          v-if="splitCount !== 1 && !isPhoneLayout"
           v-model:count="splitCount"
           :controller="controller"
           :active-session-id="String(chatStore.activeSessionId || '')"
@@ -106,6 +148,21 @@
             @scroll.passive="handleMessageListScroll"
             @click="handleMessageContentClick"
           >
+            <div v-if="showPhoneEmptyState" class="messenger-phone-empty">
+              <span class="messenger-phone-empty-icon" aria-hidden="true">
+                <i class="fa-solid fa-comment-dots"></i>
+              </span>
+              <h2 class="messenger-phone-empty-title">{{ t('messenger.mobile.emptyTitle') }}</h2>
+              <p class="messenger-phone-empty-subtitle">{{ t('messenger.mobile.emptySubtitle') }}</p>
+              <button
+                class="messenger-phone-empty-action"
+                type="button"
+                :disabled="phoneNewTaskDisabled"
+                @click="handleNewTask"
+              >
+                {{ t('chat.newSession') }}
+              </button>
+            </div>
             <RemoteThreadsPanel
               v-if="localThreadActive"
               ref="remoteThreadPanelRef"
@@ -186,6 +243,7 @@
               :approval-mode-syncing="composerApprovalModeSyncing"
               :model-name="agentHeaderModelDisplayName"
               :apply-model="applyComposerModelSelection"
+              :phone-layout="isPhoneLayout && !isEmbeddedChatRoute"
               :reasoning-effort="String(activeSessionRecord?.reasoning_effort || activeSessionRecord?.reasoningEffort || 'default')"
               :context-messages="agentRenderableContextMessages"
               :workspace-agent-id="activeAgentIdForApi"
@@ -278,6 +336,14 @@
       :resolve-agent-runtime-state="resolveAgentRuntimeState"
       :open-agent-by-id="openAgentById"
     />
+    <PhoneModelSheet
+      v-if="isPhoneLayout && !isEmbeddedChatRoute"
+      v-model:visible="phoneModelSheetOpen"
+      :model-name="phoneHeaderModel"
+      :context-usage="phoneContextUsage"
+      :apply-model="applyComposerModelSelection"
+      :reasoning-effort="String(activeSessionRecord?.reasoning_effort || activeSessionRecord?.reasoningEffort || 'default')"
+    />
   </div>
 </template>
 
@@ -302,6 +368,10 @@ import MessengerTurnRuler from '@/views/messenger/sections/MessengerTurnRuler.vu
 import MessengerSettingsOverlay from '@/views/messenger/sections/MessengerSettingsOverlay.vue';
 import MessageGoalBar from '@/components/chat/MessageGoalBar.vue';
 import ComposerStatusDock from '@/components/chat/ComposerStatusDock.vue';
+import ContextUsageIcon from '@/components/chat/ContextUsageIcon.vue';
+import PhoneModelSheet from '@/views/messenger/sections/PhoneModelSheet.vue';
+import { useSessionContextUsage } from '@/views/messenger/sessionContextUsage';
+import { readChatLiveContextUsage } from '@/realtime/chat/chatLiveContextUsage';
 import RemoteThreadsPanel from '@/views/messenger/interlink/RemoteThreadsPanel.vue';
 import type { RemoteThreadItem } from '@/views/messenger/interlink/remoteThreadModel';
 
@@ -346,14 +416,14 @@ const singleDropActive = vueRef(false);
 const hasThreadDrag = (event: DragEvent): boolean =>
   Array.from(event.dataTransfer?.types || []).includes(CHAT_THREAD_DRAG_TYPE);
 const handleSingleSplitDragOver = (event: DragEvent) => {
-  if (splitCount.value !== 1 || !hasThreadDrag(event) || localThreadActive.value) return;
+  if (isPhoneLayout.value || splitCount.value !== 1 || !hasThreadDrag(event) || localThreadActive.value) return;
   event.preventDefault();
   singleDropActive.value = true;
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
 };
 const handleSingleSplitDrop = (event: DragEvent) => {
   singleDropActive.value = false;
-  if (splitCount.value !== 1) return;
+  if (isPhoneLayout.value || splitCount.value !== 1) return;
   const id = String(event.dataTransfer?.getData(CHAT_THREAD_DRAG_TYPE) || '').trim();
   if (!id) return;
   event.preventDefault();
@@ -386,6 +456,53 @@ const sidebarDrawerOpen = vueRef(false);
 const closeDrawerOnNarrow = () => {
   if (isSidebarDrawer.value) sidebarDrawerOpen.value = false;
 };
+
+// Phone browsers (<= 720px) follow the Android layout: one full-width chat pane,
+// a compact top bar, and a near-full-width drawer. Tablets keep the desktop shell.
+const PHONE_LAYOUT_MAX_WIDTH = 720;
+const isPhoneLayout = vueComputed(() => {
+  const width = Number(controller.viewportWidth?.value || 0);
+  return width > 0 && width <= PHONE_LAYOUT_MAX_WIDTH;
+});
+const showPhoneEmptyState = vueComputed(
+  () => isPhoneLayout.value && !hasActiveThread.value && !localThreadActive.value
+);
+const phoneHeaderModel = vueComputed(() => {
+  if (localThreadActive.value) return '';
+  const activeModel = String(controller.agentHeaderModelDisplayName?.value || '').trim();
+  if (activeModel) return activeModel;
+  // 空状态没有线程时读智能体配置，选完模型顶部能立刻回显。
+  const agent = (controller.activeAgent?.value || null) as Record<string, unknown> | null;
+  return String(agent?.configured_model_name || agent?.model_name || '').trim();
+});
+const phoneHeaderModelLabel = vueComputed(() => {
+  if (localThreadActive.value) return 'wunder';
+  return phoneHeaderModel.value || t('chat.composer.modelSheetTitle');
+});
+// 本地/互联线程有自己的模型，顶部胶囊只服务智能体会话。
+const phoneModelChipDisabled = vueComputed(() => localThreadActive.value);
+const phoneModelChipTitle = vueComputed(
+  () => `${t('chat.composer.modelSelect')}: ${phoneHeaderModelLabel.value}`
+);
+const phoneModelSheetOpen = vueRef(false);
+// 顶部胶囊上的大脑就是上下文占用表：与输入区共用同一份 sessionContextUsage 投影。
+const phoneContextUsage = useSessionContextUsage({
+  scope: () => `${String(chatStore.activeSessionId || '')}:${phoneHeaderModel.value}`,
+  messages: () =>
+    Array.isArray(agentRenderableContextMessages.value) ? agentRenderableContextMessages.value : [],
+  session: () => (activeSessionRecord.value || null) as Record<string, unknown> | null,
+  loading: () => Boolean(agentSessionLoading.value),
+  modelName: () => phoneHeaderModel.value,
+  observedUsedTokens: () =>
+    readChatLiveContextUsage(String(chatStore.activeSessionId || ''))?.used ?? null,
+  observedTotalTokens: () =>
+    readChatLiveContextUsage(String(chatStore.activeSessionId || ''))?.total ?? null
+});
+const phoneNewTaskDisabled = vueComputed(
+  () =>
+    Boolean(controller.creatingAgentSession?.value) ||
+    Boolean(controller.isMessengerInteractionBlocked?.value)
+);
 
 // 桌面端侧栏宽度拖拽与折叠：宽度通过覆盖 --mz-sidebar-width 生效，状态持久化在 localStorage。
 const SIDEBAR_WIDTH_STORAGE_KEY = 'messenger:sidebar:width';
@@ -636,6 +753,10 @@ const showChatSettingsView = controller.showChatSettingsView;
 const showScrollBottomButton = controller.showScrollBottomButton;
 const showScrollTopButton = controller.showScrollTopButton;
 const startNewSession = controller.startNewSession;
+const handleNewTask = () => {
+  closeDrawerOnNarrow();
+  startNewSession();
+};
 const stopAgentMessage = controller.stopAgentMessage;
 const toggleAgentVoiceRecord = controller.toggleAgentVoiceRecord;
 const updateComposerApprovalMode = controller.updateComposerApprovalMode;

@@ -3301,6 +3301,19 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         }
         let desktop = state.borrow().desktop.clone();
         let send_order = Arc::clone(&send_lock);
+        // The failure path must hand the cards back from the UI thread. Keep a
+        // send-safe payload copy: `ChatAttachment` carries a Slint image (not
+        // `Send`), so the closure rebuilds the cards instead of moving them.
+        let restore_cards = attachments
+            .iter()
+            .map(|attachment| {
+                (
+                    attachment.name.clone(),
+                    attachment.content_type.clone(),
+                    attachment.content.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
         let weak = weak.clone();
         std::thread::spawn(move || {
             let _order = send_order.lock().ok();
@@ -3392,10 +3405,17 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                                     app.set_draft(draft_content.as_str().into());
                                 }
                                 if app.get_pending_attachments().row_count() == 0
-                                    && !pending_attachments.is_empty()
+                                    && !restore_cards.is_empty()
                                 {
                                     app.set_pending_attachments(ModelRc::new(VecModel::from(
-                                        pending_attachments,
+                                        restore_cards
+                                            .iter()
+                                            .map(|(name, mime_type, data_url)| {
+                                                crate::image_attachment::chat_attachment(
+                                                    name, mime_type, data_url,
+                                                )
+                                            })
+                                            .collect::<Vec<_>>(),
                                     )));
                                 }
                             } else {
@@ -3611,19 +3631,27 @@ fn bind_attachments(app: &MainWindow) {
         app.set_status("正在读取附件…".into());
         let weak = weak.clone();
         std::thread::spawn(move || {
-            let picked = crate::file_dialog::pick_attachments();
-            let _ = weak.upgrade_in_event_loop(move |app| match picked {
-                Ok(paths) if paths.is_empty() => app.set_status("".into()),
-                Ok(paths) => {
-                    let mut attachments = app.get_pending_attachments().iter().collect::<Vec<_>>();
-                    let mut skipped = 0usize;
-                    for path in paths {
-                        match crate::file_dialog::read_attachment(&path) {
-                            Some(attachment) => attachments.push(attachment),
-                            None => skipped += 1,
-                        }
+            // 文件读取、base64 和缩略图解码都留在工作线程；事件循环只装配卡片。
+            let picked = crate::file_dialog::pick_attachments().map(|paths| {
+                let mut drafts = Vec::new();
+                let mut skipped = 0usize;
+                for path in paths {
+                    match crate::file_dialog::read_attachment(&path) {
+                        Some(draft) => drafts.push(draft),
+                        None => skipped += 1,
                     }
-                    let added = attachments.len();
+                }
+                (drafts, skipped)
+            });
+            let _ = weak.upgrade_in_event_loop(move |app| match picked {
+                Ok((drafts, skipped)) if drafts.is_empty() && skipped == 0 => {
+                    app.set_status("".into())
+                }
+                Ok((drafts, skipped)) => {
+                    let mut attachments = app.get_pending_attachments().iter().collect::<Vec<_>>();
+                    let added = drafts.len();
+                    attachments
+                        .extend(drafts.into_iter().map(|draft| draft.into_chat_attachment()));
                     app.set_pending_attachments(ModelRc::new(VecModel::from(attachments)));
                     app.set_status(
                         if skipped == 0 {
@@ -4054,10 +4082,12 @@ fn release_next_waiting_turn(app: &MainWindow, state: &Rc<RefCell<State>>) {
     app.set_pending_attachments(ModelRc::new(VecModel::from(
         turn.payload
             .iter()
-            .map(|attachment| crate::ChatAttachment {
-                name: attachment.name.as_str().into(),
-                data_url: attachment.content.as_str().into(),
-                mime_type: attachment.content_type.as_str().into(),
+            .map(|attachment| {
+                crate::image_attachment::chat_attachment(
+                    attachment.name.as_str(),
+                    attachment.content_type.as_str(),
+                    attachment.content.as_str(),
+                )
             })
             .collect::<Vec<_>>(),
     )));
@@ -4119,10 +4149,12 @@ fn interject_waiting_turn(
     app.set_pending_attachments(ModelRc::new(VecModel::from(
         turn.payload
             .iter()
-            .map(|attachment| crate::ChatAttachment {
-                name: attachment.name.as_str().into(),
-                data_url: attachment.content.as_str().into(),
-                mime_type: attachment.content_type.as_str().into(),
+            .map(|attachment| {
+                crate::image_attachment::chat_attachment(
+                    attachment.name.as_str(),
+                    attachment.content_type.as_str(),
+                    attachment.content.as_str(),
+                )
             })
             .collect::<Vec<_>>(),
     )));
@@ -4623,6 +4655,13 @@ fn write_session_row_settled(
     // point update; the periodic catalogue poll is only a backstop, not the
     // path a live transition should wait for.
     crate::navigation_ui::update_thread_status(app, session, status, phase, settled_at);
+    // A terminal is the authoritative "this run is over" signal. Every
+    // completion path writes it here, so the working directory catches up on
+    // the artifacts even when this window never pumped the turn's stream
+    // (a goal round, background work ending, a thread opened afterwards).
+    if phase.terminal() {
+        crate::workspace_files::note_execution_finished(app);
+    }
 }
 
 /// Settled news is short-lived; the row's outcome is not. This timer expires

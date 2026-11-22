@@ -770,8 +770,8 @@ fn install_first_frame_probe(boot: std::time::Instant) {
 /// ceiling of the automatic open size: the first frame should read as a small
 /// workbench, so a large monitor never gets a canvas-sized window. Both are
 /// ceilings, not requests — the user can still drag the window wider.
-const MIN_WINDOW_W: f64 = 880.0;
-const MIN_WINDOW_H: f64 = 700.0;
+const MIN_WINDOW_W: f64 = 360.0;
+const MIN_WINDOW_H: f64 = 360.0;
 const OPEN_WINDOW_MAX_W: f64 = 960.0;
 const OPEN_WINDOW_MAX_H: f64 = 780.0;
 

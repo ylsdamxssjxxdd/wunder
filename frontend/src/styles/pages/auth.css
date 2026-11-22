@@ -277,12 +277,17 @@
 
 @media (max-width: 640px) {
   .auth-page {
-    padding: 16px;
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(16px + env(safe-area-inset-bottom, 0px));
   }
   .auth-page--user .auth-card--user {
     width: 100%;
     border-radius: 14px;
     padding: 24px 20px;
+  }
+  /* 16px 是 iOS Safari 聚焦输入框不自动放大的下限，同时把触面抬到 44px。 */
+  .auth-page--user .auth-input {
+    height: 44px;
+    font-size: 16px;
   }
 }
 

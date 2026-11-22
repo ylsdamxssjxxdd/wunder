@@ -216,6 +216,12 @@ body,
   height: 100%;
 }
 
+html {
+  /* 手机浏览器旋转/横竖切换时不要自动放大字号。 */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
   font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;

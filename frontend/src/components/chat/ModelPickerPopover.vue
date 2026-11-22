@@ -1,6 +1,7 @@
 <template>
   <div
     class="composer-model-popover"
+    :class="{ 'composer-model-popover--sheet': variant === 'sheet' }"
     role="dialog"
     :aria-label="t('chat.composer.modelSelect')"
     @click.stop
@@ -108,6 +109,14 @@ const props = defineProps({
   busy: {
     type: Boolean,
     default: false
+  },
+  /**
+   * popover: 输入区上方的浮层（桌面）；
+   * sheet: 手机顶部模型胶囊打开的底部面板，位置与外观交给外层卡片。
+   */
+  variant: {
+    type: String,
+    default: 'popover'
   }
 });
 
@@ -212,6 +221,36 @@ const resolveModelTags = (item: ComposerModelOption): Array<{
   min-height: 0;
   max-height: 248px;
   overflow-y: auto;
+}
+
+/* 手机底部面板：外层卡片负责定位、圆角与阴影，这里只保留列表内容。 */
+.composer-model-popover--sheet {
+  position: static;
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.composer-model-popover--sheet .composer-model-list {
+  max-height: min(56vh, 420px);
+}
+
+.composer-model-popover--sheet .composer-model-row {
+  height: 52px;
+  padding: 8px 6px;
+}
+
+.composer-model-popover--sheet .composer-model-row:hover:not(:disabled) {
+  background: transparent;
+}
+
+.composer-model-popover--sheet .composer-model-row:active:not(:disabled) {
+  background: var(--mz-hover, #f1efec);
 }
 
 .composer-model-row {

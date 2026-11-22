@@ -1,0 +1,390 @@
+/* 手机浏览器适配（<= 720px）
+   参考安卓版：顶部条（抽屉 / 标题与模型 / 新建）+ 单栏聊天 + 近全宽抽屉 + 全屏设置。
+   桌面与平板（> 720px）保持原壳体，不引入任何手机专属结构。 */
+
+@media (max-width: 720px) {
+  .messenger-view {
+    /* 单栏时左右呼吸边距收窄，把宽度留给正文与输入区。 */
+    --mz-chat-gutter: 12px;
+    /* 手机上没有刻度条通道，输入区与正文回到同一条边线。 */
+    --mz-turn-ruler-width: 0px;
+    /* 设置/公告入口抬到 40px，手指更容易点中。 */
+    --mz-settings-btn-height: 40px;
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* ------------------------------------------------------------ 顶部条 */
+
+  .messenger-mobile-head {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 4px;
+    box-sizing: border-box;
+    height: calc(52px + env(safe-area-inset-top, 0px));
+    padding: env(safe-area-inset-top, 0px) 6px 0;
+    border-bottom: 1px solid var(--mz-border);
+    background: var(--mz-bg);
+  }
+
+  .messenger-mobile-head-btn {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--mz-text-secondary);
+    font-size: 16px;
+    cursor: pointer;
+  }
+
+  .messenger-mobile-head-btn:active:not(:disabled) {
+    background: var(--mz-hover);
+  }
+
+  .messenger-mobile-head-btn:disabled {
+    opacity: 0.45;
+  }
+
+  /* 顶部模型胶囊：点击呼出模型面板（安卓版同名交互），不再显示线程标题。 */
+  .messenger-mobile-head-model {
+    display: inline-flex;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-width: 0;
+    height: 36px;
+    margin: 0 4px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 18px;
+    background: transparent;
+    color: var(--mz-text);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .messenger-mobile-head-model:active:not(:disabled) {
+    background: var(--mz-hover);
+  }
+
+  .messenger-mobile-head-model:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  .messenger-mobile-head-model-usage {
+    font-size: 15px;
+  }
+
+  .messenger-mobile-head-model-label {
+    min-width: 0;
+    overflow: hidden;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .messenger-mobile-head-model-caret {
+    flex-shrink: 0;
+    color: var(--mz-text-muted);
+    font-size: 10px;
+  }
+
+  /* 顶部条已在布局流里占位，消息区不再给浮层按钮让高度。 */
+  .messenger-view--phone .messenger-main .messenger-chat-body {
+    padding-top: 0;
+    /* 滚到顶继续下拉时不要触发浏览器整页刷新。 */
+    overscroll-behavior-y: contain;
+  }
+
+  /* 回到顶部按钮落在顶部条下方，不再与条重叠。 */
+  .messenger-view--phone .messenger-main .messenger-scroll-top-btn {
+    top: calc(52px + env(safe-area-inset-top, 0px) + 8px);
+    right: 8px;
+  }
+
+  /* 手机上与安卓版一致，隐藏右侧用户轮次刻度条。 */
+  .messenger-view--phone .messenger-turn-ruler {
+    display: none;
+  }
+
+  /* --------------------------------------------------------- 空状态入口 */
+
+  .messenger-phone-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    box-sizing: border-box;
+    min-height: 100%;
+    padding: 32px 28px calc(32px + env(safe-area-inset-bottom, 0px));
+    text-align: center;
+  }
+
+  .messenger-phone-empty-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    margin-bottom: 4px;
+    border-radius: 18px;
+    background: var(--mz-primary-tint, var(--ui-accent-soft));
+    color: var(--mz-primary, var(--ui-accent-ink));
+    font-size: 22px;
+  }
+
+  .messenger-phone-empty-title {
+    margin: 0;
+    color: var(--mz-text);
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  .messenger-phone-empty-subtitle {
+    max-width: 280px;
+    margin: 0;
+    color: var(--mz-text-muted);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .messenger-phone-empty-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 132px;
+    height: 44px;
+    margin-top: 10px;
+    padding: 0 22px;
+    border: 0;
+    border-radius: 12px;
+    background: var(--mz-primary, var(--ui-accent-ink));
+    color: #ffffff;
+    font: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .messenger-phone-empty-action:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* 顶部条已经占住屏幕最上方，提示条下移，避免盖住标题与模型。 */
+  .el-message {
+    top: calc(60px + env(safe-area-inset-top, 0px)) !important;
+  }
+
+  /* ------------------------------------------------------------- 抽屉 */
+
+  .messenger-view--phone .messenger-sidebar {
+    width: min(88vw, 380px);
+    min-width: min(88vw, 380px);
+    max-width: min(88vw, 380px);
+    border-right: 0;
+    box-shadow: none;
+  }
+
+  /* 阴影只在抽屉真正打开时出现；关闭后留在画布外，避免在左边缘投出一条灰边。 */
+  .messenger-view--phone.messenger-view--drawer-open .messenger-sidebar {
+    box-shadow: 0 12px 40px rgba(31, 35, 41, 0.22);
+  }
+
+  .messenger-view--phone .messenger-sidebar-workspace-region {
+    padding-top: calc(8px + env(safe-area-inset-top, 0px));
+  }
+
+  .messenger-view--phone .messenger-sidebar-footer {
+    padding-bottom: calc(4px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* 手机抽屉里不再提供上下区拖拽；两区按已保存的比例分配，各自滚动。 */
+  .messenger-view--phone .messenger-sidebar-splitter {
+    display: none;
+  }
+
+  .messenger-view--phone .messenger-sidebar-workspace-menu {
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+  }
+
+  /* 文件区工具栏 24px 的图标按钮在触屏上太难点，放大一档。 */
+  .messenger-view--phone .workspace-files-action--icon {
+    flex: 0 0 32px;
+    width: 32px;
+    min-height: 32px;
+  }
+
+  .messenger-view--phone .messenger-sidebar-device-menu,
+  .messenger-view--phone .messenger-sidebar-workspace-menu {
+    touch-action: manipulation;
+  }
+
+  /* 触屏没有 hover：线程行长按后才出现的动作按钮放大一档，文件行的「更多」
+     直接常显，否则手机上找不到重命名 / 归档 / 删除的入口。 */
+  .messenger-view--phone .messenger-sidebar .mz-thread-action {
+    width: 26px;
+    height: 26px;
+  }
+
+  .messenger-view--phone .messenger-sidebar .workspace-file-menu {
+    width: 26px;
+    height: 26px;
+    opacity: 1;
+  }
+
+  /* ------------------------------------------------------------- 输入区 */
+
+  .messenger-view .messenger-chat-footer {
+    padding: 6px var(--mz-chat-gutter) calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* 16px 是 iOS Safari 聚焦输入框不自动放大的下限。 */
+  .messenger-view .messenger-chat-footer .composer-textarea {
+    font-size: 16px;
+    line-height: 1.5;
+  }
+
+  .messenger-view .messenger-chat-footer .composer-plus-btn,
+  .messenger-view .messenger-chat-footer .composer-send-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+  }
+
+  .messenger-view .messenger-chat-footer .composer-plus-icon,
+  .messenger-view .messenger-chat-footer .composer-send-icon {
+    font-size: 14px;
+  }
+
+  /* 手机「+」面板：预设问题 / 上传文件 / 拍照，宽度给足手指点击。 */
+  .messenger-view .messenger-chat-footer .composer-panel.composer-panel--plus {
+    width: min(320px, calc(100vw - 24px));
+    max-height: min(60vh, 420px);
+  }
+
+  /* 用户气泡在窄屏上额外让出宽度，正文列不至于被两侧缩进挤成一条。 */
+  .messenger-view--phone .messenger-message.messenger-message--timeline.mine .messenger-message-main {
+    padding: 0 12px;
+  }
+
+  .messenger-view--phone .messenger-message.messenger-message--timeline.mine .messenger-message-bubble {
+    max-width: 82%;
+  }
+
+  /* --------------------------------------------------------- 设置页 */
+
+  .messenger-settings-overlay {
+    padding: 0;
+  }
+
+  .messenger-settings-window {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .messenger-settings-window-head {
+    height: calc(48px + env(safe-area-inset-top, 0px));
+    padding: env(safe-area-inset-top, 0px) 8px 0 16px;
+  }
+
+  .messenger-settings-frame {
+    flex-direction: column;
+  }
+
+  /* 分类导航从左侧竖栏改成顶部横向胶囊条，内容区独占剩余高度。 */
+  .messenger-settings-frame-nav {
+    width: 100%;
+    max-height: none;
+    padding: 10px 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--mz-border);
+  }
+
+  .messenger-settings-frame-search {
+    height: 40px;
+    margin-bottom: 8px;
+  }
+
+  .messenger-settings-frame-search input {
+    font-size: 16px;
+  }
+
+  .messenger-settings-frame-nav-list {
+    flex-direction: row;
+    gap: 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 0 2px;
+    scrollbar-width: none;
+  }
+
+  .messenger-settings-frame-nav-list::-webkit-scrollbar {
+    display: none;
+  }
+
+  .messenger-settings-frame-nav-item {
+    flex: 0 0 auto;
+    width: auto;
+    height: 40px;
+    gap: 8px;
+    padding: 0 12px;
+    border-radius: 20px;
+  }
+
+  .messenger-settings-frame-nav-item.is-active::before {
+    display: none;
+  }
+
+  .messenger-settings-frame-nav-title {
+    flex: 0 0 auto;
+    font-size: 13px;
+  }
+
+  .messenger-settings-frame-nav-icon {
+    width: 16px;
+  }
+
+  .messenger-settings-frame-content-body {
+    padding: 12px 14px calc(24px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* iOS Safari 对小于 16px 的输入控件会在聚焦时自动放大页面。 */
+  .messenger-settings-window input,
+  .messenger-settings-window textarea,
+  .messenger-settings-window select,
+  .el-input__inner,
+  .el-textarea__inner,
+  .mz-dialog-input {
+    font-size: 16px;
+  }
+
+  /* 通用确认/输入弹层：贴边留白 + 安全区，输入框同样避免 iOS 聚焦放大。 */
+  .mz-dialog-overlay {
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(16px + env(safe-area-inset-bottom, 0px));
+    align-items: center;
+  }
+
+  .mz-dialog {
+    width: 100%;
+  }
+}

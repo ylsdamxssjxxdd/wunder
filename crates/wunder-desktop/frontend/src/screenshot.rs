@@ -702,9 +702,7 @@ pub fn capture_fullscreen(app: slint::Weak<MainWindow>, hide_window: bool) {
             }
             CAPTURE_IN_FLIGHT.store(false, Ordering::Release);
             match result {
-                Ok((Ok((name, data_url)), copied)) => {
-                    add_attachment(&app, name, data_url, "全屏截图", copied)
-                }
+                Ok((Ok(draft), copied)) => add_attachment(&app, draft, "全屏截图", copied),
                 Ok((Err(error), copied)) => report_unsaved(&app, "全屏截图", error, copied),
                 Err(error) => report(&app, format!("截图失败：{}", error)),
             }
@@ -813,7 +811,7 @@ fn finish_selection(app: slint::Weak<MainWindow>, x: i32, y: i32, width: i32, he
         // full or its temporary PNG could not be written.
         let copied = clipboard_image::publish(width, height, rgba);
         let _ = slint::invoke_from_event_loop(move || match result {
-            Ok((name, data_url)) => add_attachment(&app, name, data_url, "截图", copied),
+            Ok(draft) => add_attachment(&app, draft, "截图", copied),
             Err(error) => report_unsaved(&app, "截图", error, copied),
         });
     });
@@ -824,12 +822,11 @@ fn finish_selection(app: slint::Weak<MainWindow>, x: i32, y: i32, width: i32, he
 /// independent, so the user is told which one actually happened.
 fn add_attachment(
     app: &slint::Weak<MainWindow>,
-    name: String,
-    data_url: String,
+    draft: image_attachment::AttachmentDraft,
     kind: &str,
     clipboard: Result<(), String>,
 ) {
-    if !image_attachment::push(app, name, data_url) {
+    if !image_attachment::push(app, draft) {
         return;
     }
     let Some(app) = app.upgrade() else { return };
@@ -879,7 +876,11 @@ fn crop(
     (width as u32, height as u32, rgba)
 }
 
-fn save_attachment(width: u32, height: u32, rgba: &[u8]) -> Result<(String, String), String> {
+fn save_attachment(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+) -> Result<image_attachment::AttachmentDraft, String> {
     image_attachment::save(width, height, rgba, "screenshot")
 }
 
