@@ -9,7 +9,8 @@ import { presentChatInquiry, type ChatInquiryPanel } from './chatInquiry';
 import { reconcileThreadStream, LIVE_STREAM_MAX_CHARS } from './threadViewStream';
 
 export interface ThreadBodyRef { body_id: string; revision: number; bytes: number }
-export interface ViewMessage { item_id: string; content: string; reasoning?: string; created_seq?: number; durable_seq?: number; content_offset?: number; reasoning_offset?: number; tail_offset?: number; body?: ThreadBodyRef; feedback?: unknown; stats?: unknown; tail?: string; failure?: string; attachments?: unknown[]; /** Full body text once the lazy read landed, plus the identity it belongs to. */ hydrated_content?: string; hydrated_body?: string; /** Contiguous local view of a stream; the durable row drops its middle. */ live_content?: string; live_offset?: number; question_panel?: ChatInquiryPanel | null }
+export type ViewFailure = string | { code?: string; message?: string } | null;
+export interface ViewMessage { item_id: string; content: string; reasoning?: string; created_seq?: number; durable_seq?: number; content_offset?: number; reasoning_offset?: number; tail_offset?: number; body?: ThreadBodyRef; feedback?: unknown; stats?: unknown; tail?: string; failure?: ViewFailure; attachments?: unknown[]; /** Full body text once the lazy read landed, plus the identity it belongs to. */ hydrated_content?: string; hydrated_body?: string; /** Contiguous local view of a stream; the durable row drops its middle. */ live_content?: string; live_offset?: number; question_panel?: ChatInquiryPanel | null }
 export interface ChatViewRow { root_turn_id: string; execution_turn_id?:string; user_round: number; client_message_id?: string; revision: number; status: string; stop_reason?: string | null; queued_input?: { queue_id: string; reason: string; priority: number } | null; user: ViewMessage; assistant: ViewMessage; workflow_count: number; process_count?: number | null; process_items?: Array<Record<string, any>>; process_revision?: number; workspace_change_seq?: number; reasoning_count?: number; reasoning_item_id?: string; process_activity?: ProcessActivity; failed_count: number; subagents?: any[]; plan?: ChatPlan | null; created_time?: number; updated_time?: number }
 export interface ThreadViewPage { runtime_status?:string;status_turn_id?:string;active_turn_id?:string; session_id: string; epoch: number; view_seq: number; projection_state: string; degraded?: boolean; diagnostic?: string | null; thread_empty: boolean | null; latest_round: number; chat: ChatViewRow[]; trajectory: any[]; tiles: any[]; tile_level: number; next_before: number | null; has_more: boolean; next_after?: number | null; has_newer?: boolean }
 export type ViewPhase = 'opening' | 'ready' | 'verified_empty' | 'refreshing' | 'error';
@@ -126,7 +127,7 @@ function materialize(row: ChatViewRow): ViewSlot {
     process_activity: row.process_activity?.kind ? row.process_activity : undefined,
     process_items: row.process_items, process_revision: row.process_revision,
     process_refresh_revision: row.revision,
-    __thread_tail: m.tail, failureDetail:m.failure, attachments:m.attachments,
+    __thread_tail: m.tail, failureDetail: failureDetailOf(m.failure), attachments:m.attachments,
     __thread_tail_offset: m.tail_offset, __thread_content_offset: m.content_offset,
     __thread_live: m.live_content, __thread_live_offset: m.live_offset,
     workflowItems: [], ...(role==='assistant'?{plan:row.plan ?? null,questionPanel:presentChatInquiry(m.question_panel,row.status)}:{}), ...(role==='assistant'&&Array.isArray(row.subagents)&&row.subagents.length>0?{subagents:row.subagents}:{}), failed: role === 'assistant' && ['failed','rejected'].includes(row.status), stopped: row.status === 'cancelled' });
@@ -145,6 +146,14 @@ const isQueueOnlyCancelledRow = (row: ChatViewRow): boolean =>
       Number(row.workflow_count || 0) === 0
     )
   );
+// The durable projection sends a structured failure ({code,message}); older
+// payloads only carried the sentence. Normalize both into the string detail
+// the assistant failure notice consumes.
+function failureDetailOf(failure: ViewFailure | undefined): string {
+  if (!failure) return '';
+  if (typeof failure === 'string') return failure.trim();
+  return String(failure.message || failure.code || '').trim();
+}
 function utf16Units(text: string): number {
   return [...text].reduce((total, char) => total + char.length, 0);
 }

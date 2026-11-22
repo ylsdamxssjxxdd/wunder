@@ -26,6 +26,11 @@ assert.equal(threadViewSlots(key)!.length,100);
 clearThreadView(key);generation=beginThreadView(key);commitThreadView(key,page([]),generation);assert.equal(threadViewPhase(key),'verified_empty');
 console.log('thread view: generation, retained content, readiness, historical cursor, optimistic binding, unchanged identity, bounds and verified empty pass');
 
+clearThreadView(key);generation=beginThreadView(key);
+commitThreadView(key,page([{...row(1),status:'failed',assistant:{item_id:'',content:'',failure:{code:'llm_unavailable',message:'fixture failure reason'}}}]),generation);
+assert.equal(threadViewSlots(key)![0].assistant.failureDetail,'fixture failure reason');
+console.log('thread view: structured turn failure reaches the assistant failure notice');
+
 clearThreadView(key);generation=beginThreadView(key);commitThreadView(key,page([row(1)]),generation);
 applyThreadViewChanges(key,{view_seq:2,rows:[{...row(1,2),status:'running'}]});
 applyThreadViewTail(key,{item_id:'fixture-answer-1',field:'content',offset:14,text:'😀 fixture tail'});

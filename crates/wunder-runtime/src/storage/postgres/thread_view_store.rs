@@ -128,6 +128,7 @@ fn turn(row: tokio_postgres::Row) -> Result<Value> {
         "summary":row.get::<_,Option<String>>("summary_json").as_deref().map(serde_json::from_str::<Value>).transpose()?.unwrap_or_default(),
         "process_item_id":row.get::<_,Option<String>>("process_item_id"),
         "latest_assistant_item_id":row.get::<_,Option<String>>("latest_assistant_item_id"),
+        "failure_item_id":row.get::<_,Option<String>>("failure_item_id"),
     }))
 }
 
@@ -151,7 +152,8 @@ fn roots(
                 FROM (SELECT part FROM jsonb_array_elements(CASE WHEN jsonb_typeof(input.doc->'attachments')='array'
                   THEN input.doc->'attachments' ELSE '[]'::jsonb END) part LIMIT 8) cards))::text END AS input_json,
             head.control_json,chat.summary_json,process.item_id AS process_item_id,
-            latest_assistant.item_id AS latest_assistant_item_id
+            latest_assistant.item_id AS latest_assistant_item_id,
+            failure.item_id AS failure_item_id
         FROM (SELECT * FROM service_thread_admissions
             WHERE thread_id=$1 AND turn_id=root_turn_id
               AND ($2::bigint IS NULL OR user_round<$2) AND ($3::bigint IS NULL OR user_round>$3)
@@ -177,6 +179,14 @@ fn roots(
             WHERE thread_id=$1 AND root_turn_id=root.root_turn_id AND visible
               AND preview_json::jsonb->>'kind'='assistant_message'
             ORDER BY ordinal DESC LIMIT 1) latest_assistant ON TRUE
+        -- A failed turn's explanation lives in its durable terminal item. The
+        -- admission row keeps only bounded control fields, so the chat row has
+        -- to read the failure sentence from the timeline before it can explain
+        -- the failure instead of rendering an empty reply.
+        LEFT JOIN LATERAL (SELECT item_id FROM service_thread_items_v2
+            WHERE thread_id=$1 AND root_turn_id=root.root_turn_id AND visible
+              AND preview_json::jsonb->>'kind'='terminal'
+            ORDER BY ordinal DESC LIMIT 1) failure ON TRUE
         ORDER BY root.user_round {order}"), &[&session,&before,&after,&((limit+1) as i64),&include_input])?
         .into_iter().map(turn).collect::<Result<Vec<_>>>()?;
     turns.retain(|turn| !p::is_withdrawn_queue_turn(turn));
@@ -270,6 +280,15 @@ fn chat(turn: &Value, items: &HashMap<String, Value>, seq: i64) -> Result<ChatVi
     {
         row.assistant.question_panel = p::extract_question_panel(&item["payload"]);
     }
+    // Keep the failure explanation attached to the assistant bubble. Without
+    // it a failed model request settles into an empty reply and the cloud
+    // client shows no reason at all, unlike the local SQLite projection.
+    if matches!(row.status.as_str(), "failed" | "rejected") {
+        row.assistant.failure = turn["failure_item_id"]
+            .as_str()
+            .and_then(|id| items.get(id))
+            .and_then(|item| ThreadFailureView::from_payload(&item["payload"]));
+    }
     if let Some(item) = summary.plan_item_id.as_ref().and_then(|id| items.get(id)) {
         row.plan = p::plan(
             &item["payload"],
@@ -336,6 +355,27 @@ mod inquiry_tests {
         assert_eq!(row.reasoning_item_id, "fixture-turn:text-2");
         assert_eq!(row.assistant.reasoning, "Fixture next thought");
         assert_eq!(row.process_count, Some(2));
+    }
+
+    #[test]
+    fn failed_turn_projects_terminal_error_into_answer_body() {
+        let summary = ChatSummary::default();
+        let turn = json!({"turn_id":"fixture-turn","root_turn_id":"fixture-turn",
+            "user_round":1,"status":"failed","summary":summary,
+            "failure_item_id":"fixture-turn:terminal"});
+        let items = HashMap::from([(
+            "fixture-turn:terminal".into(),
+            json!({"item_id":"fixture-turn:terminal","kind":"terminal","status":"failed",
+                "payload":{"error":{"code":"llm_unavailable",
+                    "message":"模型调用失败: LLM request failed: HTTP 402"}}}),
+        )]);
+        let row = chat(&turn, &items, 3).unwrap();
+        let failure = row.assistant.failure.expect("failure must be projected");
+        assert_eq!(failure.code, "llm_unavailable");
+        assert_eq!(
+            failure.message,
+            "模型调用失败: LLM request failed: HTTP 402"
+        );
     }
 
     #[test]
@@ -557,6 +597,7 @@ impl PostgresThreadLog<'_> {
                     .filter_map(|field| t["summary"][field].as_str().map(str::to_owned))
                     .chain(t["process_item_id"].as_str().map(str::to_owned))
                     .chain(t["latest_assistant_item_id"].as_str().map(str::to_owned))
+                    .chain(t["failure_item_id"].as_str().map(str::to_owned))
                 })
                 .collect::<BTreeSet<_>>()
                 .into_iter()
