@@ -961,7 +961,7 @@ export component Sidebar inherits Rectangle {
         height: 41px;
         z: 5;
         background: Theme.sidebar;
-        Rectangle { height: 1px; background: Theme.border; }
+        Rectangle { y: 0px; width: parent.width; height: 1px; background: Theme.border; }
         // Settings button: 4px 上气口 + 32px 行 + 4px 下气口，与树里的行同高同留白。
         Rectangle {
             height: 40px; y: 1px;
