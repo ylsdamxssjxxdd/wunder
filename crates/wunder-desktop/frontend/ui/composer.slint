@@ -1702,8 +1702,8 @@ export component Composer inherits Rectangle {
         18px + max(root.action-row-height, root.editor-box-height);
     // 附件条带固定一行：缩略图 + 10px 横向滚动条。高度不随附件数量
     // 增长，多出来的附件在本行内横向滚动。
-    private property <length> attachment-thumb-width: root.mobile ? 72px : 96px;
-    private property <length> attachment-thumb-height: root.mobile ? 60px : 72px;
+    private property <length> attachment-thumb-width: root.mobile ? 64px : 96px;
+    private property <length> attachment-thumb-height: root.mobile ? 56px : 72px;
     private property <length> attachment-strip-height: root.attachment-thumb-height + 10px;
     height: (root.mobile ? root.mobile-card-height : 136px + root.editor-growth)
         + (root.attachments.length > 0 ? root.attachment-strip-height + 6px : 0px)

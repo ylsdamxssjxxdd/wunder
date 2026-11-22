@@ -2754,7 +2754,19 @@ fn start_tick(
                         name: file.name.as_str().into(),
                         mime_type: slint::SharedString::new(),
                         data_url: slint::SharedString::new(),
-                        preview: slint::Image::default(),
+                        preview: file
+                            .preview
+                            .as_ref()
+                            .map(|preview| {
+                                slint::Image::from_rgba8(
+                                    slint::SharedPixelBuffer::clone_from_slice(
+                                        &preview.rgba,
+                                        preview.width,
+                                        preview.height,
+                                    ),
+                                )
+                            })
+                            .unwrap_or_default(),
                     })
                     .collect()
             } else {

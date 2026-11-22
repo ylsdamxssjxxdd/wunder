@@ -1201,14 +1201,25 @@ pub struct Shared {
     pub stream_revision: i32,
 }
 
+/// 输入区附件卡的缩略图。引擎线程解码并降到卡片尺寸，UI 只负责包成
+/// `slint::Image`；不把 `slint::Image` 放进 `Shared`，避免跨线程约束。
+#[derive(Clone, PartialEq)]
+pub struct UploadPreview {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
 /// 上传进工作区、还没随消息发出的一个文件。
 ///
 /// `path` 是相对工作区根目录的路径（如 `screenshots/a.png`），也就是模型在
-/// 工具里能直接用的那个路径；`name` 只用于输入框上的附件卡。
+/// 工具里能直接用的那个路径；`name` 只用于输入框上的附件卡，`preview`
+/// 让截图/图片显示成缩略图，非图片保持文件卡片。
 #[derive(Clone, PartialEq)]
 pub struct UploadedFile {
     pub name: String,
     pub path: String,
+    pub preview: Option<UploadPreview>,
 }
 
 /// 运行中键入的消息：先在本地持有，等这一轮结束再交给引擎。
@@ -6878,6 +6889,9 @@ fn upload_workspace_at(
                 }
             }
         }
+        // 缩略图要在文件被搬走前从暂存副本读取；只有挂进输入区的上传
+        // 才值得解码，工作目录里的普通上传等用户真要发送时再说。
+        let preview = if attach { upload_preview(&staged) } else { None };
         match desktop.workspace_local_upload_to(&root, dir, &staged) {
             Ok(relative) => {
                 uploaded += 1;
@@ -6885,7 +6899,7 @@ fn upload_workspace_at(
                 // `attach` 只来自聊天页与系统分享：这些文件接下来会被用户
                 // 当作「这条消息的材料」，所以要挂进输入框等发送时告知模型。
                 if attach {
-                    remember_upload(shared, &relative);
+                    remember_upload(shared, &relative, preview);
                 }
             }
             Err(error) => {
@@ -6926,8 +6940,40 @@ fn upload_workspace_at(
 /// 免得一次批量上传把提示块和输入区都撑爆。
 const PENDING_UPLOAD_LIMIT: usize = 20;
 
+/// 附件卡缩略图的长边。手机上的卡片只有几十像素，留一倍余量足够清晰，
+/// 也把一张大照片的常驻内存压到百 KB 级。
+const UPLOAD_PREVIEW_MAX_EDGE: u32 = 240;
+
+/// 给能解码的位图生成一张小预览；PDF、文本等不是图片，返回 `None`，
+/// 输入区继续显示文件图标与文件名。
+fn upload_preview(path: &std::path::Path) -> Option<UploadPreview> {
+    let mut reader = image::ImageReader::open(path)
+        .ok()?
+        .with_guessed_format()
+        .ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(64 * 1024 * 1024);
+    reader.limits(limits);
+    let image = reader
+        .decode()
+        .ok()?
+        .thumbnail(UPLOAD_PREVIEW_MAX_EDGE, UPLOAD_PREVIEW_MAX_EDGE)
+        .to_rgba8();
+    let (width, height) = image.dimensions();
+    if width == 0 || height == 0 {
+        return None;
+    }
+    Some(UploadPreview {
+        width,
+        height,
+        rgba: image.into_raw(),
+    })
+}
+
 /// 把刚上传的文件挂进输入框，等发送时随消息一起告知模型。
-fn remember_upload(shared: &Arc<Mutex<Shared>>, path: &str) {
+fn remember_upload(shared: &Arc<Mutex<Shared>>, path: &str, preview: Option<UploadPreview>) {
     let path = path.trim().trim_start_matches('/').to_string();
     if path.is_empty() {
         return;
@@ -6940,7 +6986,9 @@ fn remember_upload(shared: &Arc<Mutex<Shared>>, path: &str) {
     if state.pending_uploads.len() >= PENDING_UPLOAD_LIMIT {
         state.pending_uploads.remove(0);
     }
-    state.pending_uploads.push(UploadedFile { name, path });
+    state
+        .pending_uploads
+        .push(UploadedFile { name, path, preview });
     state.uploads_rev = state.uploads_rev.wrapping_add(1);
     state.touch();
 }
@@ -9585,9 +9633,9 @@ mod tests {
     #[test]
     fn uploaded_files_are_announced_once_with_the_next_message() {
         let shared = Arc::new(Mutex::new(Shared::default()));
-        remember_upload(&shared, "screenshots/a.png");
-        remember_upload(&shared, "/图片/b.jpg");
-        remember_upload(&shared, "screenshots/a.png");
+        remember_upload(&shared, "screenshots/a.png", None);
+        remember_upload(&shared, "/图片/b.jpg", None);
+        remember_upload(&shared, "screenshots/a.png", None);
         {
             let state = shared.lock().unwrap();
             assert_eq!(state.pending_uploads.len(), 2);
@@ -9610,7 +9658,7 @@ mod tests {
     #[test]
     fn an_empty_draft_can_still_carry_uploaded_files() {
         let shared = Arc::new(Mutex::new(Shared::default()));
-        remember_upload(&shared, "截图.png");
+        remember_upload(&shared, "截图.png", None);
         let text = append_upload_notice(&shared, String::new());
         assert!(text.starts_with("有 1 个新文件已放入当前工作目录："));
         assert!(text.contains("截图.png"));
@@ -9705,8 +9753,8 @@ mod tests {
     #[test]
     fn withdrawing_one_upload_keeps_the_rest() {
         let shared = Arc::new(Mutex::new(Shared::default()));
-        remember_upload(&shared, "a.txt");
-        remember_upload(&shared, "b.txt");
+        remember_upload(&shared, "a.txt", None);
+        remember_upload(&shared, "b.txt", None);
         forget_upload(&shared, 0);
         let state = shared.lock().unwrap();
         assert_eq!(state.pending_uploads.len(), 1);
