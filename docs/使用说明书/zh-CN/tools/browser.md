@@ -1,7 +1,7 @@
 ---
 title: 浏览器工具
-summary: 单一 `browser` action 工具的启用条件、严格动作 schema、批处理、跨刷新 ref 恢复、降噪后的观察输出、截图回传与限额。
-updated_at: 2026-11-10
+summary: 单一 `browser` action 工具的启用条件、严格动作 schema、视口、文件上传、对话框、网络与控制台观测、批处理、跨刷新 ref 恢复、降噪后的观察输出、截图回传与限额。
+updated_at: 2026-11-22
 ---
 
 # 浏览器工具
@@ -25,11 +25,18 @@ updated_at: 2026-11-10
 | `screenshot` | 截图 | 可指定工作区相对 `path`；保存为工作区附件，并把图像追加给模型查看 |
 | `click` / `type` / `hover` / `select` / `drag` / `press` | 页面交互 | 元素动作提供且只提供一种 `ref` 或 `selector`；`drag` 提供完整来源和目标；type/select/press 有专属必填字段 |
 | `wait` | 等加载、选择器、文本、URL 或有界时间 | 已知成功条件优先于固定等待 |
+| `resize` | 设置逻辑视口（CSS 像素） | 需要 240–3840 的 `width` 与 `height`；返回实际视口，便于按桌面尺寸验证响应式页面 |
+| `file_upload` | 提交文件上传 | 先点击上传控件并处理 `filechooser`，或提供 `ref`/`selector` 指向 `input[type=file]`；`files` 为 1–16 个工作区相对路径 |
+| `dialog` | 处理页面 alert/confirm/prompt | 页面弹窗会保持待处理；`accept` 决定接受或取消，`prompt_text` 作为 prompt 的输入 |
+| `console` | 读取控制台与页面错误 | 有界缓存，`clear` 可在读取后清空 |
+| `network` | 读取请求、响应与失败事件 | 有界缓存，`clear` 可在读取后清空；不含响应体 |
 | `batch` | 顺序执行 1–10 个依赖步骤 | 每步使用严格 kind schema，不能嵌套 batch；步骤末尾可用 `back` / `observe_text` 直接取证 |
 
 典型流程：`navigate` → `observe_refs` → 交互或 `batch` → `wait` → `observe_text` 验证。普通 DOM 更新、SPA 重渲染或同 URL 自刷新不会让 ref 直接失效：动作会按 ref 记录的 selector 重新定位，页面短暂刷新时最多等待约 0.8 秒。只有真正导航到另一个文档、且 selector 也找不到时，才需要重新观察。
 
 `observe_refs` 的文本会跳过没有可访问名称的链接/图标按钮，并合并同角色、同名称、同状态的重复控件（如导航栏里重复 20 次的同一个链接），重复数量只记在 `stats.duplicates`，不再逐条输出。
+
+`resize` 改变的是页面逻辑视口，与设备屏幕尺寸解耦；安卓系统 WebView 会把逻辑视口等比缩放到悬浮窗口内，页面 `window.innerWidth/innerHeight` 与工具视口一致。安卓端 `network` 只能记录请求级事件（无响应状态与响应体），`console`、`dialog`、`file_upload` 与桌面/云端语义一致。
 
 ## 批处理
 

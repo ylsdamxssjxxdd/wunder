@@ -57,13 +57,14 @@
 
 ## 用浏览器工具验收
 
-- 打开工作区页面：`navigate` 传 `path`（工作区相对路径），运行时以 `http://wunder.preview/...` 提供，无需自建 HTTP 服务，也不受 `file://` 限制。
+- 打开工作区页面：`navigate` 传 `path`（工作区相对路径），运行时从工作区读盘并通过内部预览域名提供，无需自建 HTTP 服务，也不受 `file://` 或明文 HTTP 限制。
+- 安卓版直接用系统 WebView 的浏览器工具验收；proot 里的 Playwright/Chromium 受 GPU 进程限制，WebGL 上下文通常无法创建，不要把它当作渲染结论。
 - 交互实测：`drag` 传 `from_x/from_y/to_x/to_y` 验证拖拽旋转；`scroll` 传 `delta_y`（可带 `x/y` 落在画布上）验证缩放。只读代码不能证明这两条能用。
 - 控制台：`console` 返回该标签页的 log/warn/error 与未捕获异常；每条动作回执也带 `console_errors`。验收「控制台无异常」用这个，而不是靠肉眼。
 - 截图摘要：`screenshot` 同轮返回 `frame`（`blank`、`distinct_colors`、`dominant_share`、`mean_luma`）。`blank: true` 或颜色数骤降时，先查画布尺寸、渲染循环、镜头位置与控制台，再谈画面细节。
 
 ## 降级与排错
 
-WebGL 检测、renderer 构造、首次 render 都可能失败。每个阶段都应进入同一个降级函数：隐藏或冻结 3D 画布，显示 2D Canvas/DOM 示意、文本说明和重试/重置按钮。不要把 WebGL 错误全文输出给用户；详细信息可在开发时使用受控的 `console.warn`。
+WebGL 检测、renderer 构造、首次 render 都可能失败。每个阶段都应进入同一个降级函数：隐藏或冻结 3D 画布，显示 2D Canvas/DOM 示意、文本说明和重试/重置按钮。上下文丢失先暂停循环并等待 `webglcontextrestored`，约 2–3 秒仍不可用再降级；不要把 WebGL 错误全文输出给用户，详细信息可在开发时使用受控的 `console.warn`。
 
 检查 HTML 时搜索 `src=`, `href=`, `url(`, `fetch(`, `XMLHttpRequest`, `import ` 和 `require(`。除明确允许的内嵌数据外，这些命中通常表示交付物仍依赖外部资源。

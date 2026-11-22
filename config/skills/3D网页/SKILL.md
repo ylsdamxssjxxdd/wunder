@@ -17,7 +17,7 @@ description: "创建或修改以单个 HTML 文件交付的轻量 3D 网页。�
 
 ## 制作流程
 
-1. **规划模型**：把主体拆成少量可复用的几何体、材质和层级节点。规则形状优先使用 `BoxGeometry`、`SphereGeometry`、`CylinderGeometry` 等低分段几何体；不规则形状使用 `BufferGeometry`，避免在每帧创建或修改大量对象。用 `Group` 表达部件关系，用 `userData` 保存交互标记。
+1. **规划模型**：把主体拆成少量可复用的几何体、材质和层级节点。规则形状优先使用低分段几何体，避免在每帧创建或修改大量对象。用 `Group` 表达部件关系，用 `userData` 保存交互标记。注意本技能内置的是 Three.js r124：`BoxGeometry`、`PlaneGeometry` 等仍是旧版 Geometry，`attributes` 为 `undefined`，会静默降级；源码里统一写 `BoxBufferGeometry`、`PlaneBufferGeometry`，或直接用 `BufferGeometry`。
 2. **搭建场景**：创建 `Scene`、透视或正交相机、`WebGLRenderer`、环境光和一到两盏方向光。设置清晰的背景色和可读的材质；除非用户明确需要，避免阴影、后处理、粒子和高分辨率纹理。
 3. **加入操作**：提供鼠标拖拽旋转、滚轮缩放，并用触摸事件覆盖单指旋转和双指缩放。使用普通函数、ES5 语法和显式事件监听，避免模块、异步语法、可选链、私有字段和仅新浏览器支持的 CSS。交互控件要有键盘可达性和 `aria-label`。
 4. **安排动画**：只保留能表达状态变化的动画。使用 `requestAnimationFrame`，把时间步长限制在合理范围；静态场景应在交互或状态变化时渲染，持续动画应避免每帧扫描整个模型。禁止在动画循环中重复解析数据、创建材质或复制完整场景。
@@ -53,7 +53,7 @@ description: "创建或修改以单个 HTML 文件交付的轻量 3D 网页。�
 
 ## 预览与自检
 
-- 预览工作区里的页面用浏览器工具的 `navigate` 加 `path`（工作区相对路径）：内置预览会以 `http://wunder.preview/...` 打开它，不需要起 HTTP 服务，也不受 `file://` 策略限制。
+- 预览工作区里的页面用浏览器工具的 `navigate` 加 `path`（工作区相对路径）：内置预览由浏览器后端直接从工作区读盘应答，不需要起 HTTP 服务，也不受 `file://` 或明文 HTTP 限制。安卓版用系统 WebView 承载同一预览域名；不要在 proot 里另装 Playwright/Chromium 做验收，那里的 GPU 进程通常被系统拦截，WebGL 会直接丢失。
 - 3D 页面必须实测交互：`drag` 传 `from_x/from_y/to_x/to_y` 拖动画布验证旋转，`scroll` 传 `delta_y`（可加 `x/y` 定位到画布）验证缩放。
 - `console` 取当前标签页的控制台输出与未捕获异常，用来兑现「控制台无异常」这条验收；每条动作回执里也会带 `console_errors`。
 - `screenshot` 会在同一轮返回画面摘要（`blank`、`distinct_colors`、`mean_luma`）：`blank: true` 说明场景没渲染出来，先查画布尺寸、渲染循环和控制台，再去评价画面好不好看。
@@ -63,7 +63,7 @@ description: "创建或修改以单个 HTML 文件交付的轻量 3D 网页。�
 - 目标是没有 WebGL 时仍可读、没有触摸事件时仍可用、没有高分辨率屏幕时不改变布局。不要以 `backdrop-filter`、复杂滤镜、Web Components、WebGL2 专属特性或 CSS 变量作为必需能力。
 - 事件坐标要同时处理 `clientX/clientY`、鼠标按钮和触摸列表；释放或离开画布时清除拖拽状态。滚轮事件使用 `wheel` 并提供旧浏览器可接受的 `mousewheel` 兜底，避免阻止页面全部滚动。
 - 纹理和图片必须是小尺寸内嵌数据或程序生成的颜色；不把大模型、视频或字体直接塞进首屏。若确实需要二进制资源，先评估 HTML 体积，并在加载失败时回退到颜色材质。
-- WebGL 上下文丢失、窗口尺寸为零、设备内存较低等情况都要安全退出当前渲染循环或切换到降级提示，不能持续报错占满 CPU。
+- WebGL 上下文丢失、窗口尺寸为零、设备内存较低等情况都要安全处理：上下文丢失时先停止循环并尝试恢复（监听 `webglcontextrestored`，约 2–3 秒仍不可用再降级），尺寸为零时暂停渲染，不能持续报错占满 CPU。
 - 用户提供的文本要通过 `textContent` 写入，不把未转义文本拼到 `innerHTML`；HTML 内联脚本中不要记录密钥、真实身份或具体业务数据。
 
 ## 参考与资源

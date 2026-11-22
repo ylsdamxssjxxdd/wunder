@@ -308,6 +308,9 @@ export component MobileWindow inherits Window {
     in property <int> activity-steps-total: 0;
     in property <int> activity-steps-done: 0;
     in property <bool> activity-running: false;
+    // 计划全部走完时胶囊换成对勾并停住，和桌面版一致；线程停下但计划未
+    // 完成时则由 activity-running 停掉转轮。
+    in property <bool> activity-plan-complete: false;
     in property <string> activity-plan-explanation: "";
     in property <[PlanStep]> activity-plan-steps: [];
     in property <string> activity-plan-current: "";
@@ -1192,6 +1195,10 @@ export component MobileWindow inherits Window {
                     // 计划胶囊：有计划步骤时常驻；展开的清单浮在它上方。
                     if root.activity-steps-total > 0 : StatusDock {
                         running: root.activity-running;
+                        plan-complete: root.activity-plan-complete;
+                        // 手机宽度有限：收起态只给当前步骤一小段宽度，避免
+                        // 胶囊连同计数一起顶出屏幕；展开的清单仍显示全文。
+                        compact: true;
                         steps-done: root.activity-steps-done;
                         steps-total: root.activity-steps-total;
                         plan-explanation: root.activity-plan-explanation;

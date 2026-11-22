@@ -36,6 +36,9 @@ pub use wunder_server::cloud::update::{is_newer_version, AndroidRelease};
 /// 工具动作词表（如命令会话的「等待 / 发送输入」）的唯一来源在引擎里。桌面版与安卓版
 /// 的投影代码都读这一份；安卓版的主机预览构建没有直接链接运行时，所以由这里转出。
 pub use wunder_server::tools::tool_verbs;
+/// 工具结果的折叠文案（动作、目标、输出摘要）同源。安卓版实时工具条目在没有
+/// 流附带的 `display_result` 时用它兜底，避免展开后只剩一个空面板。
+pub use wunder_server::tool_result_display;
 
 /// Adopt a portable installation root as WUNDER_HOME before any path is
 /// resolved. Call this at the very start of a local-form process; an explicit

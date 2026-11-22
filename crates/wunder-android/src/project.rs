@@ -15,6 +15,7 @@ use crate::{
 use chrono::{Local, TimeZone};
 use slint::{ModelRc, SharedString, VecModel};
 use std::hash::{Hash, Hasher};
+use std::time::Instant;
 use wunder_desktop::native::NativeMessageStats;
 use wunder_desktop::{
     NativeChatTurn, NativePatchFile, NativePatchLine, NativeWorkflowEntry, NativeWorkflowSection,
@@ -156,6 +157,9 @@ impl RowData {
             child.tool_icon.hash(&mut hasher);
             child.target.hash(&mut hasher);
             child.detail.hash(&mut hasher);
+            child.command_output.hash(&mut hasher);
+            child.command_meta.hash(&mut hasher);
+            child.lines_read.hash(&mut hasher);
             for section in &child.sections {
                 section.title.hash(&mut hasher);
                 section.meta.hash(&mut hasher);
@@ -1027,16 +1031,43 @@ fn footer_row(turn: &NativeChatTurn) -> Option<RowData> {
     Some(row)
 }
 
+/// Whole-second label, matching 桌面版's stopwatch (`2m 5s`, never `5.4s`).
+/// The phone's elapsed column is a clock, not a measurement read-out.
 fn duration_text(seconds: f64) -> String {
-    let minutes = (seconds / 60.0).floor() as u64;
+    let total = seconds.max(0.0).round() as u64;
+    let minutes = total / 60;
     let hours = minutes / 60;
+    let sec = total % 60;
     if hours > 0 {
-        format!("{hours}h {}m {:.1}s", minutes % 60, seconds % 60.0)
+        format!("{hours}h {}m {sec}s", minutes % 60)
     } else if minutes > 0 {
-        format!("{minutes}m {:.1}s", seconds % 60.0)
+        format!("{minutes}m {sec}s")
     } else {
-        format!("{seconds:.1}s")
+        format!("{sec}s")
     }
+}
+
+/// The turn's live stopwatch label. The phone ticks this once per second (and
+/// every live publish recomputes it), so the work-process bar never waits for
+/// the settled statistics to arrive.
+pub(crate) fn live_duration_label(seconds: f64) -> String {
+    duration_text(seconds.max(0.0))
+}
+
+/// Reasoning that reaches the phone is bounded before it is stored: an
+/// unbounded thought is neither readable nor worth the relayout cost.
+fn bounded_reason_text(text: String) -> String {
+    const LIMIT: usize = 64 * 1024;
+    if text.len() <= LIMIT {
+        return text;
+    }
+    let mut end = LIMIT;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut bounded = text[..end].to_string();
+    bounded.push('…');
+    bounded
 }
 
 /// 工作过程条右端的总耗时：与 footer 的 stopwatch 同源，只给数值。
@@ -1225,6 +1256,14 @@ pub struct LiveTurn {
     /// Execution id of the current run (`native_execution_started`). Late
     /// frames from an earlier execution must not decorate this turn.
     pub execution: String,
+    /// Local start of this turn. The work-process bar advances from this clock
+    /// while the turn runs instead of waiting for the settled usage numbers.
+    pub started_at: Instant,
+    /// Reasoning deltas are staged here, not painted token by token: the phone
+    /// re-lays out the expanded thinking box on every published frame, which
+    /// stalled scrolling and input during long reasoning. The text is committed
+    /// once when the round reports `llm_output` (or when the entry closes).
+    reason_buffer: String,
     active_reason: Option<usize>,
     reason_serial: u32,
 }
@@ -1245,6 +1284,8 @@ impl LiveTurn {
             command_output: std::collections::HashMap::new(),
             round: 0,
             execution: String::new(),
+            started_at: Instant::now(),
+            reason_buffer: String::new(),
             active_reason: None,
             reason_serial: 0,
         }
@@ -1270,13 +1311,60 @@ impl LiveTurn {
 
     /// Finish the active reasoning entry. Called when the model acts, a new
     /// round begins, or the turn ends; the entry keeps its text and stops
-    /// spinning.
+    /// spinning. Any staged delta that never saw `llm_output` is committed
+    /// here, so a closed thought is never blank.
     pub fn close_reason(&mut self, status: i32) {
         if let Some(index) = self.active_reason.take() {
+            let buffered = std::mem::take(&mut self.reason_buffer);
             if let Some(LiveStep::Reasoning(reason)) = self.steps.get_mut(index) {
+                if reason.text.is_empty() {
+                    reason.text = bounded_reason_text(buffered);
+                }
                 reason.status = status;
             }
         }
+    }
+
+    /// Commit the round's reasoning once the response settled. Android does
+    /// not paint reasoning deltas: `llm_output` carries the full text, and
+    /// only this single write reaches the transcript. A provider that reports
+    /// its whole thought only at the end still gets a row here.
+    pub fn finalize_reasoning(&mut self, round: i64, full: Option<&str>) {
+        let staged = std::mem::take(&mut self.reason_buffer);
+        let text = full
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned)
+            .unwrap_or(staged);
+        if text.is_empty() {
+            return;
+        }
+        // Only this round's entry may receive the text: a provider that
+        // reports the thought only at the end must not overwrite the previous
+        // round's settled row.
+        let index = self.steps.iter().rposition(
+            |step| matches!(step, LiveStep::Reasoning(reason) if reason.round == round),
+        );
+        if let Some(LiveStep::Reasoning(reason)) = index.and_then(|index| self.steps.get_mut(index))
+        {
+            reason.text = bounded_reason_text(text);
+            return;
+        }
+        let id = format!("{}-reason-{}", self.root_id, self.reason_serial);
+        self.reason_serial += 1;
+        self.steps.push(LiveStep::Reasoning(LiveReason {
+            id,
+            text: bounded_reason_text(text),
+            status: if self.status == STATUS_RUNNING {
+                STATUS_RUNNING
+            } else {
+                STATUS_DONE
+            },
+            round,
+            tokens: String::new(),
+            duration: String::new(),
+        }));
+        self.active_reason = Some(self.steps.len() - 1);
     }
 
     /// The round reports its usage and stream timing once it finished, so the
@@ -1303,28 +1391,27 @@ impl LiveTurn {
         }
     }
 
-    /// Append one reasoning delta. `replace` is used by the full-text
-    /// `reasoning` frame, `append` by stream deltas.
+    /// Stage one reasoning delta. `replace` is used by the full-text
+    /// `reasoning` frame, `append` by stream deltas. Nothing is written to the
+    /// visible entry here: the phone commits the text once at `llm_output`
+    /// (see [`LiveTurn::finalize_reasoning`]), so token-by-token reasoning
+    /// never triggers a transcript relayout.
     pub fn append_reasoning(&mut self, round: i64, text: &str, replace: bool) {
         if self.active_reason.is_some() && self.reason_round() == round {
-            if let Some(index) = self.active_reason {
-                if let Some(LiveStep::Reasoning(reason)) = self.steps.get_mut(index) {
-                    if replace {
-                        reason.text = text.to_owned();
-                    } else {
-                        reason.text.push_str(text);
-                    }
-                    self.phase = "thinking".into();
-                    return;
-                }
+            if replace {
+                self.reason_buffer = text.to_owned();
+            } else {
+                self.reason_buffer.push_str(text);
             }
+            self.phase = "thinking".into();
+            return;
         }
         self.close_reason(STATUS_DONE);
         let id = format!("{}-reason-{}", self.root_id, self.reason_serial);
         self.reason_serial += 1;
         self.steps.push(LiveStep::Reasoning(LiveReason {
             id,
-            text: text.to_owned(),
+            text: String::new(),
             status: if self.status == STATUS_RUNNING {
                 STATUS_RUNNING
             } else {
@@ -1334,6 +1421,7 @@ impl LiveTurn {
             tokens: String::new(),
             duration: String::new(),
         }));
+        self.reason_buffer = text.to_owned();
         self.active_reason = Some(self.steps.len() - 1);
         self.phase = "thinking".into();
     }
@@ -1457,7 +1545,13 @@ impl LiveTurn {
             // The live turn is unfolded from its first step; a tap writes the
             // state back into `live_rows`, and the next publish keeps it.
             bar.open = true;
-            bar.duration = turn_duration_label(&self.stats);
+            bar.duration = if self.status == STATUS_RUNNING {
+                // A running turn's clock advances locally; the settled usage
+                // numbers only take over once the turn finishes.
+                live_duration_label(self.started_at.elapsed().as_secs_f64())
+            } else {
+                turn_duration_label(&self.stats)
+            };
             bar.process_children = children;
             rows.push(bar);
         }
@@ -1811,7 +1905,7 @@ mod tests {
         let stats = NativeMessageStats::from_payload(&serde_json::json!({
             "interaction_duration_s": 65.4
         }));
-        assert_eq!(turn_duration_label(&stats), "1m 5.4s");
+        assert_eq!(turn_duration_label(&stats), "1m 5s");
         let mut live = LiveTurn::new("hi".into());
         live.stats = stats;
         live.push_tool(LiveTool {
@@ -1830,14 +1924,51 @@ mod tests {
             tokens: String::new(),
             duration: String::new(),
         });
+        // A running turn reads the local stopwatch instead of the settled
+        // statistics, so the column never sits empty while the model works.
         let rows = live.rows();
         let bar = rows
             .iter()
             .find(|row| row.kind == KIND_PROCESS)
             .expect("process bar");
-        assert_eq!(bar.duration, "1m 5.4s");
+        assert_ne!(bar.duration, "1m 5s");
+        live.status = STATUS_DONE;
+        let rows = live.rows();
+        let bar = rows
+            .iter()
+            .find(|row| row.kind == KIND_PROCESS)
+            .expect("process bar");
+        assert_eq!(bar.duration, "1m 5s");
         let shared = bar.to_row(&mut MarkdownRenderer::default());
-        assert_eq!(shared.duration, "1m 5.4s");
+        assert_eq!(shared.duration, "1m 5s");
+    }
+
+    #[test]
+    fn running_process_bar_advances_from_the_local_clock() {
+        let mut live = LiveTurn::new("hi".into());
+        live.push_tool(LiveTool {
+            id: "call-1".into(),
+            title: "读取文件".into(),
+            command: false,
+            tool_icon: "file-lines".into(),
+            summary: "src/main.rs".into(),
+            state: "running".into(),
+            detail: String::new(),
+            command_output: String::new(),
+            command_meta: String::new(),
+            target: String::new(),
+            sections: Vec::new(),
+            patch: Vec::new(),
+            tokens: String::new(),
+            duration: String::new(),
+        });
+        live.started_at = Instant::now() - std::time::Duration::from_secs(7);
+        let rows = live.rows();
+        let bar = rows
+            .iter()
+            .find(|row| row.kind == KIND_PROCESS)
+            .expect("process bar");
+        assert_eq!(bar.duration, "7s");
     }
 
     #[test]
@@ -1965,6 +2096,65 @@ mod tests {
             .find(|row| row.kind == KIND_PROCESS)
             .expect("process bar");
         assert_eq!(bar.process_children[0].tokens, "1.8k");
+    }
+
+    #[test]
+    fn streaming_reasoning_is_staged_until_the_round_finishes() {
+        let mut live = LiveTurn::new("hi".into());
+        live.append_reasoning(1, "思考中", false);
+        live.append_reasoning(1, "，继续想", false);
+        // Deltas stay out of the published row: the phone must not relayout the
+        // thinking box on every token.
+        let rows = live.rows();
+        let bar = rows
+            .iter()
+            .find(|row| row.kind == KIND_PROCESS)
+            .expect("process bar");
+        assert_eq!(bar.process_children[0].detail, "");
+        assert_eq!(bar.process_children[0].summary, "");
+        // The round's full text lands in one write.
+        live.finalize_reasoning(1, Some("完整思考"));
+        let rows = live.rows();
+        let bar = rows
+            .iter()
+            .find(|row| row.kind == KIND_PROCESS)
+            .expect("process bar");
+        assert_eq!(bar.process_children[0].detail, "完整思考");
+        assert_eq!(bar.process_children[0].summary, "完整思考");
+        // A close without `llm_output` still commits the staged tail instead
+        // of leaving the fold empty.
+        live.append_reasoning(2, "下一轮", false);
+        live.close_reason(STATUS_DONE);
+        let rows = live.rows();
+        let bar = rows
+            .iter()
+            .find(|row| row.kind == KIND_PROCESS)
+            .expect("process bar");
+        assert_eq!(bar.process_children[1].detail, "下一轮");
+    }
+
+    #[test]
+    fn a_round_that_reports_reasoning_only_at_the_end_still_gets_a_row() {
+        let mut live = LiveTurn::new("hi".into());
+        live.finalize_reasoning(1, Some("只在结尾给的思考"));
+        let rows = live.rows();
+        let bar = rows
+            .iter()
+            .find(|row| row.kind == KIND_PROCESS)
+            .expect("process bar");
+        assert_eq!(bar.process_children.len(), 1);
+        assert_eq!(bar.process_children[0].kind, KIND_REASON);
+        assert_eq!(bar.process_children[0].detail, "只在结尾给的思考");
+        // A later round must not overwrite the settled row above.
+        live.finalize_reasoning(2, Some("第二轮"));
+        let rows = live.rows();
+        let bar = rows
+            .iter()
+            .find(|row| row.kind == KIND_PROCESS)
+            .expect("process bar");
+        assert_eq!(bar.process_children.len(), 2);
+        assert_eq!(bar.process_children[0].detail, "只在结尾给的思考");
+        assert_eq!(bar.process_children[1].detail, "第二轮");
     }
 
     #[test]

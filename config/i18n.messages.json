@@ -1608,24 +1608,24 @@
     "zh-CN": "安卓屏幕参数无效。"
   },
   "tool.android_screen.action_required": {
-    "en-US": "action is required (capture/status/request_permission).",
-    "zh-CN": "必须提供 action（capture/status/request_permission）。"
+    "en-US": "action is required (capture/status/request_permission/stop).",
+    "zh-CN": "必须提供 action（capture/status/request_permission/stop）。"
   },
   "tool.android_screen.unknown_action": {
-    "en-US": "Unknown screen action; use capture, status or request_permission.",
-    "zh-CN": "未知的屏幕动作，仅支持 capture、status、request_permission。"
+    "en-US": "Unknown screen action; use capture, status, request_permission or stop.",
+    "zh-CN": "未知的屏幕动作，仅支持 capture、status、request_permission、stop。"
   },
   "tool.android_screen.permission_required": {
-    "en-US": "Screen capture is not authorized. Call request_permission before every capture and have the user confirm the system dialog.",
-    "zh-CN": "屏幕采集尚未授权：每次截图前都要先调用 request_permission，由用户在系统弹窗中确认。"
+    "en-US": "Screen capture is not authorized. Call request_permission once and have the user confirm the system dialog; the grant is then reused until the session is stopped.",
+    "zh-CN": "屏幕采集尚未授权：先调用一次 request_permission，由用户在系统弹窗中确认；授权在会话结束前可反复使用。"
   },
   "tool.android_screen.service_unavailable": {
     "en-US": "The screen-capture foreground service could not start; bring wunder to the foreground and retry.",
     "zh-CN": "屏幕采集前台服务未能启动：请把 wunder 切到前台后重试。"
   },
   "tool.android_screen.capture_failed": {
-    "en-US": "Screen capture failed; request permission again and retry.",
-    "zh-CN": "屏幕截图失败：请重新请求屏幕采集授权后重试。"
+    "en-US": "Screen capture failed. If the session ended, request permission again and retry.",
+    "zh-CN": "屏幕截图失败：若会话已结束，请重新请求屏幕采集授权后重试。"
   },
   "tool.android_screen.activity_unavailable": {
     "en-US": "The wunder activity is not available, so the screen-capture permission dialog cannot be opened. Open the app first.",
@@ -1636,24 +1636,24 @@
     "zh-CN": "屏幕动作未执行。"
   },
   "tool.android_screen.summary_capture": {
-    "en-US": "Screen frame saved ({width}x{height}). This one-shot grant is now used up; call request_permission again before the next capture.",
-    "zh-CN": "屏幕截图已保存（{width}x{height}）。本次授权已用完，再次截图前请重新调用 request_permission。"
+    "en-US": "Screen frame saved ({width}x{height}). The authorization stays active for later captures; the user can stop the session from the notification.",
+    "zh-CN": "屏幕截图已保存（{width}x{height}）。授权在会话结束前可继续使用；用户可在通知中点“停止”结束。"
   },
   "tool.android_screen.summary_status_on": {
-    "en-US": "Screen capture is authorized for one capture; waiting for the next screenshot.",
-    "zh-CN": "屏幕采集已授权（单次），等待本次截图。"
+    "en-US": "Screen capture session is active; screenshots can be taken repeatedly.",
+    "zh-CN": "屏幕采集会话进行中，可反复截图。"
   },
   "tool.android_screen.summary_status_off": {
     "en-US": "Screen capture is not authorized; call request_permission before capturing.",
     "zh-CN": "屏幕采集尚未授权；截图前请先调用 request_permission。"
   },
   "tool.android_screen.summary_permission": {
-    "en-US": "Screen-capture permission was requested. Once confirmed, it is valid for the next capture only.",
-    "zh-CN": "已请求屏幕采集授权；用户确认后仅对下一次截图有效。"
+    "en-US": "Screen-capture permission was requested. Once confirmed, screenshots reuse the authorization until the user stops the session.",
+    "zh-CN": "已请求屏幕采集授权；用户确认后，截图可反复使用该授权，直到用户结束会话。"
   },
   "tool.android_screen.next_step_hint": {
-    "en-US": "Open the returned path with the read_image tool to inspect the frame before deciding the next step. If another capture is needed, call request_permission again first.",
-    "zh-CN": "用读取图片（read_image）打开返回的 path 查看画面，再决定下一步；如需再次截图，请先重新调用 request_permission。"
+    "en-US": "Open the returned path with the read_image tool to inspect the frame before deciding the next step. Later captures reuse the same authorization; request_permission is only needed after the session was stopped.",
+    "zh-CN": "用读取图片（read_image）打开返回的 path 查看画面，再决定下一步；后续截图沿用同一授权，只有会话结束后才需要重新调用 request_permission。"
   },
   "tool.android_notifications.disabled": {
     "en-US": "Android notifications are unavailable: no device host is installed in this process.",
@@ -2444,12 +2444,12 @@
     "zh-CN": "long_press/swipe 的持续时间（毫秒），可选。"
   },
   "tool.spec.android_screen.description": {
-    "en-US": "Capture one frame of this Android screen. action=capture saves the current frame as PNG and returns path, width and height; action=status reports authorization, foreground service and screen size; action=request_permission opens the system screen-capture consent dialog, which the user must confirm while the app is reachable. Authorization is single-use: request it before every capture, and the foreground service stops as soon as the frame is saved. Only the last 4 frames are kept. After capture, open the returned path with the read_image tool. This tool does not record video or simulate touch.",
-    "zh-CN": "采集这台 Android 设备的屏幕单帧画面。action=capture 截取当前画面并保存为 PNG，返回 path、width、height；action=status 查询授权、前台服务与屏幕尺寸；action=request_permission 弹出系统屏幕采集授权框，只能由用户确认，且需要应用界面可用。授权为单次有效：每次截图前都要重新请求，截图完成后前台服务立即停止。截图只保留最近 4 张。capture 成功后用读取图片（read_image）打开 path 查看画面。该工具不录屏、不模拟触摸。"
+    "en-US": "Capture one frame of this Android screen. action=capture saves the current frame as PNG and returns path, width and height; action=status reports authorization, foreground service and screen size; action=request_permission opens the system screen-capture consent dialog, which the user must confirm while the app is reachable; action=stop ends the session and releases the authorization. One grant is reusable: the foreground service and its notification stay up so later captures need no new consent, and the user can stop the session from that notification at any time. Only the last 4 frames are kept. After capture, open the returned path with the read_image tool. This tool does not record video or simulate touch.",
+    "zh-CN": "采集这台 Android 设备的屏幕单帧画面。action=capture 截取当前画面并保存为 PNG，返回 path、width、height；action=status 查询授权、前台服务与屏幕尺寸；action=request_permission 弹出系统屏幕采集授权框，只能由用户确认，且需要应用界面可用；action=stop 结束当前屏幕采集会话并释放授权。授权一次即可反复截图：会话期间前台服务与通知保持，用户可随时在通知中点“停止”结束。截图只保留最近 4 张。capture 成功后用读取图片（read_image）打开 path 查看画面。该工具不录屏、不模拟触摸。"
   },
   "tool.spec.android_screen.args.action": {
-    "en-US": "capture one frame; status reports authorization and service; request_permission opens the one-shot system consent dialog.",
-    "zh-CN": "capture 截取一帧；status 查询授权与状态；request_permission 请求单次屏幕采集授权。"
+    "en-US": "capture one frame; status reports authorization and service; request_permission opens the system consent dialog; stop ends the reusable session.",
+    "zh-CN": "capture 截取一帧；status 查询授权与状态；request_permission 请求屏幕采集授权；stop 结束可复用的采集会话。"
   },
   "tool.spec.android_notifications.description": {
     "en-US": "Read or dismiss notifications on this Android device. action=list returns recent notifications (newest first, 20 by default, limit 1-50) with package, title, text, post_time, key and can_dismiss; action=dismiss removes one dismissible notification by key; action=status reports whether the listener is connected. The user must enable notification access for wunder in system settings. Only current notifications are covered; no history is read.",
@@ -3872,5 +3872,9 @@
   "tool.title.浏览器": {
     "en-US": "Browser",
     "zh-CN": "浏览器"
+  },
+  "tool.android_screen.summary_stop": {
+    "en-US": "Screen capture session stopped; the authorization was released.",
+    "zh-CN": "屏幕采集会话已结束，授权已释放。"
   }
 }

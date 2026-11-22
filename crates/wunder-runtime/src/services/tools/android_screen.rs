@@ -5,8 +5,10 @@
 //! is provided by a host installed by the Android shell, so 桌面版/命令行/服务端
 //! never advertise this tool and stay platform-neutral.
 //!
-//! The tool captures a single frame. Continuous recording, touch injection and
-//! shell-level capture (Shizuku/Root) are deliberately out of scope.
+//! The device keeps one reusable projection session per user consent, so later
+//! captures need no new dialog; a stop action and the service notification both
+//! end the session. Continuous recording, touch injection and shell-level
+//! capture (Shizuku/Root) are deliberately out of scope.
 
 use super::{build_model_tool_success_with_hint, ToolContext};
 use crate::schemas::ToolSpec;
@@ -77,7 +79,7 @@ pub fn android_screen_tool_spec(language: &str) -> ToolSpec {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["capture", "status", "request_permission"],
+                    "enum": ["capture", "status", "request_permission", "stop"],
                     "description": t("tool.spec.android_screen.args.action")
                 }
             },
@@ -92,6 +94,7 @@ enum ScreenAction {
     Capture,
     Status,
     RequestPermission,
+    Stop,
 }
 
 impl ScreenAction {
@@ -100,6 +103,7 @@ impl ScreenAction {
             "capture" => Some(Self::Capture),
             "status" => Some(Self::Status),
             "request_permission" => Some(Self::RequestPermission),
+            "stop" => Some(Self::Stop),
             _ => None,
         }
     }
@@ -109,6 +113,7 @@ impl ScreenAction {
             Self::Capture => "capture",
             Self::Status => "status",
             Self::RequestPermission => "request_permission",
+            Self::Stop => "stop",
         }
     }
 }
@@ -233,6 +238,9 @@ async fn execute_with_host(
         (true, ScreenAction::RequestPermission) => {
             data["requested"] = json!(true);
         }
+        (true, ScreenAction::Stop) => {
+            data["stopped"] = json!(true);
+        }
         (false, _) => {
             let fallback = crate::i18n::prompt_t("tool.android_screen.action_failed");
             let localized = localize_screen_message(code, message.as_deref(), &fallback);
@@ -266,7 +274,7 @@ async fn execute_with_host(
 
 fn completed_state(action: ScreenAction) -> &'static str {
     match action {
-        ScreenAction::Capture | ScreenAction::Status => "completed",
+        ScreenAction::Capture | ScreenAction::Status | ScreenAction::Stop => "completed",
         ScreenAction::RequestPermission => "pending",
     }
 }
@@ -291,6 +299,7 @@ fn screen_summary(action: ScreenAction, authorized: bool, width: i64, height: i6
         ScreenAction::RequestPermission => {
             crate::i18n::prompt_t("tool.android_screen.summary_permission")
         }
+        ScreenAction::Stop => crate::i18n::prompt_t("tool.android_screen.summary_stop"),
     }
 }
 
@@ -349,6 +358,10 @@ mod tests {
         assert_eq!(
             parse_screen_args(&json!({"action": "capture"})).unwrap(),
             ScreenAction::Capture
+        );
+        assert_eq!(
+            parse_screen_args(&json!({"action": "stop"})).unwrap(),
+            ScreenAction::Stop
         );
         assert!(parse_screen_args(&json!({"action": "record"})).is_err());
     }
@@ -412,6 +425,20 @@ mod tests {
         assert_eq!(result["data"]["authorized"], json!(true));
         assert_eq!(result["data"]["service_running"], json!(true));
         assert_eq!(result["data"]["screen_height"], json!(2400));
+    }
+
+    #[tokio::test]
+    async fn stop_releases_the_session() {
+        let host = Arc::new(FakeHost {
+            seen: Default::default(),
+            reply: json!({"ok": true, "message": "stopped"}),
+        });
+        let result = execute_with_host(host.clone(), ScreenAction::Stop)
+            .await
+            .unwrap();
+        assert_eq!(result["data"]["state"], json!("completed"));
+        assert_eq!(result["data"]["stopped"], json!(true));
+        assert_eq!(host.seen.lock().unwrap()[0], "stop");
     }
 
     #[test]

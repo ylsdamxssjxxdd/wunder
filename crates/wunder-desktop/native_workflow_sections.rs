@@ -28,6 +28,103 @@ fn action_label(action: &str) -> &'static str {
         _ => "更新",
     }
 }
+
+/// Readable name of one phone-control action. The raw enum value alone said
+/// nothing in a folded row ("手机 · tap").
+fn phone_action_label(action: &str) -> &'static str {
+    match action {
+        "screenshot" => "截图",
+        "ui_tree" => "界面结构",
+        "tap" => "点击",
+        "long_press" => "长按",
+        "swipe" => "滑动",
+        "type_text" => "输入文字",
+        "press_key" => "按键",
+        "open_app" => "打开应用",
+        "open_url" => "打开网址",
+        "open_settings" => "打开设置",
+        "list_apps" => "应用列表",
+        "device_info" => "设备信息",
+        "clipboard" => "剪贴板",
+        "wait" => "等待",
+        _ => "操作",
+    }
+}
+
+/// Arguments that make this phone call distinct. Every action otherwise reads
+/// the same after it completes.
+fn phone_args_hint(args: &Value, action: &str) -> String {
+    let shorten = |value: &str| value.chars().take(120).collect::<String>();
+    match action {
+        "tap" | "long_press" => {
+            let point = phone_bbox(args, "bbox");
+            (!point.is_empty())
+                .then(|| format!("位置 {point}"))
+                .unwrap_or_default()
+        }
+        "swipe" => {
+            let from = phone_bbox(args, "bbox");
+            let to = phone_bbox(args, "to_bbox");
+            (!from.is_empty() && !to.is_empty())
+                .then(|| format!("{from} → {to}"))
+                .unwrap_or_default()
+        }
+        "type_text" => {
+            let body = text(args, &["text"]);
+            (!body.is_empty())
+                .then(|| format!("输入：{}", shorten(&body)))
+                .unwrap_or_default()
+        }
+        "press_key" => {
+            let key = text(args, &["key"]);
+            (!key.is_empty())
+                .then(|| format!("按键：{key}"))
+                .unwrap_or_default()
+        }
+        "open_app" => {
+            let app = text(args, &["app"]);
+            (!app.is_empty())
+                .then(|| format!("应用：{app}"))
+                .unwrap_or_default()
+        }
+        "open_url" => {
+            let url = text(args, &["url"]);
+            (!url.is_empty())
+                .then(|| format!("网址：{}", shorten(&url)))
+                .unwrap_or_default()
+        }
+        "open_settings" => {
+            let page = text(args, &["page"]);
+            (!page.is_empty())
+                .then(|| format!("页面：{page}"))
+                .unwrap_or_default()
+        }
+        "clipboard" => {
+            let operation = text(args, &["operation"]);
+            (!operation.is_empty())
+                .then(|| format!("操作：{operation}"))
+                .unwrap_or_default()
+        }
+        "wait" => args["delay_ms"]
+            .as_i64()
+            .filter(|millis| *millis > 0)
+            .map(|millis| format!("等待 {millis} ms"))
+            .unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+fn phone_bbox(args: &Value, key: &str) -> String {
+    let Some(values) = args.get(key).and_then(Value::as_array) else {
+        return String::new();
+    };
+    let numbers: Vec<i64> = values.iter().filter_map(Value::as_i64).collect();
+    match numbers.as_slice() {
+        [x, y] => format!("({x}, {y})"),
+        [x1, y1, x2, y2] => format!("({x1}, {y1})–({x2}, {y2})"),
+        _ => String::new(),
+    }
+}
 fn push_body(section: &mut Section, body: &str, kind: &str) {
     let mut values = body.lines();
     for value in values
@@ -195,6 +292,57 @@ pub(super) fn project(tool: &str, payload: &Value, state: &str, fallback: &str) 
             }
             sections.push(section);
         }
+    } else if matches!(
+        tool,
+        "手机控制" | "手机控制器" | "手机监视器" | "phone_control" | "phone_controller"
+            | "phone_monitor"
+    ) {
+        // The phone tool answers with one action and, for frame actions, the
+        // accessibility tree. Without this branch the fold only repeated the
+        // one-line display text, so "read the screen / tap / type" rows had
+        // nothing to inspect.
+        let action = text(data, &["action"]);
+        let app = text(data, &["foreground_app"]);
+        let message = text(data, &["message"]);
+        let mut section = Section {
+            title: if action.is_empty() {
+                "手机控制".into()
+            } else {
+                format!("手机 · {}", phone_action_label(&action))
+            },
+            meta: app.clone(),
+            kind: "text".into(),
+            ..Default::default()
+        };
+        let hint = phone_args_hint(args, &action);
+        if !hint.is_empty() {
+            section.lines.push(line(hint, "note", String::new()));
+        }
+        let width = data["normalized_width"].as_i64().unwrap_or(0);
+        let height = data["normalized_height"].as_i64().unwrap_or(0);
+        if width > 0 && height > 0 {
+            section
+                .lines
+                .push(line(format!("画面 {width}×{height}"), "note", String::new()));
+        }
+        if !message.is_empty() {
+            section.lines.push(line(
+                message,
+                if failed { "error" } else { "context" },
+                String::new(),
+            ));
+        }
+        if let Some(tree) = data["ui_tree"]
+            .as_str()
+            .map(str::trim)
+            .filter(|tree| !tree.is_empty())
+        {
+            push_body(&mut section, tree, "context");
+        }
+        if section.lines.is_empty() {
+            push_body(&mut section, fallback, "context");
+        }
+        sections.push(section);
     } else if tool == "web_search" || tool.contains("网页搜索") {
         // dsh search seam: one section titled by the (joined) query batch, one
         // line per source, and an explicit note when the batch was clipped.
@@ -506,6 +654,27 @@ mod tests {
         assert_eq!(fetch[0].title, "https://example.test/a");
         assert_eq!(fetch[0].meta, "HTTP 200");
         assert_eq!(fetch[0].lines[0].text, "hello");
+    }
+    #[test]
+    fn phone_control_projects_action_args_and_ui_tree() {
+        let payload = json!({
+            "args":{"action":"tap","bbox":[12,34]},
+            "result":{"data":{
+                "action":"tap","action_applied":true,"state":"completed",
+                "foreground_app":"com.example.settings","message":"点击完成",
+                "normalized_width":720,"normalized_height":1280,
+                "ui_tree":"#0 Button [bounds=0,0,100,100]"
+            }}
+        });
+        let sections = project("手机控制", &payload, "completed", "手机控制 · 完成");
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].title, "手机 · 点击");
+        assert_eq!(sections[0].meta, "com.example.settings");
+        let body: Vec<&str> = sections[0].lines.iter().map(|l| l.text.as_str()).collect();
+        assert!(body.contains(&"位置 (12, 34)"));
+        assert!(body.contains(&"画面 720×1280"));
+        assert!(body.contains(&"点击完成"));
+        assert!(body.iter().any(|line| line.contains("#0 Button")));
     }
 }
 

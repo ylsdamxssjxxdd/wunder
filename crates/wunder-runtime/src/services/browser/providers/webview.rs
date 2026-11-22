@@ -6,6 +6,7 @@
 //! the Android shell (`WebViewBridge.java`). No browser binary is packaged and
 //! no proot runtime is involved.
 
+use super::preview::{preview_path_for_navigate, resolve_workspace_upload_files};
 use crate::schemas::ToolSpec;
 use crate::services::browser::provider::{
     BrowserProvider, ContentBlock, ProviderCallFuture, ProviderOutcome,
@@ -13,7 +14,7 @@ use crate::services::browser::provider::{
 use crate::services::browser::providers::playwright::playwright_tool_specs;
 use crate::services::tools::ToolContext;
 use anyhow::{anyhow, Result};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::sync::{Arc, RwLock};
 
 pub const PROVIDER_ID: &str = "android-webview";
@@ -80,7 +81,7 @@ impl BrowserProvider for WebViewProvider {
 
     fn call<'a, 'ctx>(
         &'a self,
-        _context: &'a ToolContext<'ctx>,
+        context: &'a ToolContext<'ctx>,
         tool: &'a str,
         args: &'a Value,
     ) -> ProviderCallFuture<'a> {
@@ -99,7 +100,33 @@ impl BrowserProvider for WebViewProvider {
             if action.is_empty() {
                 return Ok(ProviderOutcome::failure("action is required"));
             }
-            let args = args.clone();
+            let mut args = args.clone();
+            // 工作区预览与 Playwright 使用同一套解析规则：`path` 改成
+            // preview_root/preview_path，由设备端从磁盘直接应答，不经过网络。
+            if matches!(action.as_str(), "navigate" | "tabs_new") {
+                let root = context.workspace.workspace_root(context.workspace_id);
+                if let Some(relative) = preview_path_for_navigate(&root, &args)? {
+                    if let Some(map) = args.as_object_mut() {
+                        map.remove("path");
+                        map.remove("url");
+                        map.insert("preview_root".to_string(), json!(root.to_string_lossy()));
+                        map.insert("preview_path".to_string(), json!(relative));
+                    }
+                }
+            }
+            if action == "file_upload" {
+                let root = context.workspace.workspace_root(context.workspace_id);
+                let files = resolve_workspace_upload_files(&root, &args)?;
+                if let Some(map) = args.as_object_mut() {
+                    map.insert(
+                        "files".to_string(),
+                        json!(files
+                            .iter()
+                            .map(|path| path.to_string_lossy().to_string())
+                            .collect::<Vec<_>>()),
+                    );
+                }
+            }
             // Page loads and JS evaluation block; never hold a runtime worker.
             let reply = tokio::task::spawn_blocking(move || host.execute(&action, &args))
                 .await

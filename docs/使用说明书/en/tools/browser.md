@@ -1,7 +1,7 @@
 ---
 title: Browser Tool
-summary: Enablement, strict actions, batching, ref recovery across refreshes, denoised observations, screenshot delivery, and limits for the single `browser` tool.
-updated_at: 2026-11-10
+summary: Enablement, strict actions, viewport, file upload, dialogs, network and console observation, batching, ref recovery across refreshes, denoised observations, screenshot delivery, and limits for the single `browser` tool.
+updated_at: 2026-11-22
 ---
 
 # Browser Tool
@@ -25,11 +25,18 @@ Enable both the browser-tool switch and the browser runtime. `browser` registers
 | `screenshot` | Capture an image | An optional workspace-relative `path` controls output; it is saved as a workspace attachment and the image is appended for the model to view |
 | `click` / `type` / `hover` / `select` / `drag` / `press` | Interact with the page | Element actions provide exactly one of `ref` or `selector`; drag provides complete source and target pairs |
 | `wait` | Wait for load, selector, text, URL, or bounded time | Prefer a known success condition to a fixed delay |
+| `resize` | Set the logical viewport in CSS pixels | Requires `width` and `height` within 240–3840; returns the effective viewport so responsive layouts can be checked at desktop sizes |
+| `file_upload` | Submit uploaded files | Click the upload control and answer its `filechooser`, or point `ref`/`selector` at an `input[type=file]`; `files` holds 1–16 workspace-relative paths |
+| `dialog` | Answer an alert/confirm/prompt | The page dialog stays pending; `accept` accepts or dismisses it and `prompt_text` fills a prompt |
+| `console` | Read console output and page errors | Bounded buffer; `clear` empties it after reading |
+| `network` | Read request, response and failure events | Bounded buffer; `clear` empties it after reading; response bodies are not included |
 | `batch` | Run 1–10 dependent steps in order | Steps use strict kind schemas and cannot nest batch |
 
 A common flow is `navigate` → `observe_refs` → interaction or `batch` → `wait` → `observe_text`. Ordinary DOM updates, SPA re-renders and same-URL refreshes do not kill a ref: the action re-resolves it from the recorded selector and waits up to about 0.8 s for a refreshed page to render it again. Re-observe only after a real navigation to another document where the selector is also gone.
 
 The observation text skips links and icon buttons with no accessible name and merges repeated controls with the same role, name and state (for example the same navigation link twenty times). The omitted count is reported as `stats.duplicates` instead of listing every copy.
+
+`resize` changes the page's logical viewport independently of the device screen. The Android system WebView scales that viewport uniformly inside its floating window, so `window.innerWidth/innerHeight` match the tool viewport. On Android, `network` records request-level events only (no response status or body); `console`, `dialog` and `file_upload` behave like desktop and cloud.
 
 ## Batch
 

@@ -4,16 +4,10 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
-import android.graphics.PixelFormat;
 import android.graphics.Rect;
-import android.hardware.display.DisplayManager;
-import android.hardware.display.VirtualDisplay;
-import android.media.Image;
-import android.media.ImageReader;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.os.Handler;
-import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
@@ -27,24 +21,22 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
-import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.concurrent.Callable;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Single-frame screen capture on top of MediaProjection.
+ * Screen capture on top of a reusable MediaProjection session.
  *
- * <p>The user grants the projection through the system consent dialog. Android
- * 14+ allows that grant to create one projection and one virtual display, so
- * every capture consumes a fresh grant: the bridge starts the foreground
- * service for the frame, releases the projection, and stops the service as
- * soon as the PNG is saved. A new consent is required for the next capture.
+ * <p>The user grants the projection once through the system consent dialog.
+ * Android 14+ allows that grant to create one projection and one virtual
+ * display, so the bridge keeps that pair alive in a {@link ScreenCaptureSession}
+ * behind the mediaProjection foreground service: later screenshots reuse the
+ * session instead of asking again. The service notification offers a stop
+ * action, and the projection callback releases the session when the system or
+ * the user ends it.
  *
  * <p>Every method returns JSON. Failures are values, not exceptions: the agent
  * needs a readable reason (permission missing, service unavailable) instead of
@@ -54,7 +46,6 @@ final class ScreenCaptureBridge {
     private static final String TAG = "wunder";
     private static final int REQUEST_SCREEN_CAPTURE = 0x5714;
     private static final int KEEP_SCREENSHOTS = 4;
-    private static final long CAPTURE_TIMEOUT_MS = 6_000;
     private static final long SERVICE_START_TIMEOUT_MS = 2_000;
 
     private static final Object LOCK = new Object();
@@ -66,7 +57,8 @@ final class ScreenCaptureBridge {
     private static Context appContext;
     private static int resultCode = Activity.RESULT_CANCELED;
     private static Intent resultData;
-    private static MediaProjection projection;
+    /** Live session created from the current grant; null after stop/revoke. */
+    private static ScreenCaptureSession session;
 
     private ScreenCaptureBridge() {
     }
@@ -94,6 +86,9 @@ final class ScreenCaptureBridge {
                     return status(base).toString();
                 case "request_permission":
                     return requestPermission();
+                case "stop":
+                    stopSession(base);
+                    return okJson("Screen capture session stopped.");
                 default:
                     return errorJson("unknown_action", "Unknown screen action: " + name);
             }
@@ -103,10 +98,11 @@ final class ScreenCaptureBridge {
         }
     }
 
-    /** True while a one-shot projection grant is waiting to be consumed. */
+    /** True while a grant is waiting to be consumed or a session is active. */
     static boolean hasPermission() {
         synchronized (LOCK) {
-            return resultData != null && resultCode == Activity.RESULT_OK;
+            return (resultData != null && resultCode == Activity.RESULT_OK)
+                    || (session != null && session.isActive());
         }
     }
 
@@ -167,18 +163,27 @@ final class ScreenCaptureBridge {
         }
         attach(current);
         boolean granted = responseCode == Activity.RESULT_OK && data != null;
+        ScreenCaptureSession replaced = null;
+        boolean hasSession;
         synchronized (LOCK) {
-            releaseProjectionLocked();
-            ScreenCaptureBridge.resultCode =
-                    granted ? Activity.RESULT_OK : Activity.RESULT_CANCELED;
-            ScreenCaptureBridge.resultData = granted ? new Intent(data) : null;
+            hasSession = session != null && session.isActive();
+            if (granted) {
+                replaced = session;
+                session = null;
+            }
+            resultCode = granted ? Activity.RESULT_OK : Activity.RESULT_CANCELED;
+            resultData = granted ? new Intent(data) : null;
         }
-        // Do not start the foreground service on consent alone. Android shows
-        // its notification immediately for mediaProjection, so a long-lived
-        // service would leave "screen capture ready" in the shade until the
-        // process dies. The service starts only for the capture that consumes
-        // this one-shot grant.
-        ScreenCaptureService.stop(current);
+        if (replaced != null) {
+            replaced.close();
+        }
+        // A denial only clears an unused grant: an existing session keeps
+        // working. A fresh grant is consumed lazily by the next capture, which
+        // starts the service right before getMediaProjection as Android 14+
+        // requires.
+        if (granted || !hasSession) {
+            ScreenCaptureService.stop(current);
+        }
         return true;
     }
 
@@ -189,36 +194,162 @@ final class ScreenCaptureBridge {
             return errorObject("context_unavailable", "No Android context is available.");
         }
         synchronized (CAPTURE_LOCK) {
-            synchronized (LOCK) {
-                if (resultData == null || resultCode != Activity.RESULT_OK) {
+            ScreenCaptureSession active = activeSession();
+            if (active == null) {
+                active = openSession(context);
+                if (active == null) {
                     return errorObject(
                             "permission_required",
                             "Screen capture is not authorized; request permission first.");
                 }
             }
-            if (!ensureServiceRunning(context)) {
-                return errorObject(
-                        "service_unavailable",
-                        "The screen-capture foreground service did not start.");
+            int[] size = screenSize(context);
+            if (size[0] <= 0 || size[1] <= 0) {
+                return errorObject("display_unavailable", messageFor("display_unavailable"));
+            }
+            Bitmap shot = active.capture(size[0], size[1], density(context));
+            if (shot == null) {
+                if (!active.isActive()) {
+                    dropSession(active);
+                    return errorObject("projection_stopped", messageFor("projection_stopped"));
+                }
+                return errorObject("capture_timeout", messageFor("capture_timeout"));
             }
             try {
-                return captureFrame(context);
+                return saveFrame(context, shot);
             } finally {
-                // Android 14+ allows one getMediaProjection/createVirtualDisplay
-                // per consent. End the session with the frame so the next
-                // screenshot asks for a fresh grant and the notification does
-                // not outlive the capture.
-                endCaptureSession(context);
+                shot.recycle();
             }
         }
     }
 
-    private static void endCaptureSession(Context context) {
+    /**
+     * Consume the pending grant and open the reusable session. Android 14+
+     * requires the mediaProjection foreground service to be running before
+     * getMediaProjection, and only one projection may be created per consent,
+     * so the projection and its virtual display live for the whole session.
+     */
+    private static ScreenCaptureSession openSession(Context context) {
+        Intent grant;
+        int code;
         synchronized (LOCK) {
-            releaseProjectionLocked();
+            if (session != null && session.isActive()) {
+                return session;
+            }
+            if (resultData == null || resultCode != Activity.RESULT_OK) {
+                return null;
+            }
+            grant = new Intent(resultData);
+            code = resultCode;
+        }
+        if (!ensureServiceRunning(context)) {
+            return null;
+        }
+        ScreenCaptureSession created = null;
+        try {
+            MediaProjectionManager manager = (MediaProjectionManager)
+                    context.getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+            MediaProjection projection = manager == null
+                    ? null : manager.getMediaProjection(code, grant);
+            if (projection == null) {
+                // The token was consumed or rejected; ask again next time.
+                synchronized (LOCK) {
+                    clearPermissionLocked();
+                }
+                ScreenCaptureService.stop(context);
+                return null;
+            }
+            int[] size = screenSize(context);
+            created = ScreenCaptureSession.open(
+                    projection,
+                    size[0],
+                    size[1],
+                    density(context),
+                    ScreenCaptureBridge::onProjectionStopped);
+            if (created == null) {
+                try {
+                    projection.stop();
+                } catch (Throwable ignored) {
+                }
+                // The consent is single-use; a failed setup must ask again.
+                synchronized (LOCK) {
+                    clearPermissionLocked();
+                }
+                ScreenCaptureService.stop(context);
+                return null;
+            }
+            synchronized (LOCK) {
+                session = created;
+                clearPermissionLocked();
+            }
+            return created;
+        } catch (Throwable error) {
+            Log.w(TAG, "screen capture session failed: " + error);
+            if (created != null) {
+                created.close();
+            }
+            synchronized (LOCK) {
+                session = null;
+                clearPermissionLocked();
+            }
+            ScreenCaptureService.stop(context);
+            return null;
+        }
+    }
+
+    private static ScreenCaptureSession activeSession() {
+        synchronized (LOCK) {
+            return session != null && session.isActive() ? session : null;
+        }
+    }
+
+    /** Drop a dead session so the next capture can ask for a fresh grant. */
+    private static void dropSession(ScreenCaptureSession dead) {
+        synchronized (LOCK) {
+            if (session == dead) {
+                session = null;
+            }
             clearPermissionLocked();
         }
-        ScreenCaptureService.stop(context);
+        ScreenCaptureService.stop(appContext);
+    }
+
+    /** Projection ended by the system or the user; release everything. */
+    private static void onProjectionStopped() {
+        synchronized (LOCK) {
+            session = null;
+            clearPermissionLocked();
+        }
+        ScreenCaptureService.stop(appContext);
+    }
+
+    /** Stop the reusable session, for example from the service notification. */
+    static void stopSession(Context context) {
+        if (context != null) {
+            appContext = context.getApplicationContext();
+        }
+        ScreenCaptureSession current;
+        synchronized (LOCK) {
+            current = session;
+            session = null;
+            clearPermissionLocked();
+        }
+        if (current != null) {
+            current.close();
+        }
+        ScreenCaptureService.stop(context != null ? context : appContext);
+    }
+
+    /** The foreground service is gone, so its projection may not continue. */
+    static void onServiceStopped() {
+        ScreenCaptureSession current;
+        synchronized (LOCK) {
+            current = session;
+            session = null;
+        }
+        if (current != null) {
+            current.close();
+        }
     }
 
     private static boolean ensureServiceRunning(Context context) {
@@ -231,114 +362,6 @@ final class ScreenCaptureBridge {
             sleep(30);
         }
         return ScreenCaptureService.isRunning();
-    }
-
-    private static JSONObject captureFrame(Context context) {
-        int[] size = screenSize(context);
-        int density = density(context);
-        HandlerThread thread = new HandlerThread("wunder-screen-capture");
-        thread.start();
-        Handler handler = new Handler(thread.getLooper());
-        CountDownLatch setupDone = new CountDownLatch(1);
-        CountDownLatch frameDone = new CountDownLatch(1);
-        Object frameLock = new Object();
-        AtomicBoolean done = new AtomicBoolean(false);
-        AtomicReference<Bitmap> frame = new AtomicReference<>();
-        AtomicReference<String> failure = new AtomicReference<>();
-        AtomicReference<ImageReader> readerRef = new AtomicReference<>();
-        AtomicReference<VirtualDisplay> displayRef = new AtomicReference<>();
-
-        handler.post(() -> {
-            try {
-                if (size[0] <= 0 || size[1] <= 0) {
-                    failure.compareAndSet(null, "display_unavailable");
-                    return;
-                }
-                MediaProjection active = ensureProjection();
-                if (active == null) {
-                    failure.compareAndSet(null, "permission_required");
-                    return;
-                }
-                ImageReader reader = ImageReader.newInstance(
-                        size[0], size[1], PixelFormat.RGBA_8888, 2);
-                reader.setOnImageAvailableListener(source -> {
-                    Image image = null;
-                    try {
-                        image = source.acquireLatestImage();
-                        if (image != null) {
-                            Bitmap bitmap = toBitmap(image, size[0], size[1]);
-                            if (bitmap != null) {
-                                boolean stored;
-                                synchronized (frameLock) {
-                                    stored = !done.get() && frame.compareAndSet(null, bitmap);
-                                }
-                                if (!stored) {
-                                    bitmap.recycle();
-                                }
-                            }
-                        }
-                    } catch (Throwable error) {
-                        failure.compareAndSet(null, "capture_failed");
-                    } finally {
-                        if (image != null) {
-                            image.close();
-                        }
-                        frameDone.countDown();
-                    }
-                }, handler);
-                readerRef.set(reader);
-                VirtualDisplay display = active.createVirtualDisplay(
-                        "wunder-screen",
-                        size[0],
-                        size[1],
-                        density,
-                        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                        reader.getSurface(),
-                        null,
-                        handler);
-                displayRef.set(display);
-            } catch (Throwable error) {
-                failure.compareAndSet(null, projectionErrorCode(error));
-            } finally {
-                setupDone.countDown();
-            }
-        });
-
-        try {
-            if (!setupDone.await(CAPTURE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-                failure.compareAndSet(null, "capture_timeout");
-            }
-            if (failure.get() == null
-                    && !frameDone.await(CAPTURE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-                failure.compareAndSet(null, "capture_timeout");
-            }
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            failure.compareAndSet(null, "capture_failed");
-        }
-
-        Bitmap shot;
-        synchronized (frameLock) {
-            done.set(true);
-            shot = frame.getAndSet(null);
-        }
-        releaseCapture(handler, displayRef, readerRef);
-        thread.quitSafely();
-        try {
-            thread.join(1_000);
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-        }
-
-        if (shot == null) {
-            String code = failure.get() != null ? failure.get() : "capture_failed";
-            return errorObject(code, messageFor(code));
-        }
-        try {
-            return saveFrame(context, shot);
-        } finally {
-            shot.recycle();
-        }
     }
 
     /**
@@ -415,15 +438,15 @@ final class ScreenCaptureBridge {
     private static JSONObject status(Context context) {
         JSONObject result = new JSONObject();
         try {
-            boolean authorized;
+            boolean pendingGrant;
             boolean projecting;
             synchronized (LOCK) {
-                authorized = resultData != null && resultCode == Activity.RESULT_OK;
-                projecting = projection != null;
+                pendingGrant = resultData != null && resultCode == Activity.RESULT_OK;
+                projecting = session != null && session.isActive();
             }
             int[] size = screenSize(context);
             result.put("ok", true);
-            result.put("authorized", authorized);
+            result.put("authorized", pendingGrant || projecting);
             result.put("projecting", projecting);
             result.put("service_running", ScreenCaptureService.isRunning());
             result.put("screen_width", size[0]);
@@ -436,148 +459,12 @@ final class ScreenCaptureBridge {
 
     // ---- projection --------------------------------------------------------
 
-    private static MediaProjection ensureProjection() {
-        synchronized (LOCK) {
-            if (projection != null) {
-                return projection;
-            }
-            if (resultData == null || resultCode != Activity.RESULT_OK || appContext == null) {
-                return null;
-            }
-            MediaProjectionManager manager = (MediaProjectionManager)
-                    appContext.getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-            if (manager == null) {
-                return null;
-            }
-            final MediaProjection created;
-            try {
-                created = manager.getMediaProjection(resultCode, new Intent(resultData));
-            } catch (Throwable error) {
-                Log.w(TAG, "getMediaProjection failed: " + error);
-                clearPermissionLocked();
-                stopServiceOnFailure();
-                return null;
-            }
-            if (created == null) {
-                clearPermissionLocked();
-                stopServiceOnFailure();
-                return null;
-            }
-            // Android 14 requires a registered callback before the first
-            // virtual display. Main looper keeps the callback alive after the
-            // per-capture handler thread quits.
-            created.registerCallback(new MediaProjection.Callback() {
-                @Override
-                public void onStop() {
-                    boolean current;
-                    synchronized (LOCK) {
-                        current = projection == created;
-                        if (current) {
-                            projection = null;
-                            clearPermissionLocked();
-                        }
-                    }
-                    if (current && appContext != null) {
-                        ScreenCaptureService.stop(appContext);
-                    }
-                }
-            }, new Handler(Looper.getMainLooper()));
-            projection = created;
-            return created;
-        }
-    }
-
-    private static void releaseProjectionLocked() {
-        MediaProjection current = projection;
-        projection = null;
-        if (current != null) {
-            // onStop sees projection == null and therefore leaves the new
-            // grant and its service untouched.
-            try {
-                current.stop();
-            } catch (Throwable ignored) {
-            }
-        }
-    }
-
     private static void clearPermissionLocked() {
         resultData = null;
         resultCode = Activity.RESULT_CANCELED;
     }
 
-    private static String projectionErrorCode(Throwable error) {
-        synchronized (LOCK) {
-            releaseProjectionLocked();
-            clearPermissionLocked();
-        }
-        stopServiceOnFailure();
-        if (error instanceof SecurityException) {
-            return "permission_required";
-        }
-        if (error instanceof IllegalStateException) {
-            return "projection_stopped";
-        }
-        return "capture_failed";
-    }
-
-    private static void stopServiceOnFailure() {
-        Context context = appContext;
-        if (context != null) {
-            ScreenCaptureService.stop(context);
-        }
-    }
-
-    private static void releaseCapture(
-            Handler handler,
-            AtomicReference<VirtualDisplay> displayRef,
-            AtomicReference<ImageReader> readerRef) {
-        handler.post(() -> {
-            VirtualDisplay display = displayRef.getAndSet(null);
-            if (display != null) {
-                try {
-                    display.release();
-                } catch (Throwable ignored) {
-                }
-            }
-            ImageReader reader = readerRef.getAndSet(null);
-            if (reader != null) {
-                try {
-                    reader.close();
-                } catch (Throwable ignored) {
-                }
-            }
-        });
-    }
-
-    // ---- pixels and files --------------------------------------------------
-
-    private static Bitmap toBitmap(Image image, int width, int height) {
-        Image.Plane plane = image.getPlanes()[0];
-        ByteBuffer buffer = plane.getBuffer();
-        int pixelStride = plane.getPixelStride();
-        int rowStride = plane.getRowStride();
-        int rowPadding = rowStride - pixelStride * width;
-        int paddedWidth = width + Math.max(0, rowPadding) / Math.max(1, pixelStride);
-        Bitmap padded;
-        try {
-            padded = Bitmap.createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888);
-        } catch (Throwable error) {
-            return null;
-        }
-        try {
-            buffer.rewind();
-            padded.copyPixelsFromBuffer(buffer);
-            if (paddedWidth == width) {
-                return padded;
-            }
-            Bitmap cropped = Bitmap.createBitmap(padded, 0, 0, width, height);
-            padded.recycle();
-            return cropped;
-        } catch (Throwable error) {
-            padded.recycle();
-            return null;
-        }
-    }
+    // ---- files -------------------------------------------------------------
 
     private static void prune(File directory) {
         File[] files = directory.listFiles((dir, name) ->
@@ -680,6 +567,16 @@ final class ScreenCaptureBridge {
 
     private static String errorJson(String code, String message) {
         return errorObject(code, message).toString();
+    }
+
+    private static String okJson(String message) {
+        JSONObject result = new JSONObject();
+        try {
+            result.put("ok", true);
+            result.put("message", message == null ? "" : message);
+        } catch (Throwable ignored) {
+        }
+        return result.toString();
     }
 
     private static <T> T onMain(Callable<T> task, long timeoutMs) {

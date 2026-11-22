@@ -604,6 +604,8 @@ def missing_scheme_message(url):
 # enough that a page stuck in a render loop cannot grow the bridge's memory.
 CONSOLE_LIMIT = 200
 CONSOLE_TEXT_LIMIT = 400
+NETWORK_LIMIT = 200
+NETWORK_URL_LIMIT = 500
 # 回读与随动作附带的数量上限：够定位第一个报错，又不会把上下文灌满。
 CONSOLE_REPORT_LIMIT = 40
 CONSOLE_SAMPLE_LIMIT = 5
@@ -1105,6 +1107,9 @@ class BridgeSession:
         # Per-tab console ring plus the workspace directory a preview URL maps
         # to. Both are bounded and tab-scoped, so a closed tab releases them.
         self.console_logs = {}
+        self.network_logs = {}
+        self.dialogs = {}
+        self.file_choosers = {}
         self.preview_root = None
         self.preview_route_installed = False
         # Cursor signatures bind a window to this one bridge process.  They are
@@ -1287,7 +1292,11 @@ class BridgeSession:
         self.page_generations[target_id] = 0
         self.page_identities[target_id] = None
         self.console_logs[target_id] = deque(maxlen=CONSOLE_LIMIT)
+        self.network_logs[target_id] = deque(maxlen=NETWORK_LIMIT)
+        self.dialogs[target_id] = None
+        self.file_choosers[target_id] = None
         self._watch_console(target_id, page)
+        self._watch_events(target_id, page)
         if self.preview_root:
             self._install_preview(page, self.preview_root)
         if self.active_target_id is None:
@@ -1342,6 +1351,70 @@ class BridgeSession:
             # A page that cannot take listeners simply reports no console.
             if buffer is not None:
                 buffer.append({"type": "info", "text": "console capture unavailable"})
+
+    def _watch_events(self, target_id, page):
+        """Record network activity and keep dialogs/file choosers pending for
+        the corresponding browser actions instead of auto-accepting them."""
+
+        def record_network(entry):
+            current = self.network_logs.get(target_id)
+            if current is not None:
+                current.append(entry)
+
+        def on_request(request):
+            try:
+                record_network(
+                    {
+                        "event": "request",
+                        "method": request.method,
+                        "url": _short(request.url, NETWORK_URL_LIMIT),
+                        "resource_type": request.resource_type,
+                    }
+                )
+            except Exception:
+                return
+
+        def on_response(response):
+            try:
+                record_network(
+                    {
+                        "event": "response",
+                        "status": response.status,
+                        "url": _short(response.url, NETWORK_URL_LIMIT),
+                        "resource_type": response.request.resource_type,
+                    }
+                )
+            except Exception:
+                return
+
+        def on_failed(request):
+            try:
+                failure = request.failure
+                record_network(
+                    {
+                        "event": "failed",
+                        "url": _short(request.url, NETWORK_URL_LIMIT),
+                        "error": _short(str(failure or "request failed"), 200),
+                    }
+                )
+            except Exception:
+                return
+
+        def on_dialog(dialog):
+            self.dialogs[target_id] = dialog
+
+        def on_file_chooser(chooser):
+            self.file_choosers[target_id] = chooser
+
+        try:
+            page.on("request", on_request)
+            page.on("response", on_response)
+            page.on("requestfailed", on_failed)
+            page.on("dialog", on_dialog)
+            page.on("filechooser", on_file_chooser)
+        except Exception:
+            # Older bridges simply expose no network/dialog events.
+            pass
 
     def _serve_preview(self, route, request):
         """Answer one `wunder.preview` request from the workspace root."""
@@ -1603,6 +1676,31 @@ class BridgeSession:
             request = dict(raw)
             request["kind"] = action
             return self.act(request, raw.get("target_id"))
+        if action == "resize":
+            return self.resize(
+                raw.get("width"),
+                raw.get("height"),
+                target_id=raw.get("target_id"),
+            )
+        if action == "file_upload":
+            return self.file_upload(
+                raw.get("files"),
+                target_id=raw.get("target_id"),
+                ref=raw.get("ref"),
+                selector=raw.get("selector"),
+                timeout_ms=raw.get("timeout_ms"),
+            )
+        if action == "dialog":
+            return self.handle_dialog(
+                accept=raw.get("accept", True),
+                prompt_text=raw.get("prompt_text"),
+                target_id=raw.get("target_id"),
+            )
+        if action == "network":
+            return self.read_network(
+                target_id=raw.get("target_id"),
+                clear=bool(raw.get("clear", False)),
+            )
         if action == "screenshot":
             return self.screenshot(
                 target_id=raw.get("target_id"),
@@ -1615,6 +1713,122 @@ class BridgeSession:
                 cursor=raw.get("cursor"),
             )
         return {"success": False, "error": "Unknown action: %s" % action}
+
+    def resize(self, width, height, target_id=None):
+        try:
+            width = int(width)
+            height = int(height)
+        except (TypeError, ValueError):
+            return {"success": False, "error": "resize requires integer width and height"}
+        if not (240 <= width <= 3840 and 240 <= height <= 3840):
+            return {
+                "success": False,
+                "error": "resize width/height must be between 240 and 3840 CSS pixels",
+            }
+        page, target_id = self._resolve_page(target_id)
+        page.set_viewport_size({"width": width, "height": height})
+        actual = page.viewport_size or {"width": width, "height": height}
+        return {
+            "success": True,
+            "data": {
+                "target_id": target_id,
+                "width": int(actual.get("width") or width),
+                "height": int(actual.get("height") or height),
+                "url": safe_page_url(page),
+            },
+        }
+
+    def file_upload(
+        self, files, target_id=None, ref=None, selector=None, timeout_ms=None
+    ):
+        if not isinstance(files, list) or not files:
+            return {"success": False, "error": "file_upload requires files"}
+        paths = [str(path) for path in files if str(path).strip()]
+        if not paths:
+            return {"success": False, "error": "file_upload requires files"}
+        page, target_id = self._resolve_page(target_id)
+        chooser = self.file_choosers.get(target_id)
+        if chooser is not None:
+            chooser.set_files(paths)
+            self.file_choosers[target_id] = None
+            return {
+                "success": True,
+                "data": {
+                    "target_id": target_id,
+                    "files": paths,
+                    "via": "file_chooser",
+                    "url": safe_page_url(page),
+                },
+            }
+        if ref or selector:
+            locator, meta = self._resolve_locator(
+                page, target_id, {"ref": ref, "selector": selector}
+            )
+            locator.set_input_files(paths, timeout=self._timeout_ms(timeout_ms))
+            return {
+                "success": True,
+                "data": {
+                    "target_id": target_id,
+                    "files": paths,
+                    "via": "input",
+                    "url": safe_page_url(page),
+                    **meta,
+                },
+            }
+        return {
+            "success": False,
+            "error": "No pending file chooser. Click the upload control first, or pass ref/selector of an <input type=file>.",
+        }
+
+    def handle_dialog(self, accept=True, prompt_text=None, target_id=None):
+        page, target_id = self._resolve_page(target_id)
+        dialog = self.dialogs.get(target_id)
+        if dialog is None:
+            return {
+                "success": False,
+                "error": "No pending dialog. Trigger the page action that opens it first.",
+            }
+        self.dialogs[target_id] = None
+        accepted = bool(accept)
+        try:
+            if accepted:
+                if str(getattr(dialog, "type", "")).lower() == "prompt":
+                    dialog.accept("" if prompt_text is None else str(prompt_text))
+                else:
+                    dialog.accept()
+            else:
+                dialog.dismiss()
+        except Exception as exc:
+            return {"success": False, "error": "Failed to handle dialog: %s" % exc}
+        return {
+            "success": True,
+            "data": {
+                "target_id": target_id,
+                "accepted": accepted,
+                "text": ("Accepted" if accepted else "Dismissed")
+                + " the page dialog.",
+                "url": safe_page_url(page),
+            },
+        }
+
+    def read_network(self, target_id=None, clear=False):
+        page, target_id = self._resolve_page(target_id)
+        entries = list(self.network_logs.get(target_id, ()))
+        if clear:
+            self.network_logs[target_id].clear()
+        text = "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries)
+        if not text:
+            text = "(no network requests recorded)"
+        return {
+            "success": True,
+            "data": {
+                "target_id": target_id,
+                "entries": entries,
+                "count": len(entries),
+                "text": text,
+                "url": safe_page_url(page),
+            },
+        }
 
     def status(self):
         return {
@@ -1711,6 +1925,9 @@ class BridgeSession:
         self.page_identities.pop(target_id, None)
         self.page_states.pop(target_id, None)
         self.console_logs.pop(target_id, None)
+        self.network_logs.pop(target_id, None)
+        self.dialogs.pop(target_id, None)
+        self.file_choosers.pop(target_id, None)
         if not self.pages:
             new_target_id, _ = self._new_page()
             self.active_target_id = new_target_id

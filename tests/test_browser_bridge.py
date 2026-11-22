@@ -3,6 +3,7 @@
 import argparse
 import importlib.util
 import json
+import tempfile
 import time
 import unittest
 from unittest.mock import patch
@@ -492,6 +493,81 @@ class BrowserBridgeTests(unittest.TestCase):
         data = self.session.screenshot(self.target)["data"]
         self.assertTrue(data["image_base64"].startswith("iVBOR"))
         self.assertEqual(data["format"], "png")
+
+    def test_resize_changes_the_css_viewport_and_rejects_bad_sizes(self):
+        try:
+            result = self.session.handle({
+                "action": "resize", "target_id": self.target, "width": 640, "height": 480,
+            })
+            self.assertTrue(result["success"], result)
+            self.assertEqual(result["data"]["width"], 640)
+            self.assertEqual(result["data"]["height"], 480)
+            self.assertEqual(self.page.viewport_size, {"width": 640, "height": 480})
+            self.assertEqual(self.page.evaluate("window.innerWidth"), 640)
+        finally:
+            self.page.set_viewport_size({"width": 900, "height": 600})
+        self.assertFalse(self.session.handle({
+            "action": "resize", "target_id": self.target, "width": 100, "height": 480,
+        })["success"])
+
+    def test_dialog_action_answers_a_pending_prompt(self):
+        self.page.set_content(
+            "<button id='ask' onclick=\"window.answer = prompt('Sample prompt')\">Ask</button>"
+        )
+        # Playwright holds the action open while the dialog is unanswered; the
+        # bounded timeout returns control so the dialog action can answer it.
+        blocked = self.act({"kind": "click", "selector": "#ask", "timeout_ms": 120})
+        self.assertFalse(blocked["success"])
+        self.assertIsNotNone(self.session.dialogs.get(self.target))
+        result = self.session.handle({
+            "action": "dialog", "target_id": self.target,
+            "accept": True, "prompt_text": "sample answer",
+        })
+        self.assertTrue(result["success"], result)
+        self.assertTrue(result["data"]["accepted"])
+        self.assertEqual(self.page.evaluate("window.answer"), "sample answer")
+        self.assertFalse(self.session.handle({
+            "action": "dialog", "target_id": self.target,
+        })["success"])
+
+    def test_file_upload_fills_a_file_input(self):
+        self.page.set_content("<input id='upload' type='file'>")
+        with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as handle:
+            handle.write(b"sample payload")
+            path = handle.name
+        try:
+            result = self.session.handle({
+                "action": "file_upload", "target_id": self.target,
+                "selector": "#upload", "files": [path],
+            })
+            self.assertTrue(result["success"], result)
+            self.assertEqual(result["data"]["via"], "input")
+            self.assertEqual(
+                self.page.locator("#upload").evaluate("el => el.files.length"), 1
+            )
+        finally:
+            Path(path).unlink(missing_ok=True)
+        self.assertFalse(self.session.handle({
+            "action": "file_upload", "target_id": self.target, "files": [],
+        })["success"])
+
+    def test_network_log_is_bounded_and_clears_on_request(self):
+        url = "https://example.test/network-sample"
+        self.page.route(url, lambda route: route.fulfill(
+            content_type="text/html", body="<p>network sample</p>"
+        ))
+        try:
+            self.page.goto(url)
+        finally:
+            self.page.unroute(url)
+        data = self.session.read_network(self.target)["data"]
+        self.assertGreater(data["count"], 0)
+        for entry in data["entries"]:
+            self.assertIn("event", entry)
+        cleared = self.session.read_network(self.target, clear=True)["data"]
+        self.assertGreater(cleared["count"], 0)
+        self.assertEqual(self.session.read_network(self.target)["data"]["count"], 0)
+        self.assertEqual(len(self.session.network_logs[self.target]), 0)
 
     def test_open_shadow_roots_remain_readable_and_interactive(self):
         self.page.set_content("<div id='host'></div>")

@@ -2470,6 +2470,19 @@ fn start_tick(
                     state.goal.seconds = state.goal.seconds.saturating_add(1);
                     state.goal_rev = state.goal_rev.wrapping_add(1);
                 }
+                // 工作过程条右端的耗时：运行中的回合由本地秒表按真实时间推进，
+                // 与桌面版一致；等回合落定后统计值才接管。工具长时间不出事件时
+                // 这条秒表仍在走，数字不会停在旧值上。
+                if state.generating && state.live_session == state.session_id {
+                    if let Some(started) = state.turn_started {
+                        let label = project::live_duration_label(
+                            started.elapsed().as_secs_f64(),
+                        );
+                        if state.set_live_duration(&label) {
+                            state.live_rev = state.live_rev.wrapping_add(1);
+                        }
+                    }
+                }
             }
         }
         // Settings pages 7 (tools) and 8 (agent) are opened inside the Slint
@@ -2877,6 +2890,8 @@ fn start_tick(
                 ui.set_goal_active(false);
                 ui.set_goal_paused(false);
                 ui.set_activity_steps_total(0);
+                ui.set_activity_running(false);
+                ui.set_activity_plan_complete(false);
                 ui.set_activity_plan_steps(ModelRc::default());
                 // 后台任务与子智能体是本地线程的运行时状态，云端线程没有。
                 ui.set_task_rows(ModelRc::default());
@@ -3211,6 +3226,8 @@ fn start_tick(
                 .count() as i32;
             let (current, position) = plan_current(&plan.steps);
             ui.set_activity_running(plan.running);
+            // 与桌面版一致：清单全部完成时胶囊换成对勾并停住，而不是继续转。
+            ui.set_activity_plan_complete(total > 0 && done == total);
             ui.set_activity_steps_done(done);
             ui.set_activity_steps_total(total);
             ui.set_activity_plan_explanation(plan.explanation.as_str().into());

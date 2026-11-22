@@ -62,7 +62,7 @@ const ITEMS: &[Meta] = &[
     Meta {
         id: "screen_capture",
         title: "屏幕采集",
-        description: "每次截图前由系统确认（单次授权）",
+        description: "一次授权后可反复截图，在通知中可随时停止",
     },
     Meta {
         id: "notification_access",
@@ -102,9 +102,9 @@ fn from_states(states: &Value) -> Vec<PermissionItem> {
                 .unwrap_or("unknown");
             let granted = state == "granted";
             let available = state != "unsupported";
-            let single_use = meta.id == "screen_capture";
-            let state_text = match (state, single_use) {
-                ("granted", true) => "已授权（单次）",
+            let session_based = meta.id == "screen_capture";
+            let state_text = match (state, session_based) {
+                ("granted", true) => "已授权（会话）",
                 ("denied", true) => "按需授权",
                 ("granted", false) => "已开启",
                 ("denied", false) => "未开启",
@@ -113,7 +113,7 @@ fn from_states(states: &Value) -> Vec<PermissionItem> {
             };
             let action_text = if !available {
                 ""
-            } else if single_use {
+            } else if session_based {
                 "去授权"
             } else if granted {
                 "去管理"
@@ -169,13 +169,13 @@ mod tests {
     }
 
     #[test]
-    fn screen_capture_is_labelled_as_single_use() {
+    fn screen_capture_is_labelled_as_a_reusable_session() {
         let granted = from_states(&json!({"screen_capture": "granted"}));
         let item = granted
             .iter()
             .find(|item| item.id == "screen_capture")
             .unwrap();
-        assert_eq!(item.state_text, "已授权（单次）");
+        assert_eq!(item.state_text, "已授权（会话）");
         assert_eq!(item.action_text, "去授权");
 
         let denied = from_states(&json!({"screen_capture": "denied"}));

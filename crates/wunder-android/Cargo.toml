@@ -76,6 +76,14 @@ i-slint-backend-winit = { version = "=1.18.0", default-features = false, feature
 i-slint-core = { version = "=1.18.0", default-features = false, features = ["std", "shared-parley"] }
 fontique = { version = "=0.11.1", features = ["system"] }
 
+[profile.dev]
+# 安卓版是独立 workspace，不继承仓库根 Cargo.toml 的 [profile.dev]。
+# 交叉编译的 debug 增量目录单个可达数 G，累积后曾占 93G，故默认关闭增量。
+incremental = false
+# 只保留行号级调试信息，避免 cdylib/预览程序因完整调试信息而过度膨胀；
+# 回溯源仍能给出文件与行号，引擎各 crate 也保持可定位。
+debug = "line-tables-only"
+
 [profile.release]
 # The engine, SQLite and Skia are linked statically; debug symbols alone add
 # ~34 MB to the APK and are useless on a device without a symbol server.

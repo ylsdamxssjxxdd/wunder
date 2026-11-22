@@ -4,6 +4,7 @@
 //! the process-wide registry (see [`super::provider::BrowserUseRegistry`]).
 
 pub mod playwright;
+mod preview;
 pub mod webview;
 
 pub use playwright::PlaywrightProvider;

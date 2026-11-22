@@ -102,6 +102,15 @@ default = ["native-runtime"]
 # Compatibility feature; the native runtime is always linked.
 native-runtime = []
 
+[profile.dev]
+# 桌面版前端是独立 workspace，不继承仓库根 Cargo.toml 的 [profile.dev]。
+# 开启增量时每次构建会留下一个 6–7G 的 incremental 目录，多次构建后可达百 G，
+# 因此在本地与 CI 统一关闭增量，保证产物可预测且不占盘。
+incremental = false
+# 默认 debug = 2 会让 Slint/Skia 静态链接后的二进制达到 1.8G 以上；
+# 统一降为行号级信息：回溯源仍能给出文件与行号，但去掉类型/变量等大块调试数据。
+debug = "line-tables-only"
+
 [profile.release]
 strip = "symbols"
 lto = "thin"

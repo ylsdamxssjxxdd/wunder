@@ -10,6 +10,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.DocumentsContract;
 import android.provider.Settings;
 import android.util.Base64;
 import android.util.DisplayMetrics;
@@ -19,9 +20,15 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.webkit.ConsoleMessage;
 import android.webkit.CookieManager;
+import android.webkit.JsPromptResult;
+import android.webkit.JsResult;
+import android.webkit.MimeTypeMap;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -29,11 +36,22 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.FutureTask;
@@ -54,6 +72,9 @@ public final class WebViewBridge {
     private static final long JS_TIMEOUT_MS = 15_000L;
     private static final int MAX_TEXT_CHARS = 40_000;
     private static final int MAX_SNAPSHOT_NODES = 220;
+    /** 工作区预览域名：请求由 WebViewClient 从磁盘应答，不做 DNS 解析。 */
+    private static final String PREVIEW_HOST = "wunder.preview";
+    private static final String PREVIEW_ORIGIN = "https://" + PREVIEW_HOST;
 
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
 
@@ -61,12 +82,50 @@ public final class WebViewBridge {
     private static WindowManager windowManager;
     private static WebView webView;
     private static View overlay;
+    private static WindowManager.LayoutParams overlayParams;
     private static TextView titleView;
+    private static TextView browserToggle;
+    private static int browserHeaderHeight;
+    private static int browserExpandedHeight;
+    /** 默认展开；用户可手动收起为一条标题栏，收起状态在同一进程内保留。 */
+    private static boolean browserMinimized = false;
     private static volatile CountDownLatch pageLatch;
     private static volatile String currentUrl = "";
     private static volatile String currentTitle = "";
     private static volatile String lastLoadError = "";
     private static volatile long lastPermissionRequestAt;
+    /** 当前预览的工作区根目录；为空时预览域名返回 503。 */
+    private static volatile File previewRoot;
+
+    /** 逻辑视口容器：WebView 按 CSS 视口放大布局，再缩放到可见区域。 */
+    private static FrameLayout viewportHost;
+    private static int viewportWidthCss;
+    private static int viewportHeightCss;
+
+    private static final int MAX_LOG_ENTRIES = 200;
+    private static final Object LOG_LOCK = new Object();
+    private static final Deque<String> consoleEntries = new ArrayDeque<>();
+    private static final Deque<String> networkEntries = new ArrayDeque<>();
+    private static volatile ValueCallback<Uri[]> pendingFileChooser;
+    private static volatile PendingDialog pendingDialog;
+
+    /** One JS alert/confirm/prompt waiting for the `dialog` action. */
+    private static final class PendingDialog {
+        final String kind;
+        final String message;
+        final String defaultValue;
+        final JsResult result;
+        final JsPromptResult promptResult;
+
+        PendingDialog(String kind, String message, String defaultValue,
+                      JsResult result, JsPromptResult promptResult) {
+            this.kind = kind;
+            this.message = message == null ? "" : message;
+            this.defaultValue = defaultValue == null ? "" : defaultValue;
+            this.result = result;
+            this.promptResult = promptResult;
+        }
+    }
 
     private WebViewBridge() {}
 
@@ -114,6 +173,16 @@ public final class WebViewBridge {
                     return waitFor(args);
                 case "screenshot":
                     return screenshot();
+                case "resize":
+                    return resize(args);
+                case "file_upload":
+                    return fileUpload(args);
+                case "dialog":
+                    return handleDialog(args);
+                case "console":
+                    return readConsole(args);
+                case "network":
+                    return readNetwork(args);
                 case "tabs_list":
                     return tabsList();
                 case "tabs_new":
@@ -143,9 +212,32 @@ public final class WebViewBridge {
 
     private static String navigate(JSONObject args) {
         String url = args.optString("url", "").trim();
-        if (!isHttpUrl(url)) {
-            return error("url 必须是 http(s) 地址");
+        String previewPath = args.optString("preview_path", "").trim();
+        File previewRootForLoad = null;
+        if (!previewPath.isEmpty()) {
+            String rootArg = args.optString("preview_root", "").trim();
+            try {
+                File root = new File(rootArg).getCanonicalFile();
+                if (!root.isDirectory()) {
+                    return error("工作区预览根目录不可用");
+                }
+                File target = previewFile(root, previewPath);
+                if (target == null) {
+                    return error("工作区预览文件不存在：" + previewPath);
+                }
+                previewRootForLoad = root;
+                url = PREVIEW_ORIGIN + "/" + encodePreviewPath(relativePreviewPath(root, target));
+            } catch (Throwable failure) {
+                return error("工作区预览路径无效：" + previewPath);
+            }
+        } else {
+            // 外部页面不再继承上一次的工作区预览根目录。
+            previewRoot = null;
+            if (!isHttpUrl(url)) {
+                return error("url 必须是 http(s) 地址；预览工作区文件请传 path");
+            }
         }
+        final String targetUrl = url;
         try {
             ensureBrowser();
         } catch (RuntimeException error) {
@@ -154,11 +246,13 @@ public final class WebViewBridge {
         CountDownLatch latch = new CountDownLatch(1);
         pageLatch = latch;
         lastLoadError = "";
+        // 浏览器窗口创建后才挂载预览根目录，避免初始化页面把状态清掉。
+        previewRoot = previewRootForLoad;
         Boolean started = onMain(() -> {
             if (webView == null) {
                 return Boolean.FALSE;
             }
-            webView.loadUrl(url);
+            webView.loadUrl(targetUrl);
             return Boolean.TRUE;
         }, 8_000L);
         if (!Boolean.TRUE.equals(started)) {
@@ -166,7 +260,7 @@ public final class WebViewBridge {
         }
         await(latch, NAVIGATION_TIMEOUT_MS);
         sleep(350);
-        return pageText("已打开 " + (currentUrl.isEmpty() ? url : currentUrl));
+        return pageText("已打开 " + (currentUrl.isEmpty() ? targetUrl : currentUrl));
     }
 
     private static String back() {
@@ -249,6 +343,10 @@ public final class WebViewBridge {
             return error("未找到目标元素，请重新 observe_refs");
         }
         if (result == null) {
+            PendingDialog dialog = pendingDialog;
+            if (dialog != null) {
+                return pageText("已点击，页面弹出 " + dialog.kind + " 对话框，请使用 dialog 处理");
+            }
             return error("点击超时");
         }
         sleep(650);
@@ -289,6 +387,10 @@ public final class WebViewBridge {
             return error("目标元素不可输入");
         }
         if (result == null) {
+            PendingDialog dialog = pendingDialog;
+            if (dialog != null) {
+                return pageText("输入后页面弹出 " + dialog.kind + " 对话框，请使用 dialog 处理");
+            }
             return error("输入超时");
         }
         sleep(250);
@@ -462,6 +564,294 @@ public final class WebViewBridge {
         }
     }
 
+    private static String resize(JSONObject args) {
+        int rawWidth = args.optInt("width", -1);
+        int rawHeight = args.optInt("height", -1);
+        if (rawWidth < 240 || rawHeight < 240) {
+            return error("resize 需要 width/height（240-3840）");
+        }
+        int width = clamp(rawWidth, 240, 3_840);
+        int height = clamp(rawHeight, 240, 3_840);
+        float density = app.getResources().getDisplayMetrics().density;
+        long pixelWidth = Math.round(width * density);
+        long pixelHeight = Math.round(height * density);
+        if (pixelWidth > 4096 || pixelHeight > 4096
+                || pixelWidth * pixelHeight > 16_000_000L) {
+            return error("当前屏幕密度下视口过大，请降低 width/height");
+        }
+        viewportWidthCss = width;
+        viewportHeightCss = height;
+        if (webView == null) {
+            return pageText("已设置视口 " + width + "x" + height + "，打开页面后生效");
+        }
+        Boolean applied = onMain(() -> {
+            applyViewportLayoutOnMain();
+            return Boolean.TRUE;
+        }, 5_000L);
+        if (!Boolean.TRUE.equals(applied)) {
+            return error("设置视口失败");
+        }
+        sleep(350);
+        String actual = evalJs(
+                "(function(){return (window.innerWidth||0)+'x'+(window.innerHeight||0);})()",
+                3_000L);
+        String suffix = actual == null || actual.isEmpty() ? "" : "（实际 " + actual + "）";
+        return pageText("视口已设为 " + width + "x" + height + suffix);
+    }
+
+    /** Re-layout the WebView at the logical viewport size, then scale it to fit. */
+    private static void applyViewportLayoutOnMain() {
+        if (webView == null || viewportHost == null) {
+            return;
+        }
+        FrameLayout.LayoutParams params =
+                (FrameLayout.LayoutParams) webView.getLayoutParams();
+        if (viewportWidthCss <= 0 || viewportHeightCss <= 0) {
+            params.width = ViewGroup.LayoutParams.MATCH_PARENT;
+            params.height = ViewGroup.LayoutParams.MATCH_PARENT;
+        } else {
+            float density = app.getResources().getDisplayMetrics().density;
+            params.width = Math.round(viewportWidthCss * density);
+            params.height = Math.round(viewportHeightCss * density);
+        }
+        webView.setLayoutParams(params);
+        viewportHost.requestLayout();
+        viewportHost.post(WebViewBridge::applyViewportTransformOnMain);
+    }
+
+    /** Keep the logical viewport visible by uniformly scaling it into the host. */
+    private static void applyViewportTransformOnMain() {
+        if (webView == null || viewportHost == null) {
+            return;
+        }
+        int hostWidth = viewportHost.getWidth();
+        int hostHeight = viewportHost.getHeight();
+        if (hostWidth <= 0 || hostHeight <= 0) {
+            return;
+        }
+        float density = app.getResources().getDisplayMetrics().density;
+        float logicalWidth = viewportWidthCss > 0
+                ? viewportWidthCss * density : hostWidth;
+        float logicalHeight = viewportHeightCss > 0
+                ? viewportHeightCss * density : hostHeight;
+        float scale = Math.min(hostWidth / logicalWidth, hostHeight / logicalHeight);
+        if (!Float.isFinite(scale) || scale <= 0f) {
+            scale = 1f;
+        }
+        webView.setPivotX(0f);
+        webView.setPivotY(0f);
+        webView.setScaleX(scale);
+        webView.setScaleY(scale);
+        webView.setTranslationX((hostWidth - logicalWidth * scale) / 2f);
+        webView.setTranslationY((hostHeight - logicalHeight * scale) / 2f);
+    }
+
+    private static String fileUpload(JSONObject args) {
+        JSONArray files = args.optJSONArray("files");
+        if (files == null || files.length() == 0) {
+            return error("file_upload 需要 files");
+        }
+        if (files.length() > 16) {
+            return error("一次最多上传 16 个文件");
+        }
+        if (webView == null) {
+            return error("浏览器尚未打开");
+        }
+        if (pendingFileChooser == null) {
+            String lookup = lookupExpression(args);
+            if (lookup != null) {
+                evalJs("(function(){var el=" + lookup + ";if(!el)return 'not_found';"
+                        + "try{el.click();}catch(e){}return 'clicked';})()", 3_000L);
+                sleep(400);
+            }
+        }
+        ValueCallback<Uri[]> callback = pendingFileChooser;
+        if (callback == null) {
+            return error("当前没有等待中的文件选择器；先点击上传按钮，或提供 ref/selector");
+        }
+        List<Uri> uris = new ArrayList<>();
+        for (int index = 0; index < files.length(); index++) {
+            String path = files.optString(index, "").trim();
+            if (path.isEmpty()) {
+                continue;
+            }
+            Uri uri = workspaceDocumentUri(new File(path));
+            if (uri == null) {
+                pendingFileChooser = null;
+                onMain(() -> {
+                    callback.onReceiveValue(null);
+                    return Boolean.TRUE;
+                }, 3_000L);
+                return error("上传文件必须位于工作区内：" + path);
+            }
+            uris.add(uri);
+        }
+        if (uris.isEmpty()) {
+            return error("file_upload 需要至少一个文件");
+        }
+        pendingFileChooser = null;
+        Boolean delivered = onMain(() -> {
+            callback.onReceiveValue(uris.toArray(new Uri[0]));
+            return Boolean.TRUE;
+        }, 5_000L);
+        if (!Boolean.TRUE.equals(delivered)) {
+            return error("提交文件选择失败");
+        }
+        sleep(300);
+        return pageText("已选择 " + uris.size() + " 个文件");
+    }
+
+    private static String handleDialog(JSONObject args) {
+        PendingDialog dialog = pendingDialog;
+        if (dialog == null) {
+            return error("当前没有待处理的对话框");
+        }
+        pendingDialog = null;
+        boolean accept = !args.has("accept") || args.optBoolean("accept", true);
+        String promptText = args.has("prompt_text")
+                ? args.optString("prompt_text", "")
+                : dialog.defaultValue;
+        Boolean handled = onMain(() -> {
+            try {
+                if (dialog.promptResult != null) {
+                    if (accept) {
+                        dialog.promptResult.confirm(promptText);
+                    } else {
+                        dialog.promptResult.cancel();
+                    }
+                } else if (dialog.result != null) {
+                    if (accept) {
+                        dialog.result.confirm();
+                    } else {
+                        dialog.result.cancel();
+                    }
+                }
+                return Boolean.TRUE;
+            } catch (Throwable failure) {
+                Log.w(TAG, "dialog handling failed", failure);
+                return Boolean.FALSE;
+            }
+        }, 5_000L);
+        if (!Boolean.TRUE.equals(handled)) {
+            return error("处理对话框失败");
+        }
+        return pageText((accept ? "已接受 " : "已取消 ")
+                + dialog.kind + " 对话框：" + truncate(dialog.message, 200));
+    }
+
+    private static String readConsole(JSONObject args) {
+        List<String> entries;
+        synchronized (LOG_LOCK) {
+            entries = new ArrayList<>(consoleEntries);
+            if (args.optBoolean("clear", false)) {
+                consoleEntries.clear();
+            }
+        }
+        return pageText(entries.isEmpty()
+                ? "(没有控制台消息)" : String.join("\n", entries));
+    }
+
+    private static String readNetwork(JSONObject args) {
+        List<String> entries;
+        synchronized (LOG_LOCK) {
+            entries = new ArrayList<>(networkEntries);
+            if (args.optBoolean("clear", false)) {
+                networkEntries.clear();
+            }
+        }
+        return pageText(entries.isEmpty()
+                ? "(没有网络请求记录)" : String.join("\n", entries));
+    }
+
+    private static void resetLogs() {
+        synchronized (LOG_LOCK) {
+            consoleEntries.clear();
+            networkEntries.clear();
+        }
+    }
+
+    private static void recordConsole(String type, String message, String source, int line) {
+        JSONObject entry = new JSONObject();
+        try {
+            entry.put("type", type == null ? "log" : type);
+            entry.put("text", truncate(message == null ? "" : message, 2_000));
+            if (source != null && !source.isEmpty()) {
+                entry.put("source", truncate(source, 500));
+            }
+            entry.put("line", line);
+        } catch (Throwable ignored) {
+            return;
+        }
+        appendLog(consoleEntries, entry.toString());
+    }
+
+    private static void recordNetwork(Uri uri, boolean mainFrame, String method) {
+        if (uri == null) {
+            return;
+        }
+        String url = uri.toString();
+        if (url.startsWith("data:") || url.startsWith("blob:")) {
+            return;
+        }
+        JSONObject entry = new JSONObject();
+        try {
+            entry.put("url", truncate(url, 2_000));
+            entry.put("method", method == null || method.isEmpty() ? "GET" : method);
+            entry.put("main_frame", mainFrame);
+        } catch (Throwable ignored) {
+            return;
+        }
+        appendLog(networkEntries, entry.toString());
+    }
+
+    private static void appendLog(Deque<String> target, String line) {
+        synchronized (LOG_LOCK) {
+            target.addLast(line);
+            while (target.size() > MAX_LOG_ENTRIES) {
+                target.removeFirst();
+            }
+        }
+    }
+
+    private static void setPendingDialog(PendingDialog dialog) {
+        PendingDialog previous = pendingDialog;
+        pendingDialog = dialog;
+        if (previous != null) {
+            try {
+                if (previous.promptResult != null) {
+                    previous.promptResult.cancel();
+                } else if (previous.result != null) {
+                    previous.result.cancel();
+                }
+            } catch (Throwable ignored) {
+                // The old dialog may already be gone.
+            }
+        }
+    }
+
+    private static Uri workspaceDocumentUri(File file) {
+        try {
+            File target = file.getCanonicalFile();
+            for (WorkspaceRegistry.Workspace workspace : WorkspaceRegistry.list()) {
+                File root = new File(workspace.root).getCanonicalFile();
+                String rootPath = root.getPath();
+                String targetPath = target.getPath();
+                if (!targetPath.startsWith(rootPath + File.separator)) {
+                    continue;
+                }
+                String relative = targetPath.substring(rootPath.length() + 1)
+                        .replace(File.separatorChar, '/');
+                String documentId = workspace.id + ":" + relative;
+                String authority = app.getPackageName()
+                        + WunderDocumentsProvider.AUTHORITY_SUFFIX;
+                return DocumentsContract.buildDocumentUri(authority, documentId);
+            }
+        } catch (Throwable failure) {
+            Log.w(TAG, "cannot build workspace document uri", failure);
+        }
+        return null;
+    }
+
     private static String tabsList() {
         String url = currentUrl;
         String title = currentTitle;
@@ -523,6 +913,8 @@ public final class WebViewBridge {
         LinearLayout root = new LinearLayout(app);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(0xFFF7F7F5);
+        root.setClipChildren(true);
+        root.setClipToPadding(true);
 
         LinearLayout header = new LinearLayout(app);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -535,8 +927,18 @@ public final class WebViewBridge {
         titleView.setTextColor(0xFF2B2B2B);
         titleView.setSingleLine(true);
         titleView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        titleView.setOnClickListener(v -> setBrowserMinimized(!browserMinimized));
         header.addView(titleView, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        browserToggle = new TextView(app);
+        browserToggle.setTextSize(13);
+        browserToggle.setTextColor(0xFF2B6CB0);
+        browserToggle.setGravity(Gravity.CENTER);
+        browserToggle.setPadding(dp(10), 0, dp(10), 0);
+        browserToggle.setOnClickListener(v -> setBrowserMinimized(!browserMinimized));
+        header.addView(browserToggle, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)));
 
         TextView close = new TextView(app);
         close.setText("×");
@@ -548,28 +950,45 @@ public final class WebViewBridge {
         header.addView(close, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)));
 
+        browserHeaderHeight = dp(46);
         root.addView(header, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+                ViewGroup.LayoutParams.MATCH_PARENT, browserHeaderHeight));
 
         webView = new WebView(app);
         configureWebView(webView);
-        root.addView(webView, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        // WebView 始终按展开尺寸布局，收起时只裁剪窗口，页面视口与截图尺寸不变。
+        int panelHeight = Math.max(dp(160),
+                Math.max(dp(280), (int) (screenHeight() * 0.62f)) - browserHeaderHeight);
+        viewportHost = new FrameLayout(app);
+        viewportHost.setClipChildren(true);
+        viewportHost.setClipToPadding(true);
+        viewportHost.addOnLayoutChangeListener(
+                (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) ->
+                        applyViewportTransformOnMain());
+        root.addView(viewportHost, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, panelHeight));
+        viewportHost.addView(webView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        browserExpandedHeight = browserHeaderHeight + panelHeight;
 
-        int height = Math.max(dp(280), (int) (screenHeight() * 0.62f));
-        WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+        overlayParams = new WindowManager.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                height,
+                browserMinimized ? browserHeaderHeight : browserExpandedHeight,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | (browserMinimized
+                                ? WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                                : 0),
                 PixelFormat.TRANSLUCENT);
-        params.gravity = Gravity.TOP | Gravity.START;
-        params.x = 0;
-        params.y = dp(64);
-        windowManager.addView(root, params);
+        overlayParams.gravity = Gravity.TOP | Gravity.START;
+        overlayParams.x = 0;
+        overlayParams.y = dp(64);
+        windowManager.addView(root, overlayParams);
         overlay = root;
+        updateBrowserToggle();
         updateTitleOnMain();
+        applyViewportLayoutOnMain();
         Log.i(TAG, "webview overlay created");
     }
 
@@ -598,12 +1017,73 @@ public final class WebViewBridge {
                     updateTitleOnMain();
                 }
             }
+
+            @Override
+            public boolean onConsoleMessage(ConsoleMessage message) {
+                if (message != null) {
+                    recordConsole(
+                            message.messageLevel() == null
+                                    ? "log" : message.messageLevel().name().toLowerCase(Locale.ROOT),
+                            message.message(),
+                            message.sourceId(),
+                            message.lineNumber());
+                }
+                return true;
+            }
+
+            @Override
+            public boolean onJsAlert(WebView web, String url, String message, JsResult result) {
+                setPendingDialog(new PendingDialog("alert", message, "", result, null));
+                return true;
+            }
+
+            @Override
+            public boolean onJsConfirm(WebView web, String url, String message, JsResult result) {
+                setPendingDialog(new PendingDialog("confirm", message, "", result, null));
+                return true;
+            }
+
+            @Override
+            public boolean onJsPrompt(WebView web, String url, String message,
+                                      String defaultValue, JsPromptResult result) {
+                setPendingDialog(new PendingDialog("prompt", message, defaultValue, null, result));
+                return true;
+            }
+
+            @Override
+            public boolean onShowFileChooser(WebView web, ValueCallback<Uri[]> callback,
+                                             FileChooserParams params) {
+                pendingFileChooser = callback;
+                return true;
+            }
         });
         view.setWebViewClient(new WebViewClient() {
+            @Override
+            public WebResourceResponse shouldInterceptRequest(
+                    WebView web, WebResourceRequest request) {
+                if (request != null) {
+                    recordNetwork(request.getUrl(), request.isForMainFrame(),
+                            request.getMethod());
+                }
+                return interceptPreview(request == null ? null : request.getUrl());
+            }
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView web, String url) {
+                Uri uri = url == null ? null : Uri.parse(url);
+                recordNetwork(uri, false, "GET");
+                return interceptPreview(uri);
+            }
+
             @Override
             public void onPageStarted(WebView web, String url, Bitmap favicon) {
                 currentUrl = url == null ? "" : url;
                 lastLoadError = "";
+                resetLogs();
+                // 离开预览页就关闭磁盘应答，避免外部页面继续访问工作区文件。
+                if (!isPreviewUrl(url)) {
+                    previewRoot = null;
+                }
             }
 
             @Override
@@ -643,6 +1123,165 @@ public final class WebViewBridge {
         });
     }
 
+    // ---- workspace preview ------------------------------------------------
+
+    /**
+     * Answer `wunder.preview` from the workspace directory. No HTTP server,
+     * no DNS lookup and no cleartext traffic: the WebView asks its client for
+     * the bytes before touching the network.
+     */
+    private static WebResourceResponse interceptPreview(Uri uri) {
+        if (uri == null || uri.getHost() == null
+                || !PREVIEW_HOST.equalsIgnoreCase(uri.getHost())) {
+            return null;
+        }
+        File root = previewRoot;
+        if (root == null) {
+            return previewResponse(503, "工作区预览尚未打开");
+        }
+        String path = uri.getPath();
+        String relative = path == null ? "" : path.replaceFirst("^/+", "");
+        try {
+            File target = previewFile(root, relative);
+            if (target == null) {
+                return previewResponse(404, "工作区中找不到：" + relative);
+            }
+            String mime = previewMimeType(target.getName());
+            String encoding = isTextMime(mime) ? "utf-8" : null;
+            Map<String, String> headers = new HashMap<>();
+            headers.put("Cache-Control", "no-store");
+            InputStream stream = new FileInputStream(target);
+            return new WebResourceResponse(mime, encoding, 200, "OK", headers, stream);
+        } catch (Throwable failure) {
+            Log.w(TAG, "preview request failed: " + relative, failure);
+            return previewResponse(500, "读取工作区文件失败：" + relative);
+        }
+    }
+
+    /**
+     * Resolve a workspace-relative path into a canonical file. Absolute paths,
+     * `..` and symlinks escaping the root are rejected; a directory falls back
+     * to its index.html.
+     */
+    private static File previewFile(File root, String relative) throws java.io.IOException {
+        String cleaned = relative == null ? "" : relative.replace('\\', '/').trim();
+        if (cleaned.startsWith("/") || containsParentSegment(cleaned)) {
+            return null;
+        }
+        File target = new File(root, cleaned).getCanonicalFile();
+        if (!isInside(root, target)) {
+            return null;
+        }
+        if (target.isDirectory()) {
+            target = new File(target, "index.html").getCanonicalFile();
+            if (!isInside(root, target)) {
+                return null;
+            }
+        }
+        return target.isFile() ? target : null;
+    }
+
+    private static boolean containsParentSegment(String relative) {
+        for (String segment : relative.split("/")) {
+            if ("..".equals(segment)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isInside(File root, File target) {
+        String rootPath = root.getPath();
+        String targetPath = target.getPath();
+        return targetPath.equals(rootPath)
+                || targetPath.startsWith(rootPath + File.separator);
+    }
+
+    private static String relativePreviewPath(File root, File target) {
+        String rootPath = root.getPath();
+        String targetPath = target.getPath();
+        if (targetPath.startsWith(rootPath)) {
+            String relative = targetPath.substring(rootPath.length());
+            while (relative.startsWith(File.separator)) {
+                relative = relative.substring(1);
+            }
+            return relative.replace(File.separatorChar, '/');
+        }
+        return target.getName();
+    }
+
+    /** Encode one workspace-relative path without encoding the separators. */
+    private static String encodePreviewPath(String relative) {
+        StringBuilder encoded = new StringBuilder();
+        for (String segment : relative.replace('\\', '/').split("/")) {
+            if (segment.isEmpty()) {
+                continue;
+            }
+            if (encoded.length() > 0) {
+                encoded.append('/');
+            }
+            encoded.append(Uri.encode(segment));
+        }
+        return encoded.toString();
+    }
+
+    private static WebResourceResponse previewResponse(int status, String message) {
+        byte[] body = (message + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Cache-Control", "no-store");
+        return new WebResourceResponse(
+                "text/plain; charset=utf-8",
+                "utf-8",
+                status,
+                status == 200 ? "OK" : "Preview error",
+                headers,
+                new ByteArrayInputStream(body));
+    }
+
+    private static String previewMimeType(String name) {
+        int dot = name.lastIndexOf('.');
+        String extension = dot >= 0 ? name.substring(dot + 1).toLowerCase(Locale.ROOT) : "";
+        switch (extension) {
+            case "html":
+            case "htm":
+                return "text/html";
+            case "js":
+            case "mjs":
+                return "application/javascript";
+            case "css":
+                return "text/css";
+            case "json":
+                return "application/json";
+            case "wasm":
+                return "application/wasm";
+            case "svg":
+                return "image/svg+xml";
+            case "glb":
+                return "model/gltf-binary";
+            case "gltf":
+                return "model/gltf+json";
+            case "woff":
+                return "font/woff";
+            case "woff2":
+                return "font/woff2";
+            case "ttf":
+                return "font/ttf";
+            case "otf":
+                return "font/otf";
+            default:
+                String known = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
+                return known == null || known.isEmpty() ? "application/octet-stream" : known;
+        }
+    }
+
+    private static boolean isTextMime(String mime) {
+        return mime.startsWith("text/")
+                || "application/javascript".equals(mime)
+                || "application/json".equals(mime)
+                || "image/svg+xml".equals(mime)
+                || "model/gltf+json".equals(mime);
+    }
+
     private static void destroyBrowserOnMain() {
         CountDownLatch latch = pageLatch;
         if (latch != null) {
@@ -666,9 +1305,31 @@ public final class WebViewBridge {
             }
         }
         overlay = null;
+        overlayParams = null;
         titleView = null;
+        browserToggle = null;
+        viewportHost = null;
+        viewportWidthCss = 0;
+        viewportHeightCss = 0;
+        pendingFileChooser = null;
+        PendingDialog dialog = pendingDialog;
+        pendingDialog = null;
+        if (dialog != null) {
+            try {
+                if (dialog.promptResult != null) {
+                    dialog.promptResult.cancel();
+                } else if (dialog.result != null) {
+                    dialog.result.cancel();
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        resetLogs();
+        browserHeaderHeight = 0;
+        browserExpandedHeight = 0;
         currentUrl = "";
         currentTitle = "";
+        previewRoot = null;
         Log.i(TAG, "webview overlay destroyed");
     }
 
@@ -776,6 +1437,41 @@ public final class WebViewBridge {
         titleView.setText(title.isEmpty() ? "浏览器" : title);
     }
 
+    /**
+     * Collapse the overlay to its title bar. The WebView keeps its expanded
+     * layout size, so the page viewport, JS coordinates and screenshots stay
+     * unchanged while the user gets the screen back.
+     */
+    private static void setBrowserMinimized(boolean minimized) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            MAIN.post(() -> setBrowserMinimized(minimized));
+            return;
+        }
+        browserMinimized = minimized;
+        if (overlay == null || overlayParams == null || windowManager == null) {
+            updateBrowserToggle();
+            return;
+        }
+        overlayParams.height = minimized ? browserHeaderHeight : browserExpandedHeight;
+        if (minimized) {
+            overlayParams.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+        } else {
+            overlayParams.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+        }
+        try {
+            windowManager.updateViewLayout(overlay, overlayParams);
+        } catch (Throwable error) {
+            Log.w(TAG, "resize browser overlay failed", error);
+        }
+        updateBrowserToggle();
+    }
+
+    private static void updateBrowserToggle() {
+        if (browserToggle != null) {
+            browserToggle.setText(browserMinimized ? "展开" : "收起");
+        }
+    }
+
     private static <T> T onMain(Callable<T> task, long timeoutMs) {
         if (Looper.myLooper() == Looper.getMainLooper()) {
             try {
@@ -800,6 +1496,17 @@ public final class WebViewBridge {
             latch.await(timeoutMs, TimeUnit.MILLISECONDS);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    private static boolean isPreviewUrl(String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return false;
+        }
+        try {
+            return PREVIEW_HOST.equalsIgnoreCase(Uri.parse(raw).getHost());
+        } catch (Throwable error) {
+            return false;
         }
     }
 

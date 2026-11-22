@@ -5,6 +5,7 @@
 //! (`browser_bridge.py`) stays the driving engine; this provider only owns the
 //! tool surface, the argument mapping and the content-block shaping.
 
+use super::preview::{preview_path_for_navigate, resolve_workspace_upload_files};
 use crate::schemas::ToolSpec;
 use crate::services::browser::provider::{
     scope_from_context, BrowserProvider, ContentBlock, ProviderCallFuture, ProviderOutcome,
@@ -32,6 +33,10 @@ const OP_SELECT_OPTION: &str = "select";
 const OP_DRAG: &str = "drag";
 const OP_SCROLL: &str = "scroll";
 const OP_CONSOLE: &str = "console";
+const OP_RESIZE: &str = "resize";
+const OP_FILE_UPLOAD: &str = "file_upload";
+const OP_DIALOG: &str = "dialog";
+const OP_NETWORK: &str = "network";
 const OP_PRESS_KEY: &str = "press";
 const OP_WAIT_FOR: &str = "wait";
 const OP_SCREENSHOT: &str = "screenshot";
@@ -118,20 +123,23 @@ pub fn playwright_tool_specs() -> Vec<ToolSpec> {
         "l": {"type":"string","enum":["load","domcontentloaded","networkidle"]},
         "q": {"type":"string","enum":["visible","hidden","attached","detached"]},
         "d": {"type":"integer","minimum":-20000,"maximum":20000},
-        "c": {"type":"integer","minimum":0,"maximum":20000,"description":"Viewport coordinate in CSS pixels."}
+        "c": {"type":"integer","minimum":0,"maximum":20000,"description":"Viewport coordinate in CSS pixels."},
+        "w": {"type":"integer","minimum":240,"maximum":3840,"description":"Logical viewport width in CSS pixels."},
+        "t": {"type":"integer","minimum":240,"maximum":3840,"description":"Logical viewport height in CSS pixels."},
+        "e": {"type":"array","items":{"type":"string","minLength":1},"minItems":1,"maxItems":16,"description":"Workspace-relative files to upload."}
     });
     vec![ToolSpec {
         name: TOOL_BROWSER.to_string(),
         title: None,
-        description: "Built-in browser automation, already bundled — no install. Usual flow: navigate -> observe_refs -> click/type -> observe_text or screenshot, re-observing after changes. click/hover take one of ref, selector or visible text; type needs text (overwrites); select needs value; press needs key. drag: from_ref+to_ref, or from_x/from_y/to_x/to_y for canvas orbit; scroll: delta_x/delta_y is a real wheel event; console reads the tab's console output and uncaught errors. timeout_ms defaults to 5s; wait needs wait_ms or a selector/text/url/load_state condition. navigate takes an absolute url, or path (workspace-relative) to preview a file over http://wunder.preview with no server; a relative path passed as url is opened as a preview when that file exists, otherwise it errors with the url/path split. tabs_* manage tabs; target_id picks one. screenshot attaches a PNG plus a frame summary (blank/colors/luma). Observations default to 12000 chars.".to_string(),
+        description: "Built-in browser automation, already bundled — no install. Usual flow: navigate -> observe_refs -> click/type -> observe_text or screenshot, re-observing after changes. click/hover take one of ref, selector or visible text; type needs text (overwrites); select needs value; press needs key. drag: from_ref+to_ref, or from_x/from_y/to_x/to_y for canvas orbit; scroll: delta_x/delta_y is a real wheel event; console reads the tab's console output and uncaught errors; network lists recent requests (Playwright also records responses and failures); resize sets a logical CSS viewport; file_upload takes workspace-relative files and either a ref/selector or a pending file chooser; dialog accepts/dismisses an alert/confirm/prompt (prompt_text fills prompt). timeout_ms defaults to 5s; wait needs wait_ms or a selector/text/url/load_state condition. navigate takes an absolute url, or path (workspace-relative) to preview a file through the internal wunder.preview origin with no server; a relative path passed as url is opened as a preview when that file exists, otherwise it errors with the url/path split. tabs_* manage tabs; target_id picks one. screenshot attaches a PNG plus a frame summary (blank/colors/luma). Observations default to 12000 chars.".to_string(),
         input_schema: json!({
             "type":"object",
             "$defs": defs,
             "properties": {
                 "action": {
                     "type":"string",
-                    "enum":["navigate","back","tabs_list","tabs_new","tabs_select","tabs_close","observe_refs","observe_text","screenshot","click","type","hover","select","drag","scroll","press","wait","console"],
-                    "description":"One browser action per call; tabs_* actions manage tabs, observe_* and console read the page, the rest interact with it."
+                    "enum":["navigate","back","tabs_list","tabs_new","tabs_select","tabs_close","observe_refs","observe_text","screenshot","click","type","hover","select","drag","scroll","press","wait","console","resize","file_upload","dialog","network"],
+                    "description":"One browser action per call; tabs_* actions manage tabs, observe_*/console/network read the page, resize/file_upload/dialog control browser state, the rest interact with it."
                 },
                 "url": reference("u"),
                 "target_id": reference("x"),
@@ -164,7 +172,12 @@ pub fn playwright_tool_specs() -> Vec<ToolSpec> {
                 "key": reference("x"),
                 "wait_ms": reference("n"),
                 "load_state": reference("l"),
-                "state": reference("q")
+                "state": reference("q"),
+                "width": reference("w"),
+                "height": reference("t"),
+                "files": reference("e"),
+                "accept": reference("f"),
+                "prompt_text": reference("x")
             },
             "required": ["action"],
             "additionalProperties": false
@@ -199,9 +212,13 @@ fn validate_browser_action(args: &Value) -> Result<String> {
             "to_selector",
             "text",
             "key",
+            "prompt_text",
         ],
     )?;
-    validate_optional_boolean(args, &["double_click", "submit", "full_page", "clear"])?;
+    validate_optional_boolean(
+        args,
+        &["double_click", "submit", "full_page", "clear", "accept"],
+    )?;
     validate_optional_integer(args, "max_chars", 1, 40_000)?;
     validate_optional_integer(args, "snapshot_timeout_ms", 0, 120_000)?;
     validate_optional_integer(args, "wait_ms", 0, 120_000)?;
@@ -213,6 +230,22 @@ fn validate_browser_action(args: &Value) -> Result<String> {
     validate_optional_integer(args, "steps", 1, 60)?;
     for key in ["x", "y", "from_x", "from_y", "to_x", "to_y"] {
         validate_optional_integer(args, key, 0, 20_000)?;
+    }
+    validate_optional_integer(args, "width", 240, 3_840)?;
+    validate_optional_integer(args, "height", 240, 3_840)?;
+    if let Some(files) = args.get("files") {
+        let items = files
+            .as_array()
+            .ok_or_else(|| anyhow!("files must be an array"))?;
+        if items.is_empty() || items.len() > 16 {
+            return Err(anyhow!("files must contain 1-16 paths"));
+        }
+        if items
+            .iter()
+            .any(|item| item.as_str().is_none_or(|text| text.trim().is_empty()))
+        {
+            return Err(anyhow!("files entries must be non-empty strings"));
+        }
     }
     validate_optional_enum(
         args,
@@ -248,6 +281,19 @@ fn validate_browser_action(args: &Value) -> Result<String> {
             required_str(args, "key")?;
             require_optional_element_target(args, &action)?;
         }
+        "resize" => {
+            args.get("width")
+                .ok_or_else(|| anyhow!("browser action resize requires width"))?;
+            args.get("height")
+                .ok_or_else(|| anyhow!("browser action resize requires height"))?;
+        }
+        "file_upload" => {
+            if args.get("files").is_none() {
+                return Err(anyhow!("browser action file_upload requires files"));
+            }
+            require_optional_element_target(args, &action)?;
+        }
+        "network" => {} // 无必填字段，clear 可选。
         "batch" => validate_batch_steps(
             args.get("steps")
                 .ok_or_else(|| anyhow!("browser action batch requires steps"))?,
@@ -276,6 +322,10 @@ const BROWSER_ACTIONS: &[&str] = &[
     "press",
     "wait",
     "console",
+    "resize",
+    "file_upload",
+    "dialog",
+    "network",
     "batch",
 ];
 
@@ -347,6 +397,10 @@ fn browser_action_allowed_fields(action: &str) -> Option<&'static [&'static str]
             "timeout_ms",
         ],
         "console" => &["action", "target_id", "clear"],
+        "resize" => &["action", "target_id", "width", "height"],
+        "file_upload" => &["action", "target_id", "ref", "selector", "files", "timeout_ms"],
+        "dialog" => &["action", "target_id", "accept", "prompt_text"],
+        "network" => &["action", "target_id", "clear"],
         "press" => &[
             "action",
             "target_id",
@@ -696,6 +750,10 @@ async fn dispatch(context: &ToolContext<'_>, tool: &str, args: &Value) -> Result
         "drag" => dispatch_operation(context, OP_DRAG, args).await,
         "scroll" => dispatch_operation(context, OP_SCROLL, args).await,
         "console" => dispatch_operation(context, OP_CONSOLE, args).await,
+        "resize" => dispatch_operation(context, OP_RESIZE, args).await,
+        "file_upload" => dispatch_operation(context, OP_FILE_UPLOAD, args).await,
+        "dialog" => dispatch_operation(context, OP_DIALOG, args).await,
+        "network" => dispatch_operation(context, OP_NETWORK, args).await,
         "press" => dispatch_operation(context, OP_PRESS_KEY, args).await,
         "wait" => dispatch_operation(context, OP_WAIT_FOR, args).await,
         "batch" => dispatch_operation(context, OP_BATCH, args).await,
@@ -739,17 +797,9 @@ async fn dispatch_operation(
             // 工作区页面走预览域名由 bridge 从磁盘直接应答：不需要自建 HTTP
             // 服务，也不依赖 file:// 是否被允许。把工作区相对路径填进 `url`
             // 是常见误用，文件确实存在就按预览打开，否则给出 url/path 分工。
-            let preview_path = match opt_str(args, "path") {
-                Some(relative) => Some(workspace_relative_path(&relative)?),
-                None => match opt_str(args, "url") {
-                    Some(url) if !has_url_scheme(&url) => {
-                        Some(preview_path_from_schemeless_url(&url, context)?)
-                    }
-                    _ => None,
-                },
-            };
+            let root = context.workspace.workspace_root(context.workspace_id);
+            let preview_path = preview_path_for_navigate(&root, args)?;
             if let Some(relative) = &preview_path {
-                let root = context.workspace.workspace_root(context.workspace_id);
                 call_args.insert("preview_root".to_string(), json!(root.to_string_lossy()));
                 call_args.insert("preview_path".to_string(), json!(relative));
             } else if let Some(url) = opt_str(args, "url") {
@@ -967,6 +1017,67 @@ async fn dispatch_operation(
             )
             .await
         }
+        OP_RESIZE => {
+            let mut call_args = Map::new();
+            copy_opt(args, &mut call_args, "target_id");
+            copy_opt(args, &mut call_args, "width");
+            copy_opt(args, &mut call_args, "height");
+            let data = service
+                .execute(&scope, "resize", &Value::Object(call_args))
+                .await?;
+            let width = data.get("width").and_then(Value::as_i64).unwrap_or_default();
+            let height = data.get("height").and_then(Value::as_i64).unwrap_or_default();
+            Ok(text_outcome(format!("Resized viewport to {width}x{height}."), data))
+        }
+        OP_FILE_UPLOAD => {
+            let mut call_args = Map::new();
+            copy_opt(args, &mut call_args, "target_id");
+            copy_opt(args, &mut call_args, "ref");
+            copy_opt(args, &mut call_args, "selector");
+            copy_opt(args, &mut call_args, "timeout_ms");
+            let root = context.workspace.workspace_root(context.workspace_id);
+            let files = resolve_workspace_upload_files(&root, args)?;
+            call_args.insert(
+                "files".to_string(),
+                json!(files
+                    .iter()
+                    .map(|path| path.to_string_lossy().to_string())
+                    .collect::<Vec<_>>()),
+            );
+            let data = service
+                .execute(&scope, "file_upload", &Value::Object(call_args))
+                .await?;
+            Ok(text_outcome(format!("Uploaded {} file(s).", files.len()), data))
+        }
+        OP_DIALOG => {
+            let mut call_args = Map::new();
+            copy_opt(args, &mut call_args, "target_id");
+            copy_opt(args, &mut call_args, "accept");
+            copy_opt(args, &mut call_args, "prompt_text");
+            let data = service
+                .execute(&scope, "dialog", &Value::Object(call_args))
+                .await?;
+            let text = data
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or("Handled the dialog.")
+                .to_string();
+            Ok(ProviderOutcome::text(text).with_structured(data))
+        }
+        OP_NETWORK => {
+            let mut call_args = Map::new();
+            copy_opt(args, &mut call_args, "target_id");
+            copy_opt(args, &mut call_args, "clear");
+            let data = service
+                .execute(&scope, "network", &Value::Object(call_args))
+                .await?;
+            let text = data
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            Ok(ProviderOutcome::text(text).with_structured(data))
+        }
         OP_BATCH => {
             let steps = args
                 .get("steps")
@@ -1092,50 +1203,6 @@ fn copy_opt(from: &Value, to: &mut Map<String, Value>, key: &str) {
     }
 }
 
-/// 预览只服务工作区里的相对路径：绝对路径与 `..` 一律拒绝，避免把预览域名
-/// 变成任意文件读取入口。
-fn workspace_relative_path(raw: &str) -> Result<String> {
-    let normalized = raw.trim().replace('\\', "/");
-    if normalized.is_empty() {
-        return Err(anyhow!("browser action navigate requires a non-empty path"));
-    }
-    if normalized.starts_with('/') || normalized.split('/').any(|part| part == "..") {
-        return Err(anyhow!(
-            "browser navigate path must be workspace-relative and must not contain '..'"
-        ));
-    }
-    Ok(normalized)
-}
-
-/// `url` 是否已经写明协议（`https://`、`about:` 等）。`localhost:3000` 不算：
-/// 它多半是漏了协议，交给路径兜底并给出更明确的提示。
-fn has_url_scheme(value: &str) -> bool {
-    if let Some((scheme, _)) = value.split_once("://") {
-        return !scheme.trim().is_empty();
-    }
-    match value.split_once(':') {
-        Some((scheme, _)) => matches!(
-            scheme.trim().to_ascii_lowercase().as_str(),
-            "about" | "data" | "blob" | "file" | "mailto" | "javascript" | "chrome" | "view-source"
-        ),
-        None => false,
-    }
-}
-
-/// 把误填进 `url` 的工作区相对路径改判成预览路径；文件不存在时直接把
-/// url/path 的分工告诉调用方，而不是让驱动抛出 “relative URL without a base”。
-fn preview_path_from_schemeless_url(url: &str, context: &ToolContext<'_>) -> Result<String> {
-    if let Ok(relative) = workspace_relative_path(url) {
-        let root = context.workspace.workspace_root(context.workspace_id);
-        if root.join(&relative).is_file() {
-            return Ok(relative);
-        }
-    }
-    Err(anyhow!(
-        "browser navigate needs an absolute URL such as https://example.com; to open a workspace page pass path='<workspace-relative file>' instead of url (got: {url})"
-    ))
-}
-
 fn opt_str(args: &Value, key: &str) -> Option<String> {
     args.get(key)
         .and_then(Value::as_str)
@@ -1177,11 +1244,12 @@ fn normalize_image_mime(format: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        browser_action_allowed_fields, copy_snapshot_args, has_url_scheme, normalize_image_mime,
-        truncate_chars, validate_batch_steps, validate_browser_action, workspace_relative_path,
-        PlaywrightProvider, BROWSER_ACTIONS, TOOL_BROWSER, TOOL_NAMES,
+        browser_action_allowed_fields, copy_snapshot_args, normalize_image_mime, truncate_chars,
+        validate_batch_steps, validate_browser_action, PlaywrightProvider, BROWSER_ACTIONS,
+        TOOL_BROWSER, TOOL_NAMES,
     };
     use crate::services::browser::provider::BrowserProvider;
+    use crate::services::browser::providers::preview::{has_url_scheme, workspace_relative_path};
     use serde_json::{json, Value};
 
     #[test]
@@ -1219,10 +1287,14 @@ mod tests {
         let actions = schema["properties"]["action"]["enum"]
             .as_array()
             .expect("action enum");
-        assert_eq!(actions.len(), 18);
+        assert_eq!(actions.len(), 22);
         assert!(actions.iter().any(|action| action == "navigate"));
         assert!(actions.iter().any(|action| action == "scroll"));
         assert!(actions.iter().any(|action| action == "console"));
+        assert!(actions.iter().any(|action| action == "resize"));
+        assert!(actions.iter().any(|action| action == "file_upload"));
+        assert!(actions.iter().any(|action| action == "dialog"));
+        assert!(actions.iter().any(|action| action == "network"));
         assert!(!actions.iter().any(|action| action == "batch"));
         assert_eq!(
             schema["properties"]["target_id"]["$ref"],
@@ -1386,6 +1458,35 @@ mod tests {
             .map(|_| json!({"kind":"wait","wait_ms":1}))
             .collect();
         assert!(validate_batch_steps(&json!(many)).is_err());
+    }
+
+    #[test]
+    fn viewport_upload_dialog_and_network_actions_validate_their_fields() {
+        assert!(
+            validate_browser_action(&json!({"action":"resize","width":800,"height":600})).is_ok()
+        );
+        assert!(validate_browser_action(&json!({"action":"resize","width":800})).is_err());
+        assert!(
+            validate_browser_action(&json!({"action":"resize","width":100,"height":600})).is_err()
+        );
+        assert!(
+            validate_browser_action(&json!({"action":"file_upload","files":["notes.txt"]})).is_ok()
+        );
+        assert!(validate_browser_action(&json!({"action":"file_upload"})).is_err());
+        assert!(validate_browser_action(
+            &json!({"action":"file_upload","selector":"#file","files":[]})
+        )
+        .is_err());
+        assert!(validate_browser_action(
+            &json!({"action":"file_upload","selector":"#file","files":["notes.txt"],"width":800})
+        )
+        .is_err());
+        assert!(validate_browser_action(
+            &json!({"action":"dialog","accept":false,"prompt_text":"later"})
+        )
+        .is_ok());
+        assert!(validate_browser_action(&json!({"action":"network","clear":true})).is_ok());
+        assert!(validate_browser_action(&json!({"action":"network","accept":true})).is_err());
     }
 
     #[test]

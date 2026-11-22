@@ -1153,6 +1153,10 @@ pub struct Shared {
     /// Live turn phase (`requesting`/`thinking`/`outputting`/`tool`/`waiting`/
     /// `done`/`error`/`stopped`); the floating companion maps it onto sprites.
     pub turn_phase: String,
+    /// Local start of the streaming turn. The work-process stopwatch reads it
+    /// once per second so the elapsed column moves while tools run, matching
+    /// the desktop stopwatch instead of waiting for the settled stats.
+    pub turn_started: Option<std::time::Instant>,
     /// Normalized final answer or failure message of the settled turn, shown
     /// as the companion's bubble hint.
     pub turn_hint: String,
@@ -1248,6 +1252,20 @@ impl Shared {
     pub(crate) fn notify(&mut self, message: impl Into<String>) {
         self.toast = message.into();
         self.toast_rev = self.toast_rev.wrapping_add(1);
+    }
+
+    /// Advance the live work-process stopwatch in the already-published rows.
+    /// Returns whether a value changed, so the tick only invalidates the
+    /// transcript when the label actually moved to the next second.
+    pub(crate) fn set_live_duration(&mut self, label: &str) -> bool {
+        let mut changed = false;
+        for row in &mut self.live_rows {
+            if row.kind == crate::project::KIND_PROCESS && row.duration != label {
+                row.duration = label.to_owned();
+                changed = true;
+            }
+        }
+        changed
     }
 }
 
@@ -3614,6 +3632,10 @@ fn apply_context_usage(shared: &Arc<Mutex<Shared>>, usage: wunder_desktop::Nativ
     let Ok(mut state) = shared.lock() else {
         return;
     };
+    apply_context_usage_locked(&mut state, usage);
+}
+
+fn apply_context_usage_locked(state: &mut Shared, usage: wunder_desktop::NativeContextUsage) {
     // Compaction is sticky per thread and is applied before the occupancy
     // guard: a just-compacted thread has no fresh token numbers yet but must
     // still paint red.
@@ -3654,6 +3676,15 @@ fn apply_context_usage(shared: &Arc<Mutex<Shared>>, usage: wunder_desktop::Nativ
 
 fn refresh_context_usage(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, session: &str) {
     if session.trim().is_empty() {
+        return;
+    }
+    // A stream or watcher of a thread the user already left must not paint
+    // its occupancy over the thread on screen.
+    if !shared
+        .lock()
+        .map(|state| state.session_id == session)
+        .unwrap_or(false)
+    {
         return;
     }
     match desktop.context_usage(session) {
@@ -3771,6 +3802,7 @@ fn select_session(
         state.inquiry_rev = state.inquiry_rev.wrapping_add(1);
         state.live_rows.clear();
         state.live_root.clear();
+        state.turn_started = None;
         state.activity = activity;
         state.activity_rev = state.activity_rev.wrapping_add(1);
         state.rows_rev = state.rows_rev.wrapping_add(1);
@@ -3826,6 +3858,17 @@ fn select_session(
                     }
                     Some(NativeThreadUpdate::Goal(goal)) => {
                         update_goal(&shared, &goal);
+                    }
+                    // Same source as 桌面版's observer: the runtime publishes
+                    // context occupancy at every model admission and response,
+                    // independent of the turn stream. Dropping it left the
+                    // brain gauge frozen until the turn settled.
+                    Some(NativeThreadUpdate::Context(usage)) => {
+                        if let Ok(mut state) = shared.lock() {
+                            if state.session_id == session {
+                                apply_context_usage_locked(&mut state, usage);
+                            }
+                        }
                     }
                     Some(NativeThreadUpdate::Failed(message)) => {
                         notify(&shared, message);
@@ -3891,8 +3934,19 @@ fn set_plan(state: &mut Shared, explanation: String, steps: Vec<PlanStepView>, r
     state.touch();
 }
 
+/// 生成结束后停掉计划胶囊的转轮。清单与当前步骤保留（与桌面版一致），
+/// 只是不再表示“还在跑”。
+fn settle_plan_spinner(state: &mut Shared) {
+    if !state.plan.running {
+        return;
+    }
+    state.plan.running = false;
+    state.plan_rev = state.plan_rev.wrapping_add(1);
+}
+
 /// 流内的计划事件：工具每次发布整份清单，整体替换；最多保留 32 步。
-fn apply_plan_event(shared: &Arc<Mutex<Shared>>, value: &serde_json::Value) {
+/// 只写当前线程：用户切走后旧线程的迟到帧不能改写屏幕上的计划。
+fn apply_plan_event(shared: &Arc<Mutex<Shared>>, session: &str, value: &serde_json::Value) {
     let envelope = value.get("data").unwrap_or(value);
     let data = envelope.get("data").unwrap_or(envelope);
     let explanation = data
@@ -3923,10 +3977,15 @@ fn apply_plan_event(shared: &Arc<Mutex<Shared>>, value: &serde_json::Value) {
     let Ok(mut state) = shared.lock() else {
         return;
     };
+    if state.session_id != session {
+        return;
+    }
     state.plan = PlanView {
         explanation,
         steps,
-        running: true,
+        // A late plan frame arriving after the turn settled must not restart
+        // the capsule spinner; the plan itself stays published.
+        running: state.generating,
     };
     state.plan_rev = state.plan_rev.wrapping_add(1);
     state.touch();
@@ -4075,6 +4134,20 @@ fn merge_turns(retained: &mut Vec<NativeChatTurn>, incoming: Vec<NativeChatTurn>
     retained.sort_by_key(|turn| turn.user.user_round);
 }
 
+/// Whether the newest durable turn still owes work. A cancelled/failed/
+/// completed turn reads as stopped even when a stale local `generating` flag
+/// has not caught up yet — that is what kept the plan capsule spinning after a
+/// stop.
+fn durable_turn_running(state: &Shared) -> bool {
+    let Some(turn) = state.durable_turns.last() else {
+        return true;
+    };
+    if turn.assistant.state.trim().is_empty() {
+        return true;
+    }
+    project::status_kind(&turn.assistant.state) == project::STATUS_RUNNING
+}
+
 fn publish_durable(
     desktop: &NativeDesktop,
     shared: &Arc<Mutex<Shared>>,
@@ -4120,7 +4193,7 @@ fn publish_durable(
             restore_pending_inquiry(&mut state, session);
             // 落库是权威时同步计划面板；实时流期间由 plan_update 事件接管。
             let (plan_explanation, plan_steps) = plan_from_turns(&state.durable_turns);
-            let plan_running = state.generating;
+            let plan_running = state.generating && durable_turn_running(&state);
             set_plan(&mut state, plan_explanation, plan_steps, plan_running);
             state.rows_rev = state.rows_rev.wrapping_add(1);
             state.stream_revision = state.stream_revision.wrapping_add(1);
@@ -4146,7 +4219,7 @@ fn publish_durable(
         state.durable_rows = rows;
         restore_pending_inquiry(&mut state, session);
         let (plan_explanation, plan_steps) = plan_from_turns(&state.durable_turns);
-        let plan_running = state.generating;
+        let plan_running = state.generating && durable_turn_running(&state);
         set_plan(&mut state, plan_explanation, plan_steps, plan_running);
         state.rows_rev = state.rows_rev.wrapping_add(1);
         state.stream_revision = state.stream_revision.wrapping_add(1);
@@ -8543,6 +8616,10 @@ fn start_stream_with_id(
         let stream_id = state.live_stream_id;
         state.live_root = live.root_id.clone();
         state.live_rows = initial_rows;
+        // One clock for the stream and the UI tick: the first visible frame
+        // already carries the start time, and the 1 Hz stopwatch keeps the
+        // elapsed column moving while a tool runs without events.
+        state.turn_started = Some(live.started_at);
         state.live_rev = state.live_rev.wrapping_add(1);
         state.stream_revision = state.stream_revision.wrapping_add(1);
         update_live_subtitle(&mut state, &live);
@@ -8557,7 +8634,9 @@ fn start_stream_with_id(
                     state.live_rows.clear();
                     state.live_root.clear();
                     state.live_session.clear();
+                    state.turn_started = None;
                     state.generating = false;
+                    settle_plan_spinner(&mut state);
                     state.pending_draft = Some(text);
                     state.live_rev = state.live_rev.wrapping_add(1);
                     state.stream_revision = state.stream_revision.wrapping_add(1);
@@ -8597,11 +8676,19 @@ fn start_stream_with_id(
                         if raw == "turn_terminal" {
                             clear_chat_approval(&shared, &session);
                         }
-                        if matches!(raw.as_str(), "context_usage" | "round_usage") {
-                            apply_context_usage(
-                                &shared,
-                                wunder_desktop::NativeContextUsage::from_value(&value),
-                            );
+                        // Same rule as 桌面版's reducer: every event may carry
+                        // occupancy (`context_usage`, `round_usage`, or a
+                        // message-stats frame). Applying only the two named
+                        // types left the gauge waiting for the durable refresh
+                        // at settlement. A stream of a thread the user left
+                        // must not paint over the visible one.
+                        if let Ok(mut state) = shared.lock() {
+                            if state.session_id == session {
+                                apply_context_usage_locked(
+                                    &mut state,
+                                    wunder_desktop::NativeContextUsage::from_value(&value),
+                                );
+                            }
                         }
                         // 计划工具每次发布整份清单，实时覆盖计划面板；回合结束后
                         // 由落库投影接管。
@@ -8612,7 +8699,7 @@ fn start_stream_with_id(
                                 .and_then(Value::as_str)
                                 .is_some_and(|kind| kind == "plan_update")
                         {
-                            apply_plan_event(&shared, &value);
+                            apply_plan_event(&shared, &session, &value);
                         }
                         pending = true;
                         // A new tool step, a new phase or a turn identity is
@@ -8769,10 +8856,15 @@ fn start_stream_with_id(
                         state.live_root.clear();
                     }
                     state.live_session.clear();
+                    // The stopwatch belongs to the stream that just settled;
+                    // the durable footer carries the final value from here.
+                    state.turn_started = None;
                     state.live_rev = state.live_rev.wrapping_add(1);
                     if visible {
                         state.generating = false;
                         state.stopping = false;
+                        // 线程停下后计划胶囊不再转；步骤保持原样，和桌面版一致。
+                        settle_plan_spinner(&mut state);
                     }
                     state.stream_revision = state.stream_revision.wrapping_add(1);
                     state.touch();
@@ -9143,12 +9235,6 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
             }
         }
         "llm_output" | "final" => {
-            // The round's usage and stream timing are known only now, so the
-            // thinking entry takes its right-hand columns before the answer or
-            // a tool call closes it.
-            let (round_tokens, round_duration) =
-                wunder_desktop::NativeWorkflowEntry::model_round_metrics(data);
-            live.set_reason_metrics(&round_tokens, &round_duration);
             if let Some(reasoning) = data
                 .get("reasoning_delta")
                 .and_then(Value::as_str)
@@ -9156,6 +9242,16 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
             {
                 live.append_reasoning(round, reasoning, false);
             }
+            // Reasoning reaches the phone once, here: the full text from this
+            // frame (or the staged deltas). Streaming it into the thinking box
+            // token by token forced a relayout on every frame.
+            live.finalize_reasoning(round, data.get("reasoning").and_then(Value::as_str));
+            // The round's usage and stream timing are known only now, so the
+            // thinking entry takes its right-hand columns before the answer or
+            // a tool call closes it.
+            let (round_tokens, round_duration) =
+                wunder_desktop::NativeWorkflowEntry::model_round_metrics(data);
+            live.set_reason_metrics(&round_tokens, &round_duration);
             if let Some(answer) = data
                 .get("answer")
                 .and_then(Value::as_str)
@@ -9220,11 +9316,25 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
             } else {
                 "completed"
             };
-            let detail = data
+            // The stream attaches the rendered result to the frame envelope
+            // (`display_result`), exactly where 桌面版's reducer reads it. It is
+            // never inside the event payload, so looking there left every tool
+            // row blank when expanded. Recompute from the payload as a
+            // fallback (replay/queue frames carry no envelope rendering).
+            let detail = value
                 .get("display_result")
                 .and_then(Value::as_str)
                 .map(str::to_owned)
-                .unwrap_or_default();
+                .or_else(|| {
+                    data.get("display_result")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
+                .unwrap_or_else(|| {
+                    wunder_desktop::tool_result_display::tool_result_display(
+                        title, data, pending,
+                    )
+                });
             let entry = NativeWorkflowEntry::from_payload(id, title, detail, state, data);
             let label = project::tool_label_for_entry(&entry);
             let icon = project::tool_icon_key(&entry.title).to_string();
@@ -9781,6 +9891,26 @@ mod tests {
         state.goal.activation = "armed".into();
         let shared = Arc::new(Mutex::new(state));
         assert!(thread_busy(&shared, "s"));
+    }
+
+    #[test]
+    fn a_settled_turn_stops_the_plan_capsule() {
+        let mut state = Shared::default();
+        state.plan = PlanView {
+            explanation: "计划".into(),
+            steps: vec![PlanStepView {
+                step: "第一步".into(),
+                status: "in_progress".into(),
+            }],
+            running: true,
+        };
+        settle_plan_spinner(&mut state);
+        assert!(!state.plan.running, "停下的线程不能再转");
+        // The plan itself stays on screen.
+        assert_eq!(state.plan.steps.len(), 1);
+        let rev = state.plan_rev;
+        settle_plan_spinner(&mut state);
+        assert_eq!(state.plan_rev, rev, "已经停住时不再触发重绘");
     }
 
     #[test]

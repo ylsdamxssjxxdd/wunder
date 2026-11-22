@@ -347,6 +347,8 @@ export component StatusDock inherits Rectangle {
     in property <bool> running: false;
     // 计划已全部完成：胶囊右侧的转轮换成对勾并停住，用户继续提问也不再转。
     in property <bool> plan-complete: false;
+    // 触屏窄屏：收起态给当前步骤更小的宽度，整条胶囊不越出屏幕。
+    in property <bool> compact: false;
     in property <int> steps-done: 0;
     in property <int> steps-total: 0;
     in property <string> plan-explanation: "";
@@ -398,7 +400,10 @@ export component StatusDock inherits Rectangle {
                 }
                 if !root.plan-complete : Text {
                     height: parent.height;
-                    width: min(self.preferred-width, 260px);
+                    // The pill is content-sized, so the step text is the only
+                    // unbounded part. A phone caps it far shorter than the
+                    // desktop's 260px or the capsule runs off the screen.
+                    width: min(self.preferred-width, root.compact ? 96px : 260px);
                     text: root.current-step;
                     color: #4B5563; font-size: Theme.font-sm;
                     vertical-alignment: center; overflow: elide;
@@ -460,11 +465,16 @@ export component StatusDock inherits Rectangle {
                     wrap: word-wrap; max-lines: 2; vertical-alignment: top;
                 }
             }
-            ScrollView {
+            plan-scroll := ScrollView {
                 vertical-stretch: 1;
                 horizontal-scrollbar-policy: always-off;
                 VerticalLayout {
                     alignment: start; spacing: 0px;
+                    // A ScrollView infers its content width from the widest
+                    // child; on a phone a long step would make the card wider
+                    // than the screen. Bind the list to the viewport and let
+                    // each step elide instead.
+                    width: plan-scroll.visible-width;
                     for step in root.plan-steps : Rectangle {
                         height: 30px;
                         border-radius: Theme.radius-sm;
@@ -497,6 +507,9 @@ export component StatusDock inherits Rectangle {
                             }
                             Text {
                                 height: parent.height; horizontal-stretch: 1;
+                                // Without this the longest step keeps the layout
+                                // at its preferred width and the row overflows.
+                                min-width: 0px;
                                 text: step.step;
                                 color: step.status == "in_progress" ? Theme.text : #3F3F46;
                                 font-size: Theme.font-lg;
