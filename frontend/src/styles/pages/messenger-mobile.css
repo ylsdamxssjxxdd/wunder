@@ -311,49 +311,64 @@
     flex-direction: column;
   }
 
-  /* 分类导航：去掉搜索框后，全部平铺换行，避免横向滚动把后半段分类藏在屏幕外。 */
-  .messenger-settings-frame-nav {
-    width: 100%;
-    max-height: none;
-    padding: 8px 12px;
-    border-right: 0;
-    border-bottom: 1px solid var(--mz-border);
-  }
-
-  /* 手机屏幕高度有限，设置搜索框只会挤占内容区，直接不展示。 */
-  .messenger-settings-frame-search {
-    display: none;
-  }
-
-  .messenger-settings-frame-nav-list {
-    flex: 0 0 auto;
-    flex-direction: row;
-    flex-wrap: wrap;
+  /* 分类收进标题行下拉：不再占用内容高度，也避免多行分类把选项挤走。 */
+  .messenger-settings-window-head {
     gap: 6px;
-    overflow: visible;
-    padding: 0;
   }
 
-  .messenger-settings-frame-nav-item {
-    flex: 0 0 auto;
-    width: auto;
+  .messenger-settings-window-head-extra {
+    display: flex;
+    flex: 0 1 auto;
+    align-items: center;
+    min-width: 0;
+    margin-left: auto;
+  }
+
+  .messenger-settings-window-close {
+    flex-shrink: 0;
+    margin-left: 0;
+  }
+
+  .messenger-settings-category-select {
+    position: relative;
+    display: inline-flex;
+    box-sizing: border-box;
+    align-items: center;
+    max-width: min(40vw, 168px);
     height: 34px;
-    gap: 6px;
-    padding: 0 11px;
+    padding: 0 30px 0 12px;
+    border: 1px solid var(--mz-border);
     border-radius: 17px;
+    background: var(--mz-surface);
   }
 
-  .messenger-settings-frame-nav-item.is-active::before {
+  .messenger-settings-category-select select {
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    outline: none;
+    background: transparent;
+    color: var(--mz-text);
+    font: inherit;
+    font-size: 16px;
+    text-overflow: ellipsis;
+    appearance: none;
+    -webkit-appearance: none;
+  }
+
+  .messenger-settings-category-select i {
+    position: absolute;
+    right: 11px;
+    color: var(--mz-text-muted);
+    font-size: 10px;
+    pointer-events: none;
+  }
+
+  /* 分类全部在标题行下拉里，手机不再需要侧边/顶部导航。 */
+  .messenger-settings-frame-nav {
     display: none;
-  }
-
-  .messenger-settings-frame-nav-title {
-    flex: 0 0 auto;
-    font-size: 13px;
-  }
-
-  .messenger-settings-frame-nav-icon {
-    width: 16px;
   }
 
   .messenger-settings-frame-content-body {
@@ -380,30 +395,5 @@
 
   .mz-dialog {
     width: 100%;
-  }
-}
-
-/* 窄屏（320px 一类）再压缩设置分类胶囊，给内容区留出高度。 */
-@media (max-width: 360px) {
-  .messenger-settings-frame-nav {
-    padding: 6px 10px;
-  }
-
-  .messenger-settings-frame-nav-list {
-    gap: 4px;
-  }
-
-  .messenger-settings-frame-nav-item {
-    height: 30px;
-    padding: 0 9px;
-    border-radius: 15px;
-  }
-
-  .messenger-settings-frame-nav-title {
-    font-size: 12px;
-  }
-
-  .messenger-settings-frame-nav-icon {
-    width: 14px;
   }
 }

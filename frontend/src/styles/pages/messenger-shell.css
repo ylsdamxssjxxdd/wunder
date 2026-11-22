@@ -1781,6 +1781,11 @@ button.messenger-sidebar-workspace-row {
   font-weight: 600;
 }
 
+/* 手机端分类下拉的挂载点；桌面端设置仍用左侧竖栏导航。 */
+.messenger-settings-window-head-extra {
+  display: none;
+}
+
 .messenger-settings-window-close {
   display: inline-flex;
   align-items: center;

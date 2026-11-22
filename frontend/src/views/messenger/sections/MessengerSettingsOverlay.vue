@@ -15,6 +15,8 @@
       <header class="messenger-settings-window-head">
         <i class="fa-solid fa-gear messenger-settings-window-gear" aria-hidden="true"></i>
         <span class="messenger-settings-window-title">{{ t('messenger.sidebar.settings') }}</span>
+        <!-- 手机端把分类下拉挂到标题行（由设置页 Teleport 进来），桌面端隐藏。 -->
+        <div class="messenger-settings-window-head-extra"></div>
         <button
           class="messenger-settings-window-close"
           type="button"

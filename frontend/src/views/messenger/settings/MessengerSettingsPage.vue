@@ -1,5 +1,23 @@
 <template>
   <div class="messenger-settings-frame">
+    <!-- 手机端：11 个分类收进标题行的下拉，省掉多行分类胶囊占用的高度。
+         桌面端目标容器隐藏，这个下拉不会显示。 -->
+    <Teleport defer to=".messenger-settings-window-head-extra">
+      <label class="messenger-settings-category-select">
+        <select
+          :value="activeCategory"
+          data-testid="settings-category-select"
+          :aria-label="t('messenger.sidebar.settings')"
+          @change="handleCategorySelect"
+        >
+          <option v-for="item in SETTINGS_CATEGORIES" :key="item.id" :value="item.id">
+            {{ t(item.titleKey) }}
+          </option>
+        </select>
+        <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+      </label>
+    </Teleport>
+
     <nav class="messenger-settings-frame-nav" :aria-label="t('messenger.sidebar.settings')">
       <div class="messenger-settings-frame-search">
         <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
@@ -67,7 +85,9 @@ import type { MessengerControllerContext } from '@/views/messenger/controller/me
 import { useI18n } from '@/i18n';
 
 import {
+  SETTINGS_CATEGORIES,
   filterSettingsCategories,
+  findSettingsCategory,
   type SettingsCategoryId
 } from './settingsCategories';
 import { SETTINGS_CATEGORY_COMPONENTS } from './settingsCategoryComponents';
@@ -164,6 +184,12 @@ const activeComponent = computed(() => SETTINGS_CATEGORY_COMPONENTS[activeCatego
 const selectCategory = (id: SettingsCategoryId) => {
   activeCategory.value = id;
   pushControllerState(id);
+};
+
+const handleCategorySelect = (event: Event) => {
+  const target = event.target as HTMLSelectElement | null;
+  const category = findSettingsCategory(target?.value);
+  if (category) selectCategory(category.id);
 };
 
 defineExpose({ activeCategory });
