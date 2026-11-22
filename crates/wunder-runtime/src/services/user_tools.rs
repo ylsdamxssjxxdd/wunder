@@ -826,9 +826,18 @@ impl UserToolManager {
                                     }
                                 }
                             }
+                            // 别名 `owner@server@tool` 只用于路由身份；设置页展示的标题
+                            // 取工具自己的 title 或工具名，避免多级 @ 前缀挤占可读空间。
+                            let title = tool
+                                .get("title")
+                                .and_then(Value::as_str)
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                                .map(str::to_string)
+                                .unwrap_or_else(|| tool_name.to_string());
                             let candidate = ToolSpec {
                                 name: alias_name.clone(),
-                                title: None,
+                                title: Some(title),
                                 description: description.clone(),
                                 input_schema: schema.clone(),
                             };
@@ -1772,6 +1781,57 @@ mod tests {
         });
         assert!(config.enabled);
         assert!(config.allow_tools.is_empty());
+    }
+
+    #[test]
+    fn user_mcp_alias_titles_drop_the_routing_prefix() {
+        let root = tempdir().expect("tempdir");
+        let db_path = root.path().join("user-tools-mcp.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace = Arc::new(WorkspaceManager::new(
+            root.path().join("workspaces").to_string_lossy().as_ref(),
+            storage,
+            0,
+            &HashMap::new(),
+        ));
+        let store = Arc::new(UserToolStore::new(&Config::default(), workspace).expect("store"));
+        let server = UserMcpServer {
+            name: "demo".to_string(),
+            endpoint: "http://127.0.0.1:9000/mcp".to_string(),
+            tool_specs: vec![
+                json!({ "name": "list_records" }),
+                json!({ "name": "lookup_person", "title": "人员查询" }),
+            ],
+            ..UserMcpServer::default()
+        };
+        store
+            .update_mcp_servers("alice", vec![server])
+            .expect("save mcp servers");
+
+        let manager = UserToolManager::new(store);
+        let bindings = manager.build_bindings_for_catalog(
+            &Config::default(),
+            &SkillRegistry::default(),
+            "alice",
+        );
+
+        let plain = bindings
+            .alias_specs
+            .get("alice@demo@list_records")
+            .expect("plain alias");
+        assert_eq!(plain.title.as_deref(), Some("list_records"));
+        let titled = bindings
+            .alias_specs
+            .get("alice@demo@lookup_person")
+            .expect("titled alias");
+        assert_eq!(titled.title.as_deref(), Some("人员查询"));
+        assert!(matches!(
+            bindings
+                .alias_map
+                .get("alice@demo@list_records")
+                .map(|alias| &alias.kind),
+            Some(UserToolKind::Mcp)
+        ));
     }
 
     #[test]

@@ -141,7 +141,11 @@ impl NativeDesktop {
                 .map(|spec| {
                     let category = if let Some(binding) = context.bindings.alias_map.get(&spec.name)
                     {
-                        if binding.owner_id == self.user_id() {
+                        if matches!(binding.kind, wunder_server::user_tools::UserToolKind::Mcp) {
+                            // 用户自建 MCP 工具同样是 MCP 工具，设置页统一用插头图标；
+                            // 归属差异只影响路由，不应该改变能力分组。
+                            "MCP 工具"
+                        } else if binding.owner_id == self.user_id() {
                             "用户工具"
                         } else {
                             "共享工具"
