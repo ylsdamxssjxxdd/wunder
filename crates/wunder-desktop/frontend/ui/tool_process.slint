@@ -166,13 +166,15 @@ component ProcessEntryCard inherits Rectangle {
                     font-size: Theme.font-xs; font-family: Theme.font-mono;
                     horizontal-alignment: left; vertical-alignment: center;
                 }
-                if root.entry.tokens != "" || root.entry.duration != "" : Text {
+                // A phone row drops the token count and duration: the narrow
+                // width is better spent on the tool name, file and summary.
+                if !root.mobile && (root.entry.tokens != "" || root.entry.duration != "") : Text {
                     width: 44px * Theme.font-scale; height: parent.height;
                     text: root.entry.tokens; color: Theme.muted;
                     font-size: Theme.font-xs; font-family: Theme.font-mono;
                     horizontal-alignment: left; vertical-alignment: center;
                 }
-                if root.entry.tokens != "" || root.entry.duration != "" : Text {
+                if !root.mobile && (root.entry.tokens != "" || root.entry.duration != "") : Text {
                     width: 40px * Theme.font-scale; height: parent.height;
                     text: root.entry.duration; color: Theme.muted;
                     font-size: Theme.font-xs; font-family: Theme.font-mono;

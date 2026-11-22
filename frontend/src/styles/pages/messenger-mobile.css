@@ -311,44 +311,36 @@
     flex-direction: column;
   }
 
-  /* 分类导航从左侧竖栏改成顶部横向胶囊条，内容区独占剩余高度。 */
+  /* 分类导航：去掉搜索框后，全部平铺换行，避免横向滚动把后半段分类藏在屏幕外。 */
   .messenger-settings-frame-nav {
     width: 100%;
     max-height: none;
-    padding: 10px 12px;
+    padding: 8px 12px;
     border-right: 0;
     border-bottom: 1px solid var(--mz-border);
   }
 
+  /* 手机屏幕高度有限，设置搜索框只会挤占内容区，直接不展示。 */
   .messenger-settings-frame-search {
-    height: 40px;
-    margin-bottom: 8px;
-  }
-
-  .messenger-settings-frame-search input {
-    font-size: 16px;
+    display: none;
   }
 
   .messenger-settings-frame-nav-list {
+    flex: 0 0 auto;
     flex-direction: row;
+    flex-wrap: wrap;
     gap: 6px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding: 0 0 2px;
-    scrollbar-width: none;
-  }
-
-  .messenger-settings-frame-nav-list::-webkit-scrollbar {
-    display: none;
+    overflow: visible;
+    padding: 0;
   }
 
   .messenger-settings-frame-nav-item {
     flex: 0 0 auto;
     width: auto;
-    height: 40px;
-    gap: 8px;
-    padding: 0 12px;
-    border-radius: 20px;
+    height: 34px;
+    gap: 6px;
+    padding: 0 11px;
+    border-radius: 17px;
   }
 
   .messenger-settings-frame-nav-item.is-active::before {
@@ -366,6 +358,8 @@
 
   .messenger-settings-frame-content-body {
     padding: 12px 14px calc(24px + env(safe-area-inset-bottom, 0px));
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
 
   /* iOS Safari 对小于 16px 的输入控件会在聚焦时自动放大页面。 */
@@ -386,5 +380,30 @@
 
   .mz-dialog {
     width: 100%;
+  }
+}
+
+/* 窄屏（320px 一类）再压缩设置分类胶囊，给内容区留出高度。 */
+@media (max-width: 360px) {
+  .messenger-settings-frame-nav {
+    padding: 6px 10px;
+  }
+
+  .messenger-settings-frame-nav-list {
+    gap: 4px;
+  }
+
+  .messenger-settings-frame-nav-item {
+    height: 30px;
+    padding: 0 9px;
+    border-radius: 15px;
+  }
+
+  .messenger-settings-frame-nav-title {
+    font-size: 12px;
+  }
+
+  .messenger-settings-frame-nav-icon {
+    width: 14px;
   }
 }
