@@ -1170,11 +1170,13 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     let layout_api = desktop.clone();
     std::thread::spawn(move || {
         let ratio = layout_api.sidebar_split_ratio().unwrap_or(0.6);
+        let collapsed = layout_api.sidebar_collapsed().unwrap_or(false);
         let navigation = layout_api.navigation_order().unwrap_or_default();
         let order = navigation.threads;
         let workspace_order = navigation.workspaces;
         let _ = weak.upgrade_in_event_loop(move |app| {
             app.set_sidebar_split_ratio(ratio);
+            app.set_sidebar_collapsed(collapsed);
             THREAD_ORDER.with(|slot| *slot.borrow_mut() = order);
             WORKSPACE_ORDER.with(|slot| *slot.borrow_mut() = workspace_order);
             project_sidebar(&app, None);
@@ -1195,9 +1197,11 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                     return;
                 };
                 let ratio = app.get_sidebar_split_ratio();
+                let collapsed = app.get_sidebar_collapsed();
                 let api = api.clone();
                 std::thread::spawn(move || {
                     let _ = api.save_sidebar_split_ratio(ratio);
+                    let _ = api.save_sidebar_collapsed(collapsed);
                 });
             },
         );

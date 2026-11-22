@@ -134,6 +134,9 @@ export component MainWindow inherits Window {
     // 模型删除确认框的开合由窗口持有：原生冒烟据此截图核对文案。
     in-out property <bool> model-delete-open: false;
     in-out property <length> sidebar-width: Theme.sidebar-width;
+    // 侧栏折叠（对齐云端版）：拖窄到阈值以内或点分线中点的按钮后整列退场，
+    // 主区左上角浮出恢复入口；展开时沿用收起前的宽度，折叠状态跨启动保留。
+    in-out property <bool> sidebar-collapsed: false;
 
     in-out property <bool> expert-loading;
     in-out property <bool> expert-saving;
@@ -819,8 +822,16 @@ export component MainWindow inherits Window {
     callback composer-file-drop(DropEvent);
     // 侧栏宽度：以窗口坐标为准（追踪通道给的是真实光标位置），起点由按下时
     // 记录，因此拖多远就宽多少，不受布局反馈滞后影响。
-    function apply-sidebar-width(start-width: length, start-x: length, current-x: length) {
+    // 缩到 140px 以内直接收起（对齐云端版：侧栏不会缩成一条缝，而是整列退场，
+    // 由主区左上角的入口重新展开）。返回 false 表示这次拖动以收起结束。
+    function apply-sidebar-width(start-width: length, start-x: length, current-x: length) -> bool {
+        if start-width + (current-x - start-x) < 140px {
+            root.sidebar-collapsed = true;
+            root.sidebar-layout-changed();
+            return false;
+        }
         root.sidebar-width = clamp(start-width + (current-x - start-x), 170px, 420px);
+        return true;
     }
     // 拖到分屏区时的目标格。落点只按指针相对分屏框的象限算，不看当前预览
     // 出的是 2 格还是 4 格：预览会在指针进入分屏区时自己切换，若还拿它当
@@ -1272,7 +1283,11 @@ export component MainWindow inherits Window {
         HorizontalLayout {
             spacing: 0px;
             sidebar_view := Sidebar {
-                width: root.sidebar-width;
+                // 收起时整列退场：只设 visible 不足以让出宽度（不可见元素仍会
+                // 带着内容最小宽度参与布局），必须同时把宽度钉到 0。
+                visible: !root.sidebar-collapsed;
+                min-width: root.sidebar-collapsed ? 0px : root.sidebar-width;
+                max-width: root.sidebar-collapsed ? 0px : root.sidebar-width;
                 rows: root.sidebar-rows;
                 active-thread-id: root.active-session-id;
                 // Signed-in identity travels from the profile projection so the
@@ -1371,7 +1386,8 @@ export component MainWindow inherits Window {
             // marker. Only hover and drag earn the 2px accent pill; painting
             // the whole strip would read as a divider, not an affordance.
             Rectangle {
-                width: 6px;
+                width: root.sidebar-collapsed ? 0px : 6px;
+                visible: !root.sidebar-collapsed;
                 background: transparent;
                 Rectangle {
                     x: (parent.width - self.width) / 2;
@@ -1409,11 +1425,16 @@ export component MainWindow inherits Window {
                         if event.kind == PointerEventKind.move && dragging-width && !PointerChase.enabled {
                             // 按住期间指针可能移出 6px 把手，捕获的 move 事件
                             // 仍然可靠；与 `moved` 一起兜住 Linux 上的拖动。
-                            root.apply-sidebar-width(
+                            if !root.apply-sidebar-width(
                                 start-width,
                                 start-absolute-x,
                                 self.absolute-position.x + self.mouse-x,
-                            );
+                            ) {
+                                // 拖到阈值以内：侧栏已经收起，把手随之退场，
+                                // 这一轮手势必须在这里收尾，别让追踪通道空转。
+                                dragging-width = false;
+                                PointerChase.holding = false;
+                            }
                         }
                         if (event.kind == PointerEventKind.up && event.button == PointerEventButton.left)
                             || event.kind == PointerEventKind.cancel {
@@ -1432,22 +1453,60 @@ export component MainWindow inherits Window {
                             // Linux 等平台没有光标追踪通道，必须从事件流本身
                             // 取当前窗口坐标；否则 pointer-x 停留在按下时的
                             // 起点，宽度只会被夹到最小值。
-                            root.apply-sidebar-width(
+                            if !root.apply-sidebar-width(
                                 start-width,
                                 start-absolute-x,
                                 self.absolute-position.x + self.mouse-x,
-                            );
+                            ) {
+                                dragging-width = false;
+                                PointerChase.holding = false;
+                            }
                         }
                     }
                     changed chase-x => {
-                        if dragging-width {
-                            root.apply-sidebar-width(start-width, start-absolute-x, PointerChase.pointer-x);
+                        if dragging-width && !root.apply-sidebar-width(
+                            start-width,
+                            start-absolute-x,
+                            PointerChase.pointer-x,
+                        ) {
+                            dragging-width = false;
+                            PointerChase.holding = false;
                         }
                     }
                     changed chase-finish => {
                         if dragging-width {
                             dragging-width = false;
                             PointerChase.holding = false;
+                        }
+                    }
+                }
+                // 分线中点的收起按钮（对齐云端版）：平时隐形，指针进入分线
+                // 或按钮本身时才出现；按钮比 6px 分线略宽，向聊天区一侧伸出
+                // 半列，避免在分线里挤成一根针。不可见时不占位、不拦截事件。
+                Rectangle {
+                    x: (parent.width - 18px) / 2;
+                    y: (parent.height - 32px) / 2;
+                    width: 18px;
+                    height: 32px;
+                    visible: resize-touch.has-hover || resize-touch.pressed || collapse-touch.has-hover;
+                    border-radius: 6px;
+                    border-width: 1px;
+                    border-color: collapse-touch.has-hover ? Theme.accent-soft : Theme.border;
+                    background: Theme.surface;
+                    Image {
+                        x: (parent.width - 10px) / 2;
+                        y: (parent.height - 10px) / 2;
+                        width: 10px; height: 10px;
+                        source: @image-url("../assets/icons/chevron-left.svg");
+                        colorize: collapse-touch.has-hover ? Theme.accent-ink : Theme.muted;
+                    }
+                    collapse-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        accessible-role: button; accessible-label: I18n.ui_collapse_sidebar;
+                        Tooltip { text: @markdown("\{I18n.ui_collapse_sidebar}"); }
+                        clicked => {
+                            root.sidebar-collapsed = true;
+                            root.sidebar-layout-changed();
                         }
                     }
                 }
@@ -1685,6 +1744,35 @@ export component MainWindow inherits Window {
                 fork-thread(session, round) => { root.fork-thread(session, round); }
                 copy-text(text) => { root.copy-raw(text); }
                 open-resource(id) => { root.timeline-open(id); }
+            }
+        }
+        // 收起后的恢复入口（对齐云端版）：侧栏整列退场后，聊天区拿到左上角，
+        // 这颗常驻小按钮浮在那里，点击就按收起前的宽度把侧栏展开。
+        if root.sidebar-collapsed : Rectangle {
+            x: 12px;
+            y: 12px;
+            z: 120;
+            width: 30px;
+            height: 30px;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: sidebar-open-touch.has-hover ? Theme.accent-soft : Theme.border;
+            background: Theme.surface;
+            Image {
+                x: (parent.width - 14px) / 2;
+                y: (parent.height - 14px) / 2;
+                width: 14px; height: 14px;
+                source: @image-url("../assets/icons/bars.svg");
+                colorize: sidebar-open-touch.has-hover ? Theme.accent-ink : Theme.text-secondary;
+            }
+            sidebar-open-touch := TouchArea {
+                mouse-cursor: pointer;
+                accessible-role: button; accessible-label: I18n.ui_expand_sidebar;
+                Tooltip { text: @markdown("\{I18n.ui_expand_sidebar}"); }
+                clicked => {
+                    root.sidebar-collapsed = false;
+                    root.sidebar-layout-changed();
+                }
             }
         }
     }

@@ -38,6 +38,24 @@ impl NativeDesktop {
         Ok(())
     }
 
+    /// 侧栏是否折叠，和云端版一样跨启动保留。
+    pub fn sidebar_collapsed(&self) -> Result<bool> {
+        Ok(self
+            .state()
+            .user_store
+            .get_meta(&format!("desktop_sidebar_collapsed:v1:{}", self.user_id()))?
+            .as_deref()
+            == Some("1"))
+    }
+
+    pub fn save_sidebar_collapsed(&self, collapsed: bool) -> Result<()> {
+        self.state().user_store.set_meta(
+            &format!("desktop_sidebar_collapsed:v1:{}", self.user_id()),
+            if collapsed { "1" } else { "0" },
+        )?;
+        Ok(())
+    }
+
     pub fn navigation_order(&self) -> Result<NativeNavigationOrder> {
         self.state()
             .user_store

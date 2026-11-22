@@ -541,6 +541,17 @@ fn sidebar_split_preference_round_trips_and_rejects_invalid_values(
 }
 
 #[test]
+fn sidebar_collapsed_preference_round_trips() -> Result<(), Box<dyn std::error::Error>> {
+    let runtime = start_isolated()?;
+    assert!(!runtime.sidebar_collapsed()?);
+    runtime.save_sidebar_collapsed(true)?;
+    assert!(runtime.sidebar_collapsed()?);
+    runtime.save_sidebar_collapsed(false)?;
+    assert!(!runtime.sidebar_collapsed()?);
+    Ok(())
+}
+
+#[test]
 fn saving_thread_order_preserves_other_navigation_preferences(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = start_isolated()?;
