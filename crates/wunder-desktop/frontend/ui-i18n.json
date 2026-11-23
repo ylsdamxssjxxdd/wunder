@@ -4058,6 +4058,16 @@
   "en": "Restore"
  },
  {
+  "key": "wm_pin",
+  "zh": "置顶",
+  "en": "Always on top"
+ },
+ {
+  "key": "wm_unpin",
+  "zh": "取消置顶",
+  "en": "Stop always on top"
+ },
+ {
   "key": "wm_status_running",
   "zh": "运行中 {} 线程",
   "en": "{} running",
@@ -6940,6 +6950,11 @@
   "key": "tm_mcp_tools_tip",
   "zh": "连接后可查看工具列表，并按需启用",
   "en": "Connect to view available tools"
+ },
+ {
+  "key": "tm_connecting",
+  "zh": "正在连接 MCP 服务器…",
+  "en": "Connecting to MCP server…"
  },
  {
   "key": "tm_select_tool",

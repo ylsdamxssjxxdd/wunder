@@ -207,9 +207,12 @@ export global Theme {
     // Below this width the sidebar stops sharing the row and becomes an
     // overlay: the chat keeps the full width and the tree is summoned on top.
     out property <length> sidebar-overlay-width: 760px;
-    // The hardware readout is the first thing to yield on a narrow composer:
-    // plus + model + send must still fit without eliding either control.
-    out property <length> host-hud-min-width: 640px;
+    // The hardware readout keeps only the background-task / subagent cells on
+    // a narrow composer; CPU and memory yield first.
+    out property <length> host-hud-compact-width: 560px;
+    // Below this width the plan capsule shortens its step text so the whole
+    // pill (title, position and chevron) stays inside the input band.
+    out property <length> plan-compact-width: 520px;
     // Frameless workbench chrome strip height; the main content starts below it.
     out property <length> titlebar-height: 28px;
     out property <length> dock-breakpoint: 1100px;

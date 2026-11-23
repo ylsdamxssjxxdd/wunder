@@ -667,6 +667,17 @@ pub fn open(app: &crate::MainWindow) {
         window
             .window()
             .with_winit_window(|native| native.focus_window());
+        // 主窗口置顶时，帮助窗口必须同样置顶，否则新开的帮助窗口会被压在
+        // topmost 主窗口下面，看起来像点了没反应。
+        crate::native_window::set_always_on_top(window.window(), app.get_pinned());
+    }
+}
+
+/// 主窗口置顶开关变化后同步帮助窗口（未创建时无事可做）。
+pub fn sync_always_on_top(pinned: bool) {
+    let window = WINDOW.with(|slot| slot.borrow().as_ref().map(|window| window.clone_strong()));
+    if let Some(window) = window {
+        crate::native_window::set_always_on_top(window.window(), pinned);
     }
 }
 

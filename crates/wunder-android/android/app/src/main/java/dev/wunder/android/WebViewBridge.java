@@ -71,7 +71,8 @@ public final class WebViewBridge {
     private static final long NAVIGATION_TIMEOUT_MS = 30_000L;
     private static final long JS_TIMEOUT_MS = 15_000L;
     private static final int MAX_TEXT_CHARS = 40_000;
-    private static final int MAX_SNAPSHOT_NODES = 220;
+    /** Base64 注入会把文件放大 4/3，手机上给一个明确的总量上限。 */
+    private static final long MAX_UPLOAD_BYTES = 16L * 1024 * 1024;
     /** 工作区预览域名：请求由 WebViewClient 从磁盘应答，不做 DNS 解析。 */
     private static final String PREVIEW_HOST = "wunder.preview";
     private static final String PREVIEW_ORIGIN = "https://" + PREVIEW_HOST;
@@ -152,7 +153,7 @@ public final class WebViewBridge {
                 case "back":
                     return back();
                 case "observe_refs":
-                    return snapshot();
+                    return snapshot(args);
                 case "observe_text":
                     return readPage(args);
                 case "read_page":
@@ -171,8 +172,10 @@ public final class WebViewBridge {
                     return drag(args);
                 case "wait":
                     return waitFor(args);
+                case "scroll":
+                    return scroll(args);
                 case "screenshot":
-                    return screenshot();
+                    return screenshot(args);
                 case "resize":
                     return resize(args);
                 case "file_upload":
@@ -188,12 +191,9 @@ public final class WebViewBridge {
                 case "tabs_new":
                     return navigate(args);
                 case "tabs_select":
-                    return error("WebView 浏览器只支持一个标签页");
+                    return tabsSelect(args);
                 case "tabs_close":
-                    if (args.has("target_id") || args.has("index")) {
-                        return error("WebView 浏览器只支持一个标签页");
-                    }
-                    return close();
+                    return tabsClose(args);
                 case "close":
                     return close();
                 case "status":
@@ -288,21 +288,49 @@ public final class WebViewBridge {
         if (!ensureReady()) {
             return error("浏览器尚未打开");
         }
-        String text = evalJs(
-                "(function(){var b=document.body;return b?(b.innerText||b.textContent||''):'';})()",
-                JS_TIMEOUT_MS);
-        if (text == null) {
+        String cursor = trimToNull(args.optString("cursor", ""));
+        int offset = 0;
+        if (cursor != null) {
+            try {
+                offset = Integer.parseInt(cursor);
+            } catch (NumberFormatException ignored) {
+                return error("cursor 无效；请不带 cursor 重新调用 observe_text");
+            }
+            if (offset < 0) {
+                return error("cursor 无效；请不带 cursor 重新调用 observe_text");
+            }
+        }
+        JSONObject reply = evalJsJson(BrowserScripts.readText(), JS_TIMEOUT_MS);
+        if (reply == null) {
             return error("读取页面超时");
         }
+        String text = reply.optString("text", "").trim();
         int limit = clamp(args.optInt("max_chars", MAX_TEXT_CHARS), 1, MAX_TEXT_CHARS);
-        return pageText(truncate(text.trim(), limit));
+        int total = text.length();
+        int start = Math.min(offset, total);
+        int end = Math.min(start + limit, total);
+        boolean hasMore = end < total;
+        JSONObject data = new JSONObject();
+        try {
+            data.put("truncated", hasMore);
+            data.put("has_more", hasMore);
+            data.put("page_length", total);
+            if (hasMore) {
+                data.put("next_cursor", String.valueOf(end));
+            }
+        } catch (Throwable ignored) {
+        }
+        String suffix = hasMore
+                ? "\n…（已截断，共 " + total + " 字符；继续读取请传 cursor=" + end + "）"
+                : "";
+        return pageText(text.substring(start, end) + suffix, data);
     }
 
-    private static String snapshot() {
+    private static String snapshot(JSONObject args) {
         if (!ensureReady()) {
             return error("浏览器尚未打开");
         }
-        String raw = evalJs(SNAPSHOT_JS, JS_TIMEOUT_MS);
+        String raw = evalJs(BrowserScripts.snapshot(), JS_TIMEOUT_MS);
         if (raw == null || raw.trim().isEmpty()) {
             return error("页面快照超时");
         }
@@ -310,7 +338,8 @@ public final class WebViewBridge {
             JSONObject data = new JSONObject(raw);
             String lines = data.optString("text", "");
             String header = data.optString("title", "") + "\n" + data.optString("url", "");
-            return pageText(header + "\n" + lines);
+            int limit = clamp(args.optInt("max_chars", MAX_TEXT_CHARS), 1, MAX_TEXT_CHARS);
+            return pageText(truncate((header + "\n" + lines).trim(), limit));
         } catch (Throwable error) {
             return pageText(raw);
         }
@@ -320,80 +349,73 @@ public final class WebViewBridge {
         if (!ensureReady()) {
             return error("浏览器尚未打开");
         }
-        String lookup = lookupExpression(args);
-        if (lookup == null) {
-            return error("click 需要 ref 或 selector");
+        String target = targetExpression(args, true);
+        if (target == null) {
+            return error("click 需要 ref、selector 或 text");
         }
-        boolean doubleClick = args.optBoolean("double_click", false);
-        String script = "(function(){"
-                + "var el=" + lookup + ";"
-                + "if(!el)return 'not_found';"
-                + "try{el.scrollIntoView({block:'center',inline:'center'});}catch(e){}"
-                + "var r=el.getBoundingClientRect();"
-                + "var x=r.left+r.width/2,y=r.top+r.height/2;"
-                + "['pointerover','mouseover','pointerdown','mousedown','pointerup','mouseup']"
-                + ".forEach(function(t){try{el.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,clientX:x,clientY:y}));}catch(e){}});"
-                + "try{el.click();}catch(e){}"
-                + (doubleClick
-                    ? "try{el.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,clientX:x,clientY:y}));}catch(e){}"
-                    : "")
-                + "return 'clicked';})()";
-        String result = evalJs(script, 6_000L);
-        if ("not_found".equals(result)) {
-            return error("未找到目标元素，请重新 observe_refs");
-        }
-        if (result == null) {
+        String beforeUrl = currentUrl;
+        JSONObject reply = evalJsJson(
+                BrowserScripts.click(target, args.optBoolean("double_click", false)), 6_000L);
+        if (reply == null) {
             PendingDialog dialog = pendingDialog;
             if (dialog != null) {
                 return pageText("已点击，页面弹出 " + dialog.kind + " 对话框，请使用 dialog 处理");
             }
-            return error("点击超时");
+            sleep(650);
+            if (!beforeUrl.equals(currentUrl)) {
+                return pageText("已点击并跳转到 " + currentUrl);
+            }
+            return error("点击未执行：页面脚本没有返回结果（页面可能正在跳转或被阻止），请重试或重新 observe_refs");
+        }
+        String status = reply.optString("status", "");
+        if ("not_found".equals(status)) {
+            return error("未找到目标元素，请重新 observe_refs");
+        }
+        if ("error".equals(status)) {
+            return error("点击失败：" + reply.optString("message", "页面脚本异常"));
         }
         sleep(650);
-        return pageText("已点击目标元素");
+        if (!beforeUrl.equals(currentUrl)) {
+            return pageText("已点击并跳转到 " + currentUrl);
+        }
+        String label = reply.optString("label", "").trim();
+        return pageText(label.isEmpty() ? "已点击目标元素" : "已点击：" + label);
     }
 
     private static String type(JSONObject args) {
         if (!ensureReady()) {
             return error("浏览器尚未打开");
         }
-        String lookup = lookupExpression(args);
-        if (lookup == null) {
+        String target = targetExpression(args, false);
+        if (target == null) {
             return error("type 需要 ref 或 selector");
         }
         String text = args.optString("text", "");
         boolean submit = args.optBoolean("submit", false);
-        String script = "(function(){"
-                + "var el=" + lookup + ";"
-                + "if(!el)return 'not_found';"
-                + "try{el.focus();}catch(e){}"
-                + "if(el.isContentEditable){el.textContent=" + JSONObject.quote(text) + ";}"
-                + "else if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'){"
-                + "var proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;"
-                + "var desc=Object.getOwnPropertyDescriptor(proto,'value');"
-                + "if(desc&&desc.set){desc.set.call(el," + JSONObject.quote(text) + ");}else{el.value=" + JSONObject.quote(text) + ";}"
-                + "}else{return 'not_editable';}"
-                + "try{el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));}catch(e){}"
-                + (submit
-                    ? "try{var f=el.form;if(f&&f.requestSubmit){f.requestSubmit();}else{"
-                        + "['keydown','keypress','keyup'].forEach(function(t){el.dispatchEvent(new KeyboardEvent(t,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));});}}catch(e){}"
-                    : "")
-                + "return 'typed';})()";
-        String result = evalJs(script, 6_000L);
-        if ("not_found".equals(result)) {
-            return error("未找到输入元素，请重新 observe_refs");
-        }
-        if ("not_editable".equals(result)) {
-            return error("目标元素不可输入");
-        }
-        if (result == null) {
+        String beforeUrl = currentUrl;
+        JSONObject reply = evalJsJson(BrowserScripts.type(target, text, submit), 6_000L);
+        if (reply == null) {
             PendingDialog dialog = pendingDialog;
             if (dialog != null) {
                 return pageText("输入后页面弹出 " + dialog.kind + " 对话框，请使用 dialog 处理");
             }
-            return error("输入超时");
+            sleep(400);
+            if (submit && !beforeUrl.equals(currentUrl)) {
+                return pageText("已输入文本并提交，页面跳转到 " + currentUrl);
+            }
+            return error("输入未执行：页面脚本没有返回结果（页面可能正在跳转或被阻止），请重试");
+        }
+        String status = reply.optString("status", "");
+        if ("not_found".equals(status)) {
+            return error("未找到输入元素，请重新 observe_refs");
+        }
+        if ("not_editable".equals(status)) {
+            return error("目标元素不可输入：" + reply.optString("tag", ""));
         }
         sleep(250);
+        if (submit && !beforeUrl.equals(currentUrl)) {
+            return pageText("已输入文本并提交，页面跳转到 " + currentUrl);
+        }
         return pageText("已输入文本");
     }
 
@@ -405,6 +427,16 @@ public final class WebViewBridge {
         int code = keyCode(key);
         if (code == 0) {
             return error("不支持的按键：" + key);
+        }
+        String lookup = lookupExpression(args);
+        if (lookup != null) {
+            JSONObject focus = evalJsJson(BrowserScripts.focus(lookup), 4_000L);
+            if (focus == null) {
+                return error("无法聚焦目标元素");
+            }
+            if ("not_found".equals(focus.optString("status", ""))) {
+                return error("未找到目标元素，请重新 observe_refs");
+            }
         }
         Boolean sent = onMain(() -> {
             if (webView == null) {
@@ -426,19 +458,18 @@ public final class WebViewBridge {
         if (!ensureReady()) {
             return error("浏览器尚未打开");
         }
-        String lookup = lookupExpression(args);
-        if (lookup == null) {
-            return error("hover 需要 ref 或 selector");
+        String target = targetExpression(args, true);
+        if (target == null) {
+            return error("hover 需要 ref、selector 或 text");
         }
-        String script = "(function(){var el=" + lookup + ";if(!el)return 'not_found';"
-                + "var r=el.getBoundingClientRect();"
-                + "['pointerover','mouseover','mousemove'].forEach(function(t){try{el.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,clientX:r.left+r.width/2,clientY:r.top+r.height/2}));}catch(e){}});"
-                + "return 'hovered';})()";
-        String result = evalJs(script, 5_000L);
-        if ("not_found".equals(result)) {
+        JSONObject reply = evalJsJson(BrowserScripts.hover(target), 5_000L);
+        if (reply == null) {
+            return error("悬停未执行：页面脚本没有返回结果，请重试");
+        }
+        if ("not_found".equals(reply.optString("status", ""))) {
             return error("未找到目标元素");
         }
-        return result == null ? error("悬停超时") : pageText("已悬停目标元素");
+        return pageText("已悬停目标元素");
     }
 
     private static String select(JSONObject args) {
@@ -450,82 +481,148 @@ public final class WebViewBridge {
             return error("select 需要 ref 或 selector");
         }
         Object value = args.opt("value");
-        String script = "(function(){var el=" + lookup + ";if(!el)return 'not_found';"
-                + "var values=" + jsonValueExpression(value) + ";"
-                + "if(!Array.isArray(values))values=[values];"
-                + "try{for(var i=0;i<el.options.length;i++){el.options[i].selected=values.indexOf(el.options[i].value)>=0;}"
-                + "el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return 'selected';}catch(e){return 'not_select';})()";
-        String result = evalJs(script, 5_000L);
-        if ("not_found".equals(result)) {
-            return error("未找到下拉元素");
+        JSONObject reply = evalJsJson(
+                BrowserScripts.select(lookup, jsonValueExpression(value)), 5_000L);
+        if (reply == null) {
+            return error("选择未执行：页面脚本没有返回结果（页面可能正在跳转），请重试");
         }
-        if ("not_select".equals(result)) {
-            return error("目标元素不是下拉框");
+        String status = reply.optString("status", "");
+        if ("not_found".equals(status)) {
+            return error("未找到下拉元素，请重新 observe_refs");
         }
-        return result == null ? error("选择超时") : pageText("已选择选项");
+        if ("not_select".equals(status)) {
+            return error("目标元素不是原生下拉框（" + reply.optString("tag", "") + "）；"
+                    + "自定义下拉请改用 click 逐项点击");
+        }
+        if ("empty".equals(status)) {
+            return error("select 需要非空的 value");
+        }
+        if ("no_match".equals(status)) {
+            JSONArray options = reply.optJSONArray("options");
+            String available = joinJsonArray(options);
+            return error("没有匹配的选项。value 可以传 option 的 value 或可见文字；"
+                    + "可选项共 " + reply.optInt("count", 0) + " 个：" + available);
+        }
+        if (!"selected".equals(status)) {
+            return error("选择失败：页面返回了未知状态 " + status);
+        }
+        JSONArray selected = reply.optJSONArray("selected");
+        String names = selected == null || selected.length() == 0
+                ? "" : joinJsonArray(selected);
+        String current = reply.optString("value", "").trim();
+        if (names.isEmpty() && current.isEmpty()) {
+            return error("未选中任何选项，请检查 value");
+        }
+        String detail = names.isEmpty() ? current : names;
+        return pageText("已选择：" + detail + (current.isEmpty() ? "" : "（value=" + current + "）"));
     }
 
     private static String drag(JSONObject args) {
         if (!ensureReady()) {
             return error("浏览器尚未打开");
         }
-        String from = lookupExpression(args, "from_ref", "from_selector");
-        String to = lookupExpression(args, "to_ref", "to_selector");
-        if (from == null || to == null) {
-            return error("drag 需要 from_ref/from_selector 与 to_ref/to_selector");
+        int steps = clamp(args.optInt("steps", 12), 1, 60);
+        String script;
+        if (args.has("from_x") && args.has("from_y")
+                && args.has("to_x") && args.has("to_y")) {
+            script = BrowserScripts.dragCoordinates(
+                    clamp(args.optInt("from_x", 0), 0, 20_000),
+                    clamp(args.optInt("from_y", 0), 0, 20_000),
+                    clamp(args.optInt("to_x", 0), 0, 20_000),
+                    clamp(args.optInt("to_y", 0), 0, 20_000),
+                    steps);
+        } else {
+            String from = lookupExpression(args, "from_ref", "from_selector");
+            String to = lookupExpression(args, "to_ref", "to_selector");
+            if (from == null || to == null) {
+                return error("drag 需要 from_ref/from_selector 与 to_ref/to_selector，"
+                        + "或完整的 from_x/from_y/to_x/to_y 坐标");
+            }
+            script = BrowserScripts.dragElements(from, to, steps);
         }
-        String script = "(function(){var a=" + from + ",b=" + to + ";if(!a||!b)return 'not_found';"
-                + "var r1=a.getBoundingClientRect(),r2=b.getBoundingClientRect();"
-                + "var x1=r1.left+r1.width/2,y1=r1.top+r1.height/2,x2=r2.left+r2.width/2,y2=r2.top+r2.height/2;"
-                + "['pointerdown','mousedown'].forEach(function(t){try{a.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,clientX:x1,clientY:y1}));}catch(e){}});"
-                + "['pointermove','mousemove'].forEach(function(t){try{b.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,clientX:x2,clientY:y2}));}catch(e){}});"
-                + "['pointerup','mouseup'].forEach(function(t){try{b.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,clientX:x2,clientY:y2}));}catch(e){}});"
-                + "return 'dragged';})()";
-        String result = evalJs(script, 6_000L);
-        if ("not_found".equals(result)) {
-            return error("未找到拖拽元素");
+        JSONObject reply = evalJsJson(script, 6_000L);
+        if (reply == null) {
+            return error("拖拽未执行：页面脚本没有返回结果，请重试");
         }
-        return result == null ? error("拖拽超时") : pageText("已拖拽目标元素");
+        if ("not_found".equals(reply.optString("status", ""))) {
+            return error("未找到拖拽目标（坐标落在页面之外）");
+        }
+        return pageText("已拖拽目标元素");
     }
 
     private static String waitFor(JSONObject args) {
+        if (!ensureReady()) {
+            return error("浏览器尚未打开");
+        }
         int waitMs = clamp(args.optInt("wait_ms", 0), 0, 10_000);
-        String selector = args.optString("selector", "").trim();
-        if (selector.isEmpty()) {
+        String selector = trimToNull(args.optString("selector", ""));
+        String text = trimToNull(args.optString("text", ""));
+        String url = trimToNull(args.optString("url", ""));
+        String loadState = trimToNull(args.optString("load_state", ""));
+        String state = trimToNull(args.optString("state", ""));
+        boolean hasCondition = selector != null || text != null || url != null || loadState != null;
+        if (!hasCondition) {
+            if (waitMs <= 0) {
+                return error("wait 需要 wait_ms 或 selector/text/url/load_state 之一");
+            }
             sleep(waitMs);
             return pageText("已等待 " + waitMs + " ms");
         }
-        long timeout = clamp(args.optInt("timeout_ms", 10_000), 1_000, 30_000);
-        String state = args.optString("state", "").trim().toLowerCase(Locale.ROOT);
-        String quoted = JSONObject.quote(selector);
-        String script;
-        switch (state) {
-            case "hidden":
-                script = "(function(){var el=document.querySelector(" + quoted + ");if(!el)return true;"
-                        + "var r=el.getBoundingClientRect();var s=getComputedStyle(el);"
-                        + "return !(r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'&&parseFloat(s.opacity||'1')>0.05);})()";
-                break;
-            case "detached":
-                script = "(function(){return document.querySelector(" + quoted + ")==null;})()";
-                break;
-            default:
-                script = "(function(){return document.querySelector(" + quoted + ")!=null;})()";
-                break;
+        if (waitMs > 0) {
+            sleep(waitMs);
         }
+        long timeout = clamp(args.optInt("timeout_ms", 10_000), 1_000, 30_000);
         long deadline = System.currentTimeMillis() + timeout;
+        String script = BrowserScripts.waitCheck(selector, state, text, url, loadState);
+        JSONObject reply = null;
         while (System.currentTimeMillis() < deadline) {
-            String result = evalJs(script, 3_000L);
-            if ("true".equals(result)) {
-                return pageText(state.isEmpty() || "visible".equals(state) || "attached".equals(state)
-                        ? "元素已出现：" + selector
-                        : "页面状态已满足：" + selector + " " + state);
+            reply = evalJsJson(script, 4_000L);
+            if (reply != null && reply.optBoolean("ok", false)) {
+                if ("networkidle".equals(loadState)) {
+                    sleep(500);
+                }
+                String matched = joinJsonArray(reply.optJSONArray("done"));
+                String note = "networkidle".equals(loadState)
+                        ? "（networkidle 以文档加载完成 + 500ms 近似）" : "";
+                return pageText("等待条件已满足：" + matched + note);
             }
             sleep(250);
         }
-        return error("等待页面状态超时：" + selector);
+        String failed = reply == null
+                ? "页面脚本未执行" : joinJsonArray(reply.optJSONArray("failed"));
+        return error("等待页面状态超时，未满足：" + failed);
     }
 
-    private static String screenshot() {
+    private static String scroll(JSONObject args) {
+        if (!ensureReady()) {
+            return error("浏览器尚未打开");
+        }
+        int deltaX = clamp(args.optInt("delta_x", 0), -20_000, 20_000);
+        int deltaY = clamp(args.optInt("delta_y", 0), -20_000, 20_000);
+        if (deltaX == 0 && deltaY == 0) {
+            return error("scroll 需要非零的 delta_x 或 delta_y");
+        }
+        int x = args.has("x") ? clamp(args.optInt("x", 0), 0, 20_000) : -1;
+        int y = args.has("y") ? clamp(args.optInt("y", 0), 0, 20_000) : -1;
+        JSONObject reply = evalJsJson(BrowserScripts.scroll(deltaX, deltaY, x, y), 5_000L);
+        if (reply == null) {
+            return error("滚动未执行：页面脚本没有返回结果（页面可能正在跳转），请重试");
+        }
+        if (!"scrolled".equals(reply.optString("status", ""))) {
+            return error("滚动失败：页面返回了未知状态");
+        }
+        if (reply.optBoolean("moved", false)) {
+            return pageText("已滚动 " + deltaX + "," + deltaY
+                    + "（位置 " + reply.optInt("x", 0) + "," + reply.optInt("y", 0)
+                    + "，容器 " + reply.optString("container", "document") + "）");
+        }
+        if (reply.optBoolean("handled", false) || reply.optBoolean("canvas", false)) {
+            return pageText("已向画布发送滚轮事件（页面自行处理，如 3D 缩放/旋转）");
+        }
+        return pageText("已发送滚轮事件，但页面没有可滚动区域（可能已到顶/底）");
+    }
+
+    private static String screenshot(JSONObject args) {
         if (!ensureReady()) {
             return error("浏览器尚未打开");
         }
@@ -555,7 +652,10 @@ public final class WebViewBridge {
         try {
             JSONObject result = new JSONObject();
             result.put("ok", true);
-            result.put("text", "已截取当前页面");
+            result.put("text", args.optBoolean("full_page", false)
+                    ? "已截取当前视口（WebView 不支持整页截图，full_page 已忽略；"
+                        + "长页请配合 scroll 分段截图）"
+                    : "已截取当前页面");
             result.put("image_base64", base64);
             result.put("mime_type", "image/png");
             return result.toString();
@@ -657,48 +757,92 @@ public final class WebViewBridge {
         if (webView == null) {
             return error("浏览器尚未打开");
         }
-        if (pendingFileChooser == null) {
-            String lookup = lookupExpression(args);
-            if (lookup != null) {
-                evalJs("(function(){var el=" + lookup + ";if(!el)return 'not_found';"
-                        + "try{el.click();}catch(e){}return 'clicked';})()", 3_000L);
-                sleep(400);
-            }
-        }
-        ValueCallback<Uri[]> callback = pendingFileChooser;
-        if (callback == null) {
-            return error("当前没有等待中的文件选择器；先点击上传按钮，或提供 ref/selector");
-        }
+        List<File> localFiles = new ArrayList<>();
         List<Uri> uris = new ArrayList<>();
+        long totalBytes = 0;
         for (int index = 0; index < files.length(); index++) {
             String path = files.optString(index, "").trim();
             if (path.isEmpty()) {
                 continue;
             }
-            Uri uri = workspaceDocumentUri(new File(path));
-            if (uri == null) {
-                pendingFileChooser = null;
+            File file = new File(path);
+            if (!file.isFile()) {
+                return error("上传文件不存在：" + path);
+            }
+            totalBytes += file.length();
+            if (totalBytes > MAX_UPLOAD_BYTES) {
+                return error("上传文件总大小超过 16 MB，请压缩后再上传或改用接口");
+            }
+            localFiles.add(file);
+            Uri uri = workspaceDocumentUri(file);
+            if (uri != null) {
+                uris.add(uri);
+            }
+        }
+        if (localFiles.isEmpty()) {
+            return error("file_upload 需要至少一个文件");
+        }
+        // 原生选择器已打开时沿用它；脚本合成点击没有 user activation，
+        // 浏览器不会弹出选择器，因此其余情况直接把文件注入 input.files。
+        ValueCallback<Uri[]> callback = pendingFileChooser;
+        if (callback != null) {
+            pendingFileChooser = null;
+            if (uris.size() != localFiles.size()) {
                 onMain(() -> {
                     callback.onReceiveValue(null);
                     return Boolean.TRUE;
                 }, 3_000L);
-                return error("上传文件必须位于工作区内：" + path);
+                return error("原生文件选择器只接受工作区内的文件");
             }
-            uris.add(uri);
+            Boolean delivered = onMain(() -> {
+                callback.onReceiveValue(uris.toArray(new Uri[0]));
+                return Boolean.TRUE;
+            }, 5_000L);
+            if (!Boolean.TRUE.equals(delivered)) {
+                return error("提交文件选择失败");
+            }
+            sleep(300);
+            return pageText("已选择 " + uris.size() + " 个文件");
         }
-        if (uris.isEmpty()) {
-            return error("file_upload 需要至少一个文件");
+        String target = lookupExpression(args);
+        if (target == null) {
+            return error("当前没有等待中的文件选择器；请提供文件输入框的 ref/selector"
+                    + "（observe_refs 中 type=file 的元素）");
         }
-        pendingFileChooser = null;
-        Boolean delivered = onMain(() -> {
-            callback.onReceiveValue(uris.toArray(new Uri[0]));
-            return Boolean.TRUE;
-        }, 5_000L);
-        if (!Boolean.TRUE.equals(delivered)) {
-            return error("提交文件选择失败");
+        JSONArray payload = new JSONArray();
+        for (File file : localFiles) {
+            try {
+                byte[] bytes = readFileBytes(file);
+                JSONObject item = new JSONObject();
+                item.put("name", file.getName());
+                item.put("type", previewMimeType(file.getName()));
+                item.put("b64", Base64.encodeToString(bytes, Base64.NO_WRAP));
+                payload.put(item);
+            } catch (Throwable failure) {
+                return error("读取上传文件失败：" + file.getName());
+            }
         }
-        sleep(300);
-        return pageText("已选择 " + uris.size() + " 个文件");
+        JSONObject reply = evalJsJson(
+                BrowserScripts.fileUpload(target, payload.toString()), 15_000L);
+        if (reply == null) {
+            return error("上传文件注入失败：页面脚本没有返回结果，请重试");
+        }
+        String status = reply.optString("status", "");
+        if ("not_found".equals(status)) {
+            return error("未找到文件输入框，请重新 observe_refs");
+        }
+        if ("not_file_input".equals(status)) {
+            return error("目标是 <" + reply.optString("tag", "?") + ">，不是 <input type=file>；"
+                    + "请用 observe_refs 找到 type=file 的元素");
+        }
+        if ("assign_failed".equals(status)) {
+            return error("写入文件列表失败：" + reply.optString("message", "未知原因"));
+        }
+        if (!"uploaded".equals(status)) {
+            return error("上传失败：页面返回了未知状态 " + status);
+        }
+        String names = joinJsonArray(reply.optJSONArray("names"));
+        return pageText("已选择 " + reply.optInt("count", 0) + " 个文件：" + names);
     }
 
     private static String handleDialog(JSONObject args) {
@@ -858,6 +1002,32 @@ public final class WebViewBridge {
         String text = "1 tab\n- tab-1 " + (title.isEmpty() ? url : title)
                 + (url.isEmpty() ? "" : " (" + url + ")");
         return pageText(text);
+    }
+
+    private static String tabsSelect(JSONObject args) {
+        if (webView == null) {
+            return error("浏览器尚未打开");
+        }
+        String targetId = trimToNull(args.optString("target_id", ""));
+        int index = args.has("index") ? args.optInt("index", -1) : -1;
+        boolean current = "tab-1".equals(targetId) || (args.has("index") && index == 0);
+        if (!current) {
+            return error("WebView 浏览器只有一个标签页（tab-1）："
+                    + (currentUrl.isEmpty() ? "空白页" : currentUrl)
+                    + "；请直接用 navigate 打开页面");
+        }
+        return pageText("当前标签页：" + (currentTitle.isEmpty() ? currentUrl : currentTitle)
+                + (currentUrl.isEmpty() ? "" : "\n" + currentUrl));
+    }
+
+    private static String tabsClose(JSONObject args) {
+        String targetId = trimToNull(args.optString("target_id", ""));
+        boolean hasIndex = args.has("index");
+        int index = hasIndex ? args.optInt("index", -1) : -1;
+        if ((targetId != null || hasIndex) && !"tab-1".equals(targetId) && index != 0) {
+            return error("WebView 浏览器只有一个标签页（tab-1）；关闭请传 index=0 或 target_id=tab-1");
+        }
+        return close();
     }
 
     private static String status() {
@@ -1380,6 +1550,24 @@ public final class WebViewBridge {
         return decodeJsString(result.get());
     }
 
+    /**
+     * Evaluate a script whose contract is one JSON object envelope. `null`
+     * means the script did not run (timeout, navigation or a parse error), so
+     * callers must treat it as a failure instead of assuming success.
+     */
+    private static JSONObject evalJsJson(String script, long timeoutMs) {
+        String raw = evalJs(script, timeoutMs);
+        if (raw == null || raw.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            return new JSONObject(raw);
+        } catch (Throwable error) {
+            Log.w(TAG, "page script returned an unparsable envelope", error);
+            return null;
+        }
+    }
+
     private static String lookupExpression(JSONObject args) {
         String ref = args.optString("ref", "").trim();
         String selector = args.optString("selector", "").trim();
@@ -1390,9 +1578,25 @@ public final class WebViewBridge {
             return "document.querySelector('[data-wunder-ref=\"" + ref + "\"]')";
         }
         if (!selector.isEmpty()) {
-            return "document.querySelector(" + JSONObject.quote(selector) + ")";
+            return "document.querySelector(" + BrowserScripts.quote(selector) + ")";
         }
         return null;
+    }
+
+    /** 元素定位：ref/selector 优先，可选按可见文字兜底。 */
+    private static String targetExpression(JSONObject args, boolean allowText) {
+        String lookup = lookupExpression(args);
+        if (lookup != null) {
+            return lookup;
+        }
+        if (!allowText) {
+            return null;
+        }
+        String text = trimToNull(args.optString("text", ""));
+        if (text == null) {
+            return null;
+        }
+        return "__wunderFindByText(" + BrowserScripts.quote(text) + ")";
     }
 
     private static String lookupExpression(JSONObject args, String refKey, String selectorKey) {
@@ -1415,7 +1619,42 @@ public final class WebViewBridge {
                 || value instanceof Boolean) {
             return String.valueOf(value);
         }
-        return JSONObject.quote(String.valueOf(value));
+        return BrowserScripts.quote(String.valueOf(value));
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private static String joinJsonArray(JSONArray items) {
+        if (items == null || items.length() == 0) {
+            return "（无）";
+        }
+        StringBuilder out = new StringBuilder();
+        for (int index = 0; index < items.length(); index++) {
+            if (index > 0) {
+                out.append("、");
+            }
+            out.append(items.optString(index, ""));
+        }
+        return out.toString();
+    }
+
+    private static byte[] readFileBytes(File file) throws java.io.IOException {
+        try (InputStream in = new FileInputStream(file);
+             ByteArrayOutputStream out = new ByteArrayOutputStream(
+                     (int) Math.min(file.length(), 1L << 20))) {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = in.read(buffer)) > 0) {
+                out.write(buffer, 0, read);
+            }
+            return out.toByteArray();
+        }
     }
 
     private static void updateTitleOnMain() {
@@ -1567,6 +1806,10 @@ public final class WebViewBridge {
     }
 
     private static String pageText(String text) {
+        return pageText(text, null);
+    }
+
+    private static String pageText(String text, JSONObject data) {
         try {
             JSONObject result = new JSONObject();
             result.put("ok", true);
@@ -1581,6 +1824,9 @@ public final class WebViewBridge {
             }
             if (!lastLoadError.isEmpty()) {
                 result.put("note", lastLoadError);
+            }
+            if (data != null && data.length() > 0) {
+                result.put("data", data);
             }
             return result.toString();
         } catch (Throwable error) {
@@ -1653,39 +1899,4 @@ public final class WebViewBridge {
         }
         return app.getResources().getDisplayMetrics().heightPixels;
     }
-
-    /**
-     * Builds an accessibility-like tree and assigns stable `data-wunder-ref`
-     * attributes so the model can target elements without CSS knowledge.
-     */
-    private static final String SNAPSHOT_JS =
-            "(function(){"
-            + "var old=document.querySelectorAll('[data-wunder-ref]');"
-            + "for(var i=0;i<old.length;i++)old[i].removeAttribute('data-wunder-ref');"
-            + "var selector='a,button,input,textarea,select,summary,[role=\"button\"],[role=\"link\"],[role=\"checkbox\"],[role=\"radio\"],[role=\"tab\"],[role=\"menuitem\"],[contenteditable=\"true\"],[onclick]';"
-            + "var all=document.querySelectorAll(selector);"
-            + "function visible(el){try{var r=el.getBoundingClientRect();var s=getComputedStyle(el);"
-            + "return r.width>2&&r.height>2&&s.visibility!=='hidden'&&s.display!=='none'&&parseFloat(s.opacity||'1')>0.05;}catch(e){return false;}}"
-            + "function label(el){var t=el.getAttribute('aria-label')||el.getAttribute('placeholder')||el.getAttribute('alt')||el.getAttribute('title')||'';"
-            + "if(!t){if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.tagName==='SELECT')t=el.value||'';else t=(el.innerText||'').trim();}"
-            + "return (t||'').replace(/\\s+/g,' ').slice(0,120);}"
-            + "function role(el){var tag=el.tagName.toLowerCase();var r=(el.getAttribute('role')||'').toLowerCase();"
-            + "if(tag==='a')return 'link';"
-            + "if(tag==='button'||r==='button')return 'button';"
-            + "if(tag==='select')return 'combobox';"
-            + "if(tag==='textarea'||el.isContentEditable)return 'textbox';"
-            + "if(tag==='input'){var t=(el.type||'text').toLowerCase();"
-            + "if(t==='checkbox')return 'checkbox';if(t==='radio')return 'radio';"
-            + "if(t==='submit'||t==='button'||t==='reset')return 'button';return 'textbox';}"
-            + "return r||'clickable';}"
-            + "var lines=[];var n=0;"
-            + "for(var i=0;i<all.length&&n<" + MAX_SNAPSHOT_NODES + ";i++){var el=all[i];if(!visible(el))continue;"
-            + "n++;var ref='e'+n;el.setAttribute('data-wunder-ref',ref);"
-            + "var line='- '+ref+' '+role(el)+' \"'+label(el).replace(/\"/g,'\\\\\"')+'\"';"
-            + "if(el.tagName==='A'&&el.href)line+=' href=\"'+(el.href||'').slice(0,200)+'\"';"
-            + "if(el.tagName==='INPUT')line+=' type='+(el.type||'text');"
-            + "if(el.disabled)line+=' disabled';"
-            + "lines.push(line);}"
-            + "return JSON.stringify({url:location.href,title:document.title,text:lines.join('\\n')});"
-            + "})()";
 }

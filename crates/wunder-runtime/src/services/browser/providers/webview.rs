@@ -6,6 +6,7 @@
 //! the Android shell (`WebViewBridge.java`). No browser binary is packaged and
 //! no proot runtime is involved.
 
+use super::action_contract::validate_browser_action;
 use super::preview::{preview_path_for_navigate, resolve_workspace_upload_files};
 use crate::schemas::ToolSpec;
 use crate::services::browser::provider::{
@@ -91,14 +92,17 @@ impl BrowserProvider for WebViewProvider {
             }
             let host =
                 webview_host().ok_or_else(|| anyhow!("Android WebView host is not installed"))?;
-            let action = args
-                .get("action")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .trim()
-                .to_string();
-            if action.is_empty() {
-                return Ok(ProviderOutcome::failure("action is required"));
+            // 设备端不认识未知字段，也没有校验层：先按共享契约把动作、字段、
+            // 目标与范围全部校验掉，避免 `label` 之类字段被静默丢弃后动作
+            // 仍然返回成功。
+            let action = match validate_browser_action(args) {
+                Ok(action) => action,
+                Err(error) => return Ok(ProviderOutcome::failure(error.to_string())),
+            };
+            if action == "batch" {
+                return Ok(ProviderOutcome::failure(
+                    "Android WebView 不支持 batch；请逐个调用动作",
+                ));
             }
             let mut args = args.clone();
             // 工作区预览与 Playwright 使用同一套解析规则：`path` 改成
@@ -165,7 +169,13 @@ fn outcome_from_reply(reply: Value) -> ProviderOutcome {
     if blocks.is_empty() {
         blocks.push(ContentBlock::text("ok"));
     }
-    ProviderOutcome::blocks(blocks)
+    let mut outcome = ProviderOutcome::blocks(blocks);
+    // 分页游标、滚动位置之类的机器可读字段由设备端放在 `data` 里，
+    // 直接透传给工具结果，模型不必从人类可读文案里再解析一遍。
+    if let Some(data) = reply.get("data").filter(|value| value.is_object()) {
+        outcome = outcome.with_structured(data.clone());
+    }
+    outcome
 }
 
 #[cfg(test)]
@@ -186,5 +196,17 @@ mod tests {
         let outcome = outcome_from_reply(json!({"ok": false, "error": "needs overlay"}));
         assert!(!outcome.ok);
         assert_eq!(outcome.error.as_deref(), Some("needs overlay"));
+    }
+
+    #[test]
+    fn structured_data_is_forwarded_to_the_tool_result() {
+        let outcome = outcome_from_reply(json!({
+            "ok": true,
+            "text": "page slice",
+            "data": {"has_more": true, "next_cursor": "12000"}
+        }));
+        let structured = outcome.structured.expect("structured data");
+        assert_eq!(structured["has_more"], json!(true));
+        assert_eq!(structured["next_cursor"], json!("12000"));
     }
 }

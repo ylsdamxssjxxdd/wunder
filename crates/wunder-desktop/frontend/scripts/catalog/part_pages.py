@@ -167,6 +167,8 @@ ENTRIES = [
     ("wm_minimize", "最小化", "Minimize"),
     ("wm_maximize", "最大化", "Maximize"),
     ("wm_restore", "还原", "Restore"),
+    ("wm_pin", "置顶", "Always on top"),
+    ("wm_unpin", "取消置顶", "Stop always on top"),
     ("wm_status_running", "运行中 {} 线程", "{} running", ["count"]),
     ("wm_status_inquiry", "问询 {}", "Inquiry {}", ["count"]),
     ("wm_status_starting", "正在启动", "Starting"),

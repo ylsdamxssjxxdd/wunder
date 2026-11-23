@@ -131,6 +131,9 @@ export component MainWindow inherits Window {
     // Settings render in an internal overlay window instead of taking over
     // the chat area; the sidebar width is user-draggable.
     in-out property <bool> settings-open: false;
+    // 窄窗设置页走云端移动模式：整页铺满、分类收进下拉，不再挤成
+    // 「200px 导航 + 一条内容缝」。
+    private property <bool> settings-compact: root.width < 560px;
     // 模型删除确认框的开合由窗口持有：原生冒烟据此截图核对文案。
     in-out property <bool> model-delete-open: false;
     in-out property <length> sidebar-width: Theme.sidebar-width;
@@ -197,9 +200,13 @@ export component MainWindow inherits Window {
     in property <int> title-running-count: 0;
     in property <int> title-inquiry-count: 0;
     // Frameless custom chrome: the strip below replaces the system caption.
+    // `pinned` mirrors the native always-on-top state; Rust owns it so a failed
+    // window-manager request never leaves the pin looking active.
+    in-out property <bool> pinned: false;
     callback window-drag-requested();
     callback window-minimize-requested();
     callback window-maximize-requested();
+    callback window-pin-requested(bool);
     callback window-close-requested();
     title: root.title-inquiry-count > 0
         ? I18n.wm_status_inquiry("" + root.title-inquiry-count)
@@ -1385,6 +1392,7 @@ export component MainWindow inherits Window {
                                 if root.activity-steps-total > 0 : StatusDock {
                                     running: root.activity-running;
                                     plan-complete: root.activity-plan-complete;
+                                    compact: root.width < Theme.plan-compact-width;
                                     steps-done: root.activity-steps-done;
                                     steps-total: root.activity-steps-total;
                                     plan-explanation: root.activity-plan-explanation;
@@ -1427,9 +1435,8 @@ export component MainWindow inherits Window {
                                 }
                                 composer := Composer {
                                     draft <=> root.draft; busy: root.command-pending || root.session-loading || root.creating-session || (root.chat-loading && !root.busy) || (root.cloud-chat-active && root.cloud-thread-busy);
-                                // 窄窗先让出硬件读数，再没有空间才让模型触发器收窄；
-                                // 动作行本身永远不该因为读数而溢出。
-                                show-host-hud: root.width >= Theme.host-hud-min-width;
+                                    // 窄窗保留后台任务与子智能体计数，只收起 CPU/内存读数。
+                                    compact-host-hud: root.width < Theme.host-hud-compact-width;
                                 launch-cli => { root.launch-cli(); }
                                 send-key: root.runtime-send-key;
                                 context-usage: root.context-usage; context-known: root.context-known; context-counts: root.context-counts; context-compacted: root.context-compacted;
@@ -1822,9 +1829,11 @@ export component MainWindow inherits Window {
         // 16px 标题栏用 32px 小尺寸图：1x 时缩小仍保留绿天线，2x 时直接原生显示。
         icon: @image-url("../assets/app-icon-32.png");
         maximized: root.maximized;
+        pinned: root.pinned;
         drag-requested => { root.window-drag-requested(); }
         minimize-requested => { root.window-minimize-requested(); }
         maximize-requested => { root.window-maximize-requested(); }
+        pin-toggled => { root.window-pin-requested(!root.pinned); }
         close-requested => { root.window-close-requested(); }
     }
     WindowFrame { }
@@ -1833,7 +1842,7 @@ export component MainWindow inherits Window {
     // chat area: the shield closes it on click-away, the card swallows stray
     // clicks and the header row carries the window title plus close action.
     if root.settings-open : Rectangle {
-        z: 220;
+        z: 245;
         // The chrome paints above this scrim; starting below the title strip
         // keeps the strip bright and draggable while the settings dialog is
         // open, matching ordinary desktop apps.
@@ -1847,16 +1856,16 @@ export component MainWindow inherits Window {
             scroll-event(event) => { return accept; }
         }
         Rectangle {
-            width: min(1080px, root.width - 72px);
-            height: min(720px, root.height - 56px);
+            width: root.settings-compact ? parent.width : min(1080px, root.width - 72px);
+            height: root.settings-compact ? parent.height : min(720px, root.height - 56px);
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            border-radius: Theme.radius-xl;
+            border-radius: root.settings-compact ? 0px : Theme.radius-xl;
             background: Theme.panel;
-            border-width: 1px;
+            border-width: root.settings-compact ? 0px : 1px;
             border-color: Theme.border;
             clip: true;
-            drop-shadow-blur: 24px;
+            drop-shadow-blur: root.settings-compact ? 0px : 24px;
             drop-shadow-color: #00000033;
             TouchArea { }
             VerticalLayout {

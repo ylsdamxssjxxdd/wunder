@@ -457,6 +457,8 @@ export component HostHud inherits Rectangle {
     in property <int> subagent-running-count: 0;
     in property <int> subagent-hidden: 0;
     in property <string> subagent-hint: "";
+    // 窄输入区：占用读数先让位，后台任务与子智能体计数始终保留。
+    in property <bool> compact: false;
     callback toggle-task(string);
     callback terminate-task(string);
     callback open-subagent(string);
@@ -499,13 +501,17 @@ export component HostHud inherits Rectangle {
     background: transparent;
 
     body := HorizontalLayout {
-        padding-left: 10px;
-        spacing: 12px;
+        padding-left: root.compact ? 2px : 10px;
+        spacing: root.compact ? 8px : 12px;
         cpu-cell := GaugeCell {
+            width: root.compact ? 0px : 26px;
+            visible: !root.compact;
             icon: @image-url("../assets/icons/cpu-chip.svg");
             ratio: root.cpu;
         }
         mem-cell := GaugeCell {
+            width: root.compact ? 0px : 26px;
+            visible: !root.compact;
             icon: @image-url("../assets/icons/fa-memory.svg");
             ratio: root.memory;
         }

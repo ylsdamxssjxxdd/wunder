@@ -3,6 +3,7 @@
 //! Each provider owns a native tool surface and is registered exclusively into
 //! the process-wide registry (see [`super::provider::BrowserUseRegistry`]).
 
+mod action_contract;
 pub mod playwright;
 mod preview;
 pub mod webview;

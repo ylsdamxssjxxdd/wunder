@@ -244,6 +244,8 @@ export component ToolsPage inherits Rectangle {
     private property <bool> active: root.selected >= 0 && root.selected < root.resources.length;
     private property <bool> readonly: root.active && root.resources[root.selected].readonly;
     background: Theme.chat;
+    // 窄设置页：主从两栏改为上下堆叠，列表在上、详情在下。
+    private property <bool> compact: root.width < 560px;
     function edit(op: string) { root.operation = op; root.draft-name = op == "edit" && root.active ? root.resources[root.selected].name : ""; }
     function open-mcp-dialog(new: bool) {
         if new {
@@ -258,7 +260,7 @@ export component ToolsPage inherits Rectangle {
     // 列表在卡片里滚动，页面本身不滚。
     VerticalLayout {
         width: parent.width; height: parent.height;
-        padding: 24px; spacing: 12px;
+        padding: root.compact ? 12px : 24px; spacing: 12px;
         // 页签条已移除：MCP 与技能各自是设置里独立的入口，本页只呈现单一类别。
         Rectangle {
             vertical-stretch: 1;
@@ -268,7 +270,7 @@ export component ToolsPage inherits Rectangle {
             border-color: Theme.border;
             background: Theme.surface;
             VerticalLayout {
-                padding: 14px; spacing: 10px;
+                padding: root.compact ? 12px : 14px; spacing: 10px;
                 // 卡片头：标题 + 说明 + 右侧动作。
                 HorizontalLayout { height: 40px; spacing: 8px;
                     VerticalLayout { horizontal-stretch: 1; spacing: 3px;
@@ -282,11 +284,13 @@ export component ToolsPage inherits Rectangle {
                     if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/trash.svg"); danger: true; label: I18n.common_delete; enabled: root.active && !root.readonly && !root.working; clicked => { root.deleting = true; } }
                 }
                 Rectangle { height: 1px; background: Theme.border; }
-                // MCP / 技能：左列表 + 右详情的主从布局。
-                HorizontalLayout {
-                    vertical-stretch: 1; spacing: 12px;
+                // MCP / 技能：宽屏左右分栏；窄设置页上下堆叠，列表在上、详情在下。
+                Rectangle {
+                    vertical-stretch: 1; min-height: 0px;
                     Rectangle {
-                        width: 200px;
+                        x: 0px; y: 0px;
+                        width: root.compact ? parent.width : 200px;
+                        height: root.compact ? min(180px, parent.height * 0.42) : parent.height;
                         border-radius: Theme.radius-md; border-width: 1px; border-color: Theme.border;
                         background: Theme.surface;
                         clip: true;
@@ -319,6 +323,10 @@ export component ToolsPage inherits Rectangle {
                         }
                     }
                     if root.tab == 1 : VerticalLayout {
+                        x: root.compact ? 0px : 212px;
+                        y: root.compact ? 12px + min(180px, parent.height * 0.42) : 0px;
+                        width: root.compact ? parent.width : parent.width - 212px;
+                        height: parent.height - self.y;
                         horizontal-stretch: 1; min-width: 0px; spacing: 8px;
                         HorizontalLayout { height: 30px; spacing: 8px;
                             ToolText { horizontal-stretch: 1; text: root.active ? root.resources[root.selected].name : I18n.tm_no_detail; font-size: Theme.font-lg; font-weight: 700; color: Theme.text; min-width: 0px; }
@@ -376,6 +384,10 @@ export component ToolsPage inherits Rectangle {
                         }
                     }
                     if root.tab == 2 : VerticalLayout {
+                        x: root.compact ? 0px : 212px;
+                        y: root.compact ? 12px + min(180px, parent.height * 0.42) : 0px;
+                        width: root.compact ? parent.width : parent.width - 212px;
+                        height: parent.height - self.y;
                         // 技能页文件区吃满剩余宽度。
                         horizontal-stretch: 1;
                         min-width: 0px;

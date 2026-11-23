@@ -2377,7 +2377,12 @@ class BridgeSession:
                 value = request.get("text")
             if value is None:
                 return {"success": False, "error": "Browser select missing 'value' or 'text'"}
-            locator.select_option(value=value, timeout=timeout_ms)
+            try:
+                # 页面的 value 常是内部 id，模型更容易看到可见文字；
+                # 先用 value 精确匹配，未命中再按 label 兜底。
+                locator.select_option(value=value, timeout=min(timeout_ms, 1500))
+            except Exception:
+                locator.select_option(label=value, timeout=timeout_ms)
             return self._action_result(page, target_id, kind, extra=locator_meta)
         if kind == "drag":
             target_locator, target_meta = self._resolve_locator(

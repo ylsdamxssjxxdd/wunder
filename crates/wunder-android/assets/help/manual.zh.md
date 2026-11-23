@@ -935,13 +935,26 @@ wunder-cli
 | `observe_refs` | 读取可访问性快照 | 返回后续点击和输入使用的 element ref；同页重渲染或刷新后仍会按 selector 自动恢复 |
 | `observe_text` | 分页读取当前页正文 | 可使用同一未变化页面返回的 `next_cursor` |
 | `screenshot` | 截图 | 可指定工作区相对 `path`；保存为工作区附件，并把图像追加给模型查看 |
-| `click` / `type` / `hover` / `select` / `drag` / `press` | 页面交互 | 元素动作提供且只提供一种 `ref` 或 `selector`；`drag` 提供完整来源和目标；type/select/press 有专属必填字段 |
+| `click` / `type` / `hover` / `select` / `drag` / `press` | 页面交互 | click/hover 提供且只提供 `ref`、`selector`、`text` 之一；其余元素动作提供 `ref` 或 `selector`；`drag` 提供完整来源和目标 |
 | `wait` | 等加载、选择器、文本、URL 或有界时间 | 已知成功条件优先于固定等待 |
 | `batch` | 顺序执行 1–10 个依赖步骤 | 每步使用严格 kind schema，不能嵌套 batch；步骤末尾可用 `back` / `observe_text` 直接取证 |
 
 典型流程：`navigate` → `observe_refs` → 交互或 `batch` → `wait` → `observe_text` 验证。普通 DOM 更新、SPA 重渲染或同 URL 自刷新不会让 ref 直接失效：动作会按 ref 记录的 selector 重新定位，页面短暂刷新时最多等待约 0.8 秒。只有真正导航到另一个文档、且 selector 也找不到时，才需要重新观察。
 
 `observe_refs` 的文本会跳过没有可访问名称的链接/图标按钮，并合并同角色、同名称、同状态的重复控件（如导航栏里重复 20 次的同一个链接），重复数量只记在 `stats.duplicates`，不再逐条输出。
+
+## 安卓版内置 WebView 的差异
+
+安卓版使用系统 WebView 作为浏览器，动作语义与桌面版一致，但有以下边界：
+
+- **单标签页**：`tabs_new` 等同当前页跳转；`tabs_select` 只接受 `index=0` 或 `target_id=tab-1`；`tabs_close` 传 `index=0` / `target_id=tab-1` 会关闭浏览器。
+- **批处理**：安卓版不支持 `batch`，请逐条调用动作。
+- **下拉框**：`select` 的 `value` 可以传 option 的 `value` 或页面上的可见文字；未命中会直接报错并列出可选项，不再假装成功。自定义下拉（非原生 `<select>`）请改用 `click` 逐项点击。
+- **文字定位**：`click` / `hover` 支持用 `text` 按可见文字找最小的可交互元素，不必先观察 ref。
+- **滚动**：`scroll` 会滚动最近的可滚动容器，并在指定坐标发送真实滚轮事件，3D canvas 页面可照常缩放/旋转。
+- **上传**：`file_upload` 直接把工作区文件注入 `<input type=file>`；无需先点开系统文件选择器，单次总大小上限 16 MB。
+- **截图**：只支持当前视口；`full_page` 会被忽略并提示，长页请配合 `scroll` 分段截图。
+- **等待**：`networkidle` 以“文档加载完成 + 500ms”近似；`observe_text` 的 `next_cursor` 是字符偏移量，页面变化后应重新读取。
 
 ## 批处理
 

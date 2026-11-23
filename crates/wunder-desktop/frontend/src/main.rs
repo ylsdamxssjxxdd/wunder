@@ -548,6 +548,26 @@ fn install_window_chrome(app: &MainWindow) {
             native_window::toggle_maximize(app.window());
         }
     });
+    // The pin is window state, not a command the UI can flip on its own: only
+    // report it as active after the window manager accepted the request.
+    let weak = app.as_weak();
+    app.on_window_pin_requested(move |pinned| {
+        if let Some(app) = weak.upgrade() {
+            if native_window::set_always_on_top(app.window(), pinned) {
+                app.set_pinned(pinned);
+                // The help window is a separate top-level; a topmost main
+                // window would otherwise hide it behind itself.
+                crate::help_browser::sync_always_on_top(pinned);
+            } else if pinned {
+                let message = if app.get_ui_zh() {
+                    "当前窗口管理器不支持置顶"
+                } else {
+                    "This window manager does not support always-on-top"
+                };
+                crate::feedback::notify(&app, message, crate::feedback::KIND_INFO);
+            }
+        }
+    });
     let weak = app.as_weak();
     app.on_window_close_requested(move || {
         if let Some(app) = weak.upgrade() {

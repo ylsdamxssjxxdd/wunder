@@ -15,8 +15,9 @@ use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadI
 #[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, GetClientRect, GetForegroundWindow, GetWindowThreadProcessId, IsIconic,
-    IsWindowVisible, IsZoomed, SetForegroundWindow, ShowWindow, SW_MAXIMIZE, SW_MINIMIZE,
-    SW_RESTORE, SW_SHOW,
+    IsWindowVisible, IsZoomed, SetForegroundWindow, SetWindowPos, ShowWindow, HWND_NOTOPMOST,
+    HWND_TOPMOST, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE,
 };
 
 /// Starts the platform caption-drag for the custom title bar. Winit turns this
@@ -110,6 +111,52 @@ pub fn toggle_maximize(window: &slint::Window) -> bool {
     window
         .with_winit_window(|native| {
             native.set_maximized(!native.is_maximized());
+            true
+        })
+        .unwrap_or(false)
+}
+
+/// Pin/unpin the window above every other top-level window.
+///
+/// Windows goes through the HWND: the pin must take effect on the same frame
+/// as the click, and winit defers attribute changes through its state queue.
+/// The rest of the platforms ask the compositor through winit; a window manager
+/// that does not implement the "above" state (Wayland) simply keeps the normal
+/// stacking, which is why the caller only marks the pin active on success.
+#[cfg(windows)]
+pub fn set_always_on_top(window: &slint::Window, pinned: bool) -> bool {
+    native_hwnd(window).is_some_and(|hwnd| unsafe {
+        SetWindowPos(
+            hwnd,
+            if pinned { HWND_TOPMOST } else { HWND_NOTOPMOST },
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        ) != 0
+    })
+}
+
+#[cfg(not(windows))]
+pub fn set_always_on_top(window: &slint::Window, pinned: bool) -> bool {
+    use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use slint::winit_030::WinitWindowAccessor;
+    window
+        .with_winit_window(|native| {
+            // winit's Wayland backend has no "above" state, so the request would
+            // be silently dropped; report failure instead of pinning the icon.
+            if matches!(
+                native.window_handle().ok().map(|handle| handle.as_raw()),
+                Some(RawWindowHandle::Wayland(_))
+            ) {
+                return false;
+            }
+            native.set_window_level(if pinned {
+                winit::window::WindowLevel::AlwaysOnTop
+            } else {
+                winit::window::WindowLevel::Normal
+            });
             true
         })
         .unwrap_or(false)

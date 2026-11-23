@@ -807,6 +807,8 @@ export global I18n {
     out property <string> wm_minimize: zh ? "最小化" : "Minimize";
     out property <string> wm_maximize: zh ? "最大化" : "Maximize";
     out property <string> wm_restore: zh ? "还原" : "Restore";
+    out property <string> wm_pin: zh ? "置顶" : "Always on top";
+    out property <string> wm_unpin: zh ? "取消置顶" : "Stop always on top";
     public pure function wm_status_running(count: string) -> string { return zh ? "运行中 " + count + " 线程" : "" + count + " running"; }
     public pure function wm_status_inquiry(count: string) -> string { return zh ? "问询 " + count + "" : "Inquiry " + count + ""; }
     out property <string> wm_status_starting: zh ? "正在启动" : "Starting";

@@ -916,13 +916,26 @@ Enable both the browser-tool switch and the browser runtime. `browser` registers
 | `observe_refs` | Read the accessibility snapshot | Returns element refs for later interaction; refs are re-resolved by selector across same-page re-renders and refreshes |
 | `observe_text` | Read current-page text by page | Reuse `next_cursor` only on the unchanged page |
 | `screenshot` | Capture an image | An optional workspace-relative `path` controls output; it is saved as a workspace attachment and the image is appended for the model to view |
-| `click` / `type` / `hover` / `select` / `drag` / `press` | Interact with the page | Element actions provide exactly one of `ref` or `selector`; drag provides complete source and target pairs |
+| `click` / `type` / `hover` / `select` / `drag` / `press` | Interact with the page | click/hover provide exactly one of `ref`, `selector` or `text`; other element actions provide `ref` or `selector`; drag provides complete source and target pairs |
 | `wait` | Wait for load, selector, text, URL, or bounded time | Prefer a known success condition to a fixed delay |
 | `batch` | Run 1–10 dependent steps in order | Steps use strict kind schemas and cannot nest batch |
 
 A common flow is `navigate` → `observe_refs` → interaction or `batch` → `wait` → `observe_text`. Ordinary DOM updates, SPA re-renders and same-URL refreshes do not kill a ref: the action re-resolves it from the recorded selector and waits up to about 0.8 s for a refreshed page to render it again. Re-observe only after a real navigation to another document where the selector is also gone.
 
 The observation text skips links and icon buttons with no accessible name and merges repeated controls with the same role, name and state (for example the same navigation link twenty times). The omitted count is reported as `stats.duplicates` instead of listing every copy.
+
+## Android WebView differences
+
+The Android build uses the system WebView, so action semantics match the desktop build with these limits:
+
+- **Single tab**: `tabs_new` navigates the current tab; `tabs_select` only accepts `index=0` or `target_id=tab-1`; `tabs_close` with either closes the browser.
+- **Batch**: `batch` is unavailable on Android; call actions one at a time.
+- **Select**: `value` matches an option value or its visible label. A miss fails with the available options instead of pretending to succeed; use `click` for custom (non-`<select>`) dropdowns.
+- **Text targeting**: `click` / `hover` accept `text` and pick the smallest visible interactive element containing it.
+- **Scroll**: `scroll` moves the nearest scrollable container and dispatches a real wheel event at the given point, so 3D canvas pages still zoom/rotate.
+- **Upload**: `file_upload` injects workspace files into `<input type=file>` directly, without opening the system picker; 16 MB total per call.
+- **Screenshot**: viewport only. `full_page` is ignored with a notice; scroll and capture in sections for long pages.
+- **Wait**: `networkidle` approximates "document complete + 500 ms"; `observe_text` `next_cursor` is a character offset, so re-read after the page changes.
 
 ## Batch
 

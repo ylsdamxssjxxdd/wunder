@@ -1,7 +1,7 @@
-// Frameless chrome for the workbench window: title strip with drag, minimize,
-// maximize/restore and close, plus the client-area border a borderless Win32
-// window needs to stay distinct on a light desktop. Mirrors the rcho
-// workbench's window-chrome, recolored to the honeycomb Theme tokens.
+// Frameless chrome for the workbench window: title strip with drag, pin,
+// minimize, maximize/restore and close, plus the client-area border a
+// borderless Win32 window needs to stay distinct on a light desktop. Mirrors
+// the rcho workbench's window-chrome, recolored to the honeycomb Theme tokens.
 import { Theme } from "theme.slint";
 import { I18n } from "i18n.slint";
 
@@ -9,9 +9,12 @@ export component WindowChrome inherits Rectangle {
     in property <string> title;
     in property <image> icon;
     in property <bool> maximized: false;
+    // Window-owned state: the chrome only paints the pin and reports clicks.
+    in property <bool> pinned: false;
     callback drag-requested();
     callback maximize-requested();
     callback minimize-requested();
+    callback pin-toggled();
     callback close-requested();
 
     x: 0px;
@@ -37,7 +40,7 @@ export component WindowChrome inherits Rectangle {
     }
     Text {
         x: 34px;
-        width: max(0px, parent.width - 152px);
+        width: max(0px, parent.width - 190px);
         height: parent.height;
         text: root.title;
         color: Theme.text;
@@ -52,7 +55,7 @@ export component WindowChrome inherits Rectangle {
     // an actual drag may start it: a modal move grab sent for a plain click
     // can swallow clicks across the whole window until the next click.
     title-drag-area := TouchArea {
-        width: max(0px, parent.width - 114px);
+        width: max(0px, parent.width - 152px);
         height: parent.height;
         mouse-cursor: default;
         property <bool> drag-armed: false;
@@ -68,6 +71,34 @@ export component WindowChrome inherits Rectangle {
             }
         }
         double-clicked => { root.maximize-requested(); }
+    }
+
+    // Pin (always-on-top) sits left of the caption buttons. A filled thumbtack
+    // stays legible at 14px where an outlined one would smear; the accent ink
+    // marks the active state without adding a badge or a second tooltip.
+    Rectangle {
+        x: max(0px, parent.width - 152px);
+        width: 38px;
+        height: parent.height;
+        property <bool> hovered: pin-touch.has-hover;
+        background: (self.hovered || root.pinned) ? Theme.selected : transparent;
+        Path {
+            x: (parent.width - 14px) / 2;
+            y: (parent.height - 14px) / 2;
+            width: 14px;
+            height: 14px;
+            viewbox-x: 0; viewbox-y: 0; viewbox-width: 24; viewbox-height: 24;
+            commands: "M 9 3 L 15 3 L 15 5 L 13.5 5 L 13.5 9.5 L 16.5 12 L 16.5 13.5 L 13 13.5 L 13 20 L 12 21.2 L 11 20 L 11 13.5 L 7.5 13.5 L 7.5 12 L 10.5 9.5 L 10.5 5 L 9 5 Z";
+            fill: root.pinned ? Theme.accent-ink : Theme.text-secondary;
+            stroke: transparent;
+            accessible-role: none;
+        }
+        pin-touch := TouchArea {
+            accessible-role: button;
+            accessible-label: root.pinned ? I18n.wm_unpin : I18n.wm_pin;
+            mouse-cursor: pointer;
+            clicked => { root.pin-toggled(); }
+        }
     }
 
     Rectangle {

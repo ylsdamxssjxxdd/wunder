@@ -1603,6 +1603,8 @@ export component Composer inherits Rectangle {
     // The Android shell trims desktop-only chrome: the host hardware HUD and
     // the "open CLI" action have no counterpart on a phone.
     in property <bool> show-host-hud: true;
+    // 窄输入区只保留后台任务与子智能体计数，CPU/内存读数让位。
+    in property <bool> compact-host-hud: false;
     in property <bool> show-cli-action: true;
     // §8.5 status line under the box.
     in property <string> branch-name: "";
@@ -2325,6 +2327,7 @@ export component Composer inherits Rectangle {
                 visible: root.show-host-hud;
                 horizontal-stretch: 0;
                 hud := HostHud {
+                    compact: root.compact-host-hud;
                     // 26px 的读数行放进 30px 的行里，y=2 才与加号、发送方块共中线。
                     y: 2px;
                     cpu: root.host-cpu;
