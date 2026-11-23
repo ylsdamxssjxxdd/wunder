@@ -1147,6 +1147,15 @@ export function buildRequestNumbers(turns: readonly TrajTurnModel[]): TrajReques
 /* 逐步 token 直方图                                                    */
 /* ------------------------------------------------------------------ */
 
+export function cacheHitPercent(usage: TrajUsage): number | null {
+  const count = (value: number | undefined): number =>
+    typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
+  const cacheRead = count(usage.cacheRead)
+  const prompt = count(usage.input) + cacheRead + count(usage.cacheWrite)
+  if (cacheRead <= 0 || prompt <= 0) return null
+  return Math.round((cacheRead / prompt) * 100)
+}
+
 export interface StepUsageBar {
   requestNumber: number
   turn: number | null

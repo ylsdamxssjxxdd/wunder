@@ -2780,6 +2780,7 @@ export default {
   'messenger.trajectory.usageOutput': 'Output {value}',
   'messenger.trajectory.usageCacheRead': 'Cache read {value}',
   'messenger.trajectory.usageCacheWrite': 'Cache write {value}',
+  'messenger.trajectory.usageCacheHit': 'Cache hit {value}',
   'messenger.trajectory.usageNotReported': 'Usage not reported',
   'messenger.trajectory.throughput': 'Throughput',
   'messenger.trajectory.tokensPerSecond': '{value} tok/s',

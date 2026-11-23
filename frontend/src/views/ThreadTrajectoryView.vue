@@ -540,6 +540,7 @@ import ThinScrollbar from '@/components/common/ThinScrollbar.vue'
 import {
   buildRequestNumbers,
   buildStepUsageBars,
+  cacheHitPercent,
   buildTrajectoryLayout,
   collapseTurnRecords,
   buildFoldGroups,
@@ -2565,6 +2566,10 @@ function onTokenBarEnter(bar: StepUsageBar, event: PointerEvent): void {
       }
       if (bar.cacheWrite > 0) {
         parts.push(modelT('trajectory.usageCacheWrite', { value: formatCompactTokens(bar.cacheWrite) }))
+      }
+      const cacheHit = cacheHitPercent(bar)
+      if (cacheHit !== null) {
+        parts.push(modelT('trajectory.usageCacheHit', { value: `${cacheHit}%` }))
       }
       lines.push(parts.join(' · '))
     } else {

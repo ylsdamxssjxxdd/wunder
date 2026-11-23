@@ -12,6 +12,7 @@ import {
   attachTurnItems,
   buildRequestNumbers,
   buildStepUsageBars,
+  cacheHitPercent,
   buildTrajectoryLayout,
   collapseTurnRecords,
   buildFoldGroups,
@@ -961,6 +962,10 @@ export function createTrajectoryView(host, options = {}) {
         }
         if (bar.cacheWrite > 0) {
           parts.push(modelT("usageCacheWrite", { value: formatCompactTokens(bar.cacheWrite) }));
+        }
+        const cacheHit = cacheHitPercent(bar);
+        if (cacheHit !== null) {
+          parts.push(modelT("usageCacheHit", { value: `${cacheHit}%` }));
         }
         lines.push(parts.join(" · "));
       } else {

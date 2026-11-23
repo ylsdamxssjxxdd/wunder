@@ -560,12 +560,14 @@ fn install_window_chrome(app: &MainWindow) {
         }
     });
     // The pin is window state, not a command the UI can flip on its own: only
-    // report it as active after the window manager accepted the request.
+    // report it as active after the window manager accepted the request, and
+    // only then make it durable for the next launch.
     let weak = app.as_weak();
     app.on_window_pin_requested(move |pinned| {
         if let Some(app) = weak.upgrade() {
             if native_window::set_always_on_top(app.window(), pinned) {
                 app.set_pinned(pinned);
+                crate::window_placement::record_pinned(&app, pinned);
                 // The help window is a separate top-level; a topmost main
                 // window would otherwise hide it behind itself.
                 crate::help_browser::sync_always_on_top(pinned);
@@ -808,7 +810,8 @@ const OPEN_WINDOW_MAX_W: f64 = 960.0;
 const OPEN_WINDOW_MAX_H: f64 = 780.0;
 
 /// Place the workbench for the first frame: the frame saved by the last
-/// session when it is still usable, otherwise a compact centered size.
+/// session when it is still usable, otherwise a compact centered size, plus
+/// the pin that session ended with.
 ///
 /// Slint creates the window before the monitor work area is known, and some
 /// window managers ignore geometry requests while it is still withdrawn. Retry
@@ -830,15 +833,20 @@ fn apply_initial_window_geometry(app: &MainWindow) {
         std::time::Duration::from_millis(50),
         move || {
             attempts_handle.set(attempts_handle.get().saturating_add(1));
-            let applied = weak
+            let (placed, pin_settled) = weak
                 .upgrade()
                 .map(|app| {
                     let area = native_window::work_area(app.window());
-                    app.window()
+                    let visible = app
+                        .window()
+                        .with_winit_window(|native| native.is_visible().unwrap_or(false))
+                        .unwrap_or(false);
+                    if !visible {
+                        return (false, false);
+                    }
+                    let placed = app
+                        .window()
                         .with_winit_window(|native| {
-                            if !native.is_visible().unwrap_or(false) {
-                                return false;
-                            }
                             if let Some(saved) = saved {
                                 if apply_saved_placement(native, saved) {
                                     return true;
@@ -853,14 +861,31 @@ fn apply_initial_window_geometry(app: &MainWindow) {
                             fit_and_center(native, &monitor, area);
                             true
                         })
-                        .unwrap_or(false)
+                        .unwrap_or(false);
+                    (placed, restore_initial_pin(&app))
                 })
-                .unwrap_or(true);
-            if applied || attempts_handle.get() >= 100 {
+                .unwrap_or((true, true));
+            if (placed && pin_settled) || attempts_handle.get() >= 100 {
                 timer_handle.stop();
             }
         },
     );
+}
+
+/// Re-apply the always-on-top state the last session ended with, after the
+/// first map: a topmost request sent while the window is still withdrawn is
+/// dropped by winit's deferred state queue on Win32, which is what made the
+/// pin come back off after every restart. Returns whether the pin is settled
+/// (applied, unnecessary, or already restored).
+fn restore_initial_pin(app: &MainWindow) -> bool {
+    if !crate::window_placement::initial_pinned() || app.get_pinned() {
+        return true;
+    }
+    if !native_window::set_always_on_top(app.window(), true) {
+        return false;
+    }
+    app.set_pinned(true);
+    true
 }
 
 /// Restore the frame the user left. Returns false when the stored frame no

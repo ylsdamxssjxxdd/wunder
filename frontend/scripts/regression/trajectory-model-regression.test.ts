@@ -20,6 +20,7 @@ const bridgeModel = async () => {
 import {
   buildTrajectoryLayout,
   buildRequestNumbers,
+  cacheHitPercent,
   deriveTimeline,
   filterRecords,
   trajectoryDiagnosticRows,
@@ -602,4 +603,20 @@ test('bounded paged diagnostics and exported retry events have identical client 
   assert.equal(hive[0].failure?.retryable, true);
   assert.equal(hive[1].retry?.willRetry, false);
   assert.equal(hive[1].isError, false);
+});
+
+test('cache hit percentage uses prompt tokens and is wired into both trajectory views', async () => {
+  const bridge = await bridgeModel();
+  for (const model of [{ cacheHitPercent }, bridge]) {
+    assert.equal(model.cacheHitPercent({ input: 10, cacheRead: 80, cacheWrite: 10, output: 20 }), 80);
+    assert.equal(model.cacheHitPercent({ input: 0, cacheRead: 80, cacheWrite: 0 }), 100);
+    assert.equal(model.cacheHitPercent({ input: 1, cacheRead: 2, cacheWrite: 0 }), 67);
+    assert.equal(model.cacheHitPercent({ input: 10, cacheRead: 0, cacheWrite: 10 }), null);
+    assert.equal(model.cacheHitPercent({ input: 10, output: 20 }), null);
+  }
+
+  const cloudView = readFileSync(resolve(__dirname, '../../frontend/src/views/ThreadTrajectoryView.vue'), 'utf8');
+  const adminView = readWebModule('modules/trajectory-view.js');
+  assert.ok(cloudView.includes("trajectory.usageCacheHit"));
+  assert.ok(adminView.includes('usageCacheHit'));
 });

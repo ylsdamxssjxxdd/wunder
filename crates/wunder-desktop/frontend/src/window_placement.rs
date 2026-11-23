@@ -5,6 +5,10 @@
 //! the store after a short idle period; the maximized flag is tracked apart
 //! from the normal frame, so unmaximizing after a restart still lands on the
 //! size the user actually used.
+//!
+//! The chrome's pin (always-on-top) toggle lives in the same file: it is window
+//! state, so it is written the moment the window manager accepts it and
+//! re-applied to the native window at the first map of the next session.
 
 use crate::MainWindow;
 use slint::ComponentHandle;
@@ -26,6 +30,10 @@ thread_local! {
     /// Normal (non-maximized) frame last seen, so maximizing and quitting
     /// still leaves the size the user can restore to.
     static LAST_NORMAL: Cell<Option<WindowGeometry>> = const { Cell::new(None) };
+    /// Always-on-top as the chrome last reported it. Kept apart from the frame
+    /// because every save path rebuilds the geometry from the live window; the
+    /// pin is not observable from the frame, so it has to survive those copies.
+    static PINNED: Cell<bool> = const { Cell::new(false) };
     static SAVE_TIMER: slint::Timer = slint::Timer::default();
 }
 
@@ -35,6 +43,7 @@ pub fn install() {
     ENABLED.with(|enabled| enabled.set(true));
     SAVED.with(|saved| saved.set(loaded));
     LAST_NORMAL.with(|normal| normal.set(loaded));
+    PINNED.with(|pinned| pinned.set(loaded.is_some_and(|geometry| geometry.pinned)));
 }
 
 /// Placement restored at startup, if the last session left one.
@@ -43,6 +52,22 @@ pub fn initial_geometry() -> Option<WindowGeometry> {
         return None;
     }
     SAVED.with(Cell::get)
+}
+
+/// Whether the last session left the workbench pinned above other windows.
+/// The caller re-applies it to the native window once it is mapped.
+pub fn initial_pinned() -> bool {
+    ENABLED.with(Cell::get) && PINNED.with(Cell::get)
+}
+
+/// Record a pin toggle and write it together with the current frame.
+///
+/// The chrome only reports pin changes the window manager accepted, so this is
+/// also the durability point: quitting right after toggling must relaunch with
+/// the same stacking.
+pub fn record_pinned(app: &MainWindow, pinned: bool) {
+    PINNED.with(|slot| slot.set(pinned));
+    save_now(app);
 }
 
 /// Called from the window event filter for every winit event. Slint keeps a
@@ -86,7 +111,8 @@ pub fn save_now(app: &MainWindow) {
     if frame.minimized {
         return;
     }
-    let placement = if frame.maximized {
+    let pinned = PINNED.with(Cell::get);
+    let mut placement = if frame.maximized {
         // A maximized frame reports the screen rectangle; keep the last normal
         // frame and only flip the flag.
         let normal = LAST_NORMAL.with(Cell::get).unwrap_or(WindowGeometry {
@@ -95,6 +121,7 @@ pub fn save_now(app: &MainWindow) {
             width: 0,
             height: 0,
             maximized: false,
+            pinned,
         });
         WindowGeometry {
             maximized: true,
@@ -107,10 +134,14 @@ pub fn save_now(app: &MainWindow) {
             width: frame.width,
             height: frame.height,
             maximized: false,
+            pinned,
         };
         LAST_NORMAL.with(|slot| slot.set(Some(normal)));
         normal
     };
+    // The pin is tracked apart from the frame: every branch above may rebuild
+    // the geometry from a stale copy, so stamp the live value last.
+    placement.pinned = pinned;
     if SAVED.with(Cell::get) == Some(placement) {
         return;
     }

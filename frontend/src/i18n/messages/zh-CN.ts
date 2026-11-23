@@ -2744,6 +2744,7 @@ export default {
   'messenger.trajectory.usageOutput': '输出 {value}',
   'messenger.trajectory.usageCacheRead': '缓存读 {value}',
   'messenger.trajectory.usageCacheWrite': '缓存写 {value}',
+  'messenger.trajectory.usageCacheHit': '缓存命中 {value}',
   'messenger.trajectory.usageNotReported': '未报告用量',
   'messenger.trajectory.throughput': '吞吐量',
   'messenger.trajectory.tokensPerSecond': '{value} tok/s',

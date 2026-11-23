@@ -76,6 +76,11 @@ export component WindowChrome inherits Rectangle {
     // Pin (always-on-top) sits left of the caption buttons. Both states use the
     // same neutral fill; the glyph itself carries the state: the pin lies
     // tilted while the window is free and stands upright once it is pinned.
+    //
+    // Every caption button ends with its `Tooltip`: the tip is lowered into a
+    // hover layer over the button, so it only receives the pointer when it is
+    // the last child. Placed before the glyph or the touch area, the touch area
+    // sits on top and the tip never appears.
     Rectangle {
         x: max(0px, parent.width - 152px);
         width: 38px;
@@ -111,6 +116,7 @@ export component WindowChrome inherits Rectangle {
             mouse-cursor: pointer;
             clicked => { root.pin-toggled(); }
         }
+        Tooltip { text: @markdown("\{root.pinned ? I18n.wm_unpin : I18n.wm_pin}"); }
     }
 
     Rectangle {
@@ -136,6 +142,7 @@ export component WindowChrome inherits Rectangle {
             mouse-cursor: pointer;
             clicked => { root.minimize-requested(); }
         }
+        Tooltip { text: @markdown("\{I18n.wm_minimize}"); }
     }
 
     Rectangle {
@@ -173,6 +180,7 @@ export component WindowChrome inherits Rectangle {
             mouse-cursor: pointer;
             clicked => { root.maximize-requested(); }
         }
+        Tooltip { text: @markdown("\{root.maximized ? I18n.wm_restore : I18n.wm_maximize}"); }
     }
 
     Rectangle {
@@ -199,6 +207,7 @@ export component WindowChrome inherits Rectangle {
             mouse-cursor: pointer;
             clicked => { root.close-requested(); }
         }
+        Tooltip { text: @markdown("\{I18n.common_close}"); }
     }
 }
 

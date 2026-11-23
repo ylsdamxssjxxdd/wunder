@@ -952,6 +952,14 @@ export function buildRequestNumbers(turns) {
  * 步骤，因此新增占用视图取增量；压缩上下文后总量回落的步增量为 0。
  * 未上报用量的步以 reported=false 标出，由视图降级显示，不参与增量链。
  */
+export function cacheHitPercent(usage) {
+    const count = (value) => typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+    const cacheRead = count(usage?.cacheRead);
+    const prompt = count(usage?.input) + cacheRead + count(usage?.cacheWrite);
+    if (cacheRead <= 0 || prompt <= 0) return null;
+    return Math.round((cacheRead / prompt) * 100);
+}
+
 export function buildStepUsageBars(requests) {
     const bars = [];
     let max = 0;

@@ -16,6 +16,11 @@ pub const FILE_NAME: &str = "desktop.window.json";
 /// corner; `width`/`height` are the inner size, which equals the outer size of
 /// the frameless workbench. A stored frame without a size carries only the
 /// maximized state (first session that ended maximized after a fresh install).
+///
+/// `pinned` is the chrome's always-on-top toggle. It rides along with the
+/// frame because it is window state, not app settings: it changes at exactly
+/// the moment the window is on screen, and it has to be re-applied to the
+/// native window at map time, before the user touches anything.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WindowGeometry {
     pub x: i32,
@@ -24,6 +29,8 @@ pub struct WindowGeometry {
     pub height: u32,
     #[serde(default)]
     pub maximized: bool,
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 impl WindowGeometry {
@@ -100,6 +107,7 @@ mod tests {
             width: 960,
             height: 780,
             maximized: false,
+            pinned: false,
         }
     }
 
@@ -109,6 +117,28 @@ mod tests {
         let path = dir.path().join(FILE_NAME);
         save_to(&path, &sample()).unwrap();
         assert_eq!(load_from(&path), Some(sample()));
+    }
+
+    #[test]
+    fn pin_state_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        let pinned = WindowGeometry {
+            pinned: true,
+            ..sample()
+        };
+        save_to(&path, &pinned).unwrap();
+        assert_eq!(load_from(&path), Some(pinned));
+    }
+
+    #[test]
+    fn a_placement_from_before_the_pin_reads_as_unpinned() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        std::fs::write(&path, r#"{"x":10,"y":20,"width":800,"height":600}"#).unwrap();
+        let loaded = load_from(&path).expect("legacy placement still loads");
+        assert!(!loaded.pinned);
+        assert!(!loaded.maximized);
     }
 
     #[test]
