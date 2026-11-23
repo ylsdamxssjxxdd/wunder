@@ -131,9 +131,10 @@ export component MainWindow inherits Window {
     // Settings render in an internal overlay window instead of taking over
     // the chat area; the sidebar width is user-draggable.
     in-out property <bool> settings-open: false;
-    // 窄窗设置页走云端移动模式：整页铺满、分类收进下拉，不再挤成
-    // 「200px 导航 + 一条内容缝」。
-    private property <bool> settings-compact: root.width < 560px;
+    // 窄窗设置走云端移动模式：分类收进标题行下拉、内容单列；窗口极窄时
+    // 整页铺满。断点与侧栏窄窗保持一致，避免出现「导航已隐藏但下拉没出来」。
+    private property <bool> settings-compact: root.width < Theme.sidebar-overlay-width;
+    private property <bool> settings-fullscreen: root.width < 560px;
     // 模型删除确认框的开合由窗口持有：原生冒烟据此截图核对文案。
     in-out property <bool> model-delete-open: false;
     in-out property <length> sidebar-width: Theme.sidebar-width;
@@ -701,6 +702,24 @@ export component MainWindow inherits Window {
     callback pick-shell-path();
     // The settings page's active category, shared with the smoke harness.
     in-out property <int> settings-active-panel: 0;
+    // 窄窗标题行下拉与设置页导航使用同一套分类编号（settings-tab 的取值
+    // 并不连续），下拉只负责换页，进入分类后的数据刷新仍沿用原来的回调。
+    pure function settings-category-index(tab: int) -> int {
+        return tab == 14 ? 1 : tab == 13 ? 2 : tab == 1 ? 3 : tab == 2 ? 4
+            : tab == 15 ? 5 : tab == 3 ? 6 : tab == 4 ? 7 : tab == 5 ? 8
+            : tab == 6 ? 9 : tab == 7 ? 10 : tab == 10 ? 11 : tab == 16 ? 12 : 0;
+    }
+    pure function settings-category-tab(index: int) -> int {
+        return index == 1 ? 14 : index == 2 ? 13 : index == 3 ? 1 : index == 4 ? 2
+            : index == 5 ? 15 : index == 6 ? 3 : index == 7 ? 4 : index == 8 ? 5
+            : index == 9 ? 6 : index == 10 ? 7 : index == 11 ? 10 : index == 12 ? 16 : 0;
+    }
+    function select-settings-category(tab: int) {
+        if (tab == 1) { root.refresh-settings(); }
+        if (tab == 2) { root.tools-tab = 1; root.tools-selected = -1; root.refresh-settings(); }
+        if (tab == 15) { root.tools-tab = 2; root.tools-selected = -1; root.refresh-settings(); }
+        root.settings-active-panel = tab;
+    }
     // Memory, usage and archive data are pulled on demand: the old expert page's
     // own tab strip is gone, so the active category is what selects the view.
     changed settings-active-panel => {
@@ -1856,16 +1875,16 @@ export component MainWindow inherits Window {
             scroll-event(event) => { return accept; }
         }
         Rectangle {
-            width: root.settings-compact ? parent.width : min(1080px, root.width - 72px);
-            height: root.settings-compact ? parent.height : min(720px, root.height - 56px);
+            width: root.settings-fullscreen ? parent.width : min(1080px, root.width - 72px);
+            height: root.settings-fullscreen ? parent.height : min(720px, root.height - 56px);
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            border-radius: root.settings-compact ? 0px : Theme.radius-xl;
+            border-radius: root.settings-fullscreen ? 0px : Theme.radius-xl;
             background: Theme.panel;
-            border-width: root.settings-compact ? 0px : 1px;
+            border-width: root.settings-fullscreen ? 0px : 1px;
             border-color: Theme.border;
             clip: true;
-            drop-shadow-blur: root.settings-compact ? 0px : 24px;
+            drop-shadow-blur: root.settings-fullscreen ? 0px : 24px;
             drop-shadow-color: #00000033;
             TouchArea { }
             VerticalLayout {
@@ -1878,7 +1897,18 @@ export component MainWindow inherits Window {
                         height: parent.height;
                         text: I18n.sidebar_settings;
                         color: Theme.text; font-size: Theme.font-lg; font-weight: 600;
-                        vertical-alignment: center; horizontal-stretch: 1;
+                        vertical-alignment: center;
+                        horizontal-stretch: root.settings-compact ? 0 : 1;
+                    }
+                    if root.settings-compact : Rectangle { horizontal-stretch: 1; }
+                    if root.settings-compact : ComboBox {
+                        width: min(168px, root.width * 0.42);
+                        height: 32px;
+                        model: [I18n.stc_general, I18n.st_tab_runtime, I18n.stc_account, I18n.stc_models,
+                            I18n.stc_mcp, I18n.stc_skills, I18n.stc_agent, I18n.stc_pet, I18n.stc_cron,
+                            I18n.stc_memory, I18n.stc_channels, I18n.stc_archives, I18n.stc_data];
+                        current-index: root.settings-category-index(root.settings-active-panel);
+                        selected(value) => { root.select-settings-category(root.settings-category-tab(self.current-index)); }
                     }
                     Action {
                         width: 28px; height: 28px;
@@ -1890,6 +1920,7 @@ export component MainWindow inherits Window {
         SettingsPage {
         horizontal-stretch: 1;
         vertical-stretch: 1;
+        compact: root.settings-compact;
         loading: root.settings-loading; saving: root.saving;
         status: root.status;
         settings-category-flags: root.settings-category-flags;

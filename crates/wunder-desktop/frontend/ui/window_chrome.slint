@@ -73,23 +73,35 @@ export component WindowChrome inherits Rectangle {
         double-clicked => { root.maximize-requested(); }
     }
 
-    // Pin (always-on-top) sits left of the caption buttons. A filled thumbtack
-    // stays legible at 14px where an outlined one would smear; the accent ink
-    // marks the active state without adding a badge or a second tooltip.
+    // Pin (always-on-top) sits left of the caption buttons. Both states use the
+    // same neutral fill; the glyph itself carries the state: the pin lies
+    // tilted while the window is free and stands upright once it is pinned.
     Rectangle {
         x: max(0px, parent.width - 152px);
         width: 38px;
         height: parent.height;
-        property <bool> hovered: pin-touch.has-hover;
-        background: (self.hovered || root.pinned) ? Theme.selected : transparent;
-        Path {
+        background: pin-touch.has-hover ? Theme.selected : transparent;
+        // Tilted 45° around the glyph centre (same thumbtack as the upright
+        // one), so both states share one silhouette and one stroke weight.
+        if !root.pinned : Path {
+            x: (parent.width - 14px) / 2;
+            y: (parent.height - 14px) / 2;
+            width: 14px;
+            height: 14px;
+            viewbox-x: 0; viewbox-y: 0; viewbox-width: 24; viewbox-height: 24;
+            commands: "M 16.24 3.51 L 20.49 7.76 L 19.07 9.17 L 18.01 8.11 L 14.83 11.29 L 15.18 15.18 L 14.12 16.24 L 11.65 13.77 L 7.05 18.36 L 5.49 18.51 L 5.64 16.95 L 10.23 12.35 L 7.76 9.88 L 8.82 8.82 L 12.71 9.17 L 15.89 5.99 L 14.83 4.93 Z";
+            fill: Theme.text-secondary;
+            stroke: transparent;
+            accessible-role: none;
+        }
+        if root.pinned : Path {
             x: (parent.width - 14px) / 2;
             y: (parent.height - 14px) / 2;
             width: 14px;
             height: 14px;
             viewbox-x: 0; viewbox-y: 0; viewbox-width: 24; viewbox-height: 24;
             commands: "M 9 3 L 15 3 L 15 5 L 13.5 5 L 13.5 9.5 L 16.5 12 L 16.5 13.5 L 13 13.5 L 13 20 L 12 21.2 L 11 20 L 11 13.5 L 7.5 13.5 L 7.5 12 L 10.5 9.5 L 10.5 5 L 9 5 Z";
-            fill: root.pinned ? Theme.accent-ink : Theme.text-secondary;
+            fill: Theme.text-secondary;
             stroke: transparent;
             accessible-role: none;
         }
