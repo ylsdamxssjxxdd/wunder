@@ -129,6 +129,10 @@ async fn usage_accounting_includes_rejected_calls_empty_responses_and_compaction
         output: 40,
         total: 560,
         reasoning: Some(120),
+        cache_read: 0,
+
+        cache_write: 0,
+
         estimated: false,
     };
     assert_eq!(emitter.accumulated_usage(), cumulative);

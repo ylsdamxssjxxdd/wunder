@@ -316,7 +316,7 @@ impl StreamStats {
             .usage
             .as_ref()
             .filter(|_| self.input_reported)
-            .map(|usage| usage.input);
+            .map(|usage| usage.prompt_tokens());
         let output = self
             .usage
             .as_ref()

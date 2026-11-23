@@ -1,4 +1,7 @@
 # AI生成
+# 形式化主题现状：cron、service-history、thread-history-replay、postgres-io、
+# self-update 的 docs 模型目录已移除，对应复验脚本仍在 scripts/ 下但处于休眠
+# 状态，因此不再纳入布局校验；恢复这些主题的 docs 材料后再加回 RUNNERS。
 import contextlib
 import importlib.util
 import io
@@ -15,13 +18,9 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 PROOFS = ROOT / "docs" / "形式化证明"
+# 只保留当前仍有 docs 模型材料的主题（见文件顶部说明）。
 RUNNERS = (
-    ("check_cron_formal", "cron/models", "CronLifecycle", 2),
-    ("check_service_history_formal", "service-history-20261027", "ServiceHistory", 10),
-    ("check_thread_history_replay_formal", "thread-history-replay/models", "ThreadHistoryReplay", 10),
     ("check_context_cache_prefix_formal", "context-cache-prefix/models", "PrefixStability", 6),
-    ("check_postgres_io_formal", "postgres-io/models", "PostgresIo", 6),
-    ("check_self_update_formal", "self-update-20261101/models", "SelfUpdate", 12),
 )
 
 
@@ -90,7 +89,9 @@ class FormalProofLayoutTests(unittest.TestCase):
                     self.assertTrue((scratch / (model + "Fixed.cfg")).is_file())
                     logs = output / "tlc"
                     (logs / "fixed").mkdir(parents=True)
-                    for index in range(log_count):
+                    # runner 为「每条不变式 + TypeOK」各跑缺陷/修复模型，
+                    # 日志数为 2 * (不变式数 + 1)；RUNNERS 第 4 项是 cfg 里的不变式数。
+                    for index in range(2 * (log_count + 1)):
                         parent = logs / "fixed" if index % 2 else logs
                         (parent / ("fixture-{:02d}.out".format(index))).write_text(
                             "Model checking completed\n", encoding="utf-8"

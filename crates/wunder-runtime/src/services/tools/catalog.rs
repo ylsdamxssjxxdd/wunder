@@ -2720,13 +2720,18 @@ mod tests {
             // 后英文面到 21.0k，这些规则能直接避免阻塞等待与空任务，故上调到 21.2k。
             // 文本编辑公开 edits 批量替换结构（~0.3k）后到 21.33k：它替代的是模型
             // 逐条重发替换与自写补丁脚本，属于减少轮次的确定性信息，故上调到 21.4k。
+            // 21.4k 在之后三个功能上被突破（21.54k）：浏览器补全元素操作参数（+0.29k）、
+            // 读图工具公开视频帧参数（+0.30k）、文本编辑补 start_line/end_line（+0.03k）。
+            // 三者都是「不给参数就只能靠试错或整段重发」的确定性信息，故上调到 21.6k。
+            // 注意：阈值只是护栏。下一次再想上调时，先确认新增文字能否用更短的表述
+            // 达到同样效果——这段目录是每个首轮请求的固定成本，也决定前缀缓存的上限。
             let largest = rows.first().map(|row| row.0).unwrap_or(0);
             assert!(
                 largest < 2_500,
                 "largest model-facing tool spec is {largest} chars in {language}"
             );
             assert!(
-                total < 21_400,
+                total < 21_600,
                 "model-facing tool catalogue grew to {total} chars in {language}"
             );
             let authoritative_chars: usize = authoritative

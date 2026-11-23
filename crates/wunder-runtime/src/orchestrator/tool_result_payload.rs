@@ -619,9 +619,13 @@ fn summarize_command_failure_stream(map: &Map<String, Value>, stream: &str) -> O
 
 // Character limits are only a last-resort circuit breaker for malformed or
 // provider-owned payloads. Model input is governed by token budgets below.
-const OBSERVATION_MAX_CHARS: usize = 262_144;
-const OBSERVATION_HEAD_CHARS: usize = 131_072;
-const OBSERVATION_TAIL_CHARS: usize = 131_072;
+/// Inline observation budget for one tool result. Larger results keep a head
+/// and a tail and point at the stored carrier (`tool-result:` handle) instead of
+/// riding along in every later request; 64K chars is roughly 16K tokens, close
+/// to the spill-policy defaults used by comparable harnesses.
+const OBSERVATION_MAX_CHARS: usize = 65_536;
+const OBSERVATION_HEAD_CHARS: usize = 32_768;
+const OBSERVATION_TAIL_CHARS: usize = 32_768;
 const OBSERVATION_MAX_ARRAY_ITEMS: usize = 32;
 /// A top-level listing is bounded by the number of direct children (normally
 /// dozens), so keeping it inline is both cheap and avoids forcing a second

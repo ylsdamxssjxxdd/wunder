@@ -1,0 +1,41 @@
+{
+  "topic": "上下文缓存前缀",
+  "abstract": "把一条会话的请求消息序列抽象成上一轮已发送前缀 sent 与本轮请求 surface，检查两者在压缩、图片预算降级、预算裁剪之后是否仍逐字重复。",
+  "models": {
+    "broken": "models/PrefixStability.tla",
+    "fixed": "models/PrefixStabilityFixed.tla（由 check_context_cache_prefix_formal.py 生成）",
+    "config": "models/PrefixStability.cfg",
+    "map": "models/PrefixStability.map.mjs"
+  },
+  "constants": {
+    "Messages": 3
+  },
+  "actions": ["Step", "Compact", "Prune", "Restart"],
+  "invariants": [
+    "TypeOK",
+    "AppendOnlyPrefix",
+    "NoSilentRewrite",
+    "CompactionOnce",
+    "ReplayKeepsSystem",
+    "TailPreserved"
+  ],
+  "expected": {
+    "brokenModel": {
+      "invariant": "AppendOnlyPrefix",
+      "verdict": "反例"
+    },
+    "fixedModel": {
+      "invariants": [
+        "TypeOK",
+        "AppendOnlyPrefix",
+        "NoSilentRewrite",
+        "CompactionOnce",
+        "ReplayKeepsSystem",
+        "TailPreserved"
+      ],
+      "verdict": "通过"
+    }
+  },
+  "runner": "scripts/check_context_cache_prefix_formal.py",
+  "reportLocation": "仓库外临时目录（--out 指定）"
+}

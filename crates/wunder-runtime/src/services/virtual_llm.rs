@@ -404,6 +404,8 @@ pub fn estimate_virtual_usage(input_messages: &[Value], turn: &VirtualReplayTurn
             output,
             total: input.saturating_add(output).saturating_add(reasoning),
             reasoning: Some(reasoning),
+            cache_read: 0,
+            cache_write: 0,
             estimated: true,
         }
     })
@@ -619,6 +621,13 @@ fn parse_usage(value: Option<&Value>) -> Option<TokenUsage> {
         output: output.unwrap_or(0),
         total: resolved_total,
         reasoning: read_usage_u64(usage, &["reasoning_tokens", "reasoning"]),
+        cache_read: read_usage_u64(usage, &["cache_read_tokens", "cache_read_input_tokens"])
+            .unwrap_or(0),
+        cache_write: read_usage_u64(
+            usage,
+            &["cache_write_tokens", "cache_creation_input_tokens"],
+        )
+        .unwrap_or(0),
         estimated: usage
             .get("estimated")
             .and_then(Value::as_bool)

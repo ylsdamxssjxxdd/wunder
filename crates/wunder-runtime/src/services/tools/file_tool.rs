@@ -1,5 +1,6 @@
 use super::line_diff::{
-    diff_added_file, diff_replaced, diff_source_too_large, insert_diff_fields, render_write_diff,
+    changed_lines, diff_added_file, diff_replaced, diff_source_too_large, insert_diff_fields,
+    render_write_diff,
     LineDiff, DIFF_UNAVAILABLE_BINARY, DIFF_UNAVAILABLE_OVERSIZE, DIFF_UNAVAILABLE_UNREADABLE,
     MAX_DIFF_SOURCE_BYTES,
 };
@@ -2865,6 +2866,10 @@ fn build_write_data(
         data.insert("history_rev".to_string(), json!(snapshot.rev));
     }
     write_receipt::insert_fields(&mut data, receipt);
+    // 回显正文受行/字节预算约束；变更行号不受约束，始终给出。
+    if diff.unavailable.is_none() {
+        data.insert("changed_lines".to_string(), json!(changed_lines(&diff.diff)));
+    }
     data.insert("unified_diff".to_string(), json!(unified));
     data.insert(
         "unified_diff_truncated".to_string(),

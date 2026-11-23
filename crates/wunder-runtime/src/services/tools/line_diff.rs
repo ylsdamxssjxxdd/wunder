@@ -18,12 +18,14 @@ use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 
 /// 单次工具调用最多输出的块数；超出的块整块折进 `diff_lines_omitted`。
-const MAX_DIFF_BLOCKS: usize = 12;
+/// 回显是「确认改在哪里」，不是「重放整个文件」：模型的下一步只需要块头、
+/// 变更行号和少量上下文，其余靠 `changed_lines` + 磁盘文件核对。
+pub(super) const MAX_DIFF_BLOCKS: usize = 4;
 /// 可见行上限（与 `apply_patch_tool/preview.rs` 的每文件预算一致；本模块每次
 /// 调用只处理一个文件，因此每文件即每次调用）。
-const MAX_DIFF_LINES: usize = 80;
+const MAX_DIFF_LINES: usize = 24;
 /// 行正文上限。
-const MAX_DIFF_TEXT_BYTES: usize = 24 * 1024;
+const MAX_DIFF_TEXT_BYTES: usize = 8 * 1024;
 /// 允许参与 diff 的最大文本字节数；任一侧到界即放弃 diff（只给计数）。
 pub(super) const MAX_DIFF_SOURCE_BYTES: usize = 512 * 1024;
 
@@ -645,6 +647,17 @@ pub(super) fn render_write_diff(
     (rendered.text, truncated)
 }
 
+/// 每个变更块的起始行号（新文本侧，1-based）。
+///
+/// 回显被预算裁掉正文时，模型仍需要「改在哪几行」来定位下一次编辑；
+/// 这份列表只与块头有关，比正文便宜两个数量级，所以每次都给。
+pub(super) fn changed_lines(diff: &LineDiff) -> Vec<usize> {
+    diff.blocks
+        .iter()
+        .map(|block| block.start_line_after.max(1))
+        .collect()
+}
+
 /// 把（旧文本，新文本）渲染成 unified diff 文本：`---`/`+++`/`@@` + 上下文 + `-`/`+`。
 ///
 /// 写类工具（写入文件、文本编辑）的回执靠这段文本确认「自己刚写进去的到底是
@@ -1162,7 +1175,10 @@ mod tests {
         assert_eq!(diff.deleted_lines, 30);
         assert_eq!(diff.omitted_lines, 2 * (30 - MAX_DIFF_BLOCKS));
         assert_eq!(diff.blocks[0].header, "@@ -1,1 +1,1 @@");
-        assert_eq!(diff.blocks[11].start_line_before, 12);
+        assert_eq!(
+            diff.blocks[MAX_DIFF_BLOCKS - 1].start_line_before,
+            MAX_DIFF_BLOCKS
+        );
     }
 
     #[test]

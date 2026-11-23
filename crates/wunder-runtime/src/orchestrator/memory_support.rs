@@ -991,6 +991,136 @@ pub(super) fn build_compaction_summary_input(
     summary_input
 }
 
+/// Replay the exact request that is about to be sent and append the compaction
+/// instruction to its tail.
+///
+/// A provider prefix cache is keyed on the byte sequence from the first token.
+/// Flattening the transcript (`build_compaction_summary_input`) throws away
+/// `tool_calls`, `tool_call_id` and `reasoning_content`, so the auxiliary
+/// summary request diverges at the first assistant tool call and pays full
+/// price for the whole history — exactly when the history is largest. Replaying
+/// the live messages instead makes the summary a strict prefix extension: every
+/// token before the instruction is already warm.
+///
+/// Returns `None` when the tail is not a user message. Appending a second user
+/// turn would make some providers reject the request (Anthropic requires
+/// alternating roles), and merging into a tool result would rewrite structure;
+/// callers fall back to the flattened transcript in that case.
+pub(super) fn replay_compaction_prefix(messages: &[Value], instruction: &str) -> Option<Vec<Value>> {
+    let instruction = instruction.trim();
+    if instruction.is_empty() || messages.is_empty() {
+        return None;
+    }
+    let last = messages.last()?.as_object()?;
+    if last.get("role").and_then(Value::as_str) != Some("user") {
+        return None;
+    }
+    if Orchestrator::is_observation_message("user", last.get("content").unwrap_or(&Value::Null)) {
+        return None;
+    }
+    // 图片预算在本轮稍后才执行（`enforce_request_limits`），它会把超限的旧图片
+    // 就地换成占位符。若现在按原样重放，摘要请求与真正要发的请求会在那一条上
+    // 分叉，既拿不到缓存又可能把已被驱逐的大图重新算一遍输入。带内联图片时
+    // 直接走扁平化兜底，保证两边一致。
+    if messages.iter().any(contains_inline_image_message) {
+        return None;
+    }
+    let mut replay = messages.to_vec();
+    let last = replay.last_mut()?.as_object_mut()?;
+    match last.get_mut("content") {
+        Some(Value::String(text)) => {
+            text.push_str("\n\n");
+            text.push_str(instruction);
+        }
+        Some(Value::Array(parts)) => {
+            parts.push(json!({ "type": "text", "text": instruction }));
+        }
+        _ => {
+            last.insert(
+                "content".to_string(),
+                Value::String(instruction.to_string()),
+            );
+        }
+    }
+    Some(replay)
+}
+
+/// Replace the largest tool results in a replayed prefix with short stubs until
+/// the request fits `budget`. Pairing (`role=tool` + `tool_call_id`) is kept, so
+/// the message shape still matches the live request; only the payload shrinks.
+///
+/// This runs on the auxiliary summary request only. It never touches persisted
+/// history, so a prune here cannot rewrite the next real request.
+pub(super) fn prune_replayed_tool_results(messages: &mut [Value], budget: i64) -> usize {
+    let mut pruned = 0usize;
+    let mut remaining = estimate_messages_tokens(messages);
+    while remaining > budget {
+        let mut best: Option<(usize, usize)> = None;
+        for (index, message) in messages.iter().enumerate() {
+            if index + 1 == messages.len() {
+                break;
+            }
+            if message.get("role").and_then(Value::as_str) != Some("tool") {
+                continue;
+            }
+            let chars = estimate_tool_content_chars(message.get("content"));
+            if chars == 0 {
+                continue;
+            }
+            if best.map_or(true, |(_, current)| chars > current) {
+                best = Some((index, chars));
+            }
+        }
+        let Some((index, chars)) = best else { break };
+        let tool_call_id = messages[index]
+            .get("tool_call_id")
+            .cloned()
+            .unwrap_or(Value::Null);
+        messages[index] = json!({
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": format!(
+                "[tool result omitted from the compaction replay: {chars} chars. \
+The call and its result pairing are preserved; the full result is still in the thread record.]"
+            ),
+        });
+        pruned += 1;
+        remaining = estimate_messages_tokens(messages);
+    }
+    pruned
+}
+
+fn estimate_tool_content_chars(content: Option<&Value>) -> usize {
+    match content {
+        Some(Value::String(text)) => text.chars().count(),
+        Some(Value::Array(parts)) => parts
+            .iter()
+            .map(|part| {
+                part.get("text")
+                    .and_then(Value::as_str)
+                    .map(|text| text.chars().count())
+                    .unwrap_or(0)
+            })
+            .sum(),
+        _ => 0,
+    }
+}
+
+/// 消息里是否带内联图片（多模态内容块或 data URL 字符串）。
+fn contains_inline_image_message(message: &Value) -> bool {
+    let content = message.get("content").unwrap_or(&Value::Null);
+    match content {
+        Value::Array(parts) => parts.iter().any(|part| {
+            matches!(
+                part.get("type").and_then(Value::as_str),
+                Some("image_url" | "image" | "input_image")
+            ) || part.get("image_url").is_some()
+        }),
+        Value::String(text) => text.contains("data:image/"),
+        _ => false,
+    }
+}
+
 pub(super) fn normalize_compaction_summary_role(role: &str) -> &'static str {
     match role {
         "system" => "system",

@@ -2,7 +2,10 @@ use super::{EventEmitter, Orchestrator, OrchestratorError, RoundInfo, TokenUsage
 use serde_json::json;
 
 pub(super) fn request_context_tokens(usage: &TokenUsage) -> Option<i64> {
-    (!usage.estimated && usage.input > 0).then_some(usage.input.min(i64::MAX as u64) as i64)
+    // Occupancy is the whole prompt the provider saw, cache buckets included;
+    // `input` alone is only the uncached share after `normalize_usage`.
+    let prompt = usage.prompt_tokens();
+    (!usage.estimated && prompt > 0).then_some(prompt.min(i64::MAX as u64) as i64)
 }
 
 /// Context occupancy for providers that compute the exact prompt locally.
@@ -13,7 +16,8 @@ pub(super) fn request_context_tokens(usage: &TokenUsage) -> Option<i64> {
 /// report context occupancy and trigger compaction exactly like a real provider
 /// without flipping `estimated`, which would trip the output-limit heuristic.
 pub(super) fn simulated_request_context_tokens(usage: &TokenUsage) -> Option<i64> {
-    (usage.input > 0).then_some(usage.input.min(i64::MAX as u64) as i64)
+    let prompt = usage.prompt_tokens();
+    (prompt > 0).then_some(prompt.min(i64::MAX as u64) as i64)
 }
 
 impl Orchestrator {
@@ -48,6 +52,8 @@ impl Orchestrator {
 pub(super) fn accumulate_usage(target: &mut TokenUsage, usage: &TokenUsage) {
     target.input = target.input.saturating_add(usage.input);
     target.output = target.output.saturating_add(usage.output);
+    target.cache_read = target.cache_read.saturating_add(usage.cache_read);
+    target.cache_write = target.cache_write.saturating_add(usage.cache_write);
     target.total = target.total.saturating_add(usage.total);
     // A mixed turn has no exact reasoning split if any response omitted it.
     target.reasoning = match (target.reasoning, usage.reasoning) {
@@ -68,6 +74,8 @@ mod tests {
             output: 10,
             total: 170,
             reasoning: Some(40),
+            cache_read: 0,
+            cache_write: 0,
             estimated: false,
         };
         assert_eq!(request_context_tokens(&usage), Some(120));
@@ -87,6 +95,8 @@ mod tests {
             output: 10,
             total: 371,
             reasoning: Some(40),
+            cache_read: 0,
+            cache_write: 0,
             estimated: true,
         };
         assert_eq!(request_context_tokens(&usage), None);
@@ -110,6 +120,8 @@ mod tests {
                 output: 10,
                 total: 130,
                 reasoning: Some(20),
+                cache_read: 0,
+                cache_write: 0,
                 estimated: false,
             },
             TokenUsage {
@@ -117,6 +129,8 @@ mod tests {
                 output: 20,
                 total: 140,
                 reasoning: None,
+                cache_read: 0,
+                cache_write: 0,
                 estimated: false,
             },
             TokenUsage {
@@ -124,6 +138,8 @@ mod tests {
                 output: 10,
                 total: 40,
                 reasoning: Some(0),
+                cache_read: 0,
+                cache_write: 0,
                 estimated: true,
             },
         ] {
@@ -136,6 +152,8 @@ mod tests {
                 output: 40,
                 total: 310,
                 reasoning: None,
+                cache_read: 0,
+                cache_write: 0,
                 estimated: true
             }
         );

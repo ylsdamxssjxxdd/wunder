@@ -1386,3 +1386,63 @@ fn test_build_compaction_instruction_deduplicates_request_candidates() {
         build_compaction_instruction("base prompt", "", "same request", "same request");
     assert_eq!(instruction.matches("same request").count(), 1);
 }
+
+#[test]
+fn replay_compaction_prefix_keeps_every_token_before_the_tail() {
+    let messages = vec![
+        json!({"role":"system","content":"frozen"}),
+        json!({"role":"user","content":"first"}),
+        json!({"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"read_file","arguments":"{}"}}]}),
+        json!({"role":"tool","tool_call_id":"c1","content":"result"}),
+        json!({"role":"user","content":"next question"}),
+    ];
+    let replay = replay_compaction_prefix(&messages, "COMPACT NOW").expect("replay");
+    // 前四条逐字保持：提供方缓存命中的正是这一段。
+    assert_eq!(&replay[..4], &messages[..4]);
+    assert_eq!(replay.len(), messages.len());
+    assert_eq!(
+        replay[4]["content"],
+        json!("next question\n\nCOMPACT NOW")
+    );
+}
+
+#[test]
+fn replay_compaction_prefix_refuses_non_user_tail() {
+    let messages = vec![
+        json!({"role":"system","content":"frozen"}),
+        json!({"role":"assistant","content":"done"}),
+    ];
+    // 追加第二条连续 assistant/user 会破坏交替约束，交给扁平化兜底。
+    assert!(replay_compaction_prefix(&messages, "COMPACT NOW").is_none());
+}
+
+#[test]
+fn prune_replayed_tool_results_keeps_pairing_and_drops_payload() {
+    let big = "x".repeat(40_000);
+    let mut messages = vec![
+        json!({"role":"system","content":"frozen"}),
+        json!({"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"read_file","arguments":"{}"}}]}),
+        json!({"role":"tool","tool_call_id":"c1","content":big}),
+        json!({"role":"user","content":"next"}),
+    ];
+    let pruned = prune_replayed_tool_results(&mut messages, 2_000);
+    assert_eq!(pruned, 1);
+    assert_eq!(messages[2]["role"], json!("tool"));
+    assert_eq!(messages[2]["tool_call_id"], json!("c1"));
+    assert!(messages[2]["content"].as_str().unwrap().len() < 400);
+    // 结构不变：前后两条消息原样保留。
+    assert_eq!(messages[0]["content"], json!("frozen"));
+    assert_eq!(messages[3]["content"], json!("next"));
+}
+
+#[test]
+fn prune_replayed_tool_results_leaves_small_requests_untouched() {
+    let mut messages = vec![
+        json!({"role":"system","content":"frozen"}),
+        json!({"role":"tool","tool_call_id":"c1","content":"small"}),
+        json!({"role":"user","content":"next"}),
+    ];
+    let before = messages.clone();
+    assert_eq!(prune_replayed_tool_results(&mut messages, 100_000), 0);
+    assert_eq!(messages, before);
+}

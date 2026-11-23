@@ -11,7 +11,8 @@
 use super::capabilities::{local_fs, FsCapability};
 use super::context::collect_allow_roots;
 use super::line_diff::{
-    diff_literal_replaces, diff_replaced, insert_diff_fields, render_write_diff, LineDiff,
+    changed_lines, diff_literal_replaces, diff_replaced, insert_diff_fields, render_write_diff,
+    LineDiff,
 };
 use super::{
     build_model_tool_success,
@@ -1032,6 +1033,10 @@ fn build_edit_data(
         data.insert("history_rev".to_string(), json!(snapshot.rev));
     }
     write_receipt::insert_fields(&mut data, receipt);
+    // 回显正文受行/字节预算约束；变更行号不受约束，始终给出。
+    if unavailable.is_none() {
+        data.insert("changed_lines".to_string(), json!(changed_lines(diff)));
+    }
     data.insert("unified_diff".to_string(), json!(unified));
     data.insert(
         "unified_diff_truncated".to_string(),
@@ -1181,13 +1186,19 @@ mod tests {
         let after = "y\n".repeat(30);
         let data = edit_data_for(&before, &after, &replace_all_offsets(30), "x", "y");
         let blocks = data["files"][0]["diff_blocks"].as_array().expect("blocks");
-        // 一个命中一个块，块数上限由 line_diff 收口为 12。
-        assert_eq!(blocks.len(), 12);
-        assert_eq!(blocks[11]["start_line_before"], json!(12));
+        // 一个命中一个块，块数上限由 line_diff 收口。
+        assert_eq!(blocks.len(), crate::services::tools::line_diff::MAX_DIFF_BLOCKS);
+        assert_eq!(
+            blocks[crate::services::tools::line_diff::MAX_DIFF_BLOCKS - 1]["start_line_before"],
+            json!(crate::services::tools::line_diff::MAX_DIFF_BLOCKS)
+        );
         assert_eq!(data["hunks_applied"], json!(30));
         assert_eq!(data["added_lines"], json!(30));
         assert_eq!(data["deleted_lines"], json!(30));
-        assert_eq!(data["diff_lines_omitted"], json!(36));
+        assert_eq!(
+            data["diff_lines_omitted"],
+            json!(2 * (30 - crate::services::tools::line_diff::MAX_DIFF_BLOCKS))
+        );
     }
 
     #[test]
@@ -1226,7 +1237,7 @@ mod tests {
                 .as_array()
                 .expect("blocks")
                 .len(),
-            12
+            crate::services::tools::line_diff::MAX_DIFF_BLOCKS
         );
         assert_eq!(data["added_lines"], json!(MAX_DIFF_OFFSETS));
     }
@@ -1281,6 +1292,7 @@ mod tests {
                 "bytes_after",
                 "bytes_before",
                 "changed_files",
+                "changed_lines",
                 "check",
                 "deleted",
                 "deleted_lines",

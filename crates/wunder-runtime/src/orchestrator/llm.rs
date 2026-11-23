@@ -535,6 +535,8 @@ impl Orchestrator {
             input,
             output,
             reasoning: Some(reasoning_tokens),
+            cache_read: 0,
+            cache_write: 0,
             estimated: true,
             total: input
                 .saturating_add(output)
@@ -589,7 +591,7 @@ impl Orchestrator {
                 let usage = self.estimate_token_usage(messages, &content, "");
                 let decode_output_tokens = usage.output;
                 let round_speed = LlmSpeedSummary::from_usage_and_durations(
-                    Some(usage.input),
+                    Some(usage.prompt_tokens()),
                     Some(decode_output_tokens),
                     None,
                     None,
@@ -1060,7 +1062,7 @@ impl Orchestrator {
                     approx_token_count(&content).max(0) as u64
                 };
                 let round_speed = LlmSpeedSummary::from_usage_and_durations(
-                    Some(usage.input),
+                    Some(usage.prompt_tokens()),
                     Some(decode_output_tokens),
                     prefill_duration_s,
                     decode_duration_s,
@@ -1263,7 +1265,7 @@ impl Orchestrator {
                         approx_token_count(&content).max(0) as u64
                     };
                     let round_speed = LlmSpeedSummary::from_usage_and_durations(
-                        Some(usage.input),
+                        Some(usage.prompt_tokens()),
                         Some(decode_output_tokens),
                         prefill_duration_s,
                         decode_duration_s,

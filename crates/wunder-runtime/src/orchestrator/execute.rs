@@ -658,6 +658,10 @@ impl Orchestrator {
             } else {
                 None
             };
+            // 工具 schema 也是提供方前缀的一部分：线程中途重建会让整段前缀
+            // 从 tools 起失效。函数名集合不变时复用首个请求的快照。
+            let function_tooling =
+                self.restore_frozen_tooling(&user_id, &session_id, function_tooling);
 
             let user_round_id = user_round.to_string();
             let system_prompt = self
@@ -858,6 +862,7 @@ impl Orchestrator {
                         force_compaction_on_entry || admission_compaction_needed,
                         true,
                         super::memory::CompactionRunMode::AutoLoop,
+                        tools_payload,
                     ))
                     .await?;
                 messages = compaction_result.messages;
@@ -989,6 +994,16 @@ impl Orchestrator {
                     let previous_turn = self
                         .workspace
                         .load_session_sent_prefix_turn(&user_id, &session_id);
+                    // 分歧点之后提供方缓存全部作废；日志里留一条可检索的证据，
+                    // 与 `context_cache_prefix` 事件、llm_request 的 tools_hash
+                    // 一起用来定位「命中率为什么掉了」。
+                    tracing::warn!(
+                        session_id = %session_id,
+                        diverged_at = index,
+                        previous_len = last_sent_message_hashes.len(),
+                        current_len = messages.len(),
+                        "request prefix diverged from the previous turn; provider prompt cache cannot be reused past this point"
+                    );
                     emitter.emit("context_cache_prefix", json!({
                         "append_only": false,
                         "previous_len": last_sent_message_hashes.len(),
@@ -1108,6 +1123,7 @@ impl Orchestrator {
                                     true,
                                     true,
                                     super::memory::CompactionRunMode::OverflowRecovery,
+                                    tools_payload,
                                 ))
                                 .await?;
                             let overflow_recovery_compaction_id =

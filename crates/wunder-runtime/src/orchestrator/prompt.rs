@@ -55,6 +55,27 @@ pub(crate) fn build_prompt_tool_name_map(
     map
 }
 
+/// Sorted function names of a rendered tools array. Used as the identity of a
+/// tool set when deciding whether a frozen schema snapshot still applies; the
+/// order is ignored so a catalog reshuffle alone cannot force a rebuild, while
+/// any added or removed tool still opens a new (necessarily uncached) series.
+fn tool_function_names(tools: &[Value]) -> Vec<String> {
+    let mut names: Vec<String> = tools
+        .iter()
+        .filter_map(|tool| {
+            tool.get("function")
+                .and_then(|function| function.get("name"))
+                .and_then(Value::as_str)
+                .or_else(|| tool.get("name").and_then(Value::as_str))
+        })
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect();
+    names.sort();
+    names
+}
+
 pub(crate) struct FunctionTooling {
     pub(crate) tools: Vec<Value>,
     pub(crate) name_map: HashMap<String, String>,
@@ -227,6 +248,46 @@ impl Orchestrator {
             name_map,
             display_map,
         })
+    }
+
+    /// 复用线程首个请求实际发送的工具定义快照。
+    ///
+    /// 工具 schema 与描述由当前 catalog/MCP 连接实时生成，进程重启、MCP 重连
+    /// 或别名去重规则变化都会让同一线程的 tools 数组字节变化，提供方前缀缓存
+    /// 从第一个工具 token 起全部作废。这里只做一件事：**函数名集合完全相同**
+    /// 时改用快照（顺序也沿用快照），否则写入新快照并继续用新定义。
+    ///
+    /// 权限没有被绕过：`allowed_tool_names` 在构建 tooling 时已经过滤过，
+    /// 快照里不存在的工具不会因为复用而重新出现；函数名集合变化（例如权限
+    /// 被收回）本来就会让前缀失效，此时用新定义是唯一正确的选择。
+    pub(crate) fn restore_frozen_tooling(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        tooling: Option<FunctionTooling>,
+    ) -> Option<FunctionTooling> {
+        let mut tooling = tooling?;
+        let current_names = tool_function_names(&tooling.tools);
+        if current_names.is_empty() {
+            return Some(tooling);
+        }
+        if let Some(frozen) = self
+            .workspace
+            .load_session_tool_schema(user_id, session_id)
+            .and_then(|value| value.as_array().cloned())
+            .filter(|items| !items.is_empty())
+        {
+            if tool_function_names(&frozen) == current_names {
+                tooling.tools = frozen;
+                return Some(tooling);
+            }
+        }
+        self.workspace.save_session_tool_schema(
+            user_id,
+            session_id,
+            &Value::Array(tooling.tools.clone()),
+        );
+        Some(tooling)
     }
 
     /// Frozen system prompt for an existing thread, or `None` when the thread

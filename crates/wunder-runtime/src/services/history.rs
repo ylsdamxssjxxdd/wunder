@@ -539,11 +539,10 @@ fn extract_tool_calls_payload(item: &Value) -> Option<Value> {
 /// 模型把整段调用复制回来时，工具边界可以明确拒绝，而不会把占位文字当成正文写盘。
 /// 其它工具仍需保留头部帮助辨认内容，继续用“头 + 省略量”的投影。
 pub(crate) const HISTORY_TOOL_ARGS_MAX_STRING_CHARS: usize = 2_000;
-/// 写类工具（写入文件 / 文本编辑）的正文就是这一轮的交付物，模型下一轮
-/// 往往要基于它继续修改；卡在 2k 会让整文件写入在历史里消失，只能靠回读
-/// 或切成大量小补丁。这里把上限放到 64k 字符：常见的一次性整文件写入在
-/// 历史里保持完整，只有病态大负载才投影成哨兵。
-pub(crate) const HISTORY_WRITE_TOOL_ARGS_MAX_STRING_CHARS: usize = 65_536;
+/// 写类参数保留阈值。写入的正文已经落盘，回执与有界回显是「实际生效内容」
+/// 的权威记录；把整份正文再放回后续每一次请求只会重复计费。超过这个量级就换
+/// 对象哨兵，模型需要精确原文时按路径重读。
+pub(crate) const HISTORY_WRITE_TOOL_ARGS_MAX_STRING_CHARS: usize = 2_048;
 pub(crate) const HISTORY_TOOL_ARGS_KEEP_HEAD_CHARS: usize = 320;
 const HISTORY_TOOL_ARGS_MAX_DEPTH: usize = 6;
 
@@ -1376,16 +1375,34 @@ mod tests {
     }
 
     #[test]
-    fn history_projection_keeps_typical_large_write_intact() {
-        // 30 KB 级别的整文件写入不该在历史里消失，否则模型下一轮只能回读，
-        // 或者把本来一次能写完的内容切成大量小补丁。
-        let body = "const line = 1;\n".repeat(2_000);
+    fn history_projection_elides_large_write_bodies_but_keeps_short_ones() {
+        // 写入正文已经落盘，回执/回显才是权威记录：超过阈值就换对象哨兵，
+        // 否则同一份正文会以「参数 + 回显」出现两遍，并跟着之后每次请求计费。
+        let large = "const line = 1;\n".repeat(2_000);
         let payload = json!([{
             "id": "call_big",
             "type": "function",
             "function": {
                 "name": "write_file",
-                "arguments": json!({ "path": "film.js", "content": body }).to_string()
+                "arguments": json!({ "path": "film.js", "content": large }).to_string()
+            }
+        }]);
+        let projected = project_tool_calls_for_history(&payload);
+        let args = projected[0]["function"]["arguments"]
+            .as_str()
+            .expect("arguments stay a JSON string");
+        assert!(args.contains(HISTORY_ELIDED_ARG_KEY));
+        assert!(!args.contains("const line = 1;"));
+        assert_eq!(projected[0]["function"]["name"], json!("write_file"));
+
+        // 阈值以内的小补丁保持完整：它们本来就是下一步编辑的上下文。
+        let small = "const line = 1;\n".repeat(20);
+        let payload = json!([{
+            "id": "call_small",
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "arguments": json!({ "path": "small.js", "content": small }).to_string()
             }
         }]);
         assert_eq!(project_tool_calls_for_history(&payload), payload);

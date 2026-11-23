@@ -149,6 +149,9 @@ pub struct SharedToolSpec {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenUsage {
+    /// Uncached prompt tokens. Providers that fold cache reads into the prompt
+    /// total (OpenAI / DeepSeek) are split here so the three prompt buckets stay
+    /// disjoint and a hit rate is computable.
     #[serde(rename = "input_tokens")]
     pub input: u64,
     #[serde(rename = "output_tokens")]
@@ -163,9 +166,45 @@ pub struct TokenUsage {
         skip_serializing_if = "Option::is_none"
     )]
     pub reasoning: Option<u64>,
+    /// Prompt tokens served from the provider cache (billed at the cached rate).
+    #[serde(
+        default,
+        rename = "cache_read_tokens",
+        skip_serializing_if = "crate::schemas::is_zero_u64"
+    )]
+    pub cache_read: u64,
+    /// Prompt tokens written into the provider cache this request (Anthropic).
+    #[serde(
+        default,
+        rename = "cache_write_tokens",
+        skip_serializing_if = "crate::schemas::is_zero_u64"
+    )]
+    pub cache_write: u64,
     #[serde(default)]
     pub estimated: bool,
 }
+
+pub(crate) fn is_zero_u64(value: &u64) -> bool {
+    *value == 0
+}
+
+impl TokenUsage {
+    /// Full prompt size as the provider saw it, cache buckets included.
+    /// Context occupancy must use this: `input` alone is the uncached part.
+    pub fn prompt_tokens(&self) -> u64 {
+        self.input
+            .saturating_add(self.cache_read)
+            .saturating_add(self.cache_write)
+    }
+
+    /// Share of the billed prompt served from cache, or `None` when the
+    /// provider reported no prompt tokens at all.
+    pub fn cache_hit_rate(&self) -> Option<f64> {
+        let prompt = self.prompt_tokens();
+        (prompt > 0).then(|| self.cache_read as f64 / prompt as f64)
+    }
+}
+
 
 #[derive(Debug, Clone, Serialize)]
 pub struct I18nConfigResponse {

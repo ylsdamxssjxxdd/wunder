@@ -2330,6 +2330,34 @@ impl WorkspaceManager {
         let _ = self.storage.set_meta(&key, &turn.to_string());
     }
 
+    /// 线程首个请求实际发送的工具定义快照。
+    ///
+    /// 工具 schema 是提供方提示词前缀的一部分：同一线程中途因为 MCP 连接、
+    /// 别名去重或本地化路径变化而重建 schema，会让整段前缀从 tools 起失效。
+    /// 快照只在「函数名集合完全相同」时复用，权限变化仍由调用方的 allowed
+    /// 集合过滤，不会被快照绕过。
+    pub fn save_session_tool_schema(&self, user_id: &str, session_id: &str, tools: &serde_json::Value) {
+        let key = format!("{}:tools", self.session_sent_prefix_key(user_id, session_id));
+        match serde_json::to_string(tools) {
+            Ok(text) => {
+                let _ = self.storage.set_meta(&key, &text);
+            }
+            Err(_) => {
+                let _ = self.storage.delete_meta_prefix(&key);
+            }
+        }
+    }
+
+    pub fn load_session_tool_schema(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Option<serde_json::Value> {
+        let key = format!("{}:tools", self.session_sent_prefix_key(user_id, session_id));
+        let raw = self.storage.get_meta(&key).ok().flatten()?;
+        serde_json::from_str(&raw).ok()
+    }
+
     pub fn load_session_sent_prefix_turn(&self, user_id: &str, session_id: &str) -> Option<u64> {
         let key = format!("{}:turn", self.session_sent_prefix_key(user_id, session_id));
         self.storage

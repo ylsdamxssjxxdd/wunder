@@ -131,6 +131,62 @@ impl Orchestrator {
         prepare_compaction_summary_messages(messages, max_tokens)
     }
 
+    /// Flattened-transcript fallback for the compaction summary request.
+    ///
+    /// Replaying the live request (`replay_compaction_prefix`) is preferred
+    /// because it reuses the provider prefix cache. This path is only used when
+    /// the replayed request cannot fit the summary budget even after tool
+    /// payloads were pruned: it drops `tool_calls` / `tool_call_id` /
+    /// `reasoning_content` and clamps each message, which is correct but pays
+    /// full price. Keeping it separate makes that trade-off explicit.
+    fn prepare_flattened_compaction_input(
+        &self,
+        system_message: Option<&Value>,
+        source_messages: &[Value],
+        compaction_message: Value,
+        summary_limit: i64,
+    ) -> Vec<Value> {
+        let per_message_limit = summary_limit.clamp(1, COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
+        let mut summary_input =
+            build_compaction_summary_input(system_message, source_messages, compaction_message);
+        // The frozen thread prompt is an immutable request prefix. Prepare
+        // history independently so compaction cannot truncate or merge it.
+        let frozen_summary_system = summary_input
+            .first()
+            .filter(|message| message.get("role").and_then(Value::as_str) == Some("system"))
+            .cloned();
+        let summary_history_start = usize::from(frozen_summary_system.is_some());
+        let mut prepared_summary_input = frozen_summary_system
+            .clone()
+            .into_iter()
+            .collect::<Vec<_>>();
+        prepared_summary_input.extend(self.prepare_summary_messages(
+            summary_input.split_off(summary_history_start),
+            per_message_limit,
+        ));
+        summary_input = prepared_summary_input;
+        if estimate_messages_tokens(&summary_input) > summary_limit {
+            summary_input = self.shrink_messages_to_limit(summary_input, summary_limit);
+        }
+        if estimate_messages_tokens(&summary_input) > summary_limit {
+            let mut trimmed = Vec::new();
+            let head_len = if summary_input.first().is_some_and(|message| {
+                message.get("role").and_then(Value::as_str) == Some("system")
+            }) {
+                trimmed.push(summary_input[0].clone());
+                1
+            } else {
+                0
+            };
+            let remaining = (summary_limit - estimate_messages_tokens(&trimmed)).max(1);
+            let tail =
+                trim_messages_to_budget(summary_input.get(head_len..).unwrap_or(&[]), remaining);
+            trimmed.extend(tail);
+            summary_input = trimmed;
+        }
+        summary_input
+    }
+
     pub(super) fn locate_current_user_index(messages: &[Value]) -> Option<usize> {
         messages.iter().rposition(|message| {
             let role = message.get("role").and_then(Value::as_str).unwrap_or("");
@@ -169,6 +225,10 @@ impl Orchestrator {
         force: bool,
         exclude_current_user: bool,
         run_mode: CompactionRunMode,
+        // The exact tool definitions of the live request. The summary request
+        // replays them so the provider cache sees the same token prefix; dropping
+        // tools would diverge at the first token and bill the whole history.
+        tools: Option<&[Value]>,
     ) -> Result<CompactionResult, OrchestratorError> {
         let compaction_profile = CompactionExecutionProfile::new(run_mode);
         let trigger_mode = Some(compaction_profile.trigger_mode());
@@ -454,11 +514,6 @@ impl Orchestrator {
             &current_user_signature,
         );
         let compaction_message = json!({ "role": "user", "content": compaction_instruction });
-        let mut summary_input = build_compaction_summary_input(
-            system_message.as_ref(),
-            &source_messages,
-            compaction_message,
-        );
 
         let summary_config = build_compaction_summary_config(llm_config);
 
@@ -478,42 +533,28 @@ impl Orchestrator {
                 })),
             ));
         }
-        let per_message_limit = summary_limit.clamp(1, COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
-        // The frozen thread prompt is an immutable request prefix. Prepare
-        // history independently so compaction cannot truncate or merge it.
-        let frozen_summary_system = summary_input
-            .first()
-            .filter(|message| message.get("role").and_then(Value::as_str) == Some("system"))
-            .cloned();
-        let summary_history_start = usize::from(frozen_summary_system.is_some());
-        let mut prepared_summary_input = frozen_summary_system
-            .clone()
-            .into_iter()
-            .collect::<Vec<_>>();
-        prepared_summary_input.extend(self.prepare_summary_messages(
-            summary_input.split_off(summary_history_start),
-            per_message_limit,
-        ));
-        summary_input = prepared_summary_input;
-        if estimate_messages_tokens(&summary_input) > summary_limit {
-            summary_input = self.shrink_messages_to_limit(summary_input, summary_limit);
-        }
-        if estimate_messages_tokens(&summary_input) > summary_limit {
-            let mut trimmed = Vec::new();
-            let head_len = if summary_input.first().is_some_and(|message| {
-                message.get("role").and_then(Value::as_str) == Some("system")
-            }) {
-                trimmed.push(summary_input[0].clone());
-                1
-            } else {
-                0
-            };
-            let remaining = (summary_limit - estimate_messages_tokens(&trimmed)).max(1);
-            let tail =
-                trim_messages_to_budget(summary_input.get(head_len..).unwrap_or(&[]), remaining);
-            trimmed.extend(tail);
-            summary_input = trimmed;
-        }
+        // The replay is preferred because it keeps every token before the
+        // instruction warm in the provider cache. Oversized histories first
+        // shed tool payloads (structure preserved) and only fall back to the
+        // flattened transcript when even that does not fit.
+        let replayed = super::memory_support::replay_compaction_prefix(
+            &messages,
+            &compaction_instruction,
+        )
+        .map(|mut replay| {
+            super::memory_support::prune_replayed_tool_results(&mut replay, summary_limit);
+            replay
+        })
+        .filter(|replay| estimate_messages_tokens(replay) <= summary_limit);
+        let mut summary_input = match replayed {
+            Some(replay) => replay,
+            None => self.prepare_flattened_compaction_input(
+                system_message.as_ref(),
+                &source_messages,
+                compaction_message,
+                summary_limit,
+            ),
+        };
         ensure_frozen_system_message(&mut summary_input, system_message.as_ref(), summary_limit)?;
 
         // Compaction summary requests always log in the compact profile; the
@@ -551,7 +592,7 @@ impl Orchestrator {
             compaction_round,
             false,
             true,
-            None,
+            tools,
             Some(summary_config),
             None,
         ))
@@ -1389,6 +1430,7 @@ impl Orchestrator {
                 true,
                 false,
                 CompactionRunMode::Manual,
+                None,
             )
             .await
         {

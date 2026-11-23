@@ -3526,6 +3526,19 @@ fn project_token_bars(app: &MainWindow, model: &SnapshotModel, texts: &Texts, to
                 compact_tokens(usage.cache_write.unwrap_or(0.0))
             ));
         }
+        // 命中率 = 缓存读 / (未缓存输入 + 缓存读 + 缓存写)。三个桶互不重叠，
+        // 与提供方计费口径一致；没有缓存读时不显示，避免冷启动标成 0%。
+        let prompt_total = usage.input.unwrap_or(0.0)
+            + usage.cache_read.unwrap_or(0.0)
+            + usage.cache_write.unwrap_or(0.0);
+        let cache_read = usage.cache_read.unwrap_or(0.0);
+        if cache_read > 0.0 && prompt_total > 0.0 {
+            parts.push(format!(
+                "{} {}%",
+                label(zh, "缓存命中", "cache hit"),
+                (cache_read / prompt_total * 100.0).round() as i64
+            ));
+        }
         lines.push(parts.join(" · "));
         if let Some(duration) = cell
             .metrics

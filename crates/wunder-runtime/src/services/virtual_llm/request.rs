@@ -55,6 +55,8 @@ pub fn prepare_turn(
         output,
         total: input + output + reasoning,
         reasoning: Some(reasoning),
+        cache_read: 0,
+        cache_write: 0,
         estimated: true,
     });
     Ok(turn)

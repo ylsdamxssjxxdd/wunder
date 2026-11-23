@@ -369,6 +369,95 @@ fn apply_anthropic_thinking(payload: &mut Value, config: &LlmModelConfig) {
     payload["temperature"] = json!(1.0);
 }
 
+/// 给 Anthropic 请求体打上提示词缓存断点（prompt caching）。
+///
+/// Anthropic 缓存的是有序前缀，命中顺序为 tools → system → messages：断点标的是
+/// 「读到此处为止的前缀」。因此三个断点分别落在工具数组末尾、系统提示词末尾、
+/// 最后一条消息的最后一个内容块上，工具定义 + 系统提示词 + 完整对话历史就能被
+/// 下一次请求整体复用，只重算新增的尾部。此前 Anthropic 路径一个断点都没有，
+/// 服务端无从缓存，命中恒为 0。
+///
+/// 本函数必须幂等：构造后可能被重复经过（重试、补发、在同一结构上继续加工），
+/// 重复叠加 `cache_control` 会很快耗尽 Anthropic 的 4 个断点上限，还会让相邻
+/// 断点之间没有可缓存内容，白付 25% 的缓存写入溢价。
+fn apply_anthropic_prompt_cache(payload: &mut Value) {
+    // 断点 1：工具数组末尾。工具在缓存顺序最前，断点放这里即可同时覆盖工具+系统前缀。
+    if let Some(tools) = payload.get_mut("tools").and_then(Value::as_array_mut) {
+        if let Some(last_tool) = tools.last_mut() {
+            mark_ephemeral_cache_control(last_tool);
+        }
+    }
+
+    // 断点 2：系统提示词末尾。字符串形态要先转成 text 块数组，因为 `cache_control`
+    // 只能挂在内容块上，顶层字符串没有位置可挂。
+    if let Some(system) = payload.get_mut("system") {
+        match system {
+            Value::String(text) => {
+                if !text.trim().is_empty() {
+                    let text = std::mem::take(text);
+                    *system = json!([{
+                        "type": "text",
+                        "text": text,
+                        "cache_control": { "type": "ephemeral" },
+                    }]);
+                }
+            }
+            Value::Array(blocks) => {
+                // 系统提示词已经是数组时只给最后一个 text 块打断点，其他块类型不接受该字段。
+                if let Some(block) = blocks
+                    .iter_mut()
+                    .rev()
+                    .find(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+                {
+                    mark_ephemeral_cache_control(block);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // 断点 3：最后一条消息的最后一个内容块。断点必须落在对话尾部，才能让整段历史
+    // （含 tool_use / tool_result）在下一轮命中，而不只是前缀提示词。
+    if let Some(messages) = payload.get_mut("messages").and_then(Value::as_array_mut) {
+        if let Some(last_message) = messages.last_mut() {
+            if let Some(content) = last_message.get_mut("content") {
+                match content {
+                    Value::String(text) => {
+                        // 空内容没有可缓存的前缀，也避免发出 Anthropic 会拒绝的空 text 块。
+                        if !text.trim().is_empty() {
+                            let text = std::mem::take(text);
+                            // 先给块本身挂断点，再整体包成数组（数组本身不能承载字段）。
+                            let mut block = json!({ "type": "text", "text": text });
+                            mark_ephemeral_cache_control(&mut block);
+                            *content = json!([block]);
+                        }
+                    }
+                    Value::Array(blocks) => {
+                        // 末尾块可能是 tool_result、image 或 text，它们都支持该字段。
+                        if let Some(block) = blocks.last_mut() {
+                            mark_ephemeral_cache_control(block);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+/// 给单个内容块挂上 ephemeral 断点；已存在时原样保留，这是幂等的关键。
+fn mark_ephemeral_cache_control(block: &mut Value) {
+    let Value::Object(map) = block else {
+        return;
+    };
+    if !map.contains_key("cache_control") {
+        map.insert(
+            "cache_control".to_string(),
+            json!({ "type": "ephemeral" }),
+        );
+    }
+}
+
 /// 思考预算触顶时注入流式回调的提示，随思考增量展示并落入线程记录。
 /// 走 i18n，避免英文界面被硬编码中文污染。
 pub(crate) fn reasoning_budget_notice() -> String {
@@ -539,6 +628,8 @@ fn merge_token_usage(base: Option<TokenUsage>, extra: Option<TokenUsage>) -> Opt
                 (Some(a), None) => Some(a),
                 (None, b) => b,
             },
+            cache_read: a.cache_read.saturating_add(b.cache_read),
+            cache_write: a.cache_write.saturating_add(b.cache_write),
             estimated: a.estimated || b.estimated,
         }),
         (Some(a), None) => Some(a),
@@ -1773,6 +1864,9 @@ impl LlmClient {
                 payload["tool_choice"] = json!({ "type": "auto" });
             }
         }
+        // system / messages / tools 全部组装完成后统一打断点：断点必须覆盖最终前缀，
+        // 早于此处的任何位置都可能漏掉后续追加的字段。
+        apply_anthropic_prompt_cache(&mut payload);
         payload
     }
 
@@ -6020,6 +6114,243 @@ mod tests {
         assert!(payload.get("thinking_token_budget").is_none());
         assert!(payload.get("thinking_budget_tokens").is_none());
         assert_eq!(payload["max_tokens"], 8_192);
+    }
+
+    fn provider_test_config(provider: &str) -> LlmModelConfig {
+        LlmModelConfig {
+            enable: Some(true),
+            provider: Some(provider.to_string()),
+            model: Some("test-model".to_string()),
+            temperature: Some(0.7),
+            stream: Some(false),
+            stream_include_usage: Some(false),
+            model_type: Some("llm".to_string()),
+            ..Default::default()
+        }
+    }
+
+    fn cache_control_count(value: &Value) -> usize {
+        match value {
+            Value::Object(map) => map
+                .iter()
+                .map(|(key, value)| {
+                    usize::from(key == "cache_control") + cache_control_count(value)
+                })
+                .sum(),
+            Value::Array(items) => items.iter().map(cache_control_count).sum(),
+            _ => 0,
+        }
+    }
+
+    fn prompt_cache_messages() -> Vec<ChatMessage> {
+        vec![
+            ChatMessage {
+                role: "system".to_string(),
+                content: Value::String("You are a test assistant.".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: None,
+            },
+            ChatMessage {
+                role: "user".to_string(),
+                content: Value::String("list files".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: None,
+            },
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: Value::String(String::new()),
+                reasoning_content: None,
+                tool_calls: Some(json!([{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": { "name": "list_files", "arguments": "{\"path\":\".\"}" }
+                }])),
+                tool_call_id: None,
+            },
+            ChatMessage {
+                role: "tool".to_string(),
+                content: Value::String("[\"src\",\"Cargo.toml\"]".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: Some("call_1".to_string()),
+            },
+        ]
+    }
+
+    fn prompt_cache_tools() -> Vec<Value> {
+        vec![
+            json!({
+                "type": "function",
+                "function": {
+                    "name": "list_files",
+                    "description": "List files under a path",
+                    "parameters": { "type": "object", "properties": {} }
+                }
+            }),
+            json!({
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "description": "Read a file",
+                    "parameters": { "type": "object", "properties": {} }
+                }
+            }),
+        ]
+    }
+
+    #[test]
+    fn build_anthropic_payload_marks_three_prompt_cache_breakpoints() {
+        let client = LlmClient::new(Client::new(), provider_test_config("anthropic"));
+        let messages = prompt_cache_messages();
+        let tools = prompt_cache_tools();
+        let payload =
+            client.build_request_payload_with_tools(&messages, false, Some(tools.as_slice()));
+
+        // 断点 1：最后一个 tool 定义。
+        let tool_breakpoints = payload["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .filter(|tool| tool.get("cache_control").is_some())
+            .count();
+        assert_eq!(tool_breakpoints, 1);
+        assert_eq!(
+            payload["tools"][1]["cache_control"],
+            json!({ "type": "ephemeral" })
+        );
+        assert!(payload["tools"][0].get("cache_control").is_none());
+
+        // 断点 2：system 由字符串转成带断点的 text 块数组。
+        assert_eq!(payload["system"][0]["type"], "text");
+        assert_eq!(payload["system"][0]["text"], "You are a test assistant.");
+        assert_eq!(
+            payload["system"][0]["cache_control"],
+            json!({ "type": "ephemeral" })
+        );
+
+        // 断点 3：最后一条消息（tool_result）的最后一个块。
+        let messages_json = payload["messages"].as_array().expect("messages");
+        let last_blocks = messages_json
+            .last()
+            .and_then(|message| message["content"].as_array())
+            .expect("last message blocks");
+        assert_eq!(last_blocks[0]["type"], "tool_result");
+        assert_eq!(last_blocks[0]["tool_use_id"], "call_1");
+        assert_eq!(
+            last_blocks[0]["cache_control"],
+            json!({ "type": "ephemeral" })
+        );
+        assert_eq!(last_blocks[0]["content"], "[\"src\",\"Cargo.toml\"]");
+
+        // Anthropic 上限 4 个断点，这里恰好 3 个，且没有重复挂载。
+        assert_eq!(cache_control_count(&payload), 3);
+    }
+
+    #[test]
+    fn apply_anthropic_prompt_cache_is_idempotent() {
+        let client = LlmClient::new(Client::new(), provider_test_config("anthropic"));
+        let messages = prompt_cache_messages();
+        let tools = prompt_cache_tools();
+        let mut payload =
+            client.build_request_payload_with_tools(&messages, false, Some(tools.as_slice()));
+        let once = payload.clone();
+
+        apply_anthropic_prompt_cache(&mut payload);
+        apply_anthropic_prompt_cache(&mut payload);
+
+        // 重复调用不改变结构：不嵌套数组、不重复字段、断点仍为 3 个。
+        assert_eq!(payload, once);
+        assert_eq!(cache_control_count(&payload), 3);
+        assert_eq!(
+            payload["system"],
+            json!([{
+                "type": "text",
+                "text": "You are a test assistant.",
+                "cache_control": { "type": "ephemeral" },
+            }])
+        );
+    }
+
+    #[test]
+    fn non_anthropic_payload_contains_no_cache_control() {
+        let messages = prompt_cache_messages();
+        let tools = prompt_cache_tools();
+        for provider in ["deepseek", "openai_compatible", "qwen", "vllm"] {
+            let client = LlmClient::new(Client::new(), provider_test_config(provider));
+            let payload =
+                client.build_request_payload_with_tools(&messages, false, Some(tools.as_slice()));
+            let serialized = serde_json::to_string(&payload).expect("serialize payload");
+            assert!(
+                !serialized.contains("cache_control"),
+                "{provider} 请求体不应包含缓存断点：{serialized}"
+            );
+            // system 仍按 OpenAI 风格保留为普通消息，没有被 Anthropic 分支改写。
+            assert!(
+                payload["messages"][0]["content"].is_string(),
+                "{provider} 消息内容不应被转成分块数组"
+            );
+        }
+    }
+
+    #[test]
+    fn anthropic_prompt_cache_skips_empty_sections() {
+        let client = LlmClient::new(Client::new(), provider_test_config("anthropic"));
+        let payload = client.build_request_payload(
+            &[ChatMessage {
+                role: "user".to_string(),
+                content: Value::String("hello".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            false,
+        );
+
+        assert!(payload.get("system").is_none());
+        assert!(payload.get("tools").is_none());
+        // 只有消息尾部的 1 个断点。
+        assert_eq!(cache_control_count(&payload), 1);
+        assert_eq!(
+            payload["messages"][0]["content"][0]["cache_control"],
+            json!({ "type": "ephemeral" })
+        );
+
+        // 空 system / 空 tools / 空 messages 一律不加断点。
+        let mut empty = json!({ "system": "", "tools": [], "messages": [] });
+        let before = empty.clone();
+        apply_anthropic_prompt_cache(&mut empty);
+        assert_eq!(empty, before);
+    }
+
+    #[test]
+    fn anthropic_prompt_cache_handles_system_array_and_string_content() {
+        let mut payload = json!({
+            "system": [
+                { "type": "text", "text": "first" },
+                { "type": "text", "text": "second" }
+            ],
+            "messages": [
+                { "role": "user", "content": "plain text" }
+            ]
+        });
+        apply_anthropic_prompt_cache(&mut payload);
+
+        assert!(payload["system"][0].get("cache_control").is_none());
+        assert_eq!(
+            payload["system"][1]["cache_control"],
+            json!({ "type": "ephemeral" })
+        );
+        assert_eq!(
+            payload["messages"][0]["content"],
+            json!([{
+                "type": "text",
+                "text": "plain text",
+                "cache_control": { "type": "ephemeral" },
+            }])
+        );
+        assert_eq!(cache_control_count(&payload), 2);
     }
 
     #[test]
