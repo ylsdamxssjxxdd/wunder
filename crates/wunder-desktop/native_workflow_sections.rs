@@ -294,7 +294,11 @@ pub(super) fn project(tool: &str, payload: &Value, state: &str, fallback: &str) 
         }
     } else if matches!(
         tool,
-        "手机控制" | "手机控制器" | "手机监视器" | "phone_control" | "phone_controller"
+        "手机控制"
+            | "手机控制器"
+            | "手机监视器"
+            | "phone_control"
+            | "phone_controller"
             | "phone_monitor"
     ) {
         // The phone tool answers with one action and, for frame actions, the
@@ -321,9 +325,11 @@ pub(super) fn project(tool: &str, payload: &Value, state: &str, fallback: &str) 
         let width = data["normalized_width"].as_i64().unwrap_or(0);
         let height = data["normalized_height"].as_i64().unwrap_or(0);
         if width > 0 && height > 0 {
-            section
-                .lines
-                .push(line(format!("画面 {width}×{height}"), "note", String::new()));
+            section.lines.push(line(
+                format!("画面 {width}×{height}"),
+                "note",
+                String::new(),
+            ));
         }
         if !message.is_empty() {
             section.lines.push(line(

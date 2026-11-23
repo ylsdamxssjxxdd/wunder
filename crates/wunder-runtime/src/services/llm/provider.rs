@@ -4,12 +4,12 @@ use reqwest::header::HeaderMap;
 use url::Url;
 
 use super::{
-    build_headers, OpenAiApiMode, DEFAULT_ANTHROPIC_BASE_URL, DEFAULT_DEEPSEEK_BASE_URL,
-    DEFAULT_GROQ_BASE_URL, DEFAULT_LMSTUDIO_BASE_URL, DEFAULT_MISTRAL_BASE_URL,
-    DEFAULT_MOONSHOT_BASE_URL, DEFAULT_OLLAMA_BASE_URL, DEFAULT_OPENAI_BASE_URL,
-    DEFAULT_OPENROUTER_BASE_URL, DEFAULT_QWEN_BASE_URL, DEFAULT_SILICONFLOW_BASE_URL,
-    DEFAULT_TOGETHER_BASE_URL, DEFAULT_VLLM_OMNI_BASE_URL, DEFAULT_WHISPER_CPP_BASE_URL,
-    MESSAGES_RESOURCE, OPENAI_COMPAT_RESOURCE_SUFFIXES,
+    DEFAULT_ANTHROPIC_BASE_URL, DEFAULT_DEEPSEEK_BASE_URL, DEFAULT_GROQ_BASE_URL,
+    DEFAULT_LMSTUDIO_BASE_URL, DEFAULT_MISTRAL_BASE_URL, DEFAULT_MOONSHOT_BASE_URL,
+    DEFAULT_OLLAMA_BASE_URL, DEFAULT_OPENAI_BASE_URL, DEFAULT_OPENROUTER_BASE_URL,
+    DEFAULT_QWEN_BASE_URL, DEFAULT_SILICONFLOW_BASE_URL, DEFAULT_TOGETHER_BASE_URL,
+    DEFAULT_VLLM_OMNI_BASE_URL, DEFAULT_WHISPER_CPP_BASE_URL, MESSAGES_RESOURCE,
+    OPENAI_COMPAT_RESOURCE_SUFFIXES, OpenAiApiMode, build_headers,
 };
 
 pub fn normalize_provider(provider: Option<&str>) -> String {
@@ -459,8 +459,10 @@ mod tests {
         assert!(is_openai_compatible_provider("wunder_cloud"));
         assert!(is_openai_compatible_provider("cloud"));
         assert!(super::provider_default_base_url(crate::services::cloud::CLOUD_PROVIDER).is_none());
-        assert!(!super::PROVIDER_PRESETS
-            .iter()
-            .any(|(provider, _)| *provider == crate::services::cloud::CLOUD_PROVIDER));
+        assert!(
+            !super::PROVIDER_PRESETS
+                .iter()
+                .any(|(provider, _)| *provider == crate::services::cloud::CLOUD_PROVIDER)
+        );
     }
 }

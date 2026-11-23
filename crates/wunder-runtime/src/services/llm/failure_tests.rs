@@ -1,5 +1,5 @@
 use super::*;
-use axum::{body::Body, http::StatusCode, response::Response, routing::post, Router};
+use axum::{Router, body::Body, http::StatusCode, response::Response, routing::post};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 async fn fixture(
@@ -41,6 +41,7 @@ fn messages() -> Vec<ChatMessage> {
         role: "user".into(),
         content: json!("input"),
         reasoning_content: None,
+        anthropic_thinking_blocks: None,
         tool_calls: None,
         tool_call_id: None,
     }]
@@ -256,10 +257,12 @@ async fn malformed_stream_events_cannot_be_hidden_by_a_done_marker() {
         b"data: {invalid-json}\n\ndata: [DONE]\n\n".to_vec(),
     ] {
         let (client, server) = fragmented_fixture(body).await;
-        assert!(client
-            .stream_complete_with_callback(&messages(), |_, _| async { Ok(()) })
-            .await
-            .is_err());
+        assert!(
+            client
+                .stream_complete_with_callback(&messages(), |_, _| async { Ok(()) })
+                .await
+                .is_err()
+        );
         server.abort();
     }
 }

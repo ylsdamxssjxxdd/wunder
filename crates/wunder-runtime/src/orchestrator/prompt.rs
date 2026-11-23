@@ -1,5 +1,6 @@
 use super::*;
 use crate::tools::build_responses_freeform_tool;
+use serde::{Deserialize, Serialize};
 
 const MAX_FUNCTION_NAME_LEN: usize = 64;
 const THREAD_AGENTS_MD_FILE_NAME: &str = "AGENTS.md";
@@ -76,10 +77,83 @@ fn tool_function_names(tools: &[Value]) -> Vec<String> {
     names
 }
 
+#[derive(Clone)]
 pub(crate) struct FunctionTooling {
     pub(crate) tools: Vec<Value>,
     pub(crate) name_map: HashMap<String, String>,
     pub(crate) display_map: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FrozenFunctionTooling {
+    epoch: u64,
+    tools: Vec<Value>,
+    name_map: HashMap<String, String>,
+    display_map: HashMap<String, String>,
+}
+
+impl FrozenFunctionTooling {
+    fn new(tooling: &FunctionTooling, epoch: u64) -> Self {
+        Self {
+            epoch,
+            tools: tooling.tools.clone(),
+            name_map: tooling.name_map.clone(),
+            display_map: tooling.display_map.clone(),
+        }
+    }
+}
+
+fn same_tool_definitions(left: &[Value], right: &[Value]) -> bool {
+    if tool_function_names(left) != tool_function_names(right) {
+        return false;
+    }
+    let mut left = left.iter().collect::<Vec<_>>();
+    let mut right = right.iter().collect::<Vec<_>>();
+    let name = |tool: &&Value| {
+        tool.get("function")
+            .and_then(|function| function.get("name"))
+            .and_then(Value::as_str)
+            .or_else(|| tool.get("name").and_then(Value::as_str))
+            .unwrap_or("")
+            .to_string()
+    };
+    left.sort_by_key(&name);
+    right.sort_by_key(&name);
+    left.into_iter().zip(right).all(|(a, b)| a == b)
+}
+
+fn restore_tooling_snapshot(
+    mut current: FunctionTooling,
+    stored: Option<Value>,
+) -> (FunctionTooling, Value, bool, bool) {
+    let frozen = stored
+        .as_ref()
+        .and_then(|value| serde_json::from_value::<FrozenFunctionTooling>(value.clone()).ok());
+    let legacy_tools = stored.as_ref().and_then(Value::as_array).cloned();
+    let frozen_tools = frozen
+        .as_ref()
+        .map(|snapshot| snapshot.tools.clone())
+        .or(legacy_tools);
+    let previous_epoch = frozen.as_ref().map_or(0, |snapshot| snapshot.epoch);
+    if let Some(tools) = frozen_tools.filter(|tools| {
+        same_tool_definitions(tools, &current.tools)
+            && frozen.as_ref().is_none_or(|snapshot| {
+                snapshot.name_map == current.name_map && snapshot.display_map == current.display_map
+            })
+    }) {
+        current.tools = tools;
+        if let Some(snapshot) = frozen.as_ref() {
+            current.name_map = snapshot.name_map.clone();
+            current.display_map = snapshot.display_map.clone();
+        }
+        let save = frozen.is_none();
+        let snapshot = FrozenFunctionTooling::new(&current, previous_epoch.max(1));
+        let value = serde_json::to_value(snapshot).unwrap_or(Value::Null);
+        return (current, value, save, false);
+    }
+    let snapshot = FrozenFunctionTooling::new(&current, previous_epoch.saturating_add(1).max(1));
+    let value = serde_json::to_value(snapshot).unwrap_or(Value::Null);
+    (current, value, true, true)
 }
 
 impl Orchestrator {
@@ -250,43 +324,32 @@ impl Orchestrator {
         })
     }
 
-    /// 复用线程首个请求实际发送的工具定义快照。
-    ///
-    /// 工具 schema 与描述由当前 catalog/MCP 连接实时生成，进程重启、MCP 重连
-    /// 或别名去重规则变化都会让同一线程的 tools 数组字节变化，提供方前缀缓存
-    /// 从第一个工具 token 起全部作废。这里只做一件事：**函数名集合完全相同**
-    /// 时改用快照（顺序也沿用快照），否则写入新快照并继续用新定义。
-    ///
-    /// 权限没有被绕过：`allowed_tool_names` 在构建 tooling 时已经过滤过，
-    /// 快照里不存在的工具不会因为复用而重新出现；函数名集合变化（例如权限
-    /// 被收回）本来就会让前缀失效，此时用新定义是唯一正确的选择。
+    /// 复用线程的工具面快照。仅目录顺序变化不改变实际请求；描述、参数、
+    /// 权限或执行映射变化时递增 schema epoch 并启用新定义，避免模型继续按
+    /// 过期 schema 调用当前工具。
     pub(crate) fn restore_frozen_tooling(
         &self,
         user_id: &str,
         session_id: &str,
         tooling: Option<FunctionTooling>,
     ) -> Option<FunctionTooling> {
-        let mut tooling = tooling?;
-        let current_names = tool_function_names(&tooling.tools);
-        if current_names.is_empty() {
+        let tooling = tooling?;
+        if tool_function_names(&tooling.tools).is_empty() {
             return Some(tooling);
         }
-        if let Some(frozen) = self
-            .workspace
-            .load_session_tool_schema(user_id, session_id)
-            .and_then(|value| value.as_array().cloned())
-            .filter(|items| !items.is_empty())
-        {
-            if tool_function_names(&frozen) == current_names {
-                tooling.tools = frozen;
-                return Some(tooling);
-            }
+        let stored = self.workspace.load_session_tool_schema(user_id, session_id);
+        let (tooling, snapshot, save, new_epoch) = restore_tooling_snapshot(tooling, stored);
+        if save {
+            self.workspace
+                .save_session_tool_schema(user_id, session_id, &snapshot);
         }
-        self.workspace.save_session_tool_schema(
-            user_id,
-            session_id,
-            &Value::Array(tooling.tools.clone()),
-        );
+        if new_epoch {
+            tracing::info!(
+                session_id,
+                schema_epoch = snapshot["epoch"].as_u64().unwrap_or(0),
+                "tool schema changed; started a new provider prompt-cache epoch"
+            );
+        }
         Some(tooling)
     }
 
@@ -1209,5 +1272,76 @@ mod tests {
             map.get("extra_mcp@__mcp_pack__").map(String::as_str),
             Some("extra_mcp@__mcp_pack__")
         );
+    }
+
+    fn tooling(tools: Vec<Value>) -> FunctionTooling {
+        let names = tool_function_names(&tools);
+        FunctionTooling {
+            tools,
+            name_map: names
+                .iter()
+                .map(|name| (name.clone(), format!("runtime_{name}")))
+                .collect(),
+            display_map: names.into_iter().map(|name| (name.clone(), name)).collect(),
+        }
+    }
+
+    fn tool(name: &str, description: &str) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": description,
+                "parameters": {"type": "object", "properties": {}}
+            }
+        })
+    }
+
+    #[test]
+    fn tooling_snapshot_reuses_equivalent_definitions_despite_catalog_reordering() {
+        let original = tooling(vec![tool("a", "A"), tool("b", "B")]);
+        let (_, stored, save, new_epoch) = restore_tooling_snapshot(original.clone(), None);
+        assert!(save && new_epoch);
+
+        let reordered = tooling(vec![tool("b", "B"), tool("a", "A")]);
+        let (restored, _, save, new_epoch) = restore_tooling_snapshot(reordered, Some(stored));
+        assert_eq!(restored.tools, original.tools);
+        assert!(!save);
+        assert!(!new_epoch);
+    }
+
+    #[test]
+    fn tooling_snapshot_opens_new_epoch_for_schema_and_mapping_changes() {
+        let original = tooling(vec![tool("a", "A")]);
+        let (_, stored, _, _) = restore_tooling_snapshot(original.clone(), None);
+
+        let changed_schema = tooling(vec![tool("a", "new schema")]);
+        let (restored, snapshot, save, new_epoch) =
+            restore_tooling_snapshot(changed_schema.clone(), Some(stored.clone()));
+        assert_eq!(restored.tools, changed_schema.tools);
+        assert_eq!(snapshot["epoch"], json!(2));
+        assert!(save && new_epoch);
+
+        let mut changed_mapping = original;
+        changed_mapping
+            .name_map
+            .insert("a".into(), "different_runtime".into());
+        let (restored, snapshot, _, new_epoch) =
+            restore_tooling_snapshot(changed_mapping.clone(), Some(stored));
+        assert_eq!(restored.name_map, changed_mapping.name_map);
+        assert_eq!(snapshot["epoch"], json!(2));
+        assert!(new_epoch);
+    }
+
+    #[test]
+    fn tooling_snapshot_upgrades_legacy_arrays_without_changing_the_request() {
+        let current = tooling(vec![tool("a", "A")]);
+        let legacy = Value::Array(current.tools.clone());
+        let (restored, snapshot, save, new_epoch) =
+            restore_tooling_snapshot(current.clone(), Some(legacy));
+        assert_eq!(restored.tools, current.tools);
+        assert_eq!(snapshot["epoch"], json!(1));
+        assert!(save);
+        assert!(!new_epoch);
     }
 }

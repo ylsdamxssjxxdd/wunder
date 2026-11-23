@@ -119,16 +119,23 @@ impl RequestBudget {
         if self.admitted() {
             return Ok(self);
         }
-        let error = OrchestratorError::new("CONTEXT_WINDOW_EXCEEDED", format!(
-            "Request context estimate {} exceeds input budget {} (output reserve {}, safety reserve {}). Reduce tool definitions or compact conversation history.",
-            self.estimated_tokens, self.limit_tokens, self.output_reserve_tokens, self.safety_reserve_tokens,
-        ), Some(json!({
-            "source":"local_request_admission",
-            "estimated_tokens":self.estimated_tokens,
-            "input_budget_tokens":self.limit_tokens,
-            "output_reserve_tokens":self.output_reserve_tokens,
-            "safety_reserve_tokens":self.safety_reserve_tokens,
-        })));
+        let error = OrchestratorError::new(
+            "CONTEXT_WINDOW_EXCEEDED",
+            format!(
+                "Request context estimate {} exceeds input budget {} (output reserve {}, safety reserve {}). Reduce tool definitions or compact conversation history.",
+                self.estimated_tokens,
+                self.limit_tokens,
+                self.output_reserve_tokens,
+                self.safety_reserve_tokens,
+            ),
+            Some(json!({
+                "source":"local_request_admission",
+                "estimated_tokens":self.estimated_tokens,
+                "input_budget_tokens":self.limit_tokens,
+                "output_reserve_tokens":self.output_reserve_tokens,
+                "safety_reserve_tokens":self.safety_reserve_tokens,
+            })),
+        );
         Err(error)
     }
 }
@@ -142,6 +149,7 @@ mod tests {
             role: role.into(),
             content,
             reasoning_content: None,
+            anthropic_thinking_blocks: None,
             tool_calls: None,
             tool_call_id: None,
         }

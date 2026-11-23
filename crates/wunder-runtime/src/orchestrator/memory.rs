@@ -1,6 +1,6 @@
 use super::execute_support::{
-    build_persisted_message_stats, emit_turn_terminal_event, turn_terminal_status_for_error,
-    TurnTerminalEvent,
+    TurnTerminalEvent, build_persisted_message_stats, emit_turn_terminal_event,
+    turn_terminal_status_for_error,
 };
 use super::thread_runtime::ThreadRuntimeStatus;
 use super::*;
@@ -8,7 +8,7 @@ use super::*;
 use super::memory_support::*;
 use crate::core::{blocking, long_task};
 
-pub(super) use super::memory_support::{insert_compaction_id, CompactionRunMode};
+pub(super) use super::memory_support::{CompactionRunMode, insert_compaction_id};
 
 fn ensure_frozen_system_message(
     messages: &mut Vec<Value>,
@@ -537,15 +537,13 @@ impl Orchestrator {
         // instruction warm in the provider cache. Oversized histories first
         // shed tool payloads (structure preserved) and only fall back to the
         // flattened transcript when even that does not fit.
-        let replayed = super::memory_support::replay_compaction_prefix(
-            &messages,
-            &compaction_instruction,
-        )
-        .map(|mut replay| {
-            super::memory_support::prune_replayed_tool_results(&mut replay, summary_limit);
-            replay
-        })
-        .filter(|replay| estimate_messages_tokens(replay) <= summary_limit);
+        let replayed =
+            super::memory_support::replay_compaction_prefix(&messages, &compaction_instruction)
+                .map(|mut replay| {
+                    super::memory_support::prune_replayed_tool_results(&mut replay, summary_limit);
+                    replay
+                })
+                .filter(|replay| estimate_messages_tokens(replay) <= summary_limit);
         let mut summary_input = match replayed {
             Some(replay) => replay,
             None => self.prepare_flattened_compaction_input(
@@ -2085,6 +2083,7 @@ impl Orchestrator {
                         role: "system".to_string(),
                         content: json!(prompt),
                         reasoning_content: None,
+                        anthropic_thinking_blocks: None,
                         tool_calls: None,
                         tool_call_id: None,
                     },
@@ -2092,6 +2091,7 @@ impl Orchestrator {
                         role: "user".to_string(),
                         content: json!(request_text),
                         reasoning_content: None,
+                        anthropic_thinking_blocks: None,
                         tool_calls: None,
                         tool_call_id: None,
                     },
@@ -2266,9 +2266,11 @@ mod tests {
             messages[0]["content"],
             json!("frozen prompt\n\nartifact index")
         );
-        assert!(messages
-            .iter()
-            .skip(1)
-            .all(|message| message["role"] != json!("system")));
+        assert!(
+            messages
+                .iter()
+                .skip(1)
+                .all(|message| message["role"] != json!("system"))
+        );
     }
 }

@@ -2,17 +2,18 @@
 use crate::config::LlmModelConfig;
 use crate::schemas::TokenUsage;
 use crate::services::cloud::{
-    network_error_summary, shared as cloud_shared, CloudQuotaInsufficient, CloudSessionExpired,
-    CLOUD_PROVIDER, CLOUD_QUEUE_JITTER_MS, CLOUD_QUEUE_MAX_WAIT_SECS,
+    CLOUD_PROVIDER, CLOUD_QUEUE_JITTER_MS, CLOUD_QUEUE_MAX_WAIT_SECS, CloudQuotaInsufficient,
+    CloudSessionExpired, network_error_summary, shared as cloud_shared,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use futures::StreamExt;
 use reqwest::Client;
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tracing::warn;
 
@@ -21,15 +22,21 @@ pub(crate) mod benchmark;
 mod context_probe;
 mod failure;
 pub(crate) use failure::{
-    summarize_llm_transport_error, LlmHttpError, LlmPayloadError, ProviderFailureKind,
+    LlmHttpError, LlmPayloadError, ProviderFailureKind, summarize_llm_transport_error,
 };
 #[cfg(test)]
 mod failure_tests;
 pub(crate) mod output;
 mod payload;
+mod prompt_cache;
 mod provider;
 mod response;
 mod usage;
+#[cfg(test)]
+use prompt_cache::apply_anthropic_prompt_cache;
+use prompt_cache::{anthropic_cache_tail, apply_anthropic_prompt_cache_with_state};
+#[cfg(test)]
+mod prompt_cache_tests;
 use usage::{merge_anthropic_usage, normalize_usage};
 mod stream_decode;
 mod stream_tool;
@@ -41,31 +48,30 @@ use payload::{
     build_responses_input, normalize_chat_tool_definition, normalize_responses_tool_definition,
     sanitize_chat_messages,
 };
+pub use provider::{
+    PROVIDER_PRESETS, build_model_auth_headers, build_openai_model_resource_endpoint,
+    is_openai_compatible_provider, normalize_openai_api_mode, normalize_provider,
+    provider_default_base_url, resolve_model_base_url, resolve_openai_api_mode,
+    should_disable_streaming_for_native_tools,
+};
 use provider::{
     build_anthropic_messages_endpoint, build_openai_resource_endpoint, resolve_base_url,
     should_strip_openai_tool_schema,
 };
-pub use provider::{
-    build_model_auth_headers, build_openai_model_resource_endpoint, is_openai_compatible_provider,
-    normalize_openai_api_mode, normalize_provider, provider_default_base_url,
-    resolve_model_base_url, resolve_openai_api_mode, should_disable_streaming_for_native_tools,
-    PROVIDER_PRESETS,
-};
 #[cfg(test)]
 use response::extract_tool_calls;
 use response::{
-    build_anthropic_messages, extract_responses_output, has_stream_tool_activity,
-    is_false_tool_stop_reason, openai_tool_definition_to_anthropic_tool, parse_anthropic_body,
-    parse_chat_completion_body, parse_responses_body,
+    anthropic_thinking_blocks, build_anthropic_messages, extract_responses_output,
+    has_stream_tool_activity, is_false_tool_stop_reason, openai_tool_definition_to_anthropic_tool,
+    parse_anthropic_body, parse_chat_completion_body, parse_responses_body,
 };
 #[cfg(test)]
 use stream_tool::merge_stream_delta_field;
 use stream_tool::{
-    finalize_stream_tool_calls, merge_stream_tool_call_item, resolve_stream_tool_call_arguments,
-    resolve_stream_tool_call_name, update_responses_tool_call_arguments,
-    update_responses_tool_call_from_item, update_stream_tool_calls_delta,
-    update_stream_tool_calls_snapshot, upsert_responses_tool_calls, StreamToolCall,
-    StreamToolFieldMode,
+    StreamToolCall, StreamToolFieldMode, finalize_stream_tool_calls, merge_stream_tool_call_item,
+    resolve_stream_tool_call_arguments, resolve_stream_tool_call_name,
+    update_responses_tool_call_arguments, update_responses_tool_call_from_item,
+    update_stream_tool_calls_delta, update_stream_tool_calls_snapshot, upsert_responses_tool_calls,
 };
 
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
@@ -369,95 +375,6 @@ fn apply_anthropic_thinking(payload: &mut Value, config: &LlmModelConfig) {
     payload["temperature"] = json!(1.0);
 }
 
-/// 给 Anthropic 请求体打上提示词缓存断点（prompt caching）。
-///
-/// Anthropic 缓存的是有序前缀，命中顺序为 tools → system → messages：断点标的是
-/// 「读到此处为止的前缀」。因此三个断点分别落在工具数组末尾、系统提示词末尾、
-/// 最后一条消息的最后一个内容块上，工具定义 + 系统提示词 + 完整对话历史就能被
-/// 下一次请求整体复用，只重算新增的尾部。此前 Anthropic 路径一个断点都没有，
-/// 服务端无从缓存，命中恒为 0。
-///
-/// 本函数必须幂等：构造后可能被重复经过（重试、补发、在同一结构上继续加工），
-/// 重复叠加 `cache_control` 会很快耗尽 Anthropic 的 4 个断点上限，还会让相邻
-/// 断点之间没有可缓存内容，白付 25% 的缓存写入溢价。
-fn apply_anthropic_prompt_cache(payload: &mut Value) {
-    // 断点 1：工具数组末尾。工具在缓存顺序最前，断点放这里即可同时覆盖工具+系统前缀。
-    if let Some(tools) = payload.get_mut("tools").and_then(Value::as_array_mut) {
-        if let Some(last_tool) = tools.last_mut() {
-            mark_ephemeral_cache_control(last_tool);
-        }
-    }
-
-    // 断点 2：系统提示词末尾。字符串形态要先转成 text 块数组，因为 `cache_control`
-    // 只能挂在内容块上，顶层字符串没有位置可挂。
-    if let Some(system) = payload.get_mut("system") {
-        match system {
-            Value::String(text) => {
-                if !text.trim().is_empty() {
-                    let text = std::mem::take(text);
-                    *system = json!([{
-                        "type": "text",
-                        "text": text,
-                        "cache_control": { "type": "ephemeral" },
-                    }]);
-                }
-            }
-            Value::Array(blocks) => {
-                // 系统提示词已经是数组时只给最后一个 text 块打断点，其他块类型不接受该字段。
-                if let Some(block) = blocks
-                    .iter_mut()
-                    .rev()
-                    .find(|block| block.get("type").and_then(Value::as_str) == Some("text"))
-                {
-                    mark_ephemeral_cache_control(block);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    // 断点 3：最后一条消息的最后一个内容块。断点必须落在对话尾部，才能让整段历史
-    // （含 tool_use / tool_result）在下一轮命中，而不只是前缀提示词。
-    if let Some(messages) = payload.get_mut("messages").and_then(Value::as_array_mut) {
-        if let Some(last_message) = messages.last_mut() {
-            if let Some(content) = last_message.get_mut("content") {
-                match content {
-                    Value::String(text) => {
-                        // 空内容没有可缓存的前缀，也避免发出 Anthropic 会拒绝的空 text 块。
-                        if !text.trim().is_empty() {
-                            let text = std::mem::take(text);
-                            // 先给块本身挂断点，再整体包成数组（数组本身不能承载字段）。
-                            let mut block = json!({ "type": "text", "text": text });
-                            mark_ephemeral_cache_control(&mut block);
-                            *content = json!([block]);
-                        }
-                    }
-                    Value::Array(blocks) => {
-                        // 末尾块可能是 tool_result、image 或 text，它们都支持该字段。
-                        if let Some(block) = blocks.last_mut() {
-                            mark_ephemeral_cache_control(block);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-}
-
-/// 给单个内容块挂上 ephemeral 断点；已存在时原样保留，这是幂等的关键。
-fn mark_ephemeral_cache_control(block: &mut Value) {
-    let Value::Object(map) = block else {
-        return;
-    };
-    if !map.contains_key("cache_control") {
-        map.insert(
-            "cache_control".to_string(),
-            json!({ "type": "ephemeral" }),
-        );
-    }
-}
-
 /// 思考预算触顶时注入流式回调的提示，随思考增量展示并落入线程记录。
 /// 走 i18n，避免英文界面被硬编码中文污染。
 pub(crate) fn reasoning_budget_notice() -> String {
@@ -694,6 +611,8 @@ pub struct ChatMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub anthropic_thinking_blocks: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
@@ -706,6 +625,7 @@ pub struct LlmResponse {
     pub reasoning: String,
     pub usage: Option<TokenUsage>,
     pub tool_calls: Option<Value>,
+    pub anthropic_thinking_blocks: Option<Value>,
     /// A streaming attempt whose thinking budget was exhausted already
     /// resent the request once with thinking disabled. Recovery is a
     /// once-per-turn budget shared with `EmptyOutputGuard`, so the
@@ -725,9 +645,47 @@ struct StreamOutputState {
     finish_reason: Option<String>,
     displayed: String,
     displayed_tail: String,
+    anthropic_thinking_blocks: BTreeMap<usize, Value>,
 }
 
 impl StreamOutputState {
+    fn start_anthropic_block(&mut self, index: usize, block: &Value) {
+        if matches!(
+            block.get("type").and_then(Value::as_str),
+            Some("thinking" | "redacted_thinking")
+        ) {
+            self.anthropic_thinking_blocks.insert(index, block.clone());
+        }
+    }
+
+    fn append_anthropic_delta(&mut self, index: usize, delta: &Value) {
+        let Some(block) = self.anthropic_thinking_blocks.get_mut(&index) else {
+            return;
+        };
+        let delta_type = delta.get("type").and_then(Value::as_str).unwrap_or("");
+        let (target, source) = match delta_type {
+            "thinking_delta" => (
+                "thinking",
+                delta.get("thinking").or_else(|| delta.get("text")),
+            ),
+            "signature_delta" => ("signature", delta.get("signature")),
+            _ => return,
+        };
+        if let Some(text) = source.and_then(Value::as_str) {
+            let current = block
+                .get(target)
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            block[target] = Value::String(format!("{current}{text}"));
+        }
+    }
+
+    fn anthropic_thinking_blocks(&self) -> Option<Value> {
+        (!self.anthropic_thinking_blocks.is_empty())
+            .then(|| Value::Array(self.anthropic_thinking_blocks.values().cloned().collect()))
+    }
+
     fn active(&self) -> bool {
         !self.displayed.is_empty()
     }
@@ -1086,6 +1044,8 @@ fn cloud_queue_jitter_ms() -> u64 {
         .unwrap_or(0)
 }
 
+type AnthropicCacheTailSink = Arc<parking_lot::Mutex<Option<Value>>>;
+
 #[derive(Clone)]
 pub struct LlmClient {
     http: Client,
@@ -1093,6 +1053,10 @@ pub struct LlmClient {
     request_admission: Option<admission::RequestAdmission>,
     /// Optional per-call observer for cloud queue positions (§4.4.4).
     cloud_queue_hook: Option<Arc<dyn Fn(u64) + Send + Sync>>,
+    prompt_cache_key: Option<String>,
+    previous_anthropic_cache_tail: Option<Value>,
+    anthropic_cache_tail_sink: Option<AnthropicCacheTailSink>,
+    anthropic_static_ttl_1h: bool,
 }
 
 impl LlmClient {
@@ -1102,6 +1066,10 @@ impl LlmClient {
             config,
             request_admission: None,
             cloud_queue_hook: None,
+            prompt_cache_key: None,
+            previous_anthropic_cache_tail: None,
+            anthropic_cache_tail_sink: None,
+            anthropic_static_ttl_1h: false,
         }
     }
 
@@ -1109,6 +1077,23 @@ impl LlmClient {
     /// with the reported position whenever the server defers the call.
     pub fn with_cloud_queue_callback(mut self, hook: Arc<dyn Fn(u64) + Send + Sync>) -> Self {
         self.cloud_queue_hook = Some(hook);
+        self
+    }
+
+    pub(crate) fn with_prompt_cache_key(mut self, key: String) -> Self {
+        self.prompt_cache_key = Some(key);
+        self
+    }
+
+    pub(crate) fn with_anthropic_cache_state(
+        mut self,
+        previous_tail: Option<Value>,
+        current_tail_sink: AnthropicCacheTailSink,
+        static_ttl_1h: bool,
+    ) -> Self {
+        self.previous_anthropic_cache_tail = previous_tail;
+        self.anthropic_cache_tail_sink = Some(current_tail_sink);
+        self.anthropic_static_ttl_1h = static_ttl_1h;
         self
     }
 
@@ -1123,14 +1108,9 @@ impl LlmClient {
     }
 
     fn with_reasoning_effort(&self, effort: Option<String>) -> Self {
-        let mut config = self.config.clone();
-        config.reasoning_effort = effort;
-        Self {
-            http: self.http.clone(),
-            config,
-            request_admission: self.request_admission.clone(),
-            cloud_queue_hook: self.cloud_queue_hook.clone(),
-        }
+        let mut next = self.clone();
+        next.config.reasoning_effort = effort;
+        next
     }
 
     // Compute the degraded effort for one retry after the provider rejected
@@ -1420,6 +1400,11 @@ impl LlmClient {
             reasoning: ReasoningBudgetCap::new(&self.config).trim(reasoning),
             usage,
             tool_calls,
+            anthropic_thinking_blocks: if self.is_anthropic_provider() {
+                anthropic_thinking_blocks(&body)
+            } else {
+                None
+            },
             transport_recovery_used: false,
         })
     }
@@ -1722,12 +1707,14 @@ impl LlmClient {
             if !saw_done && final_response_preview.finish_reason.is_none() {
                 return Err(anyhow!("LLM stream ended without a completed response"));
             }
+            let anthropic_thinking_blocks = final_response_preview.anthropic_thinking_blocks();
             return Ok(StreamAttempt::Completed(LlmResponse {
                 finish_reason: final_response_preview.finish_reason,
                 content: combined,
                 reasoning: trim_reasoning_to_budget(reasoning_combined, budget_tokens),
                 usage,
                 tool_calls,
+                anthropic_thinking_blocks,
                 transport_recovery_used: false,
             }));
         }
@@ -1864,9 +1851,15 @@ impl LlmClient {
                 payload["tool_choice"] = json!({ "type": "auto" });
             }
         }
-        // system / messages / tools 全部组装完成后统一打断点：断点必须覆盖最终前缀，
-        // 早于此处的任何位置都可能漏掉后续追加的字段。
-        apply_anthropic_prompt_cache(&mut payload);
+        let current_tail = anthropic_cache_tail(&payload["messages"]);
+        if let Some(sink) = self.anthropic_cache_tail_sink.as_ref() {
+            *sink.lock() = current_tail;
+        }
+        apply_anthropic_prompt_cache_with_state(
+            &mut payload,
+            self.previous_anthropic_cache_tail.as_ref(),
+            self.anthropic_static_ttl_1h,
+        );
         payload
     }
 
@@ -1878,6 +1871,9 @@ impl LlmClient {
         tools: Option<&[Value]>,
     ) -> Value {
         let mut messages = sanitize_chat_messages(messages);
+        for message in &mut messages {
+            message.anthropic_thinking_blocks = None;
+        }
         backfill_reasoning_content(&mut messages, &self.config);
         let openai_top_level_schema_guard =
             should_strip_openai_tool_schema(self.config.provider.as_deref());
@@ -1927,7 +1923,17 @@ impl LlmClient {
                 payload["tool_choice"] = json!("auto");
             }
         }
+        self.apply_openai_prompt_cache_key(&mut payload);
         payload
+    }
+
+    fn apply_openai_prompt_cache_key(&self, payload: &mut Value) {
+        if normalize_provider(self.config.provider.as_deref()) != "openai" {
+            return;
+        }
+        if let Some(key) = self.prompt_cache_key.as_ref() {
+            payload["prompt_cache_key"] = Value::String(key.clone());
+        }
     }
 
     fn build_responses_payload(
@@ -1976,6 +1982,7 @@ impl LlmClient {
                 payload["tool_choice"] = json!("auto");
             }
         }
+        self.apply_openai_prompt_cache_key(&mut payload);
         payload
     }
 }
@@ -2517,6 +2524,7 @@ where
         "content_block_start" => {
             let index = payload.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
             if let Some(block) = payload.get("content_block") {
+                final_response_preview.start_anthropic_block(index, block);
                 let block_type = block
                     .get("type")
                     .and_then(Value::as_str)
@@ -2576,6 +2584,7 @@ where
         "content_block_delta" => {
             let index = payload.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
             if let Some(delta) = payload.get("delta") {
+                final_response_preview.append_anthropic_delta(index, delta);
                 let delta_type = delta
                     .get("type")
                     .and_then(Value::as_str)
@@ -2644,6 +2653,13 @@ where
         "message" => {
             if let Some(new_usage) = normalize_usage(payload.get("usage")) {
                 *usage = Some(new_usage);
+            }
+            if final_response_preview.anthropic_thinking_blocks.is_empty() {
+                if let Some(Value::Array(blocks)) = anthropic_thinking_blocks(payload) {
+                    for (index, block) in blocks.iter().enumerate() {
+                        final_response_preview.start_anthropic_block(index, block);
+                    }
+                }
             }
             let (text, reasoning, tool_calls) = parse_anthropic_body(payload);
             if combined.is_empty() && !text.is_empty() {
@@ -2904,6 +2920,7 @@ mod tests {
                 role: "system".to_string(),
                 content: Value::String("You are a test assistant.".to_string()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: None,
             },
@@ -2911,13 +2928,17 @@ mod tests {
                 role: "user".to_string(),
                 content: Value::String("list files".to_string()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: None,
             },
             ChatMessage {
                 role: "assistant".to_string(),
                 content: Value::String(String::new()),
-                reasoning_content: None,
+                reasoning_content: Some("step 1".into()),
+                anthropic_thinking_blocks: Some(json!([
+                    {"type": "thinking", "thinking": "step 1", "signature": "signed-abc"}
+                ])),
                 tool_calls: Some(json!([{
                     "id": "call_1",
                     "type": "function",
@@ -2932,6 +2953,7 @@ mod tests {
                 role: "tool".to_string(),
                 content: Value::String("[\"src\",\"Cargo.toml\"]".to_string()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: Some("call_1".to_string()),
             },
@@ -2941,8 +2963,13 @@ mod tests {
         assert_eq!(system, Some("You are a test assistant.".to_string()));
         assert_eq!(anthropic_messages[0]["role"], "user");
         assert_eq!(anthropic_messages[1]["role"], "assistant");
-        assert_eq!(anthropic_messages[1]["content"][0]["type"], "tool_use");
-        assert_eq!(anthropic_messages[1]["content"][0]["name"], "list_files");
+        assert_eq!(anthropic_messages[1]["content"][0]["type"], "thinking");
+        assert_eq!(
+            anthropic_messages[1]["content"][0]["signature"],
+            "signed-abc"
+        );
+        assert_eq!(anthropic_messages[1]["content"][1]["type"], "tool_use");
+        assert_eq!(anthropic_messages[1]["content"][1]["name"], "list_files");
         assert_eq!(anthropic_messages[2]["role"], "user");
         assert_eq!(anthropic_messages[2]["content"][0]["type"], "tool_result");
         assert_eq!(anthropic_messages[2]["content"][0]["tool_use_id"], "call_1");
@@ -3053,8 +3080,8 @@ mod tests {
 
     #[tokio::test]
     async fn embed_texts_retries_without_encoding_format_when_rejected() {
-        use axum::routing::post;
         use axum::Router;
+        use axum::routing::post;
         use tokio::net::TcpListener;
 
         let app = Router::new().route(
@@ -3242,6 +3269,43 @@ mod tests {
         assert!(done);
         assert_eq!(combined, "anthropic-ok");
         assert!(reasoning.is_empty());
+    }
+
+    #[tokio::test]
+    async fn anthropic_stream_preserves_signed_and_redacted_thinking_blocks() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let mut preview = StreamOutputState::default();
+        let mut on_delta = |_content: String, _reasoning: String| async { Ok(()) };
+        for event in [
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"step \"}}",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"one\"}}",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"signed-abc\"}}",
+            "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"redacted_thinking\",\"data\":\"encrypted-data\"}}",
+        ] {
+            process_sse_event_block_with_preview(
+                event,
+                &mut combined,
+                &mut reasoning,
+                &mut usage,
+                &mut tool_calls,
+                &mut preview,
+                &mut on_delta,
+            )
+            .await
+            .expect("process thinking stream");
+        }
+
+        assert_eq!(reasoning, "step one");
+        assert_eq!(
+            preview.anthropic_thinking_blocks(),
+            Some(json!([
+                {"type": "thinking", "thinking": "step one", "signature": "signed-abc"},
+                {"type": "redacted_thinking", "data": "encrypted-data"}
+            ]))
+        );
     }
 
     #[tokio::test]
@@ -4271,11 +4335,11 @@ mod tests {
 
     #[tokio::test]
     async fn stream_complete_accepts_finished_tail_without_done_or_newline() {
+        use axum::Router;
         use axum::body::Body;
         use axum::http::StatusCode;
         use axum::response::Response;
         use axum::routing::post;
-        use axum::Router;
         use bytes::Bytes;
         use futures::stream;
         use tokio::net::TcpListener;
@@ -4332,6 +4396,7 @@ mod tests {
             role: "user".to_string(),
             content: Value::String("hello".to_string()),
             reasoning_content: None,
+            anthropic_thinking_blocks: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -4347,11 +4412,11 @@ mod tests {
 
     #[tokio::test]
     async fn stream_forwards_each_delta_immediately_within_one_network_chunk() {
+        use axum::Router;
         use axum::body::Body;
         use axum::http::StatusCode;
         use axum::response::Response;
         use axum::routing::post;
-        use axum::Router;
         use std::sync::{Arc, Mutex as StdMutex};
         use tokio::net::TcpListener;
 
@@ -4397,6 +4462,7 @@ mod tests {
             role: "user".into(),
             content: Value::String("hello".into()),
             reasoning_content: None,
+            anthropic_thinking_blocks: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -4430,11 +4496,11 @@ mod tests {
 
     #[tokio::test]
     async fn stream_release_probe() {
+        use axum::Router;
         use axum::body::Body;
         use axum::http::StatusCode;
         use axum::response::Response;
         use axum::routing::post;
-        use axum::Router;
         use std::sync::{Arc, Mutex as StdMutex};
         use tokio::net::TcpListener;
 
@@ -4485,6 +4551,7 @@ mod tests {
             role: "user".into(),
             content: Value::String("hello".into()),
             reasoning_content: None,
+            anthropic_thinking_blocks: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -4615,11 +4682,11 @@ mod tests {
 
     #[tokio::test]
     async fn stream_budget_exhaustion_aborts_and_resends_without_thinking() {
+        use axum::Router;
         use axum::body::Body;
         use axum::http::StatusCode;
         use axum::response::Response;
         use axum::routing::post;
-        use axum::Router;
         use bytes::Bytes;
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::{Arc, Mutex as StdMutex};
@@ -4692,6 +4759,7 @@ mod tests {
             role: "user".to_string(),
             content: Value::String("hello".to_string()),
             reasoning_content: None,
+            anthropic_thinking_blocks: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -4718,11 +4786,11 @@ mod tests {
 
     #[tokio::test]
     async fn stream_budget_resend_failure_falls_back_to_masked_retry() {
+        use axum::Router;
         use axum::body::Body;
         use axum::http::StatusCode;
         use axum::response::Response;
         use axum::routing::post;
-        use axum::Router;
         use bytes::Bytes;
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::{Arc, Mutex as StdMutex};
@@ -4799,6 +4867,7 @@ mod tests {
             role: "user".to_string(),
             content: Value::String("hello".to_string()),
             reasoning_content: None,
+            anthropic_thinking_blocks: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -4821,11 +4890,11 @@ mod tests {
 
     #[tokio::test]
     async fn stream_thinking_only_length_response_resends_without_thinking() {
+        use axum::Router;
         use axum::body::Body;
         use axum::http::StatusCode;
         use axum::response::Response;
         use axum::routing::post;
-        use axum::Router;
         use bytes::Bytes;
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::{Arc, Mutex as StdMutex};
@@ -4892,6 +4961,7 @@ mod tests {
             role: "user".to_string(),
             content: Value::String("hello".to_string()),
             reasoning_content: None,
+            anthropic_thinking_blocks: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -4918,8 +4988,8 @@ mod tests {
         use axum::http::StatusCode;
         use axum::routing::post;
         use axum::{Json, Router};
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
         use tokio::net::TcpListener;
 
         #[derive(Clone)]
@@ -5009,6 +5079,7 @@ mod tests {
             role: "user".to_string(),
             content: Value::String("hello".to_string()),
             reasoning_content: None,
+            anthropic_thinking_blocks: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -5086,6 +5157,7 @@ mod tests {
             role: "user".to_string(),
             content: Value::String("hello".to_string()),
             reasoning_content: None,
+            anthropic_thinking_blocks: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -5105,8 +5177,8 @@ mod tests {
         use axum::http::StatusCode;
         use axum::routing::post;
         use axum::{Json, Router};
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
         use tokio::net::TcpListener;
 
         #[derive(Clone)]
@@ -5177,6 +5249,7 @@ mod tests {
             role: "user".to_string(),
             content: Value::String("hello".to_string()),
             reasoning_content: None,
+            anthropic_thinking_blocks: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -5306,6 +5379,7 @@ mod tests {
             role: "user".to_string(),
             content: Value::String("hello".to_string()),
             reasoning_content: None,
+            anthropic_thinking_blocks: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -5345,6 +5419,7 @@ mod tests {
                 role: "user".to_string(),
                 content: Value::String("go".to_string()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: None,
             },
@@ -5352,6 +5427,7 @@ mod tests {
                 role: "assistant".to_string(),
                 content: Value::String(String::new()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: Some(json!([{
                     "id": "call_1",
                     "type": "function",
@@ -5363,6 +5439,7 @@ mod tests {
                 role: "assistant".to_string(),
                 content: Value::String("answer".to_string()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: None,
             },
@@ -5406,6 +5483,7 @@ mod tests {
                 role: "user".to_string(),
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -5485,6 +5563,7 @@ mod tests {
                 role: "user".to_string(),
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -5534,6 +5613,7 @@ mod tests {
                     role: "user".to_string(),
                     content: Value::String("hello".to_string()),
                     reasoning_content: None,
+                    anthropic_thinking_blocks: None,
                     tool_calls: None,
                     tool_call_id: None,
                 }],
@@ -5585,6 +5665,7 @@ mod tests {
                 role: "user".to_string(),
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -5599,9 +5680,11 @@ mod tests {
             payload["chat_template_kwargs"]["enable_thinking"],
             Value::Bool(false)
         );
-        assert!(payload["chat_template_kwargs"]
-            .get("reasoning_effort")
-            .is_none());
+        assert!(
+            payload["chat_template_kwargs"]
+                .get("reasoning_effort")
+                .is_none()
+        );
     }
 
     #[test]
@@ -5738,6 +5821,7 @@ mod tests {
             role: "user".to_string(),
             content: Value::String("hello".to_string()),
             reasoning_content: None,
+            anthropic_thinking_blocks: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -5787,6 +5871,7 @@ mod tests {
                 role: "user".to_string(),
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -5832,6 +5917,7 @@ mod tests {
                 role: "user".to_string(),
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -5878,6 +5964,7 @@ mod tests {
                 role: "user".to_string(),
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -5924,6 +6011,7 @@ mod tests {
                 role: "user".to_string(),
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -6015,6 +6103,7 @@ mod tests {
                 role: "user".to_string(),
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -6061,6 +6150,7 @@ mod tests {
                 role: "user".to_string(),
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -6105,6 +6195,7 @@ mod tests {
                 role: "user".to_string(),
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -6148,6 +6239,7 @@ mod tests {
                 role: "system".to_string(),
                 content: Value::String("You are a test assistant.".to_string()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: None,
             },
@@ -6155,6 +6247,7 @@ mod tests {
                 role: "user".to_string(),
                 content: Value::String("list files".to_string()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: None,
             },
@@ -6162,6 +6255,7 @@ mod tests {
                 role: "assistant".to_string(),
                 content: Value::String(String::new()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: Some(json!([{
                     "id": "call_1",
                     "type": "function",
@@ -6173,6 +6267,7 @@ mod tests {
                 role: "tool".to_string(),
                 content: Value::String("[\"src\",\"Cargo.toml\"]".to_string()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: Some("call_1".to_string()),
             },
@@ -6302,6 +6397,7 @@ mod tests {
                 role: "user".to_string(),
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],

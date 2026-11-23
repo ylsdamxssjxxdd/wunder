@@ -6,23 +6,23 @@ use crate::path_utils::{
     normalize_path_for_compare, normalize_target_path, strip_windows_verbatim_prefix,
 };
 use crate::storage::{
-    normalize_workspace_container_id, StorageBackend, DEFAULT_SANDBOX_CONTAINER_ID,
-    USER_PRIVATE_CONTAINER_ID,
+    DEFAULT_SANDBOX_CONTAINER_ID, StorageBackend, USER_PRIVATE_CONTAINER_ID,
+    normalize_workspace_container_id,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Local};
 use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
 use regex::Regex;
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicI64};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI64};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Handle;
@@ -1261,8 +1261,10 @@ impl WorkspaceManager {
         // it after the user moved or unplugged it would hide the problem.
         if extract_workspace_key_from_scoped_user(&safe_id).is_some() {
             if !user_root.exists() {
-                return Err(anyhow::anyhow!(i18n::t("workspace.root_missing")
-                    .replace("{path}", &user_root.to_string_lossy())));
+                return Err(anyhow::anyhow!(
+                    i18n::t("workspace.root_missing")
+                        .replace("{path}", &user_root.to_string_lossy())
+                ));
             }
             return Ok(user_root);
         }
@@ -2330,14 +2332,18 @@ impl WorkspaceManager {
         let _ = self.storage.set_meta(&key, &turn.to_string());
     }
 
-    /// 线程首个请求实际发送的工具定义快照。
-    ///
-    /// 工具 schema 是提供方提示词前缀的一部分：同一线程中途因为 MCP 连接、
-    /// 别名去重或本地化路径变化而重建 schema，会让整段前缀从 tools 起失效。
-    /// 快照只在「函数名集合完全相同」时复用，权限变化仍由调用方的 allowed
-    /// 集合过滤，不会被快照绕过。
-    pub fn save_session_tool_schema(&self, user_id: &str, session_id: &str, tools: &serde_json::Value) {
-        let key = format!("{}:tools", self.session_sent_prefix_key(user_id, session_id));
+    /// 线程工具面快照及 schema epoch。仅定义等价时复用，实际 schema、
+    /// 权限或执行映射变化会开启新的提供方缓存纪元。
+    pub fn save_session_tool_schema(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        tools: &serde_json::Value,
+    ) {
+        let key = format!(
+            "{}:tools",
+            self.session_sent_prefix_key(user_id, session_id)
+        );
         match serde_json::to_string(tools) {
             Ok(text) => {
                 let _ = self.storage.set_meta(&key, &text);
@@ -2353,9 +2359,47 @@ impl WorkspaceManager {
         user_id: &str,
         session_id: &str,
     ) -> Option<serde_json::Value> {
-        let key = format!("{}:tools", self.session_sent_prefix_key(user_id, session_id));
+        let key = format!(
+            "{}:tools",
+            self.session_sent_prefix_key(user_id, session_id)
+        );
         let raw = self.storage.get_meta(&key).ok().flatten()?;
         serde_json::from_str(&raw).ok()
+    }
+
+    pub fn load_session_anthropic_cache_state(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Option<serde_json::Value> {
+        let key = format!(
+            "{}:anthropic_cache",
+            self.session_sent_prefix_key(user_id, session_id)
+        );
+        let raw = self.storage.get_meta(&key).ok().flatten()?;
+        serde_json::from_str(&raw).ok()
+    }
+
+    pub fn save_session_anthropic_cache_state(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        tail: &serde_json::Value,
+        request_ts: f64,
+    ) {
+        let key = format!(
+            "{}:anthropic_cache",
+            self.session_sent_prefix_key(user_id, session_id)
+        );
+        let state = serde_json::json!({ "tail": tail, "request_ts": request_ts });
+        match serde_json::to_string(&state) {
+            Ok(text) => {
+                let _ = self.storage.set_meta(&key, &text);
+            }
+            Err(_) => {
+                let _ = self.storage.delete_meta_prefix(&key);
+            }
+        }
     }
 
     pub fn load_session_sent_prefix_turn(&self, user_id: &str, session_id: &str) -> Option<u64> {
@@ -3354,11 +3398,7 @@ fn normalize_history_limit(limit: i64) -> Option<i64> {
 }
 
 fn normalize_stream_event_retention_hours(value: i64) -> i64 {
-    if value <= 0 {
-        0
-    } else {
-        value
-    }
+    if value <= 0 { 0 } else { value }
 }
 
 fn purge_session_logs_with_storage(
@@ -3798,7 +3838,7 @@ mod concurrency_tests;
 
 #[cfg(test)]
 mod tests {
-    use super::{effective_temp_cleanup_idle_ttl_s, TEMP_FILES_IDLE_TTL_S};
+    use super::{TEMP_FILES_IDLE_TTL_S, effective_temp_cleanup_idle_ttl_s};
     use crate::storage::{SqliteStorage, StorageBackend, USER_PRIVATE_CONTAINER_ID};
     use crate::tools::{ToolProfile, ToolProfileBinding};
     use serde_json::json;
@@ -4371,10 +4411,12 @@ mod tests {
         let purged = super::cleanup_expired_deleted_session_logs(storage.as_ref(), 24, now);
         assert_eq!(purged, 1);
 
-        assert!(storage
-            .load_thread_context_items("user-a", "session-old", 500, true)
-            .expect("load deleted chat")
-            .is_empty());
+        assert!(
+            storage
+                .load_thread_context_items("user-a", "session-old", 500, true)
+                .expect("load deleted chat")
+                .is_empty()
+        );
         assert_thread_history_removed(dir.path(), "session-old", &old_rollout);
         assert_eq!(
             storage
@@ -4383,10 +4425,12 @@ mod tests {
                 .len(),
             1
         );
-        assert!(storage
-            .load_stream_events("session-old", 0, 8)
-            .expect("load old stream events")
-            .is_empty());
+        assert!(
+            storage
+                .load_stream_events("session-old", 0, 8)
+                .expect("load old stream events")
+                .is_empty()
+        );
         assert_eq!(
             storage
                 .load_stream_events("session-new", 0, 8)
@@ -4406,10 +4450,12 @@ mod tests {
         // A non-positive grace removes its marker only after a complete purge.
         manager.set_deleted_session_log_grace_hours(0);
         manager.schedule_deleted_session_log_cleanup("user-a", "session-new");
-        assert!(storage
-            .load_thread_context_items("user-a", "session-new", 500, true)
-            .expect("load deleted chat")
-            .is_empty());
+        assert!(
+            storage
+                .load_thread_context_items("user-a", "session-new", 500, true)
+                .expect("load deleted chat")
+                .is_empty()
+        );
         assert_thread_history_removed(dir.path(), "session-new", &new_rollout);
     }
 
@@ -4452,10 +4498,12 @@ mod tests {
             super::cleanup_expired_deleted_session_logs(storage.as_ref(), 24, now),
             1
         );
-        assert!(storage
-            .list_expired_deleted_session_log_grace(now, 4)
-            .unwrap()
-            .is_empty());
+        assert!(
+            storage
+                .list_expired_deleted_session_log_grace(now, 4)
+                .unwrap()
+                .is_empty()
+        );
         // An explicit administrative purge propagates errors and its marker
         // is immediately eligible despite the configured grace period.
         storage
@@ -4476,9 +4524,11 @@ mod tests {
             &HashMap::new(),
         );
         manager.set_deleted_session_log_grace_hours(24);
-        assert!(manager
-            .purge_session_logs("fixture-user", "fixture-session")
-            .is_err());
+        assert!(
+            manager
+                .purge_session_logs("fixture-user", "fixture-session")
+                .is_err()
+        );
         assert_eq!(
             storage
                 .list_expired_deleted_session_log_grace(super::now_ts() - 86400.0, 4)
@@ -4549,10 +4599,12 @@ mod tests {
         }
         manager.retention_state.lock().last_cleanup -= manager.retention_interval_s + 1.0;
         manager.maybe_schedule_retention_cleanup();
-        assert!(storage
-            .list_expired_deleted_session_log_grace(super::now_ts(), 4)
-            .unwrap()
-            .is_empty());
+        assert!(
+            storage
+                .list_expired_deleted_session_log_grace(super::now_ts(), 4)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -4583,10 +4635,12 @@ mod tests {
                 .join("worker")
                 .join("report.md")
         );
-        assert!(!resolved
-            .to_string_lossy()
-            .replace('\\', "/")
-            .contains("workspaces/alice__c__1/workspaces/alice__c__1"));
+        assert!(
+            !resolved
+                .to_string_lossy()
+                .replace('\\', "/")
+                .contains("workspaces/alice__c__1/workspaces/alice__c__1")
+        );
     }
 
     #[test]
@@ -4617,10 +4671,12 @@ mod tests {
         let resolved = workspace
             .resolve_path("alice__aw__", "/workspaces/alice/workspace/out.png")
             .expect("resolve own public path");
-        assert!(resolved
-            .to_string_lossy()
-            .replace('\\', "/")
-            .ends_with("alice/workspace/out.png"));
+        assert!(
+            resolved
+                .to_string_lossy()
+                .replace('\\', "/")
+                .ends_with("alice/workspace/out.png")
+        );
         assert!(
             !resolved
                 .to_string_lossy()
@@ -4805,15 +4861,19 @@ mod tests {
         workspace
             .purge_user_data_with_logs(user_id)
             .expect("purge logs");
-        assert!(storage
-            .load_thread_context_items(user_id, session_id, 500, true)
-            .expect("load deleted chat")
-            .is_empty());
+        assert!(
+            storage
+                .load_thread_context_items(user_id, session_id, 500, true)
+                .expect("load deleted chat")
+                .is_empty()
+        );
         assert_thread_history_removed(_dir.path(), session_id, &rollout);
-        assert!(storage
-            .load_stream_events(session_id, 0, 10)
-            .unwrap()
-            .is_empty());
+        assert!(
+            storage
+                .load_stream_events(session_id, 0, 10)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -4857,16 +4917,20 @@ mod tests {
             .expect("clear work state");
 
         assert_eq!(removed, 2);
-        assert!(private_root
-            .join("skills")
-            .join("demo")
-            .join("SKILL.md")
-            .exists());
-        assert!(private_root
-            .join("knowledge")
-            .join("demo")
-            .join("note.txt")
-            .exists());
+        assert!(
+            private_root
+                .join("skills")
+                .join("demo")
+                .join("SKILL.md")
+                .exists()
+        );
+        assert!(
+            private_root
+                .join("knowledge")
+                .join("demo")
+                .join("note.txt")
+                .exists()
+        );
         assert!(private_root.join("global").join("tooling.json").exists());
         assert!(!private_root.join("chat_media").exists());
         assert!(!private_root.join("scratch.txt").exists());

@@ -3,17 +3,17 @@
 //! (reconnecting without a false "expired"), the idle heartbeat empty batch
 //! and the proactive renewal threshold.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use wunder_server::cloud::CloudSessionFile;
-use wunder_server::cloud::{shared as cloud_shared, CloudService, CloudSessionExpired};
+use wunder_server::cloud::{CloudService, CloudSessionExpired, shared as cloud_shared};
 use wunder_server::config::LlmModelConfig;
 use wunder_server::config_store::ConfigStore;
-use wunder_server::llm::{build_llm_client, ChatMessage};
+use wunder_server::llm::{ChatMessage, build_llm_client};
 
 const TOKEN_V1: &str = "wund_tok_v1";
 const TOKEN_V2: &str = "wund_tok_v2";
@@ -299,6 +299,7 @@ fn test_message() -> ChatMessage {
         role: "user".to_string(),
         content: Value::String("ping".to_string()),
         reasoning_content: None,
+        anthropic_thinking_blocks: None,
         tool_calls: None,
         tool_call_id: None,
     }

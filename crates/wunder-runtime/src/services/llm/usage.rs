@@ -46,10 +46,21 @@ fn nested_count(map: &Map<String, Value>, parents: &[&str], children: &[&str]) -
 /// counting.
 pub(super) fn normalize_usage(raw: Option<&Value>) -> Option<TokenUsage> {
     let map = raw?.as_object()?;
+    let responses_input_details = map
+        .get("input_tokens_details")
+        .or_else(|| map.get("inputTokensDetails"))
+        .and_then(Value::as_object);
+    let responses_cache_read = nested_count(
+        map,
+        &["input_tokens_details", "inputTokensDetails"],
+        &["cached_tokens", "cachedTokens"],
+    );
+    let inclusive_cached_input = count(map.get("cached_input_tokens"));
     let cache_read = count(map.get("cache_read_input_tokens"))
-        .or_else(|| count(map.get("cached_input_tokens")))
+        .or(inclusive_cached_input)
         .or_else(|| count(map.get("prompt_cache_hit_tokens")))
         .or_else(|| count(map.get("prompt_cache_hit")))
+        .or(responses_cache_read)
         .or_else(|| {
             nested_count(
                 map,
@@ -61,26 +72,50 @@ pub(super) fn normalize_usage(raw: Option<&Value>) -> Option<TokenUsage> {
     let cache_write = count(map.get("cache_creation_input_tokens"))
         .or_else(|| count(map.get("cacheCreationInputTokens")))
         .or_else(|| count(map.get("cache_write_tokens")))
+        .or_else(|| {
+            nested_count(
+                map,
+                &[
+                    "input_tokens_details",
+                    "inputTokensDetails",
+                    "prompt_tokens_details",
+                    "promptTokensDetails",
+                ],
+                &["cache_write_tokens", "cacheWriteTokens"],
+            )
+        })
         .unwrap_or(0);
-    let (input, cache_read, cache_write, prompt_total) =
-        match (count(map.get("input_tokens")), count(map.get("prompt_tokens"))) {
-            // Anthropic: `input_tokens` already excludes both cache buckets.
-            (Some(uncached), _) => {
-                let prompt_total = uncached
-                    .saturating_add(cache_read)
-                    .saturating_add(cache_write);
-                (uncached, cache_read, cache_write, prompt_total)
-            }
-            // OpenAI-compatible / DeepSeek: `prompt_tokens` includes the cache
-            // buckets, so carve them out and clamp to the reported total.
-            (None, Some(total)) => {
-                let cache_read = cache_read.min(total);
-                let cache_write = cache_write.min(total.saturating_sub(cache_read));
-                let uncached = total.saturating_sub(cache_read).saturating_sub(cache_write);
-                (uncached, cache_read, cache_write, total)
-            }
-            (None, None) => (0, cache_read, cache_write, cache_read + cache_write),
-        };
+    let (input, cache_read, cache_write, prompt_total) = match (
+        count(map.get("input_tokens")),
+        count(map.get("prompt_tokens")),
+    ) {
+        // Responses reports an inclusive input total. Its cache details can
+        // be nested under input_tokens_details or exposed as cached_input_tokens.
+        (Some(total), _)
+            if responses_input_details.is_some() || inclusive_cached_input.is_some() =>
+        {
+            let cache_read = cache_read.min(total);
+            let cache_write = cache_write.min(total.saturating_sub(cache_read));
+            let uncached = total.saturating_sub(cache_read).saturating_sub(cache_write);
+            (uncached, cache_read, cache_write, total)
+        }
+        // Anthropic: `input_tokens` already excludes both cache buckets.
+        (Some(uncached), _) => {
+            let prompt_total = uncached
+                .saturating_add(cache_read)
+                .saturating_add(cache_write);
+            (uncached, cache_read, cache_write, prompt_total)
+        }
+        // OpenAI-compatible / DeepSeek: `prompt_tokens` includes the cache
+        // buckets, so carve them out and clamp to the reported total.
+        (None, Some(total)) => {
+            let cache_read = cache_read.min(total);
+            let cache_write = cache_write.min(total.saturating_sub(cache_read));
+            let uncached = total.saturating_sub(cache_read).saturating_sub(cache_write);
+            (uncached, cache_read, cache_write, total)
+        }
+        (None, None) => (0, cache_read, cache_write, cache_read + cache_write),
+    };
     let raw_output = count(map.get("output_tokens"))
         .or_else(|| count(map.get("completion_tokens")))
         .unwrap_or(0);
@@ -100,8 +135,7 @@ pub(super) fn normalize_usage(raw: Option<&Value>) -> Option<TokenUsage> {
                 .map(|tokens| tokens.min(raw_output))
         })
         .or_else(|| {
-            reasoning_count(map.get("completionTokensDetails"))
-                .map(|tokens| tokens.min(raw_output))
+            reasoning_count(map.get("completionTokensDetails")).map(|tokens| tokens.min(raw_output))
         });
     let total = match count(map.get("total_tokens")) {
         Some(total) => total.max(prompt_total.saturating_add(raw_output)),
@@ -221,6 +255,37 @@ mod tests {
         assert_eq!(usage.prompt_tokens(), 100);
         assert_eq!(usage.total, 120);
         assert_eq!(usage.cache_hit_rate(), Some(0.8));
+    }
+
+    #[test]
+    fn responses_cached_tokens_are_carved_out_of_input_tokens() {
+        let usage = normalize_usage(Some(&json!({
+            "input_tokens": 100,
+            "input_tokens_details": {"cached_tokens": 80, "cache_write_tokens": 5},
+            "output_tokens": 20,
+            "total_tokens": 120
+        })))
+        .expect("usage");
+        assert_eq!(usage.input, 15);
+        assert_eq!(usage.cache_read, 80);
+        assert_eq!(usage.cache_write, 5);
+        assert_eq!(usage.prompt_tokens(), 100);
+        assert_eq!(usage.total, 120);
+        assert_eq!(usage.cache_hit_rate(), Some(0.8));
+    }
+
+    #[test]
+    fn responses_top_level_cached_input_is_not_added_twice() {
+        let usage = normalize_usage(Some(&json!({
+            "input_tokens": 100,
+            "cached_input_tokens": 60,
+            "output_tokens": 20
+        })))
+        .expect("usage");
+        assert_eq!(usage.input, 40);
+        assert_eq!(usage.cache_read, 60);
+        assert_eq!(usage.prompt_tokens(), 100);
+        assert_eq!(usage.total, 120);
     }
 
     #[test]

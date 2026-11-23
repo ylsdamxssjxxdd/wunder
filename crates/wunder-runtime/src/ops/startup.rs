@@ -185,6 +185,7 @@ pub async fn recover_background_commands(
                 launch_mode: CommandSessionLaunchMode::Shell,
                 tty: false,
                 interactive: false,
+                background: true,
                 started_at: chrono::DateTime::from_timestamp_millis(
                     (record.started_at * 1000.0) as i64,
                 ),

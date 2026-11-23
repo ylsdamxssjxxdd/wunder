@@ -341,6 +341,15 @@ deltas).
   is not reentrant, so the UI thread self-deadlocked with zero CPU and no
   panic (nothing for the crash hook to log). Still unfixed upstream in
   0.30.13.
+- `winit` 0.30.2 no longer drops every non-ASCII keyboard text event while an
+  IMM32 composition is active. Some legacy Chinese IMEs submit full-width
+  punctuation directly through `WM_CHAR`, without a corresponding
+  `GCS_RESULTSTR`; the old blanket guard swallowed those characters. Commit
+  deduplication now suppresses only text matching an actual IME result, and a
+  new keydown expires an unmatched echo so repeated identical punctuation is
+  not mistaken for a delayed duplicate. Regression cases cover direct Chinese
+  text and punctuation during composition, exact echo removal, and repeated
+  punctuation after a new keydown.
 - `winit` 0.30.2 `set_ime_cursor_area` / `set_ime_allowed` now run through a
   new `EventLoopThreadExecutor::defer_to_thread`, which always posts the
   closure to the thread message target (`EXEC_MSG_ID`) instead of running it

@@ -2,11 +2,11 @@
 use crate::config::{Config, KnowledgeBaseConfig, LlmModelConfig};
 use crate::core::blocking;
 use crate::i18n;
-use crate::llm::{build_llm_client, is_llm_configured, is_llm_model, ChatMessage};
+use crate::llm::{ChatMessage, build_llm_client, is_llm_configured, is_llm_model};
 use anyhow::Result;
 use regex::Regex;
 use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -546,6 +546,7 @@ async fn prepare_literal_knowledge_query(
             role: "system".to_string(),
             content: json!(prompt),
             reasoning_content: None,
+            anthropic_thinking_blocks: None,
             tool_calls: None,
             tool_call_id: None,
         },
@@ -553,6 +554,7 @@ async fn prepare_literal_knowledge_query(
             role: "user".to_string(),
             content: json!(question),
             reasoning_content: None,
+            anthropic_thinking_blocks: None,
             tool_calls: None,
             tool_call_id: None,
         },
@@ -951,6 +953,7 @@ mod tests {
                 role: "user".to_string(),
                 content: json!("find policy"),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],

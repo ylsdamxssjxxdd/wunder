@@ -509,7 +509,7 @@ async fn list_sessions(
         let background = state
             .control
             .command_sessions
-            .has_running_tasks(&record.session_id)
+            .has_background_tasks(&record.session_id)
             || state.monitor.has_running_child_runs(&record.session_id);
         // One precedence table for every client: the chat list resolves its wire
         // status from the same signals the local directory uses.

@@ -1,9 +1,9 @@
 //! Benchmark transport reuses provider payload/auth mapping without retries or session logging.
-use super::{usage::merge_anthropic_usage, ChatMessage, LlmClient, OpenAiApiMode};
+use super::{ChatMessage, LlmClient, OpenAiApiMode, usage::merge_anthropic_usage};
 use crate::config::LlmModelConfig;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::time::Instant;
 
 const MAX_EVENT_BYTES: usize = 256 * 1024;
@@ -53,6 +53,7 @@ pub(crate) fn messages(input_tokens: u32) -> Vec<ChatMessage> {
             role: role.into(),
             content: json!(content),
             reasoning_content: None,
+            anthropic_thinking_blocks: None,
             tool_calls: None,
             tool_call_id: None,
         })

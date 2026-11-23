@@ -1,5 +1,5 @@
 use super::*;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::HashSet;
 use uuid::Uuid;
 
@@ -31,19 +31,13 @@ pub(super) const COMPACTION_SUMMARY_MAX_CHARS: usize = 20_000;
 pub(super) const COMPACTION_MIN_SUMMARY_MEANINGFUL_CHARS: usize = 8;
 pub(super) const COMPACTION_DEBUG_PREVIEW_CHARS: usize = 240;
 pub(super) const COMPACTION_MIN_RETAINED_INTERACTION_TOKENS: i64 = 128;
-pub(super) const COMPACTION_CURRENT_TURN_FINAL_NOTE: &str =
-    "The compaction summary reports that this turn can conclude. Treat retained user messages as historical context, not as a fresh request, and do not restart the original request or redo work the summary already records as done.";
-pub(super) const COMPACTION_FINAL_DIRECTIVE_FINAL: &str =
-    "- Directive: verify the delivery claim before answering. If the summary still lists concrete remaining steps, or a deliverable it claims was never observed, continue with those steps instead of reporting the task as finished; read-only checks (list/read/status) are always allowed. Otherwise provide the final response now from the compaction summary and the retained messages, and state plainly whatever is still unfinished.";
-pub(super) const COMPACTION_FINAL_DIRECTIVE_ASK_USER: &str =
-    "- Directive: the summary says the turn needs user input. Ask the specific question the summary identifies; do not restart the original request, and use only read-only checks if you need them to phrase the question.";
-pub(super) const COMPACTION_CURRENT_TURN_SUCCESS_NOTE: &str =
-    "The current user request already produced successful tool output before compaction, but that does not by itself mean the user-facing task is complete. Continue from the latest retained tool observation and the compaction summary. Treat retained user messages as historical context, not as a fresh request. Do not restart or redo completed work; perform the remaining steps the summary names, verify the deliverable, then answer. Read-only checks are always allowed.";
-pub(super) const COMPACTION_CONTINUATION_REMINDER: &str =
-    "The remaining-work section above is authoritative. Only answer without further tool calls when it is empty and every claimed deliverable has been observed.";
+pub(super) const COMPACTION_CURRENT_TURN_FINAL_NOTE: &str = "The compaction summary reports that this turn can conclude. Treat retained user messages as historical context, not as a fresh request, and do not restart the original request or redo work the summary already records as done.";
+pub(super) const COMPACTION_FINAL_DIRECTIVE_FINAL: &str = "- Directive: verify the delivery claim before answering. If the summary still lists concrete remaining steps, or a deliverable it claims was never observed, continue with those steps instead of reporting the task as finished; read-only checks (list/read/status) are always allowed. Otherwise provide the final response now from the compaction summary and the retained messages, and state plainly whatever is still unfinished.";
+pub(super) const COMPACTION_FINAL_DIRECTIVE_ASK_USER: &str = "- Directive: the summary says the turn needs user input. Ask the specific question the summary identifies; do not restart the original request, and use only read-only checks if you need them to phrase the question.";
+pub(super) const COMPACTION_CURRENT_TURN_SUCCESS_NOTE: &str = "The current user request already produced successful tool output before compaction, but that does not by itself mean the user-facing task is complete. Continue from the latest retained tool observation and the compaction summary. Treat retained user messages as historical context, not as a fresh request. Do not restart or redo completed work; perform the remaining steps the summary names, verify the deliverable, then answer. Read-only checks are always allowed.";
+pub(super) const COMPACTION_CONTINUATION_REMINDER: &str = "The remaining-work section above is authoritative. Only answer without further tool calls when it is empty and every claimed deliverable has been observed.";
 pub(super) const COMPACTION_CONTINUATION_NOTE_MAX_TOKENS: i64 = 16_384;
-pub(super) const COMPACTION_CURRENT_TURN_REPAIR_NOTE: &str =
-    "[Compaction continuation]\nThe current user request already entered tool execution and the latest tool output reports failure. Do not restart from the original user request. Continue from the retained failure observation, change strategy, and repair or explain based on the available evidence.";
+pub(super) const COMPACTION_CURRENT_TURN_REPAIR_NOTE: &str = "[Compaction continuation]\nThe current user request already entered tool execution and the latest tool output reports failure. Do not restart from the original user request. Continue from the retained failure observation, change strategy, and repair or explain based on the available evidence.";
 
 #[derive(Debug, Default)]
 pub(super) struct RebuiltContextGuardStats {
@@ -1002,30 +996,30 @@ pub(super) fn build_compaction_summary_input(
 /// the live messages instead makes the summary a strict prefix extension: every
 /// token before the instruction is already warm.
 ///
-/// Returns `None` when the tail is not a user message. Appending a second user
-/// turn would make some providers reject the request (Anthropic requires
-/// alternating roles), and merging into a tool result would rewrite structure;
-/// callers fall back to the flattened transcript in that case.
-pub(super) fn replay_compaction_prefix(messages: &[Value], instruction: &str) -> Option<Vec<Value>> {
+/// A user tail is extended in place because it is normally the new, not yet
+/// cached question. Assistant/tool tails keep their complete value and receive
+/// a new user instruction, which is valid in both OpenAI and Anthropic message
+/// protocols. Inline images are already finalized by the executor before this
+/// function runs, so they no longer require a flattened fallback.
+pub(super) fn replay_compaction_prefix(
+    messages: &[Value],
+    instruction: &str,
+) -> Option<Vec<Value>> {
     let instruction = instruction.trim();
     if instruction.is_empty() || messages.is_empty() {
         return None;
     }
-    let last = messages.last()?.as_object()?;
-    if last.get("role").and_then(Value::as_str) != Some("user") {
-        return None;
-    }
-    if Orchestrator::is_observation_message("user", last.get("content").unwrap_or(&Value::Null)) {
-        return None;
-    }
-    // 图片预算在本轮稍后才执行（`enforce_request_limits`），它会把超限的旧图片
-    // 就地换成占位符。若现在按原样重放，摘要请求与真正要发的请求会在那一条上
-    // 分叉，既拿不到缓存又可能把已被驱逐的大图重新算一遍输入。带内联图片时
-    // 直接走扁平化兜底，保证两边一致。
-    if messages.iter().any(contains_inline_image_message) {
-        return None;
-    }
     let mut replay = messages.to_vec();
+    let last = replay.last()?.as_object()?;
+    let merge_into_user = last.get("role").and_then(Value::as_str) == Some("user")
+        && !Orchestrator::is_observation_message(
+            "user",
+            last.get("content").unwrap_or(&Value::Null),
+        );
+    if !merge_into_user {
+        replay.push(json!({"role": "user", "content": instruction}));
+        return Some(replay);
+    }
     let last = replay.last_mut()?.as_object_mut()?;
     match last.get_mut("content") {
         Some(Value::String(text)) => {
@@ -1045,33 +1039,27 @@ pub(super) fn replay_compaction_prefix(messages: &[Value], instruction: &str) ->
     Some(replay)
 }
 
-/// Replace the largest tool results in a replayed prefix with short stubs until
-/// the request fits `budget`. Pairing (`role=tool` + `tool_call_id`) is kept, so
-/// the message shape still matches the live request; only the payload shrinks.
-///
-/// This runs on the auxiliary summary request only. It never touches persisted
-/// history, so a prune here cannot rewrite the next real request.
+/// Replace tool results with short stubs, newest first, until the request fits
+/// `budget`. Newest-first pruning preserves the longest provider-cache prefix.
+/// Each result is replaced at most once so even an impossible budget terminates.
 pub(super) fn prune_replayed_tool_results(messages: &mut [Value], budget: i64) -> usize {
-    let mut pruned = 0usize;
+    let mut pruned = HashSet::new();
     let mut remaining = estimate_messages_tokens(messages);
     while remaining > budget {
-        let mut best: Option<(usize, usize)> = None;
-        for (index, message) in messages.iter().enumerate() {
-            if index + 1 == messages.len() {
-                break;
-            }
-            if message.get("role").and_then(Value::as_str) != Some("tool") {
-                continue;
-            }
-            let chars = estimate_tool_content_chars(message.get("content"));
-            if chars == 0 {
-                continue;
-            }
-            if best.map_or(true, |(_, current)| chars > current) {
-                best = Some((index, chars));
-            }
-        }
-        let Some((index, chars)) = best else { break };
+        let candidate = messages
+            .iter()
+            .enumerate()
+            .rev()
+            .skip(1)
+            .filter(|(index, _)| !pruned.contains(index))
+            .filter(|(_, message)| message.get("role").and_then(Value::as_str) == Some("tool"))
+            .find_map(|(index, message)| {
+                let chars = estimate_tool_content_chars(message.get("content"));
+                (chars > 0).then_some((index, chars))
+            });
+        let Some((index, chars)) = candidate else {
+            break;
+        };
         let tool_call_id = messages[index]
             .get("tool_call_id")
             .cloned()
@@ -1081,13 +1069,13 @@ pub(super) fn prune_replayed_tool_results(messages: &mut [Value], budget: i64) -
             "tool_call_id": tool_call_id,
             "content": format!(
                 "[tool result omitted from the compaction replay: {chars} chars. \
-The call and its result pairing are preserved; the full result is still in the thread record.]"
+        The call and its result pairing are preserved; the full result is still in the thread record.]"
             ),
         });
-        pruned += 1;
+        pruned.insert(index);
         remaining = estimate_messages_tokens(messages);
     }
-    pruned
+    pruned.len()
 }
 
 fn estimate_tool_content_chars(content: Option<&Value>) -> usize {
@@ -1103,21 +1091,6 @@ fn estimate_tool_content_chars(content: Option<&Value>) -> usize {
             })
             .sum(),
         _ => 0,
-    }
-}
-
-/// 消息里是否带内联图片（多模态内容块或 data URL 字符串）。
-fn contains_inline_image_message(message: &Value) -> bool {
-    let content = message.get("content").unwrap_or(&Value::Null);
-    match content {
-        Value::Array(parts) => parts.iter().any(|part| {
-            matches!(
-                part.get("type").and_then(Value::as_str),
-                Some("image_url" | "image" | "input_image")
-            ) || part.get("image_url").is_some()
-        }),
-        Value::String(text) => text.contains("data:image/"),
-        _ => false,
     }
 }
 
@@ -1591,11 +1564,7 @@ pub(super) fn extract_compaction_observation_text_candidate(value: &Value) -> Op
         }
         other => {
             let text = strip_tool_calls(&other.to_string()).trim().to_string();
-            if text.is_empty() {
-                None
-            } else {
-                Some(text)
-            }
+            if text.is_empty() { None } else { Some(text) }
         }
     }
 }

@@ -44,7 +44,15 @@ struct HideState {
 }
 
 #[cfg(not(windows))]
-struct HideState;
+struct HideState {
+    /// Outer screen position and inner size immediately before the hide.
+    /// Window managers are free to place a remapped toplevel themselves —
+    /// Mutter does — so without reasserting this frame the workbench came
+    /// back somewhere else after every hidden-window capture.
+    position: Option<(i32, i32)>,
+    size: Option<(u32, u32)>,
+    maximized: bool,
+}
 
 /// Hide the main window on the UI thread and pin down what the capture would
 /// otherwise inherit from it. Must run on the UI thread, and the reference
@@ -175,8 +183,29 @@ fn hide_main_window(app: &slint::Weak<MainWindow>) -> (bool, Option<HideState>) 
     {
         match app.upgrade() {
             Some(window) => {
+                use slint::winit_030::WinitWindowAccessor;
+                let frame = window.window().with_winit_window(|native| {
+                    let position = native
+                        .outer_position()
+                        .ok()
+                        .map(|position| (position.x, position.y));
+                    let size = native.inner_size();
+                    (
+                        position,
+                        Some((size.width, size.height)),
+                        native.is_maximized(),
+                    )
+                });
                 let hidden = window.hide().is_ok();
-                (hidden, hidden.then_some(HideState))
+                let state = hidden.then(|| {
+                    let (position, size, maximized) = frame.unwrap_or((None, None, false));
+                    HideState {
+                        position,
+                        size,
+                        maximized,
+                    }
+                });
+                (hidden, state)
             }
             None => (false, None),
         }
@@ -353,10 +382,51 @@ fn restore_hidden_window(app: &slint::Weak<MainWindow>, state: &HideState) {
 }
 
 #[cfg(not(windows))]
-fn restore_hidden_window(app: &slint::Weak<MainWindow>, _state: &HideState) {
-    if let Some(window) = app.upgrade() {
-        let _ = window.show();
-    }
+fn restore_hidden_window(app: &slint::Weak<MainWindow>, state: &HideState) {
+    let Some(window) = app.upgrade() else {
+        return;
+    };
+    let _ = window.show();
+    let placement = (state.position, state.size, state.maximized);
+    apply_hidden_placement(app, placement);
+    // The map request only starts the remap; a window manager may apply its
+    // own placement once it processes it. Reassert the recorded frame one map
+    // turn later so the workbench always comes back where it was hidden.
+    let retry = app.clone();
+    slint::Timer::single_shot(std::time::Duration::from_millis(80), move || {
+        apply_hidden_placement(&retry, placement);
+    });
+}
+
+/// Put the remapped workbench back on the frame recorded before the hide.
+#[cfg(not(windows))]
+fn apply_hidden_placement(
+    app: &slint::Weak<MainWindow>,
+    placement: (Option<(i32, i32)>, Option<(u32, u32)>, bool),
+) {
+    use slint::winit_030::{winit, WinitWindowAccessor};
+    let (position, size, maximized) = placement;
+    let Some(window) = app.upgrade() else {
+        return;
+    };
+    let _ = window.window().with_winit_window(|native| {
+        if maximized {
+            native.set_maximized(true);
+            return;
+        }
+        if let Some((width, height)) = size.filter(|(width, height)| *width > 0 && *height > 0) {
+            let target = winit::dpi::PhysicalSize::new(width, height);
+            if native.inner_size() != target {
+                let _ = native.request_inner_size(target);
+            }
+        }
+        if let Some((x, y)) = position {
+            let target = winit::dpi::PhysicalPosition::new(x, y);
+            if native.outer_position().ok() != Some(target) {
+                native.set_outer_position(target);
+            }
+        }
+    });
 }
 
 /// Settle used when the hide cannot be verified by pixels.

@@ -126,6 +126,10 @@ impl ImeCommitDeduplicator {
         needs_result
     }
 
+    fn begin_keydown(&mut self) {
+        self.pending_text.clear();
+    }
+
     fn record_commit_echo(&mut self, text: &str) {
         const MAX_PENDING_COMMIT_BYTES: usize = 1024;
 
@@ -143,11 +147,7 @@ impl ImeCommitDeduplicator {
         self.pending_text.push_str(text);
     }
 
-    fn suppress_keyboard_text(
-        &mut self,
-        ime_composition_active: bool,
-        text: Option<&str>,
-    ) -> bool {
+    fn suppress_keyboard_text(&mut self, text: Option<&str>) -> bool {
         let Some(text) = text.filter(|text| !text.is_empty()) else {
             return false;
         };
@@ -164,10 +164,7 @@ impl ImeCommitDeduplicator {
         // A different text event proves that the queued compatibility echo
         // did not arrive. Do not let an old commit affect normal input.
         self.pending_text.clear();
-
-        // This is the original guard for IMEs that send WM_CHAR while their
-        // composition is still active. The commit path remains authoritative.
-        ime_composition_active && text.chars().any(|ch| !ch.is_ascii())
+        false
     }
 }
 
@@ -221,14 +218,12 @@ impl WindowData {
             .take_end_composition_result()
     }
 
-    fn suppress_ime_keyboard_text(
-        &self,
-        ime_composition_active: bool,
-        text: Option<&str>,
-    ) -> bool {
-        self.ime_commit_deduplicator
-            .borrow_mut()
-            .suppress_keyboard_text(ime_composition_active, text)
+    fn begin_keydown(&self) {
+        self.ime_commit_deduplicator.borrow_mut().begin_keydown();
+    }
+
+    fn suppress_ime_keyboard_text(&self, text: Option<&str>) -> bool {
+        self.ime_commit_deduplicator.borrow_mut().suppress_keyboard_text(text)
     }
 
     fn send_ime_composition_result(&self, window: HWND, text: String) {
@@ -1218,19 +1213,18 @@ unsafe fn public_window_callback_inner(
 
     let keyboard_callback = || {
         use crate::event::WindowEvent::KeyboardInput;
+        if matches!(msg, WM_KEYDOWN | WM_SYSKEYDOWN) {
+            // Any echo of the preceding composition had to arrive before this
+            // keydown. A later identical character is new, legitimate input.
+            userdata.begin_keydown();
+        }
         let events =
             userdata.key_event_builder.process_message(window, msg, wparam, lparam, &mut result);
-        // Some legacy Windows IMEs emit a
-        // translated WM_CHAR in addition to their IME commit. The character
-        // may arrive after WM_IME_ENDCOMPOSITION, so state alone cannot tell
-        // whether it is duplicate text. Match it against the actual commit.
-        let ime_composition_active = {
-            let state = userdata.window_state_lock();
-            state.ime_allowed && state.ime_state != ImeState::Disabled
-        };
+        // Some legacy Windows IMEs emit a translated WM_CHAR in addition to
+        // their IME commit. Match only that exact echo: direct WM_CHAR text,
+        // including full-width punctuation, remains valid during composition.
         for event in events {
             if userdata.suppress_ime_keyboard_text(
-                ime_composition_active,
                 event.event.text.as_deref().or_else(|| event.event.logical_key.to_text()),
             ) {
                 continue;
@@ -2637,29 +2631,47 @@ mod tests {
     fn legacy_ime_commit_consumes_only_its_matching_keyboard_text() {
         let mut state = ImeCommitDeduplicator::default();
         state.record_composition_result("sample");
-        assert!(state.suppress_keyboard_text(false, Some("sample")));
-        assert!(!state.suppress_keyboard_text(false, Some("sample")));
+        assert!(state.suppress_keyboard_text(Some("sample")));
+        assert!(!state.suppress_keyboard_text(Some("sample")));
 
         state.record_composition_result("first");
-        assert!(state.suppress_keyboard_text(false, Some("fir")));
-        assert!(state.suppress_keyboard_text(false, Some("st")));
+        assert!(state.suppress_keyboard_text(Some("fir")));
+        assert!(state.suppress_keyboard_text(Some("st")));
 
         // Legacy IMEs can split a displayed word into result strings while
         // winit later combines their WM_CHAR messages into one key event.
         state.record_composition_result("one");
         state.record_composition_result("two");
-        assert!(state.suppress_keyboard_text(false, Some("onetwo")));
-
-        assert!(state.suppress_keyboard_text(true, Some("文")));
-        assert!(!state.suppress_keyboard_text(false, Some("文")));
+        assert!(state.suppress_keyboard_text(Some("onetwo")));
     }
 
     #[test]
-    fn ime_messages_commit_each_result_once_through_a_real_window() {
+    fn direct_non_ascii_text_is_not_suppressed_during_composition() {
+        let mut state = ImeCommitDeduplicator::default();
+        state.begin_composition();
+        for text in ["文", "？", "！", "，", "。", "；", "：", "、", "（", "）", "【", "】"]
+        {
+            assert!(!state.suppress_keyboard_text(Some(text)), "lost direct text: {text}");
+        }
+    }
+
+    #[test]
+    fn new_keydown_expires_an_unmatched_commit_echo() {
+        let mut state = ImeCommitDeduplicator::default();
+        state.record_composition_result("？");
+        state.begin_keydown();
+        assert!(!state.suppress_keyboard_text(Some("？")));
+    }
+
+    #[test]
+    fn ime_messages_commit_results_and_forward_direct_text_through_a_real_window() {
         use std::cell::RefCell;
         use std::rc::Rc;
 
-        use windows_sys::Win32::UI::WindowsAndMessaging::SendMessageW;
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_OEM_2;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            DispatchMessageW, PeekMessageW, PostMessageW, SendMessageW, MSG, PM_REMOVE, WM_CHAR,
+        };
 
         use crate::event::{Event, Ime, WindowEvent};
         use crate::event_loop::EventLoop;
@@ -2669,6 +2681,7 @@ mod tests {
 
         use super::{WindowData, GCS_COMPSTR, GCS_RESULTSTR, GWL_USERDATA};
         use super::{WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION};
+        use super::WM_KEYDOWN;
 
         let event_loop = EventLoop::builder().with_any_thread(true).build().unwrap();
         #[allow(deprecated)]
@@ -2686,11 +2699,20 @@ mod tests {
         userdata.window_state_lock().ime_allowed = true;
         let commits = Rc::new(RefCell::new(Vec::new()));
         let received = Rc::clone(&commits);
+        let keyboard_texts = Rc::new(RefCell::new(Vec::new()));
+        let received_keyboard_texts = Rc::clone(&keyboard_texts);
         unsafe {
             userdata.event_loop_runner.set_event_handler(move |event| {
-                if let Event::WindowEvent { event: WindowEvent::Ime(Ime::Commit(text)), .. } = event
-                {
-                    received.borrow_mut().push(text);
+                match event {
+                    Event::WindowEvent { event: WindowEvent::Ime(Ime::Commit(text)), .. } => {
+                        received.borrow_mut().push(text);
+                    }
+                    Event::WindowEvent { event: WindowEvent::KeyboardInput { event, .. }, .. } => {
+                        if let Some(text) = event.text {
+                            received_keyboard_texts.borrow_mut().push(text.to_string());
+                        }
+                    }
+                    _ => {}
                 }
             });
         }
@@ -2765,6 +2787,20 @@ mod tests {
         send(WM_IME_COMPOSITION, GCS_COMPSTR as isize);
         send(WM_IME_ENDCOMPOSITION, 0);
         assert!(commits.borrow().is_empty());
+
+        // Some Chinese IMEs send full-width punctuation directly as WM_CHAR
+        // while composition is active, with no GCS_RESULTSTR to commit.
+        keyboard_texts.borrow_mut().clear();
+        send(WM_IME_STARTCOMPOSITION, 0);
+        assert_ne!(unsafe { PostMessageW(hwnd, WM_CHAR, '？' as usize, 0) }, 0);
+        unsafe {
+            SendMessageW(hwnd, WM_KEYDOWN, VK_OEM_2 as usize, 0);
+            let mut message = std::mem::zeroed::<MSG>();
+            assert_ne!(PeekMessageW(&mut message, hwnd, WM_CHAR, WM_CHAR, PM_REMOVE), 0);
+            DispatchMessageW(&message);
+        }
+        assert_eq!(keyboard_texts.borrow().last().map(String::as_str), Some("？"));
+        send(WM_IME_ENDCOMPOSITION, 0);
     }
 }
 

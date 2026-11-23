@@ -16,6 +16,7 @@ export type CommandSessionRuntimeEntry = {
   launchMode: string;
   tty: boolean;
   interactive: boolean;
+  background: boolean;
   status: CommandSessionRuntimeStatus;
   seq: number;
   startedAt: string;
@@ -180,6 +181,7 @@ const defaultEntry = (
   launchMode: '',
   tty: false,
   interactive: false,
+  background: false,
   status: 'running',
   seq: 0,
   startedAt: '',
@@ -233,6 +235,7 @@ const normalizeEntryPayload = (
     launchMode: normalizeText(source.launch_mode ?? source.launchMode),
     tty: normalizeFlag(source.tty),
     interactive: normalizeFlag(source.interactive),
+    background: normalizeFlag(source.background ?? source.run_in_background ?? source.runInBackground),
     status: normalizeStatus(source.status),
     seq: normalizeCount(source.seq),
     startedAt: normalizeText(source.started_at ?? source.startedAt),
@@ -427,6 +430,7 @@ export const useCommandSessionStore = defineStore('commandSessions', {
             }
           : normalized)
       };
+      next.background = Boolean(existing?.background || normalized.background);
       if (existing && !preserveTerminalState) {
         next.toolCallId = normalized.toolCallId || existing.toolCallId;
         next.command = normalized.command || existing.command;

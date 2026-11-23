@@ -13,8 +13,8 @@
 //! 2. When the evidence is ambiguous, continue. Only an explicit, empty
 //!    remaining-work section may end the turn.
 
-use super::strip_compaction_prefix_text;
 use super::CompactionResumeAction;
+use super::strip_compaction_prefix_text;
 
 /// Words that read as "the task is finished" when they are not negated.
 const COMPLETION_WORDS: &[&str] = &["done", "complete", "completed", "finished"];
@@ -301,11 +301,7 @@ fn remaining_work_section(text: &str) -> Option<Vec<String>> {
         }
         lines.push(trimmed.to_string());
     }
-    if collecting {
-        Some(lines)
-    } else {
-        None
-    }
+    if collecting { Some(lines) } else { None }
 }
 
 fn is_empty_section_line(line: &str) -> bool {

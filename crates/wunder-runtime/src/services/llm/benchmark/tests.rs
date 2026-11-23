@@ -12,12 +12,14 @@ async fn simulation_rejects_limits_before_streaming_and_honors_reasoning_switch(
     .unwrap_err();
     assert!(error.contains("context_length_exceeded"));
     config.max_context = Some(4096);
-    assert!(simulate(&messages(64), 21, &config, |_| panic!(
-        "must reject before generation"
-    ))
-    .await
-    .unwrap_err()
-    .contains("max_tokens_exceeded"));
+    assert!(
+        simulate(&messages(64), 21, &config, |_| panic!(
+            "must reject before generation"
+        ))
+        .await
+        .unwrap_err()
+        .contains("max_tokens_exceeded")
+    );
     config.reasoning_effort = Some("none".into());
     let metrics = simulate(&messages(64), 20, &config, |_| {}).await.unwrap();
     assert_eq!(
@@ -210,7 +212,7 @@ fn anthropic_usage_deltas_preserve_input_and_count_cache() {
 
 #[tokio::test]
 async fn benchmark_stream_handles_split_utf8_and_rejects_truncated_stream() {
-    use axum::{body::Body, response::Response, routing::post, Router};
+    use axum::{Router, body::Body, response::Response, routing::post};
     let app = Router::new().route("/v1/chat/completions", post(|| async {
         let text = "data: {\"choices\":[{\"delta\":{\"content\":\"字\"}}]}\r\n\r\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}],\"usage\":{\"prompt_tokens\":1024,\"completion_tokens\":1024}}\n\ndata: [DONE]";
         let chunks: Vec<_> = text.as_bytes().chunks(1).map(|chunk| Ok::<_, std::convert::Infallible>(bytes::Bytes::copy_from_slice(chunk))).collect();

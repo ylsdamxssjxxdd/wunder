@@ -155,8 +155,8 @@ const commandStore = useCommandSessionStore();
 const sessionId = computed(() => String(props.sessionId || chatStore.activeSessionId || '').trim());
 /**
  * 命令会话事件在云端可能以“无请求归属”的方式到达，broker 列表也可能只在
- * 结束时才更新；这里额外从当前会话的进行中工具条目推断正在执行的命令，
- * 让底部指示器在命令一开始就显示计数。
+ * 结束时才更新；这里额外从当前会话的进行中工具条目推断显式后台命令，
+ * 让底部指示器在命令一开始就显示计数。普通前台执行与 yield 自动脱离不计入。
  */
 type ComposerTaskRow = CommandSessionRuntimeEntry & { synthetic?: boolean };
 const runningCommandRuns = computed<ComposerTaskRow[]>(() => {
@@ -177,9 +177,13 @@ const runningCommandRuns = computed<ComposerTaskRow[]>(() => {
       if (itemId) seenItems.add(itemId);
       const tool = String(payload.tool || payload.tool_name || item.tool || '');
       if (!/exec|command|shell|terminal|bash/i.test(tool)) continue;
+      const background = payload.run_in_background ?? payload.background
+        ?? payload.args?.run_in_background ?? payload.args?.background;
+      if (background !== true && background !== 'true') continue;
       const command = String(payload.command || payload.cmd || payload.args?.command || payload.args?.cmd || '').trim();
       rows.push({
         synthetic: true,
+        background: true,
         commandSessionId: `tool:${String(item.item_id || command || rows.length)}`,
         toolCallId: String(item.tool_call_id || payload.tool_call_id || ''),
         userId: '', sessionId: sessionId.value, workspaceId: '',
@@ -198,7 +202,8 @@ const runningCommandRuns = computed<ComposerTaskRow[]>(() => {
   return rows;
 });
 const tasks = computed<ComposerTaskRow[]>(() => {
-  const known = commandStore.listBySession(sessionId.value).filter(task => task.status === 'running');
+  const known = commandStore.listBySession(sessionId.value)
+    .filter(task => task.status === 'running' && task.background);
   const knownToolCalls = new Set(
     known.map(task => String(task.toolCallId || '').trim()).filter(Boolean)
   );

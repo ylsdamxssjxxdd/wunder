@@ -1,5 +1,6 @@
 mod activity_indicator;
 mod app;
+mod background_task_footer;
 mod command_center;
 mod frame_scheduler;
 mod highlight;

@@ -11,7 +11,7 @@ use crate::prompting::read_prompt_template;
 use crate::tools::resolve_tool_name;
 use crate::workspace::WorkspaceManager;
 use chrono::DateTime;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
@@ -482,6 +482,15 @@ pub(crate) fn build_message_from_item(item: &Value, include_reasoning: bool) -> 
                 map.insert("reasoning_content".to_string(), json!(reasoning));
             }
         }
+        let thinking = item.get("anthropic_thinking_blocks").or_else(|| {
+            item.get("meta")
+                .and_then(|meta| meta.get("anthropic_thinking_blocks"))
+        });
+        if let Some(thinking) =
+            thinking.filter(|value| value.as_array().is_some_and(|blocks| !blocks.is_empty()))
+        {
+            message["anthropic_thinking_blocks"] = thinking.clone();
+        }
     }
     if role == "assistant" {
         if let Some(tool_calls) = extract_tool_calls_payload(item)
@@ -548,8 +557,7 @@ const HISTORY_TOOL_ARGS_MAX_DEPTH: usize = 6;
 
 /// 历史投影中写类参数的占位对象键；值是被省略的字符数。
 pub(crate) const HISTORY_ELIDED_ARG_KEY: &str = "__wunder_history_elided__";
-pub(crate) const HISTORY_ELIDED_ARG_HINT: &str =
-    "Omitted from model history; the argument was already applied. Do not resend this placeholder. \
+pub(crate) const HISTORY_ELIDED_ARG_HINT: &str = "Omitted from model history; the argument was already applied. Do not resend this placeholder. \
 Read the file or rebuild the content if you need the exact text.";
 
 /// 写类工具按原始名判断，避开 `resolve_tool_name` 每次构表；`apply_patch`
@@ -909,6 +917,13 @@ fn normalize_replacement_history_item(item: &Value) -> Option<Value> {
             Value::String(reasoning.to_string()),
         );
     }
+    if let Some(thinking) = item
+        .get("anthropic_thinking_blocks")
+        .cloned()
+        .filter(|value| value.as_array().is_some_and(|blocks| !blocks.is_empty()))
+    {
+        normalized.insert("anthropic_thinking_blocks".to_string(), thinking);
+    }
     if let Some(tool_calls) =
         extract_tool_calls_payload(item).and_then(filter_replay_tool_calls_payload)
     {
@@ -1036,7 +1051,11 @@ fn is_empty_assistant_replay_message(message: &Value) -> bool {
         .and_then(Value::as_str)
         .map(str::trim)
         .is_some_and(|value| !value.is_empty());
-    if has_tool_calls || has_reasoning {
+    let has_thinking = message
+        .get("anthropic_thinking_blocks")
+        .and_then(Value::as_array)
+        .is_some_and(|blocks| !blocks.is_empty());
+    if has_tool_calls || has_reasoning || has_thinking {
         return false;
     }
     match message.get("content").unwrap_or(&Value::Null) {
@@ -1796,6 +1815,32 @@ mod tests {
     }
 
     #[test]
+    fn build_message_from_item_preserves_signed_anthropic_thinking_blocks() {
+        let item = json!({
+            "role": "assistant",
+            "content": "",
+            "reasoning_content": "step one",
+            "meta": {
+                "type": "tool_call",
+                "anthropic_thinking_blocks": [
+                    {"type": "thinking", "thinking": "step one", "signature": "signed-abc"}
+                ]
+            },
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": "{}"}
+            }]
+        });
+        let message = build_message_from_item(&item, true).expect("assistant replay");
+        assert_eq!(
+            message["anthropic_thinking_blocks"][0]["signature"],
+            json!("signed-abc")
+        );
+        assert_eq!(message["reasoning_content"], json!("step one"));
+    }
+
+    #[test]
     fn build_message_from_item_excludes_visible_turn_error_rows() {
         let item = json!({
             "role": "assistant",
@@ -2141,9 +2186,11 @@ mod tests {
                 "current question".to_string(),
             ]
         );
-        assert!(kept_contents
-            .iter()
-            .all(|content| !content.contains("dropped") && !content.contains("old tail")));
+        assert!(
+            kept_contents
+                .iter()
+                .all(|content| !content.contains("dropped") && !content.contains("old tail"))
+        );
     }
 
     #[test]

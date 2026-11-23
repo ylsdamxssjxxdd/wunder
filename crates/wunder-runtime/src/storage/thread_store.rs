@@ -4,16 +4,16 @@
 //! and only an explicit append, recovery, or rebuild advances the projection.
 
 use super::rollout::{
-    AppendReceipt, RolloutDescriptor, RolloutRecorder, ROLLOUT_MAX_APPEND_BYTES,
-    ROLLOUT_MAX_RECORD_BYTES,
+    AppendReceipt, ROLLOUT_MAX_APPEND_BYTES, ROLLOUT_MAX_RECORD_BYTES, RolloutDescriptor,
+    RolloutRecorder,
 };
 use super::rollout_compression::{self, CompressionOptions, MaintenancePass, RolloutReader};
 use super::thread_history::{ThreadHistoryCursor, ThreadHistoryPageRequest, ThreadHistoryStore};
 use crate::core::blocking;
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use chrono::{TimeZone, Utc};
 use parking_lot::Mutex;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
@@ -81,6 +81,12 @@ pub(crate) fn compact_model_context_payload(payload: serde_json::Value) -> serde
                 "reasoning_content".to_string(),
                 serde_json::Value::String(reasoning.to_string()),
             );
+        }
+        if let Some(thinking) = map
+            .get("anthropic_thinking_blocks")
+            .filter(|value| value.as_array().is_some_and(|blocks| !blocks.is_empty()))
+        {
+            compact.insert("anthropic_thinking_blocks".to_string(), thinking.clone());
         }
         if let Some(tool_calls) = map
             .get("tool_calls")
@@ -999,11 +1005,11 @@ impl LocalThreadStore {
         mut progress: impl FnMut(i64, i64) + Send,
     ) -> Result<super::stress_model::StressThreadStats> {
         use super::stress_model::{
-            base_seed, build_answer_text, build_reasoning_text, build_tool_args,
+            Rng, SYNTHETIC_PROFILE_ID, StressTurnStatistics, StressUsageAccumulator, base_seed,
+            build_answer_text, build_reasoning_text, build_tool_args,
             build_tool_result_for_scenario, fill_template, iter_turn_plans_for_scenario,
             synthetic_initial_context_tokens, synthetic_initial_memory,
-            synthetic_initial_system_prompt, user_prompts, validate_spec, Rng,
-            StressTurnStatistics, StressUsageAccumulator, SYNTHETIC_PROFILE_ID,
+            synthetic_initial_system_prompt, user_prompts, validate_spec,
         };
         validate_spec(spec)?;
         let thread = ThreadId::new(spec.session_id.clone())?;
@@ -3498,6 +3504,9 @@ mod stress_batch_tests {
             "role": "assistant",
             "content": "",
             "reasoning_content": "think",
+            "anthropic_thinking_blocks": [
+                {"type": "thinking", "thinking": "think", "signature": "signed-abc"}
+            ],
             "tool_calls": [{
                 "id": "call-9",
                 "type": "function",
@@ -3511,6 +3520,10 @@ mod stress_batch_tests {
         assert_eq!(first, second);
         assert_eq!(first["role"], "assistant");
         assert_eq!(first["reasoning_content"], "think");
+        assert_eq!(
+            first["anthropic_thinking_blocks"][0]["signature"],
+            "signed-abc"
+        );
         assert_eq!(first["tool_calls"][0]["id"], "call-9");
         assert!(first.get("message_stats").is_none());
         assert!(first.get("meta").is_none());
@@ -3570,14 +3583,16 @@ mod stress_batch_tests {
             store.read_item(&thread, &item).await,
             Err(ThreadStoreError::Unavailable { .. })
         ));
-        assert!(store
-            .append_chat_payload(
-                "sample-owner",
-                &serde_json::json!({"session_id":thread, "turn_id":turn,
+        assert!(
+            store
+                .append_chat_payload(
+                    "sample-owner",
+                    &serde_json::json!({"session_id":thread, "turn_id":turn,
                     "item_id":item, "role":"user", "content":"sample input"}),
-            )
-            .await
-            .is_err());
+                )
+                .await
+                .is_err()
+        );
         assert_eq!(std::fs::metadata(&rollout).unwrap().len(), length);
     }
 
@@ -3611,12 +3626,14 @@ mod stress_batch_tests {
         reopened.delete_thread(&thread).await.unwrap();
         assert!(!rollout.exists());
         assert!(!reopened.deletion_pending(&thread).await.unwrap());
-        assert!(reopened
-            .admission_store()
-            .unwrap()
-            .thread_ids_for_user("sample-owner", None, 10)
-            .unwrap()
-            .is_empty());
+        assert!(
+            reopened
+                .admission_store()
+                .unwrap()
+                .thread_ids_for_user("sample-owner", None, 10)
+                .unwrap()
+                .is_empty()
+        );
         reopened.delete_thread(&thread).await.unwrap();
     }
 
@@ -3646,13 +3663,15 @@ mod stress_batch_tests {
         assert!(store.delete_thread(&thread).await.is_err());
         assert!(store.deletion_pending(&thread).await.unwrap());
         let admissions = store.admission_store().unwrap();
-        assert!(admissions
-            .accept(
-                "sample-owner",
-                thread.as_str(),
-                &serde_json::json!({"content":"sample"})
-            )
-            .is_err());
+        assert!(
+            admissions
+                .accept(
+                    "sample-owner",
+                    thread.as_str(),
+                    &serde_json::json!({"content":"sample"})
+                )
+                .is_err()
+        );
         assert_eq!(
             admissions
                 .thread_ids_for_user("sample-owner", None, 10)
@@ -3677,10 +3696,12 @@ mod stress_batch_tests {
                 .next_rollout_ordinal,
             0
         );
-        assert!(admissions
-            .thread_ids_for_user("sample-owner", None, 10)
-            .unwrap()
-            .is_empty());
+        assert!(
+            admissions
+                .thread_ids_for_user("sample-owner", None, 10)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -3708,12 +3729,14 @@ mod stress_batch_tests {
         assert!(!store.deletion_pending(&thread).await.unwrap());
         assert!(rollout.exists());
         assert!(store.get_thread(&thread).await.is_ok());
-        assert!(!store
-            .admission_store()
-            .unwrap()
-            .thread_ids_for_user("sample-owner", None, 10)
-            .unwrap()
-            .is_empty());
+        assert!(
+            !store
+                .admission_store()
+                .unwrap()
+                .thread_ids_for_user("sample-owner", None, 10)
+                .unwrap()
+                .is_empty()
+        );
         conn.execute_batch("ROLLBACK").unwrap();
         store.delete_thread(&thread).await.unwrap();
         assert!(!rollout.exists());
@@ -3760,20 +3783,24 @@ mod stress_batch_tests {
                 .unwrap();
         }
         assert_eq!(store.delete_user_threads("sample-owner").await.unwrap(), 1);
-        assert!(admissions
-            .thread_ids_for_user("sample-owner", None, 100)
-            .unwrap()
-            .is_empty());
+        assert!(
+            admissions
+                .thread_ids_for_user("sample-owner", None, 100)
+                .unwrap()
+                .is_empty()
+        );
         assert!(matches!(
             store
                 .get_thread(&ThreadId::new("sample-delete").unwrap())
                 .await,
             Err(ThreadStoreError::NotFound { .. })
         ));
-        assert!(store
-            .get_thread(&ThreadId::new("sample-retained").unwrap())
-            .await
-            .is_ok());
+        assert!(
+            store
+                .get_thread(&ThreadId::new("sample-retained").unwrap())
+                .await
+                .is_ok()
+        );
         assert_eq!(store.delete_user_threads("sample-owner").await.unwrap(), 0);
     }
 
@@ -3948,9 +3975,10 @@ mod stress_batch_tests {
         let reopened = LocalThreadStore::open(root.path()).unwrap();
         let thread = ThreadId::new(spec.session_id).unwrap();
         let meta = reopened.session_meta(&thread).await.unwrap();
-        assert!(meta
-            .initial_system_prompt
-            .contains("synthetic storage stress profile"));
+        assert!(
+            meta.initial_system_prompt
+                .contains("synthetic storage stress profile")
+        );
         assert_eq!(
             meta.initial_memory
                 .as_ref()
@@ -3960,16 +3988,20 @@ mod stress_batch_tests {
         );
         let messages = reopened.model_messages(&thread, None).await.unwrap();
         assert_eq!(messages.first().unwrap()["role"], "user");
-        assert!(messages
-            .iter()
-            .any(|message| message["role"] == "assistant"));
+        assert!(
+            messages
+                .iter()
+                .any(|message| message["role"] == "assistant")
+        );
         // Request token breakdown is audit metadata and must not be replayed
         // into model context. The stress generator still persists it in the
         // canonical/UI records, while model_messages contains only protocol
         // fields needed to resume the conversation.
-        assert!(messages
-            .iter()
-            .all(|message| message.get("request_token_breakdown").is_none()));
+        assert!(
+            messages
+                .iter()
+                .all(|message| message.get("request_token_breakdown").is_none())
+        );
         let turns = reopened
             .list_turns(TurnListQuery {
                 thread_id: thread,
@@ -4057,20 +4089,24 @@ mod stress_batch_tests {
             reopened.session_meta(&thread).await.unwrap().history_base,
             Some(expected_base)
         );
-        assert!(!reopened
-            .admission_store()
-            .unwrap()
-            .revert_pending(thread.as_str())
-            .unwrap());
+        assert!(
+            !reopened
+                .admission_store()
+                .unwrap()
+                .revert_pending(thread.as_str())
+                .unwrap()
+        );
         let path = reopened.state_pool.clone();
         let id = thread.to_string();
-        assert!(!db(move || Ok(super::super::thread_mutation::pending(
-            &*connect(&path)?,
-            &ThreadId::new(id)?
-        )?
-        .is_some()))
-        .await
-        .unwrap());
+        assert!(
+            !db(move || Ok(super::super::thread_mutation::pending(
+                &*connect(&path)?,
+                &ThreadId::new(id)?
+            )?
+            .is_some()))
+            .await
+            .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -4182,10 +4218,12 @@ mod stress_batch_tests {
             .await
             .unwrap();
         assert_ne!(reverted.current_rollout_id, source_rollout);
-        assert!(store
-            .revert_through_turn(&source, &turn, &source_rollout)
-            .await
-            .is_err());
+        assert!(
+            store
+                .revert_through_turn(&source, &turn, &source_rollout)
+                .await
+                .is_err()
+        );
         assert_eq!(
             store
                 .list_turns(TurnListQuery {
@@ -4536,9 +4574,11 @@ mod stress_batch_tests {
         admissions
             .register_owner("user-a", "thread-sample")
             .unwrap();
-        assert!(admissions
-            .register_owner("user-b", "thread-sample")
-            .is_err());
+        assert!(
+            admissions
+                .register_owner("user-b", "thread-sample")
+                .is_err()
+        );
     }
 
     #[tokio::test]

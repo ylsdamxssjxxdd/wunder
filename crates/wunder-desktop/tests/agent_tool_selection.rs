@@ -141,6 +141,54 @@ fn tool_catalog_keeps_canonical_identity_and_a_display_title() {
     );
 }
 
+/// 回归：用户在「工具与技能」里上传的自建技能只存在于用户技能目录与用户
+/// 绑定里，不会写进全局 `skills.enabled`。智能体设置页的能力清单必须把它
+/// 当成「技能」列出来，否则上传后无法勾选是否加载。
+#[test]
+fn uploaded_user_skill_is_listed_as_selectable_skill() {
+    let runtime = start_isolated().expect("isolated runtime");
+    let root = runtime
+        .state()
+        .user_tool_store
+        .get_skill_root(runtime.user_id());
+    let skill_dir = root.join("上传的技能");
+    std::fs::create_dir_all(&skill_dir).expect("skill dir");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: 上传的技能\ndescription: 用户上传的自建技能\n---\n\n# 上传的技能\n",
+    )
+    .expect("skill file");
+    runtime
+        .state()
+        .user_tool_store
+        .sync_skills_from_disk(runtime.user_id())
+        .expect("sync skills");
+    runtime
+        .state()
+        .user_tool_manager
+        .clear_skill_cache(Some(runtime.user_id()));
+
+    let tools = runtime.list_tools().expect("tools");
+    let uploaded = tools.iter().find(|tool| tool.name == "上传的技能");
+    assert!(
+        uploaded.is_some(),
+        "uploaded skill missing from the agent catalog: {:?}",
+        tools
+            .iter()
+            .map(|tool| (tool.category.as_str(), tool.name.as_str()))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(uploaded.unwrap().category, "技能");
+
+    // 勾选后保存必须留存：清单里的身份与智能体 tool_names 的身份一致。
+    let persisted = save_tools(&runtime, vec!["上传的技能".into()]);
+    assert!(
+        persisted.tool_names.iter().any(|name| name == "上传的技能"),
+        "uploaded skill was dropped when saving: {:?}",
+        persisted.tool_names
+    );
+}
+
 #[test]
 fn settings_updates_are_rejected_for_unknown_agents() {
     let runtime = start_isolated().expect("isolated runtime");

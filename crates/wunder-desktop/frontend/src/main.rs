@@ -71,6 +71,7 @@ mod tray;
 mod turn_stats;
 mod ui_language;
 mod update_ui;
+mod window_placement;
 mod workspace_files;
 mod workspace_ui;
 
@@ -159,6 +160,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let close_weak = app.as_weak();
     app.window().on_close_requested(move || {
         if let Some(app) = close_weak.upgrade() {
+            crate::window_placement::save_now(&app);
             if crate::tray::hide(&app) {
                 return slint::CloseRequestResponse::KeepWindowShown;
             }
@@ -257,7 +259,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tray::install(&app);
         app.show()?;
         startup_log("window_show_return", startup_boot);
-        fit_and_center_main_window(&app);
+        apply_initial_window_geometry(&app);
         return screenshot::run_hide_probe(&app);
     }
     if matches!(
@@ -335,6 +337,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(_) => return Err("旧 bridge 参数已移除；请直接启动桌面程序".into()),
     }
+    // 窗口位置与大小跨启动保留：这里装载上次的几何，首帧可见后应用；
+    // 之后的移动/缩放会经窗口事件过滤器防抖写回。
+    window_placement::install();
     tray::install(&app);
     // 截图快捷键：F1 先隐藏窗口再截图，F2 保留窗口截图。装在窗口层，
     // 因此不依赖托盘是否可用。
@@ -345,7 +350,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     install_startup_stage_notes(&app);
     app.show()?;
     startup_log("window_show_return", startup_boot);
-    fit_and_center_main_window(&app);
+    apply_initial_window_geometry(&app);
     if let Some(instance) = instance.as_mut() {
         #[cfg(windows)]
         instance.register_window(&app)?;
@@ -386,6 +391,12 @@ fn install_composer_popover_dismissal(app: &MainWindow) {
     let last_physical_pointer = Rc::new(Cell::new(None::<(f64, f64)>));
     let pointer_for_filter = Rc::clone(&last_physical_pointer);
     app.window().on_winit_window_event(move |window, event| {
+        // Slint keeps one filter slot per window: the placement tracker is
+        // forwarded from here instead of installing a second filter (which
+        // would silently replace this one).
+        if let Some(app) = weak.upgrade() {
+            crate::window_placement::observe(&app, event);
+        }
         // The touch-keyboard gate reads this before Slint dispatches the
         // press that may move focus into a text field.
         touch_keyboard::note_winit_event(event);
@@ -571,6 +582,7 @@ fn install_window_chrome(app: &MainWindow) {
     let weak = app.as_weak();
     app.on_window_close_requested(move || {
         if let Some(app) = weak.upgrade() {
+            crate::window_placement::save_now(&app);
             if crate::tray::hide(&app) {
                 return;
             }
@@ -795,17 +807,19 @@ const MIN_WINDOW_H: f64 = 360.0;
 const OPEN_WINDOW_MAX_W: f64 = 960.0;
 const OPEN_WINDOW_MAX_H: f64 = 780.0;
 
-/// Fit the workbench to a compact size and center it on the active monitor.
+/// Place the workbench for the first frame: the frame saved by the last
+/// session when it is still usable, otherwise a compact centered size.
 ///
 /// Slint creates the window before the monitor work area is known, and some
 /// window managers ignore geometry requests while it is still withdrawn. Retry
 /// briefly after the first map, then leave the window alone so a later resize
 /// or move by the user is never snapped back.
-fn fit_and_center_main_window(app: &MainWindow) {
-    use slint::winit_030::{winit, WinitWindowAccessor};
+fn apply_initial_window_geometry(app: &MainWindow) {
+    use slint::winit_030::WinitWindowAccessor;
     use std::cell::Cell;
     use std::rc::Rc;
 
+    let saved = crate::window_placement::initial_geometry();
     let weak = app.as_weak();
     let timer = Rc::new(slint::Timer::default());
     let timer_handle = Rc::clone(&timer);
@@ -825,43 +839,18 @@ fn fit_and_center_main_window(app: &MainWindow) {
                             if !native.is_visible().unwrap_or(false) {
                                 return false;
                             }
+                            if let Some(saved) = saved {
+                                if apply_saved_placement(native, saved) {
+                                    return true;
+                                }
+                            }
                             let Some(monitor) = native
                                 .current_monitor()
                                 .or_else(|| native.primary_monitor())
                             else {
                                 return false;
                             };
-                            let scale = monitor.scale_factor();
-                            let monitor_position = monitor.position();
-                            let monitor_size = monitor.size();
-                            let (area_x, area_y, area_w, area_h) = area.unwrap_or((
-                                monitor_position.x,
-                                monitor_position.y,
-                                monitor_size.width as i32,
-                                monitor_size.height as i32,
-                            ));
-                            if area_w <= 0 || area_h <= 0 {
-                                return false;
-                            }
-                            let min_w = (MIN_WINDOW_W * scale).round() as i32;
-                            let min_h = (MIN_WINDOW_H * scale).round() as i32;
-                            let max_w = (OPEN_WINDOW_MAX_W * scale).round() as i32;
-                            let max_h = (OPEN_WINDOW_MAX_H * scale).round() as i32;
-                            let target_w = ((area_w as f64 * 0.8).round() as i32)
-                                .min(max_w)
-                                .max(min_w)
-                                .min(area_w);
-                            let target_h = ((area_h as f64 * 0.8).round() as i32)
-                                .min(max_h)
-                                .max(min_h)
-                                .min(area_h);
-                            let x = area_x + (area_w - target_w) / 2;
-                            let y = area_y + (area_h - target_h) / 2;
-                            let _ = native.request_inner_size(winit::dpi::PhysicalSize::new(
-                                target_w as u32,
-                                target_h as u32,
-                            ));
-                            native.set_outer_position(winit::dpi::PhysicalPosition::new(x, y));
+                            fit_and_center(native, &monitor, area);
                             true
                         })
                         .unwrap_or(false)
@@ -872,6 +861,104 @@ fn fit_and_center_main_window(app: &MainWindow) {
             }
         },
     );
+}
+
+/// Restore the frame the user left. Returns false when the stored frame no
+/// longer touches a connected monitor (the monitor was unplugged or the layout
+/// changed); the caller then falls back to fit-and-center.
+///
+/// The position is clamped into the monitors' combined bounds and the size to
+/// that same area, so a frame saved on a bigger desktop still opens fully
+/// reachable. Frames that only carry the maximized flag (first session ended
+/// maximized) just re-maximize.
+fn apply_saved_placement(
+    native: &slint::winit_030::winit::window::Window,
+    saved: crate::window_placement::WindowGeometry,
+) -> bool {
+    use slint::winit_030::winit;
+    if !saved.has_frame() {
+        if saved.maximized {
+            native.set_maximized(true);
+            return true;
+        }
+        return false;
+    }
+    let mut desktop: Option<(i32, i32, i32, i32)> = None;
+    let mut still_visible = false;
+    for monitor in native.available_monitors() {
+        let position = monitor.position();
+        let size = monitor.size();
+        let (left, top) = (position.x, position.y);
+        let (right, bottom) = (left + size.width as i32, top + size.height as i32);
+        let overlap_w = (saved.x + saved.width as i32).min(right) - saved.x.max(left);
+        let overlap_h = (saved.y + saved.height as i32).min(bottom) - saved.y.max(top);
+        if overlap_w >= 96 && overlap_h >= 96 {
+            still_visible = true;
+        }
+        desktop = Some(match desktop {
+            None => (left, top, right, bottom),
+            Some((l, t, r, b)) => (l.min(left), t.min(top), r.max(right), b.max(bottom)),
+        });
+    }
+    let Some((left, top, right, bottom)) = desktop.filter(|_| still_visible) else {
+        return false;
+    };
+    let area_w = (right - left).max(1) as u32;
+    let area_h = (bottom - top).max(1) as u32;
+    let width = saved.width.min(area_w);
+    let height = saved.height.min(area_h);
+    let x = saved
+        .x
+        .clamp(left, left + area_w as i32 - width as i32);
+    let y = saved
+        .y
+        .clamp(top, top + area_h as i32 - height as i32);
+    let _ = native.request_inner_size(winit::dpi::PhysicalSize::new(width, height));
+    native.set_outer_position(winit::dpi::PhysicalPosition::new(x, y));
+    if saved.maximized {
+        native.set_maximized(true);
+    }
+    true
+}
+
+/// Compact 80% of the work area, capped by the open-size ceiling and centered.
+fn fit_and_center(
+    native: &slint::winit_030::winit::window::Window,
+    monitor: &slint::winit_030::winit::monitor::MonitorHandle,
+    area: Option<(i32, i32, i32, i32)>,
+) {
+    use slint::winit_030::winit;
+    let scale = monitor.scale_factor();
+    let monitor_position = monitor.position();
+    let monitor_size = monitor.size();
+    let (area_x, area_y, area_w, area_h) = area.unwrap_or((
+        monitor_position.x,
+        monitor_position.y,
+        monitor_size.width as i32,
+        monitor_size.height as i32,
+    ));
+    if area_w <= 0 || area_h <= 0 {
+        return;
+    }
+    let min_w = (MIN_WINDOW_W * scale).round() as i32;
+    let min_h = (MIN_WINDOW_H * scale).round() as i32;
+    let max_w = (OPEN_WINDOW_MAX_W * scale).round() as i32;
+    let max_h = (OPEN_WINDOW_MAX_H * scale).round() as i32;
+    let target_w = ((area_w as f64 * 0.8).round() as i32)
+        .min(max_w)
+        .max(min_w)
+        .min(area_w);
+    let target_h = ((area_h as f64 * 0.8).round() as i32)
+        .min(max_h)
+        .max(min_h)
+        .min(area_h);
+    let x = area_x + (area_w - target_w) / 2;
+    let y = area_y + (area_h - target_h) / 2;
+    let _ = native.request_inner_size(winit::dpi::PhysicalSize::new(
+        target_w as u32,
+        target_h as u32,
+    ));
+    native.set_outer_position(winit::dpi::PhysicalPosition::new(x, y));
 }
 
 /// Register the bundled faces before the first text layout.

@@ -1,6 +1,6 @@
 diff --git a/crates/wunder-desktop/frontend/vendor/winit-0.30.2/.cargo-ok b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/.cargo-ok
 new file mode 100644
-index 00000000..5f8b7958
+index 000000000..5f8b79583
 --- /dev/null
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/.cargo-ok
 @@ -0,0 +1 @@
@@ -8,7 +8,7 @@ index 00000000..5f8b7958
 \ No newline at end of file
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/Cargo.lock b/temp_dir/winit-pristine-0.30.2/winit-0.30.2/Cargo.lock
 deleted file mode 100644
-index 5d4cffe3..00000000
+index 5d4cffe36..000000000
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/Cargo.lock
 +++ /dev/null
 @@ -1,2170 +0,0 @@
@@ -2184,22 +2184,22 @@ index 5d4cffe3..00000000
 -]
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/examples/data/cross.png b/temp_dir/winit-pristine-0.30.2/winit-0.30.2/examples/data/cross.png
 deleted file mode 100644
-index 9bfdf369..00000000
+index 9bfdf369b..000000000
 Binary files a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/examples/data/cross.png and /dev/null differ
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/examples/data/cross2.png b/temp_dir/winit-pristine-0.30.2/winit-0.30.2/examples/data/cross2.png
 deleted file mode 100644
-index b9f7a486..00000000
+index b9f7a486b..000000000
 Binary files a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/examples/data/cross2.png and /dev/null differ
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/examples/data/gradient.png b/temp_dir/winit-pristine-0.30.2/winit-0.30.2/examples/data/gradient.png
 deleted file mode 100644
-index 41ce610e..00000000
+index 41ce610e6..000000000
 Binary files a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/examples/data/gradient.png and /dev/null differ
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/examples/data/icon.png b/temp_dir/winit-pristine-0.30.2/winit-0.30.2/examples/data/icon.png
 deleted file mode 100644
-index aa3fbf3c..00000000
+index aa3fbf3cf..000000000
 Binary files a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/examples/data/icon.png and /dev/null differ
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform/windows.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform/windows.rs
-index 5b79771a..d5b12de7 100644
+index 5b79771a9..d5b12de76 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform/windows.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform/windows.rs
 @@ -499,6 +499,11 @@ pub trait WindowAttributesExtWindows {
@@ -2228,7 +2228,7 @@ index 5b79771a..d5b12de7 100644
      fn with_class_name<S: Into<String>>(mut self, class_name: S) -> Self {
          self.platform_specific.class_name = class_name.into();
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform/x11.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform/x11.rs
-index 749c400a..4ab900c9 100644
+index 749c400ab..4ab900c94 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform/x11.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform/x11.rs
 @@ -81,9 +81,7 @@ pub type XWindow = u32;
@@ -2243,7 +2243,7 @@ index 749c400a..4ab900c9 100644
  
  /// Additional methods on [`ActiveEventLoop`] that are specific to X11.
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/linux/mod.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/linux/mod.rs
-index 776689fe..6f1f5e33 100644
+index 776689fe2..6f1f5e33f 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/linux/mod.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/linux/mod.rs
 @@ -643,7 +643,12 @@ pub(crate) enum PlatformCustomCursor {
@@ -2270,7 +2270,7 @@ index 776689fe..6f1f5e33 100644
          }
  
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/linux/x11/event_processor.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/linux/x11/event_processor.rs
-index 9c6b95a2..b86a7edb 100644
+index 9c6b95a2a..b86a7edbe 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/linux/x11/event_processor.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/linux/x11/event_processor.rs
 @@ -66,7 +66,21 @@ pub struct EventProcessor {
@@ -2557,7 +2557,7 @@ index 9c6b95a2..b86a7edb 100644
              // We don't have to replay modifiers pressed before the current event if some events
              // were not forwarded to us, since their state is irrelevant.
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/linux/x11/ime/callbacks.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/linux/x11/ime/callbacks.rs
-index c75724ec..b1900f48 100644
+index c75724ec8..b1900f484 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/linux/x11/ime/callbacks.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/linux/x11/ime/callbacks.rs
 @@ -118,22 +118,17 @@ unsafe fn replace_im(inner: *mut ImeInner) -> Result<(), ReplaceImError> {
@@ -2586,7 +2586,7 @@ index c75724ec..b1900f48 100644
                      (*inner).event_sender.clone(),
                  )
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/linux/x11/ime/context.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/linux/x11/ime/context.rs
-index aa046af6..22059236 100644
+index aa046af67..220592363 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/linux/x11/ime/context.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/linux/x11/ime/context.rs
 @@ -158,7 +158,13 @@ struct PreeditCallbacks {
@@ -2642,7 +2642,7 @@ index aa046af6..22059236 100644
  
      // Set the spot for preedit text. Setting spot isn't working with libX11 when preedit callbacks
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/linux/x11/ime/input_method.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/linux/x11/ime/input_method.rs
-index b9d3ca71..7c96f7de 100644
+index b9d3ca710..7c96f7def 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/linux/x11/ime/input_method.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/linux/x11/ime/input_method.rs
 @@ -34,7 +34,6 @@ unsafe fn open_im(xconn: &Arc<XConnection>, locale_modifiers: &CStr) -> Option<f
@@ -2665,7 +2665,7 @@ index b9d3ca71..7c96f7de 100644
  }
  
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/linux/x11/ime/mod.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/linux/x11/ime/mod.rs
-index 606e00d9..727fc41a 100644
+index 606e00d9f..727fc41ac 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/linux/x11/ime/mod.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/linux/x11/ime/mod.rs
 @@ -56,6 +56,11 @@ pub(crate) struct Ime {
@@ -2831,7 +2831,7 @@ index 606e00d9..727fc41a 100644
      }
  }
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/linux/x11/mod.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/linux/x11/mod.rs
-index 88071b72..51e5ba64 100644
+index 88071b72b..51e5ba642 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/linux/x11/mod.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/linux/x11/mod.rs
 @@ -24,6 +24,7 @@ use x11rb::protocol::xkb;
@@ -2994,7 +2994,7 @@ index 88071b72..51e5ba64 100644
          let window_target = EventProcessor::window_target(&self.event_processor.target);
          window_target.control_flow()
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/definitions.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/definitions.rs
-index c015ffc4..7e23409c 100644
+index c015ffc4e..7e23409c5 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/definitions.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/definitions.rs
 @@ -68,17 +68,23 @@ pub struct IDataObjectVtbl {
@@ -3033,7 +3033,7 @@ index c015ffc4..7e23409c 100644
      ) -> HRESULT,
  }
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/drop_handler.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/drop_handler.rs
-index 38cb5c54..9d8ccb15 100644
+index 38cb5c54d..9d8ccb15c 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/drop_handler.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/drop_handler.rs
 @@ -5,7 +5,8 @@ use std::ptr;
@@ -3203,7 +3203,7 @@ index 38cb5c54..9d8ccb15 100644
          unsafe { &mut *(this as *mut _) }
      }
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/event_loop.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/event_loop.rs
-index 4fc31553..c617b3f9 100644
+index 4fc31553f..2a080a5e0 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/event_loop.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/event_loop.rs
 @@ -2,7 +2,7 @@
@@ -3223,7 +3223,7 @@ index 4fc31553..c617b3f9 100644
      WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
      WM_IME_SETCONTEXT, WM_IME_STARTCOMPOSITION, WM_INPUT, WM_INPUT_DEVICE_CHANGE, WM_KEYDOWN,
      WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
-@@ -88,6 +89,88 @@ use runner::{EventLoopRunner, EventLoopRunnerShared};
+@@ -88,6 +89,85 @@ use runner::{EventLoopRunner, EventLoopRunnerShared};
  use super::window::set_skip_taskbar;
  use super::SelectedCursor;
  
@@ -3264,6 +3264,10 @@ index 4fc31553..c617b3f9 100644
 +        needs_result
 +    }
 +
++    fn begin_keydown(&mut self) {
++        self.pending_text.clear();
++    }
++
 +    fn record_commit_echo(&mut self, text: &str) {
 +        const MAX_PENDING_COMMIT_BYTES: usize = 1024;
 +
@@ -3281,11 +3285,7 @@ index 4fc31553..c617b3f9 100644
 +        self.pending_text.push_str(text);
 +    }
 +
-+    fn suppress_keyboard_text(
-+        &mut self,
-+        ime_composition_active: bool,
-+        text: Option<&str>,
-+    ) -> bool {
++    fn suppress_keyboard_text(&mut self, text: Option<&str>) -> bool {
 +        let Some(text) = text.filter(|text| !text.is_empty()) else {
 +            return false;
 +        };
@@ -3302,17 +3302,14 @@ index 4fc31553..c617b3f9 100644
 +        // A different text event proves that the queued compatibility echo
 +        // did not arrive. Do not let an old commit affect normal input.
 +        self.pending_text.clear();
-+
-+        // This is the original guard for IMEs that send WM_CHAR while their
-+        // composition is still active. The commit path remains authoritative.
-+        ime_composition_active && text.chars().any(|ch| !ch.is_ascii())
++        false
 +    }
 +}
 +
  /// some backends like macos uses an uninhabited `Never` type,
  /// on windows, `UserEvent`s are also dispatched through the
  /// WNDPROC callback, and due to the re-entrant nature of the
-@@ -113,6 +196,7 @@ pub(crate) struct WindowData {
+@@ -113,6 +193,7 @@ pub(crate) struct WindowData {
      pub window_state: Arc<Mutex<WindowState>>,
      pub event_loop_runner: EventLoopRunnerShared<UserEventPlaceholder>,
      pub key_event_builder: KeyEventBuilder,
@@ -3320,7 +3317,7 @@ index 4fc31553..c617b3f9 100644
      pub _file_drop_handler: Option<FileDropHandler>,
      pub userdata_removed: Cell<bool>,
      pub recurse_depth: Cell<u32>,
-@@ -126,6 +210,43 @@ impl WindowData {
+@@ -126,6 +207,41 @@ impl WindowData {
      fn window_state_lock(&self) -> MutexGuard<'_, WindowState> {
          self.window_state.lock().unwrap()
      }
@@ -3335,14 +3332,12 @@ index 4fc31553..c617b3f9 100644
 +            .take_end_composition_result()
 +    }
 +
-+    fn suppress_ime_keyboard_text(
-+        &self,
-+        ime_composition_active: bool,
-+        text: Option<&str>,
-+    ) -> bool {
-+        self.ime_commit_deduplicator
-+            .borrow_mut()
-+            .suppress_keyboard_text(ime_composition_active, text)
++    fn begin_keydown(&self) {
++        self.ime_commit_deduplicator.borrow_mut().begin_keydown();
++    }
++
++    fn suppress_ime_keyboard_text(&self, text: Option<&str>) -> bool {
++        self.ime_commit_deduplicator.borrow_mut().suppress_keyboard_text(text)
 +    }
 +
 +    fn send_ime_composition_result(&self, window: HWND, text: String) {
@@ -3364,7 +3359,7 @@ index 4fc31553..c617b3f9 100644
  }
  
  struct ThreadMsgTargetData {
-@@ -724,6 +845,40 @@ impl EventLoopThreadExecutor {
+@@ -724,6 +840,40 @@ impl EventLoopThreadExecutor {
              }
          }
      }
@@ -3405,7 +3400,7 @@ index 4fc31553..c617b3f9 100644
  }
  
  type ThreadExecFn = Box<Box<dyn FnMut()>>;
-@@ -890,8 +1045,15 @@ fn insert_event_target_window_data(
+@@ -890,8 +1040,15 @@ fn insert_event_target_window_data(
  
  /// Capture mouse input, allowing `window` to receive mouse events when the cursor is outside of
  /// the window.
@@ -3422,7 +3417,7 @@ index 4fc31553..c617b3f9 100644
      unsafe { SetCapture(window) };
  }
  
-@@ -1037,6 +1199,10 @@ unsafe fn public_window_callback_inner(
+@@ -1037,6 +1194,10 @@ unsafe fn public_window_callback_inner(
  ) -> LRESULT {
      let mut result = ProcResult::DefWindowProc(wparam);
  
@@ -3433,21 +3428,22 @@ index 4fc31553..c617b3f9 100644
      // Send new modifiers before sending key events.
      let mods_changed_callback = || match msg {
          WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP => {
-@@ -1054,7 +1220,21 @@ unsafe fn public_window_callback_inner(
+@@ -1052,9 +1213,22 @@ unsafe fn public_window_callback_inner(
+
+     let keyboard_callback = || {
          use crate::event::WindowEvent::KeyboardInput;
++        if matches!(msg, WM_KEYDOWN | WM_SYSKEYDOWN) {
++            // Any echo of the preceding composition had to arrive before this
++            // keydown. A later identical character is new, legitimate input.
++            userdata.begin_keydown();
++        }
          let events =
              userdata.key_event_builder.process_message(window, msg, wparam, lparam, &mut result);
-+        // Some legacy Windows IMEs emit a
-+        // translated WM_CHAR in addition to their IME commit. The character
-+        // may arrive after WM_IME_ENDCOMPOSITION, so state alone cannot tell
-+        // whether it is duplicate text. Match it against the actual commit.
-+        let ime_composition_active = {
-+            let state = userdata.window_state_lock();
-+            state.ime_allowed && state.ime_state != ImeState::Disabled
-+        };
++        // Some legacy Windows IMEs emit a translated WM_CHAR in addition to
++        // their IME commit. Match only that exact echo: direct WM_CHAR text,
++        // including full-width punctuation, remains valid during composition.
          for event in events {
 +            if userdata.suppress_ime_keyboard_text(
-+                ime_composition_active,
 +                event.event.text.as_deref().or_else(|| event.event.logical_key.to_text()),
 +            ) {
 +                continue;
@@ -3455,7 +3451,7 @@ index 4fc31553..c617b3f9 100644
              userdata.send_event(Event::WindowEvent {
                  window_id: RootWindowId(WindowId(window)),
                  event: KeyboardInput {
-@@ -1403,6 +1583,7 @@ unsafe fn public_window_callback_inner(
+@@ -1403,6 +1577,7 @@ unsafe fn public_window_callback_inner(
          WM_IME_STARTCOMPOSITION => {
              let ime_allowed = userdata.window_state_lock().ime_allowed;
              if ime_allowed {
@@ -3463,7 +3459,7 @@ index 4fc31553..c617b3f9 100644
                  userdata.window_state_lock().ime_state = ImeState::Enabled;
  
                  userdata.send_event(Event::WindowEvent {
-@@ -1436,15 +1617,16 @@ unsafe fn public_window_callback_inner(
+@@ -1436,15 +1611,16 @@ unsafe fn public_window_callback_inner(
                  if (lparam as u32 & GCS_RESULTSTR) != 0 {
                      if let Some(text) = unsafe { ime_context.get_composed_text() } {
                          userdata.window_state_lock().ime_state = ImeState::Enabled;
@@ -3484,7 +3480,7 @@ index 4fc31553..c617b3f9 100644
                      }
                  }
  
-@@ -1474,19 +1656,19 @@ unsafe fn public_window_callback_inner(
+@@ -1474,19 +1650,19 @@ unsafe fn public_window_callback_inner(
                  w.ime_allowed || w.ime_state != ImeState::Disabled
              };
              if ime_allowed_or_composing {
@@ -3511,7 +3507,7 @@ index 4fc31553..c617b3f9 100644
                      }
                  }
  
-@@ -1502,9 +1684,9 @@ unsafe fn public_window_callback_inner(
+@@ -1502,9 +1678,9 @@ unsafe fn public_window_callback_inner(
          },
  
          WM_IME_SETCONTEXT => {
@@ -3524,7 +3520,7 @@ index 4fc31553..c617b3f9 100644
          },
  
          // this is necessary for us to maintain minimize/restore state
-@@ -1673,7 +1855,7 @@ unsafe fn public_window_callback_inner(
+@@ -1673,7 +1849,7 @@ unsafe fn public_window_callback_inner(
              use crate::event::MouseButton::Left;
              use crate::event::WindowEvent::MouseInput;
  
@@ -3533,7 +3529,7 @@ index 4fc31553..c617b3f9 100644
  
              update_modifiers(window, userdata);
  
-@@ -1705,7 +1887,7 @@ unsafe fn public_window_callback_inner(
+@@ -1705,7 +1881,7 @@ unsafe fn public_window_callback_inner(
              use crate::event::MouseButton::Right;
              use crate::event::WindowEvent::MouseInput;
  
@@ -3542,7 +3538,7 @@ index 4fc31553..c617b3f9 100644
  
              update_modifiers(window, userdata);
  
-@@ -1737,7 +1919,7 @@ unsafe fn public_window_callback_inner(
+@@ -1737,7 +1913,7 @@ unsafe fn public_window_callback_inner(
              use crate::event::MouseButton::Middle;
              use crate::event::WindowEvent::MouseInput;
  
@@ -3551,7 +3547,7 @@ index 4fc31553..c617b3f9 100644
  
              update_modifiers(window, userdata);
  
-@@ -1770,7 +1952,7 @@ unsafe fn public_window_callback_inner(
+@@ -1770,7 +1946,7 @@ unsafe fn public_window_callback_inner(
              use crate::event::WindowEvent::MouseInput;
              let xbutton = super::get_xbutton_wparam(wparam as u32);
  
@@ -3560,7 +3556,7 @@ index 4fc31553..c617b3f9 100644
  
              update_modifiers(window, userdata);
  
-@@ -2021,7 +2203,12 @@ unsafe fn public_window_callback_inner(
+@@ -2021,7 +2197,12 @@ unsafe fn public_window_callback_inner(
  
          WM_NCACTIVATE => {
              let is_active = wparam != false.into();
@@ -3574,7 +3570,7 @@ index 4fc31553..c617b3f9 100644
              if active_focus_changed {
                  if is_active {
                      unsafe { gain_active_focus(window, userdata) };
-@@ -2029,7 +2216,28 @@ unsafe fn public_window_callback_inner(
+@@ -2029,7 +2210,28 @@ unsafe fn public_window_callback_inner(
                      unsafe { lose_active_focus(window, userdata) };
                  }
              }
@@ -3604,7 +3600,7 @@ index 4fc31553..c617b3f9 100644
          },
  
          WM_SETFOCUS => {
-@@ -2083,6 +2291,38 @@ unsafe fn public_window_callback_inner(
+@@ -2083,6 +2285,38 @@ unsafe fn public_window_callback_inner(
              let window_state = userdata.window_state_lock();
              let window_flags = window_state.window_flags;
  
@@ -3643,7 +3639,7 @@ index 4fc31553..c617b3f9 100644
              if window_state.min_size.is_some() || window_state.max_size.is_some() {
                  if let Some(min_size) = window_state.min_size {
                      let min_size = min_size.to_physical(window_state.scale_factor);
-@@ -2362,6 +2602,172 @@ unsafe fn public_window_callback_inner(
+@@ -2362,6 +2596,214 @@ unsafe fn public_window_callback_inner(
      }
  }
  
@@ -3682,29 +3678,47 @@ index 4fc31553..c617b3f9 100644
 +    fn legacy_ime_commit_consumes_only_its_matching_keyboard_text() {
 +        let mut state = ImeCommitDeduplicator::default();
 +        state.record_composition_result("sample");
-+        assert!(state.suppress_keyboard_text(false, Some("sample")));
-+        assert!(!state.suppress_keyboard_text(false, Some("sample")));
++        assert!(state.suppress_keyboard_text(Some("sample")));
++        assert!(!state.suppress_keyboard_text(Some("sample")));
 +
 +        state.record_composition_result("first");
-+        assert!(state.suppress_keyboard_text(false, Some("fir")));
-+        assert!(state.suppress_keyboard_text(false, Some("st")));
++        assert!(state.suppress_keyboard_text(Some("fir")));
++        assert!(state.suppress_keyboard_text(Some("st")));
 +
 +        // Legacy IMEs can split a displayed word into result strings while
 +        // winit later combines their WM_CHAR messages into one key event.
 +        state.record_composition_result("one");
 +        state.record_composition_result("two");
-+        assert!(state.suppress_keyboard_text(false, Some("onetwo")));
-+
-+        assert!(state.suppress_keyboard_text(true, Some("文")));
-+        assert!(!state.suppress_keyboard_text(false, Some("文")));
++        assert!(state.suppress_keyboard_text(Some("onetwo")));
 +    }
 +
 +    #[test]
-+    fn ime_messages_commit_each_result_once_through_a_real_window() {
++    fn direct_non_ascii_text_is_not_suppressed_during_composition() {
++        let mut state = ImeCommitDeduplicator::default();
++        state.begin_composition();
++        for text in ["文", "？", "！", "，", "。", "；", "：", "、", "（", "）", "【", "】"]
++        {
++            assert!(!state.suppress_keyboard_text(Some(text)), "lost direct text: {text}");
++        }
++    }
++
++    #[test]
++    fn new_keydown_expires_an_unmatched_commit_echo() {
++        let mut state = ImeCommitDeduplicator::default();
++        state.record_composition_result("？");
++        state.begin_keydown();
++        assert!(!state.suppress_keyboard_text(Some("？")));
++    }
++
++    #[test]
++    fn ime_messages_commit_results_and_forward_direct_text_through_a_real_window() {
 +        use std::cell::RefCell;
 +        use std::rc::Rc;
 +
-+        use windows_sys::Win32::UI::WindowsAndMessaging::SendMessageW;
++        use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_OEM_2;
++        use windows_sys::Win32::UI::WindowsAndMessaging::{
++            DispatchMessageW, PeekMessageW, PostMessageW, SendMessageW, MSG, PM_REMOVE, WM_CHAR,
++        };
 +
 +        use crate::event::{Event, Ime, WindowEvent};
 +        use crate::event_loop::EventLoop;
@@ -3714,6 +3728,7 @@ index 4fc31553..c617b3f9 100644
 +
 +        use super::{WindowData, GCS_COMPSTR, GCS_RESULTSTR, GWL_USERDATA};
 +        use super::{WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION};
++        use super::WM_KEYDOWN;
 +
 +        let event_loop = EventLoop::builder().with_any_thread(true).build().unwrap();
 +        #[allow(deprecated)]
@@ -3731,11 +3746,20 @@ index 4fc31553..c617b3f9 100644
 +        userdata.window_state_lock().ime_allowed = true;
 +        let commits = Rc::new(RefCell::new(Vec::new()));
 +        let received = Rc::clone(&commits);
++        let keyboard_texts = Rc::new(RefCell::new(Vec::new()));
++        let received_keyboard_texts = Rc::clone(&keyboard_texts);
 +        unsafe {
 +            userdata.event_loop_runner.set_event_handler(move |event| {
-+                if let Event::WindowEvent { event: WindowEvent::Ime(Ime::Commit(text)), .. } = event
-+                {
-+                    received.borrow_mut().push(text);
++                match event {
++                    Event::WindowEvent { event: WindowEvent::Ime(Ime::Commit(text)), .. } => {
++                        received.borrow_mut().push(text);
++                    }
++                    Event::WindowEvent { event: WindowEvent::KeyboardInput { event, .. }, .. } => {
++                        if let Some(text) = event.text {
++                            received_keyboard_texts.borrow_mut().push(text.to_string());
++                        }
++                    }
++                    _ => {}
 +                }
 +            });
 +        }
@@ -3810,13 +3834,27 @@ index 4fc31553..c617b3f9 100644
 +        send(WM_IME_COMPOSITION, GCS_COMPSTR as isize);
 +        send(WM_IME_ENDCOMPOSITION, 0);
 +        assert!(commits.borrow().is_empty());
++
++        // Some Chinese IMEs send full-width punctuation directly as WM_CHAR
++        // while composition is active, with no GCS_RESULTSTR to commit.
++        keyboard_texts.borrow_mut().clear();
++        send(WM_IME_STARTCOMPOSITION, 0);
++        assert_ne!(unsafe { PostMessageW(hwnd, WM_CHAR, '？' as usize, 0) }, 0);
++        unsafe {
++            SendMessageW(hwnd, WM_KEYDOWN, VK_OEM_2 as usize, 0);
++            let mut message = std::mem::zeroed::<MSG>();
++            assert_ne!(PeekMessageW(&mut message, hwnd, WM_CHAR, WM_CHAR, PM_REMOVE), 0);
++            DispatchMessageW(&message);
++        }
++        assert_eq!(keyboard_texts.borrow().last().map(String::as_str), Some("？"));
++        send(WM_IME_ENDCOMPOSITION, 0);
 +    }
 +}
 +
  unsafe extern "system" fn thread_event_target_callback(
      window: HWND,
      msg: u32,
-@@ -2441,7 +2847,7 @@ unsafe extern "system" fn thread_event_target_callback(
+@@ -2441,7 +2883,7 @@ unsafe extern "system" fn thread_event_target_callback(
      if userdata_removed {
          drop(userdata);
      } else {
@@ -3826,7 +3864,7 @@ index 4fc31553..c617b3f9 100644
      result
  }
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/ime.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/ime.rs
-index 67614873..37685a0a 100644
+index 676148735..37685a0ab 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/ime.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/ime.rs
 @@ -29,6 +29,12 @@ impl ImeContext {
@@ -3882,7 +3920,7 @@ index 67614873..37685a0a 100644
 +    }
 +}
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/mod.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/mod.rs
-index 15051f0c..bba76108 100644
+index 15051f0ca..bba76108b 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/mod.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/mod.rs
 @@ -29,6 +29,7 @@ pub struct PlatformSpecificWindowAttributes {
@@ -3902,7 +3940,7 @@ index 15051f0c..bba76108 100644
              decoration_shadow: false,
              backdrop_type: BackdropType::default(),
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/util.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/util.rs
-index 87bcbd42..f55eef02 100644
+index 87bcbd425..f55eef020 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/util.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/util.rs
 @@ -219,6 +219,7 @@ pub type GetDpiForMonitor = unsafe extern "system" fn(
@@ -3943,7 +3981,7 @@ index 87bcbd42..f55eef02 100644
      unsafe extern "system" fn(pointId: u32, penInfo: *mut POINTER_PEN_INFO) -> BOOL;
  
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/window.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/window.rs
-index 23fec32b..7bd7e25f 100644
+index 23fec32b3..7bd7e25f5 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/window.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/window.rs
 @@ -917,7 +917,11 @@ impl Window {
@@ -4000,7 +4038,7 @@ index 23fec32b..7bd7e25f 100644
      // WindowFlags::VISIBLE and MAXIMIZED are set down below after the window has been configured.
      window_flags.set(WindowFlags::RESIZABLE, attributes.resizable);
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/window_state.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/window_state.rs
-index 911467b4..bf802cc4 100644
+index 911467b4c..bf802cc4c 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/window_state.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/window_state.rs
 @@ -15,8 +15,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{

@@ -3,7 +3,7 @@ use crate::core::tool_args::{
     normalize_tool_arguments_json_with_meta,
 };
 use crate::tools::{extract_freeform_tool_input, is_freeform_tool_name};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 #[derive(Debug, Default, Clone)]
 pub(super) struct StreamToolCall {
@@ -549,11 +549,7 @@ fn choose_tool_arguments_candidate<'a>(
         right.normalized.len(),
         matches!(right.source, ToolArgumentsCandidateSource::Snapshot),
     );
-    if right_rank > left_rank {
-        right
-    } else {
-        left
-    }
+    if right_rank > left_rank { right } else { left }
 }
 
 pub(super) fn resolve_stream_tool_call_name(call: &StreamToolCall) -> Option<String> {

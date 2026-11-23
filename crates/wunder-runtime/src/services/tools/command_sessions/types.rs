@@ -39,6 +39,8 @@ pub(crate) struct CommandSessionStartSpec {
     pub launch_mode: CommandSessionLaunchMode,
     pub tty: bool,
     pub interactive: bool,
+    /// 是否由模型通过 `run_in_background` 显式转入后台。
+    pub background: bool,
     /// 启动恢复时沿用原始开始时间，保证耗时与完成通知准确。
     pub started_at: Option<DateTime<Utc>>,
 }
@@ -57,6 +59,7 @@ pub(crate) struct CommandSessionSnapshot {
     pub launch_mode: CommandSessionLaunchMode,
     pub tty: bool,
     pub interactive: bool,
+    pub background: bool,
     pub status: CommandSessionStatus,
     pub seq: u64,
     pub started_at: DateTime<Utc>,
@@ -191,6 +194,7 @@ fn base_event_map(snapshot: &CommandSessionSnapshot) -> Map<String, Value> {
     map.insert("launch_mode".to_string(), json!(snapshot.launch_mode));
     map.insert("tty".to_string(), json!(snapshot.tty));
     map.insert("interactive".to_string(), json!(snapshot.interactive));
+    map.insert("background".to_string(), json!(snapshot.background));
     map.insert("seq".to_string(), json!(snapshot.seq));
     map.insert("started_at".to_string(), json!(snapshot.started_at));
     map.insert("updated_at".to_string(), json!(snapshot.updated_at));
@@ -216,6 +220,7 @@ mod tests {
             launch_mode: CommandSessionLaunchMode::Shell,
             tty: false,
             interactive: false,
+            background: false,
             status: CommandSessionStatus::Exited,
             seq: 3,
             started_at: now,
@@ -250,7 +255,7 @@ mod tests {
     }
 }
 
-/// 一条「正在执行的命令任务」的轻量投影。给本地 UI 的后台任务面板用：
+/// 一条「正在执行的命令任务」的轻量投影。给本地 UI 的任务面板用：
 /// 只带一眼能读的字段，输出尾部要按需另取，避免每秒轮询时搬运大字符串。
 #[derive(Debug, Clone, Serialize)]
 pub struct CommandTaskView {

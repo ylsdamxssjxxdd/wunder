@@ -1636,7 +1636,7 @@ export component Composer inherits Rectangle {
     in property <string> host-memory-used: "—";
     in property <string> host-memory-total: "—";
     in property <int> host-cores: 0;
-    // 后台任务：本线程里仍在执行的命令工具。模型由 command_tasks 控制器按秒投影，
+    // 后台任务：本线程里模型显式放入后台且仍在执行的命令工具。由 command_tasks 控制器按秒投影，
     // 展开/终止都回到 Rust（展开态与输出尾部不放在 Slint 侧，避免重排时丢状态）。
     in property <[CommandTask]> running-tasks: [];
     in property <int> running-task-count: 0;

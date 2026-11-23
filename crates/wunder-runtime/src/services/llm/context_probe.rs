@@ -1,6 +1,6 @@
 use anyhow::Result;
-use reqwest::header::HeaderMap;
 use reqwest::Client;
+use reqwest::header::HeaderMap;
 use serde_json::Value;
 use std::time::Duration;
 use url::form_urlencoded::byte_serialize;
@@ -154,11 +154,7 @@ pub(super) fn normalize_api_key_token(raw: &str) -> Option<&str> {
         token = rest.trim();
     }
     token = token.trim_matches(|ch| ch == '"' || ch == '\'').trim();
-    if token.is_empty() {
-        None
-    } else {
-        Some(token)
-    }
+    if token.is_empty() { None } else { Some(token) }
 }
 
 pub(super) fn build_headers(api_key: &str) -> HeaderMap {

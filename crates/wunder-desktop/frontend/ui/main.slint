@@ -651,7 +651,7 @@ export component MainWindow inherits Window {
     in-out property <string> host-memory-used: "—";
     in-out property <string> host-memory-total: "—";
     in-out property <int> host-cores: 0;
-    // 后台任务（本线程仍在执行的命令工具）。命令行的裁剪、展开态与输出尾部都在
+    // 后台任务（本线程模型显式放入后台且仍在执行的命令工具）。命令行的裁剪、展开态与输出尾部都在
     // Rust 侧维护，这里只承载最近一次投影。
     in-out property <[CommandTask]> running-tasks: [];
     in-out property <int> running-task-count: 0;
@@ -1767,7 +1767,6 @@ export component MainWindow inherits Window {
             drop-shadow-offset-x: root.sidebar-overlay ? 4px : 0px;
             // 极窄窗按安卓版抽屉排版：底部入口加版本号，行内动作常驻。
             drawer: root.sidebar-overlay && root.narrow;
-            version: root.update-current-version;
             rows: root.sidebar-rows;
             active-thread-id: root.active-session-id;
             // Signed-in identity travels from the profile projection so the

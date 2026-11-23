@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 #[derive(Default)]
 pub(super) struct StreamDecoder {
@@ -79,10 +79,12 @@ mod tests {
         for bytes in [vec![0xff], vec![0xe4, 0x20], vec![0xe4, 0xb8], vec![0xf0]] {
             let mut decoder = StreamDecoder::default();
             let mut output = String::new();
-            assert!(decoder
-                .push(&bytes, &mut output)
-                .and_then(|()| decoder.finish())
-                .is_err());
+            assert!(
+                decoder
+                    .push(&bytes, &mut output)
+                    .and_then(|()| decoder.finish())
+                    .is_err()
+            );
         }
     }
 }

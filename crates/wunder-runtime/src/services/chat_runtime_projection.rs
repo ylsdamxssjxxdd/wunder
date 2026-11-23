@@ -48,7 +48,10 @@ pub async fn load_chat_session_activity<M: MonitorStateView>(
 ) -> ChatSessionActivity {
     // 轮次已结束但后台命令或子智能体仍在跑：线程不算完成，目录与侧栏要
     // 继续显示运行中。两处都是内存结构，按行查询的代价可以忽略。
-    let background = state.control.command_sessions.has_running_tasks(session_id)
+    let background = state
+        .control
+        .command_sessions
+        .has_background_tasks(session_id)
         || state.monitor.has_running_child_runs(session_id);
     let snapshot = || {
         state

@@ -192,18 +192,48 @@ impl NativeDesktop {
             }
             // 提示词工具规格不包含技能本体（技能经 skill_call 调度），这里与
             // 网页版工具目录对齐：把对当前用户开放的技能以"技能"分类补入，
-            // 让设置页的工具区能看到并勾选技能。
+            // 让设置页的工具区能看到并勾选技能。全局注册表只含 `skills.enabled`
+            // 里的技能；用户上传的自建技能只存在于用户绑定里（不会写进全局
+            // 配置），漏掉它们就会出现"上传后在智能体页看不到、无法勾选"。
             let mut seen_names: HashSet<String> =
                 records.iter().map(|record| record.name.clone()).collect();
-            for spec in context.skills.list_specs() {
-                if !allowed.contains(&spec.name) || !seen_names.insert(spec.name.clone()) {
+            let skill_entries = context
+                .bindings
+                .skill_specs
+                .iter()
+                .map(|spec| {
+                    let shared = context
+                        .bindings
+                        .alias_map
+                        .get(&spec.name)
+                        .is_some_and(|alias| {
+                            matches!(alias.kind, wunder_server::user_tools::UserToolKind::Skill)
+                                && alias.owner_id != self.user_id()
+                        });
+                    (
+                        spec.name.clone(),
+                        spec.description.clone(),
+                        if shared { "共享工具" } else { "技能" },
+                    )
+                })
+                // 用户技能与全局技能同名时，运行期由绑定覆盖全局；清单也按
+                // 同一顺序去重，展示的描述才和真正执行的那一份一致。
+                .chain(
+                    context
+                        .skills
+                        .list_specs()
+                        .into_iter()
+                        .map(|spec| (spec.name, spec.description, "技能")),
+                );
+            for (name, description, category) in skill_entries {
+                if !allowed.contains(&name) || !seen_names.insert(name.clone()) {
                     continue;
                 }
                 records.push(ToolRecord {
-                    name: spec.name,
+                    name,
                     title: String::new(),
-                    description: spec.description,
-                    category: "技能".into(),
+                    description,
+                    category: category.into(),
                 });
             }
             records.retain(|record| {

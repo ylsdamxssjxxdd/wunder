@@ -55,6 +55,7 @@ impl CommandSessionTracker {
         launch_mode: CommandSessionLaunchMode,
         tty: bool,
         interactive: bool,
+        background: bool,
     ) -> Option<Self> {
         Self::start_with_id(
             context,
@@ -66,6 +67,7 @@ impl CommandSessionTracker {
             launch_mode,
             tty,
             interactive,
+            background,
         )
     }
 
@@ -80,6 +82,7 @@ impl CommandSessionTracker {
         launch_mode: CommandSessionLaunchMode,
         tty: bool,
         interactive: bool,
+        background: bool,
     ) -> Option<Self> {
         let broker = context.command_sessions.as_ref().map(Arc::clone);
         let emitter = context.event_emitter.clone();
@@ -103,6 +106,7 @@ impl CommandSessionTracker {
             launch_mode,
             tty,
             interactive,
+            background,
             started_at: None,
         };
         let existed = broker.as_ref().is_some_and(|broker| {
@@ -131,6 +135,7 @@ impl CommandSessionTracker {
                 launch_mode: spec.launch_mode,
                 tty: spec.tty,
                 interactive: spec.interactive,
+                background: spec.background,
                 status: CommandSessionStatus::Running,
                 seq: 0,
                 started_at: chrono::Utc::now(),

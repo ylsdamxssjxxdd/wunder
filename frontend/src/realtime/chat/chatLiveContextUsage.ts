@@ -5,6 +5,8 @@
 // turn is still running.
 import { shallowRef } from 'vue';
 
+import { resolvePromptTokens } from '@/utils/tokenUsage';
+
 export type ChatLiveContextUsage = {
   used: number;
   total: number | null;
@@ -95,7 +97,11 @@ const resolveUsageContextTokens = (
   if (eventType !== 'llm_output' && eventType !== 'token_usage') return null;
   const usage = asRecord(source.usage ?? source.round_usage ?? source.roundUsage);
   if (!usage || source.estimated === true || usage.estimated === true) return null;
-  return firstPositiveCount(usage.input_tokens, usage.inputTokens, usage.input);
+  // 占用是「这次请求的 prompt 有多大」，不是「其中多少没命中缓存」：usage 的
+  // 三个 prompt 桶互不重叠后，`input_tokens` 只剩未缓存部分（几百 token），
+  // 直接取它会让占用条瞬间跌到接近 0，下一帧 context_usage 又跳回来。
+  const prompt = resolvePromptTokens(usage);
+  return prompt !== null && prompt > 0 ? prompt : null;
 };
 
 const resolveCompactionContextTokens = (

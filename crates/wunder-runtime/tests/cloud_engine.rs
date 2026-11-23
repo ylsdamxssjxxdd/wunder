@@ -1,16 +1,16 @@
 //! Cloud channel engine tests: login/model synthesis lifecycle, 429 queue
 //! retry with the same queue id, 401 session expiry and quota rejection.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use wunder_server::cloud::{shared as cloud_shared, CloudQuotaInsufficient, CloudSessionExpired};
+use wunder_server::cloud::{CloudQuotaInsufficient, CloudSessionExpired, shared as cloud_shared};
 use wunder_server::config::LlmModelConfig;
 use wunder_server::config_store::ConfigStore;
-use wunder_server::llm::{build_llm_client, ChatMessage};
+use wunder_server::llm::{ChatMessage, build_llm_client};
 
 const TEST_TOKEN: &str = "wund_test_token";
 const TEST_DEVICE: &str = "dev-test-1";
@@ -236,6 +236,7 @@ fn test_message() -> ChatMessage {
         role: "user".to_string(),
         content: Value::String("ping".to_string()),
         reasoning_content: None,
+        anthropic_thinking_blocks: None,
         tool_calls: None,
         tool_call_id: None,
     }
@@ -317,11 +318,13 @@ async fn cloud_login_synthesizes_models_and_logout_cleans_up() {
     assert!(!cloud.status().logged_in);
     assert!(!session_path.exists());
     let config_after_logout = store.get().await;
-    assert!(config_after_logout
-        .llm
-        .models
-        .get("cloud/m-alpha")
-        .is_none());
+    assert!(
+        config_after_logout
+            .llm
+            .models
+            .get("cloud/m-alpha")
+            .is_none()
+    );
     assert!(config_after_logout.llm.models.get("cloud/m-beta").is_none());
 }
 

@@ -386,6 +386,7 @@ fn resolve_command_session_for_index(
     command: &str,
     cwd: &str,
     command_index: usize,
+    background: bool,
 ) -> Option<CommandSessionTracker> {
     if let Some(existing) = sessions.get(&command_index) {
         return Some(existing.clone());
@@ -399,6 +400,7 @@ fn resolve_command_session_for_index(
         CommandSessionLaunchMode::Shell,
         false,
         false,
+        background,
     )?;
     sessions.insert(command_index, tracker.clone());
     Some(tracker)
@@ -414,6 +416,10 @@ async fn execute_command_in_sandbox_streaming(
         return None;
     }
     let cwd_text = cwd.to_string_lossy().to_string();
+    let background = args
+        .get("run_in_background")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let command_lookup = commands
         .iter()
         .enumerate()
@@ -450,6 +456,7 @@ async fn execute_command_in_sandbox_streaming(
                         &command,
                         cwd_text.as_str(),
                         command_index,
+                        background,
                     );
                 }
                 "delta" => {
@@ -459,6 +466,7 @@ async fn execute_command_in_sandbox_streaming(
                         &command,
                         cwd_text.as_str(),
                         command_index,
+                        background,
                     ) else {
                         return;
                     };
@@ -483,6 +491,7 @@ async fn execute_command_in_sandbox_streaming(
                             &command,
                             cwd_text.as_str(),
                             command_index,
+                            background,
                         ) {
                             let exit_code = event
                                 .get("exit_code")
@@ -1428,6 +1437,7 @@ async fn run_command_streaming(
                         CommandSessionLaunchMode::Shell,
                         false,
                         false,
+                        background,
                     ) {
                         command_session.emit_failed_to_start(fallback_err.to_string());
                     }
@@ -1445,6 +1455,7 @@ async fn run_command_streaming(
                 initial_launch_mode,
                 false,
                 false,
+                background,
             ) {
                 command_session.emit_failed_to_start(err.to_string());
             }
@@ -1468,6 +1479,7 @@ async fn run_command_streaming(
         launch_mode,
         false,
         false,
+        background,
     );
     let Some(command_session) = command_session else {
         return run_spawned_child_streaming(
@@ -2565,6 +2577,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                         CommandSessionLaunchMode::Shell,
                         false,
                         false,
+                        run_in_background,
                     )
                 });
                 let mut completed = data

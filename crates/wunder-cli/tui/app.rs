@@ -1,3 +1,4 @@
+use super::background_task_footer::BackgroundTaskFooter;
 use super::frame_scheduler::FrameRequester;
 use anyhow::{Result, anyhow};
 use chrono::TimeZone;
@@ -779,6 +780,7 @@ pub struct TuiApp {
     /// The remote approval shown as a confirm row. `active_approval` stays the
     /// engine's own tool gate for this thread; the two are never merged.
     active_remote_approval: Option<crate::interlink_tunnel::RemoteApproval>,
+    background_task_footer: BackgroundTaskFooter,
     /// Cached status-bar badge (`☁ alice · 980`), refreshed at most once per
     /// second so per-frame footer rebuilds never touch the cloud session.
     cloud_badge: Option<String>,
@@ -1003,6 +1005,7 @@ impl TuiApp {
             tunnel_open: false,
             tunnel_polled_at: None,
             active_remote_approval: None,
+            background_task_footer: BackgroundTaskFooter::new(&session_id),
             cloud_badge: None,
             cloud_badge_refreshed_at: None,
             cloud_badge_reconnecting: false,
@@ -1673,9 +1676,9 @@ impl TuiApp {
         }
     }
 
-    /// Right-aligned footer context as styled spans: the model id and the
-    /// context figure keep the dim tone, while the cloud badge carries the
-    /// warning colour when the engine reports a reconnecting connection.
+    /// Right-aligned footer context as styled spans: the model id, context figure
+    /// and background-task summary keep the dim tone, while the cloud badge carries
+    /// the warning colour when the engine reports a reconnecting connection.
     ///
     /// The model sits here rather than among the left hints because it qualifies
     /// the figure it precedes — "which model has used this much context". Each
@@ -1699,6 +1702,12 @@ impl TuiApp {
                 Span::styled(summary, super::theme::secondary_text()),
             );
         }
+        if let Some(summary) = self.background_task_summary() {
+            push_footer_part(
+                &mut spans,
+                Span::styled(summary, super::theme::secondary_text()),
+            );
+        }
         if let Some(badge) = self.cloud_badge() {
             let style = if self.cloud_badge_reconnecting {
                 super::theme::warning_text()
@@ -1708,6 +1717,16 @@ impl TuiApp {
             push_footer_part(&mut spans, Span::styled(badge, style));
         }
         (!spans.is_empty()).then_some(spans)
+    }
+
+    fn background_task_summary(&mut self) -> Option<String> {
+        let broker = &self.runtime.state.control.command_sessions;
+        let user_id = &self.runtime.user_id;
+        self.background_task_footer.summary(
+            &self.session_id,
+            self.is_zh_language(),
+            || broker.background_task_count(user_id, &self.session_id),
+        )
     }
 
     /// Status-bar cloud badge (plan §6.2), cached for one second: the footer is

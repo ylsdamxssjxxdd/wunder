@@ -18,6 +18,7 @@ import {
 import { buildCollapsedToolWorkflowSummary, isMemoryManagerTool, isSkillCallTool } from './toolWorkflowCollapsedSummary';
 import { buildTimelineDiffStats, isTimelineEditToolRun } from './toolTimelinePatch';
 import type { TimelineDiffStats } from './toolTimelinePatch';
+import { resolvePromptTokens } from '@/utils/tokenUsage';
 import { resolveToolIconClass } from '@/utils/abilityVisuals';
 import { extractToolResultDataObject, parseToolWorkflowResultObject } from './toolWorkflowResultPayload';
 import { buildToolResultPreview } from './toolWorkflowPreview';
@@ -620,12 +621,13 @@ const readItemMetrics = (item: WorkflowItem | null): TimelineToolMetrics | null 
   if (!parsed) return null;
   const usage = asObject(parsed.request_usage);
   const meta = asObject(parsed.meta);
-  const input = positiveFinite(usage?.input_tokens);
   const output = positiveFinite(usage?.output_tokens);
+  // prompt 桶已互不重叠：input 只是未缓存部分，占用总量要把缓存桶加回来。
+  const prompt = resolvePromptTokens(usage);
   const tokens =
     positiveFinite(parsed.request_context_tokens) ??
     positiveFinite(usage?.total_tokens) ??
-    (input !== null ? input + (output ?? 0) : null);
+    (prompt !== null ? prompt + (output ?? 0) : null);
   const durationMs = positiveFinite(meta?.duration_ms) ?? positiveFinite(parsed.duration_ms);
   if (tokens === null && durationMs === null) return null;
   return { tokens, durationMs };

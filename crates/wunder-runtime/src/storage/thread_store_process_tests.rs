@@ -127,10 +127,12 @@ fn local_process_fixture() {
                 .unwrap();
             fs::write(root.join(format!("{worker}.ready")), []).unwrap();
         } else {
-            assert!(store
-                .append_canonical(&thread, vec![record()])
-                .await
-                .is_err());
+            assert!(
+                store
+                    .append_canonical(&thread, vec![record()])
+                    .await
+                    .is_err()
+            );
             fs::write(root.join(format!("{worker}.ready")), []).unwrap();
         }
         let started = Instant::now();
@@ -266,10 +268,12 @@ fn local_process_exit_releases_thread_without_removing_persistent_lock_markers()
     wait_ready(&mut child, root.path(), "crash");
     let thread = ThreadId::new("sample-crash").unwrap();
     runtime.block_on(async {
-        assert!(desktop
-            .append_canonical(&thread, vec![record()])
-            .await
-            .is_err());
+        assert!(
+            desktop
+                .append_canonical(&thread, vec![record()])
+                .await
+                .is_err()
+        );
     });
     child.0.kill().unwrap();
     child.0.wait().unwrap();

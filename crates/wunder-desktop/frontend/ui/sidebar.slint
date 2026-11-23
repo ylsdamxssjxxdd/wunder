@@ -401,10 +401,9 @@ export component Sidebar inherits Rectangle {
     /// which read as a real identity that had simply failed to load.
     in property <bool> user-ready: true;
     in property <bool> busy;
-    // 极窄窗抽屉（对齐安卓版）：底部入口加版本号，行内动作常驻而不是
-    // 只在悬停时出现。桌面停靠列保持原来的紧凑节奏。
+    // 极窄窗抽屉（对齐安卓版）：行内动作常驻而不是只在悬停时出现，
+    // 底部入口加高一行。桌面停靠列保持原来的紧凑节奏。
     in property <bool> drawer: false;
-    in property <string> version: "";
     // Device selector: this 桌面版 is the local device; the signed-in account is
     // the cloud device. Only the selected device's workspace tree is shown.
     in property <bool> cloud-available: false;
@@ -1017,15 +1016,6 @@ export component Sidebar inherits Rectangle {
                             }
                         }
                         Text { height: parent.height; text: I18n.sidebar_settings; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; }
-                        // 抽屉底部与安卓版一致：右侧给出版本号。
-                        if root.drawer && root.cloud-quota-text == "" : Rectangle { horizontal-stretch: 1; }
-                        if root.drawer && root.cloud-quota-text == "" && root.version != "" : Text {
-                            height: parent.height;
-                            text: "v" + root.version;
-                            color: Theme.muted;
-                            font-size: Theme.font-2xs;
-                            vertical-alignment: center;
-                        }
                     }
                     // Cloud quota pill (§6.1): the plain balance number next
                     // to the profile row, red at or below 10% of the daily

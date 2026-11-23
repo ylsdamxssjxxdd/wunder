@@ -11,6 +11,8 @@ pub(crate) struct OutputDiagnostics {
     pub max_output: u32,
     pub thinking_token_budget: Option<u32>,
     pub thinking_disabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anthropic_thinking_blocks: Option<Value>,
     /// Set when the transport layer already resent this request once with
     /// thinking disabled, consuming the turn's output-recovery budget.
     pub transport_recovery_used: bool,
@@ -35,6 +37,7 @@ impl OutputDiagnostics {
             max_output,
             thinking_token_budget: resolved_thinking_token_budget(config),
             thinking_disabled: disable_thinking_requested(config),
+            anthropic_thinking_blocks: None,
             transport_recovery_used: false,
         }
     }
@@ -154,17 +157,19 @@ mod tests {
             "status":"incomplete", "incomplete_details":{"reason":"max_output_tokens"},
             "usage":{"input_tokens":10,"output_tokens":20}, "output":[]
         }});
-        assert!(super::super::process_stream_payload(
-            &payload.to_string(),
-            &mut content,
-            &mut reasoning,
-            &mut usage,
-            &mut calls,
-            &mut state,
-            &mut callback
-        )
-        .await
-        .unwrap());
+        assert!(
+            super::super::process_stream_payload(
+                &payload.to_string(),
+                &mut content,
+                &mut reasoning,
+                &mut usage,
+                &mut calls,
+                &mut state,
+                &mut callback
+            )
+            .await
+            .unwrap()
+        );
         assert_eq!(
             (state.finish_reason.as_deref(), usage.unwrap().output),
             (Some("max_output_tokens"), 20)

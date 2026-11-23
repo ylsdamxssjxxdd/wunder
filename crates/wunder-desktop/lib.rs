@@ -10,6 +10,7 @@ pub mod native_command_tasks;
 pub mod native_host_hud;
 pub mod runtime;
 pub mod tool_icons;
+pub mod window_state;
 
 pub use native_command_tasks::{NativeCommandTask, NativeCommandTaskDetail};
 pub use native_host_hud::{HostHud, HostHudSampler};
@@ -54,4 +55,13 @@ pub fn local_logs_dir() -> std::path::PathBuf {
         wunder_server::local_bootstrap::resolve_home_from_env_or_user(),
     )
     .logs
+}
+
+/// Shared writable config directory of the local form. The shell keeps its own
+/// window placement here, next to the runtime's `desktop.settings.json`.
+pub fn local_config_dir() -> std::path::PathBuf {
+    wunder_server::local_bootstrap::LocalHomeLayout::from_home(
+        wunder_server::local_bootstrap::resolve_home_from_env_or_user(),
+    )
+    .config
 }

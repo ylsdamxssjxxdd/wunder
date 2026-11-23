@@ -1,11 +1,11 @@
-use super::{extract_stream_text, ChatMessage};
+use super::{ChatMessage, extract_stream_text};
 use crate::core::json_schema::{
     normalize_tool_input_schema, normalize_tool_input_schema_for_openai,
 };
 use crate::core::tool_args::normalize_tool_arguments_json as normalize_tool_arguments_json_lossy;
 use crate::services::chat_attachments::parse_image_data_url;
 use crate::tools::{extract_freeform_tool_input, is_freeform_tool_name};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashSet;
 
 pub(super) fn normalize_chat_tool_definition(
@@ -365,6 +365,7 @@ pub(super) fn sanitize_chat_messages(messages: &[ChatMessage]) -> Vec<ChatMessag
             role: message.role.clone(),
             content: sanitize_message_content(&message.content),
             reasoning_content: message.reasoning_content.clone(),
+            anthropic_thinking_blocks: message.anthropic_thinking_blocks.clone(),
             tool_calls: message.tool_calls.clone(),
             tool_call_id: message.tool_call_id.clone(),
         })
@@ -418,7 +419,7 @@ mod tests {
         normalize_tool_arguments_json, sanitize_chat_messages, tool_call_to_responses_item,
     };
     use crate::services::llm::ChatMessage;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     #[test]
     fn sanitize_chat_messages_drops_invalid_image_parts_from_history() {
@@ -429,6 +430,7 @@ mod tests {
                 {"type": "image_url", "image_url": {"url": "data:image/png;base64,invalid"}}
             ]),
             reasoning_content: None,
+            anthropic_thinking_blocks: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -515,6 +517,7 @@ mod tests {
                 role: "assistant".to_string(),
                 content: json!(""),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: Some(json!([{
                     "id": "call_patch",
                     "type": "function",
@@ -529,6 +532,7 @@ mod tests {
                 role: "tool".to_string(),
                 content: json!("applied"),
                 reasoning_content: None,
+                anthropic_thinking_blocks: None,
                 tool_calls: None,
                 tool_call_id: Some("call_patch".to_string()),
             },

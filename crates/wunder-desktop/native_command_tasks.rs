@@ -1,8 +1,8 @@
-//! 命令任务的本地 façade：把运行时里「正在执行的命令」投影给桌面版的后台任务面板。
+//! 命令任务的本地 façade：把运行时里「模型显式后台命令」投影给桌面版的后台任务面板。
 //!
 //! 数据来自 `AppState.control.command_sessions`（每条命令工具调用都会开一个
 //! 命令会话），所以这里既不轮询子进程、也不重新实现一套任务表：
-//! - `running_command_tasks` 只返回仍在运行的任务，字段都是轻量投影；
+//! - `running_command_tasks` 只返回模型显式放入后台且仍在运行的任务，字段都是轻量投影；
 //! - `command_task_detail` 按需读取输出尾部（展开时才调用）；
 //! - `terminate_command_task` 只取消这一条命令的 CancellationToken。
 //!
@@ -71,7 +71,7 @@ fn task_detail(detail: CommandTaskDetail) -> NativeCommandTaskDetail {
 }
 
 impl NativeDesktop {
-    /// 当前线程里仍在执行的命令任务，最早的排在前面。
+    /// 当前线程里模型显式放入后台且仍在执行的命令任务，最早的排在前面。
     pub fn running_command_tasks(&self, session_id: &str) -> Vec<NativeCommandTask> {
         let session_id = session_id.trim();
         if session_id.is_empty() {
@@ -80,7 +80,7 @@ impl NativeDesktop {
         self.state()
             .control
             .command_sessions
-            .running_tasks(self.user_id(), session_id)
+            .background_tasks(self.user_id(), session_id)
             .into_iter()
             .map(task_view)
             .collect()

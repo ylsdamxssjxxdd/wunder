@@ -68,7 +68,15 @@ pub fn install(app: &MainWindow) {
     // process-exit boundary for this one native-menu action; the OS then reclaims
     // the tray HWND, hotkey queue and any detached worker threads in one
     // operation. Window-close exit shares the same boundary.
-    tray.on_quit_requested(crate::shutdown::request_exit);
+    let quit_weak = app.as_weak();
+    tray.on_quit_requested(move || {
+        // The debounced placement save may not have fired yet when the user
+        // quits from this menu; write the last position before the exit path.
+        if let Some(app) = quit_weak.upgrade() {
+            crate::window_placement::save_now(&app);
+        }
+        crate::shutdown::request_exit();
+    });
     TRAY.with(|slot| *slot.borrow_mut() = Some(tray));
 }
 

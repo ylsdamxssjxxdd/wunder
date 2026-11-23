@@ -1,8 +1,8 @@
 use super::payload::normalize_tool_arguments_json;
-use super::{extract_stream_text, ChatMessage};
+use super::{ChatMessage, extract_stream_text};
 use crate::core::json_schema::normalize_tool_input_schema;
 use crate::core::tool_args::sanitize_tool_call_payload;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub(super) fn build_anthropic_messages(messages: &[ChatMessage]) -> (Option<String>, Vec<Value>) {
     let mut system_parts = Vec::new();
@@ -19,6 +19,13 @@ pub(super) fn build_anthropic_messages(messages: &[ChatMessage]) -> (Option<Stri
             }
             "assistant" => {
                 let mut blocks = Vec::new();
+                if let Some(thinking) = message
+                    .anthropic_thinking_blocks
+                    .as_ref()
+                    .and_then(Value::as_array)
+                {
+                    blocks.extend(thinking.iter().cloned());
+                }
                 let text = flatten_message_text(&message.content);
                 if !text.trim().is_empty() {
                     blocks.push(json!({
@@ -287,6 +294,23 @@ fn anthropic_tool_use_block_to_openai(block: &Value, fallback_index: usize) -> O
             "arguments": normalize_tool_arguments_json(&arguments),
         }
     }))
+}
+
+pub(super) fn anthropic_thinking_blocks(body: &Value) -> Option<Value> {
+    let body = body.get("message").unwrap_or(body);
+    let blocks = body
+        .get("content")?
+        .as_array()?
+        .iter()
+        .filter(|block| {
+            matches!(
+                block.get("type").and_then(Value::as_str),
+                Some("thinking" | "redacted_thinking")
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    (!blocks.is_empty()).then_some(Value::Array(blocks))
 }
 
 pub(super) fn parse_anthropic_body(body: &Value) -> (String, String, Option<Value>) {

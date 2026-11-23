@@ -1,3 +1,5 @@
+import { resolvePromptTokens } from '@/utils/tokenUsage';
+
 /** 与折叠工具行同一形状的右侧指标：上下文占用 token 与条目自身耗时。 */
 export type ModelRoundMetrics = { tokens: number | null; durationMs: number | null };
 
@@ -34,9 +36,10 @@ export const resolveModelRoundMetrics = (
   const tokens =
     positive(payload.request_context_tokens) ??
     positive(payload.context_occupancy_tokens) ??
-    positive(usage?.input_tokens) ??
-    positive(usage?.inputTokens) ??
-    positive(roundUsage?.input_tokens) ??
+    // usage 拆成三个互不重叠的 prompt 桶后，`input_tokens` 只是未缓存部分；
+    // 这里要的是「这轮请求的 prompt 有多大」，必须把缓存桶加回来。
+    positive(resolvePromptTokens(usage)) ??
+    positive(resolvePromptTokens(roundUsage)) ??
     null;
   const timing = isRecord(payload.stream_timing)
     ? payload.stream_timing

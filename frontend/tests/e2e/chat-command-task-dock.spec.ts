@@ -7,9 +7,15 @@ test('background task dock expands output and terminates one command', async ({ 
   service.turns.push({ turn_id, user_round: 1, status: 'running', content: 'Fixture command' });
   service.commandTasks.push({
     command_session_id: 'fixture-command', session_id: MOCK_SESSION,
-    command: 'fixture-command --wait', cwd: '/fixture', status: 'running',
+    command: 'fixture-command --wait', cwd: '/fixture', status: 'running', background: true,
     started_at: new Date(Date.now() - 5000).toISOString(), updated_at: new Date().toISOString(),
     stdout_tail: 'fixture output', stderr_tail: '', pty_tail: ''
+  });
+  service.commandTasks.push({
+    command_session_id: 'fixture-foreground', session_id: MOCK_SESSION,
+    command: 'fixture-foreground --wait', cwd: '/fixture', status: 'running', background: false,
+    started_at: new Date(Date.now() - 5000).toISOString(), updated_at: new Date().toISOString(),
+    stdout_tail: 'foreground output', stderr_tail: '', pty_tail: ''
   });
   await service.install(page);
   try {
@@ -42,6 +48,7 @@ test('background task dock expands output and terminates one command', async ({ 
     await expect(panel).toBeVisible();
     const open = panel.locator('.composer-task-row__open');
     await expect(open).toContainText('fixture-command --wait');
+    await expect(panel).not.toContainText('fixture-foreground --wait');
     await open.click();
     await expect(panel.locator('.composer-task-detail')).toContainText('fixture output');
     await panel.locator('.composer-task-stop').click();
@@ -63,7 +70,7 @@ test('background task output box scrolls inside the panel with a visible thumb',
   const longTail = Array.from({ length: 80 }, (_, index) => `line ${index + 1}: compile chunk ${index}`).join('\n');
   service.commandTasks.push({
     command_session_id: 'fixture-long-output', session_id: MOCK_SESSION,
-    command: 'fixture-build --watch', cwd: '/fixture', status: 'running',
+    command: 'fixture-build --watch', cwd: '/fixture', status: 'running', background: true,
     started_at: new Date(Date.now() - 5000).toISOString(), updated_at: new Date().toISOString(),
     stdout_tail: longTail, stderr_tail: '', pty_tail: ''
   });
@@ -71,7 +78,7 @@ test('background task output box scrolls inside the panel with a visible thumb',
   for (let index = 0; index < 6; index += 1) {
     service.commandTasks.push({
       command_session_id: `fixture-extra-${index}`, session_id: MOCK_SESSION,
-      command: `fixture-extra-${index} --watch`, cwd: '/fixture', status: 'running',
+      command: `fixture-extra-${index} --watch`, cwd: '/fixture', status: 'running', background: true,
       started_at: new Date(Date.now() - 4000).toISOString(), updated_at: new Date().toISOString(),
       stdout_tail: 'ready', stderr_tail: '', pty_tail: ''
     });

@@ -589,6 +589,7 @@ async fn sandbox_background_output_streams_independently_and_polls_incrementally
         CommandSessionLaunchMode::Shell,
         false,
         false,
+        false,
     )
     .unwrap();
     let handle = Arc::new(CommandProcessHandle::new(None));
@@ -672,6 +673,7 @@ async fn sandbox_background_output_streams_independently_and_polls_incrementally
         0,
         Some("sandbox".into()),
         CommandSessionLaunchMode::Shell,
+        false,
         false,
         false,
     )
@@ -1309,6 +1311,10 @@ async fn duplicate_command_reuses_the_running_session() {
         1,
         "duplicate launch must not create a second process"
     );
+    assert!(broker
+        .background_tasks("fixture-user", "fixture-thread")
+        .is_empty());
+    assert!(!broker.has_background_tasks("fixture-thread"));
     let _ = command_session_control(
         &context,
         &json!({"command_session_id": id, "chars": "\x03"}),
@@ -1460,6 +1466,13 @@ async fn background_command_returns_running_session_before_exit() {
     assert!(run.running);
     assert!(started.elapsed() < Duration::from_secs(1));
     let id = run.command_session_id.expect("session id");
+    assert_eq!(
+        broker
+            .background_tasks("fixture-user", "fixture-thread")
+            .len(),
+        1
+    );
+    assert!(broker.has_background_tasks("fixture-thread"));
     let data = broker
         .poll(
             "fixture-user",

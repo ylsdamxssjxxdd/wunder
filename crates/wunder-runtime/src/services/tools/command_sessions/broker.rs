@@ -157,6 +157,7 @@ struct CommandSessionRecord {
     launch_mode: super::types::CommandSessionLaunchMode,
     tty: bool,
     interactive: bool,
+    background: bool,
     status: CommandSessionStatus,
     seq: u64,
     started_at: DateTime<Utc>,
@@ -194,6 +195,7 @@ impl CommandSessionRecord {
             launch_mode: spec.launch_mode,
             tty: spec.tty,
             interactive: spec.interactive,
+            background: spec.background,
             status: CommandSessionStatus::Running,
             seq: 0,
             started_at: now,
@@ -237,6 +239,7 @@ impl CommandSessionRecord {
             launch_mode: self.launch_mode,
             tty: self.tty,
             interactive: self.interactive,
+            background: self.background,
             status: self.status,
             seq: self.seq,
             started_at: self.started_at,
@@ -864,8 +867,8 @@ impl CommandSessionBroker {
         Some(record.snapshot())
     }
 
-    /// 正在执行的命令任务（本地 UI 的后台任务面板）。已完成的任务不进这里：
-    /// 面板的语义是「现在还在跑什么」，历史由时间线与日志承担。
+    /// 所有正在执行的命令任务，包括前台与自动脱离命令。已完成的任务不进这里：
+    /// 历史由时间线与日志承担；本地后台任务面板使用 `background_tasks`。
     pub fn running_tasks(&self, user_id: &str, session_id: &str) -> Vec<CommandTaskView> {
         self.prune_expired();
         let now = Utc::now();
@@ -893,8 +896,36 @@ impl CommandSessionBroker {
         tasks
     }
 
-    /// 仍有命令在跑的线程集合。线程状态用它判断「轮次已结束、工作还在继续」，
-    /// 只有运行中的会话计数，已结束的 5 分钟留存不会把线程重新标成忙。
+    /// 模型显式放入后台且仍在运行的命令。`yield_time_ms` 到期后自动脱离的
+    /// 前台命令仍可由命令会话管理，但不属于这里，也不占用输入区后台任务计数。
+    pub fn background_tasks(&self, user_id: &str, session_id: &str) -> Vec<CommandTaskView> {
+        self.prune_expired();
+        let now = Utc::now();
+        let mut tasks = self
+            .sessions
+            .iter()
+            .filter_map(|entry| {
+                let record = entry.value().lock();
+                if record.user_id != user_id
+                    || record.session_id != session_id
+                    || record.status != CommandSessionStatus::Running
+                    || !record.background
+                {
+                    return None;
+                }
+                Some(record.snapshot().task_view(now))
+            })
+            .collect::<Vec<_>>();
+        tasks.sort_by(|left, right| {
+            right
+                .elapsed_ms
+                .cmp(&left.elapsed_ms)
+                .then(left.id.cmp(&right.id))
+        });
+        tasks
+    }
+
+    /// 仍有命令在跑的线程集合，包括前台命令与自动脱离命令。
     pub fn running_task_sessions(&self, user_id: &str) -> HashSet<String> {
         self.prune_expired();
         self.sessions
@@ -907,13 +938,55 @@ impl CommandSessionBroker {
             .collect()
     }
 
-    /// 该线程当前是否有运行中的命令任务；状态投影按线程逐行查询时使用。
+    /// 仍有模型显式后台命令在跑的线程集合。轮次结束后的忙碌状态只由这里
+    /// 和子智能体决定，普通前台会话不会把已结束的轮次重新标成后台运行。
+    pub fn background_task_sessions(&self, user_id: &str) -> HashSet<String> {
+        self.prune_expired();
+        self.sessions
+            .iter()
+            .filter_map(|entry| {
+                let record = entry.value().lock();
+                (record.user_id == user_id
+                    && record.status == CommandSessionStatus::Running
+                    && record.background)
+                    .then(|| record.session_id.clone())
+            })
+            .collect()
+    }
+
+    /// 该线程当前是否有运行中的命令任务，包括前台命令与自动脱离命令。
     pub fn has_running_tasks(&self, session_id: &str) -> bool {
         self.prune_expired();
         self.sessions.iter().any(|entry| {
             let record = entry.value().lock();
             record.session_id == session_id && record.status == CommandSessionStatus::Running
         })
+    }
+
+    /// 该线程当前是否有模型显式放入后台的命令任务。
+    pub fn has_background_tasks(&self, session_id: &str) -> bool {
+        self.prune_expired();
+        self.sessions.iter().any(|entry| {
+            let record = entry.value().lock();
+            record.session_id == session_id
+                && record.status == CommandSessionStatus::Running
+                && record.background
+        })
+    }
+
+    /// 当前线程的显式后台任务数量。只读计数，不克隆命令与输出，供状态栏低频采样。
+    pub fn background_task_count(&self, user_id: &str, session_id: &str) -> usize {
+        self.prune_expired();
+        self.sessions
+            .iter()
+            .filter(|entry| {
+                let record = entry.value().lock();
+                record.user_id == user_id
+                    && record.session_id == session_id
+                    && record.status == CommandSessionStatus::Running
+                    && record.background
+            })
+            .count()
     }
 
     /// 展开一条任务时读取输出尾部。作用域校验和 `snapshot_for_scope` 一致，
@@ -1040,6 +1113,7 @@ mod tests {
             launch_mode: CommandSessionLaunchMode::Shell,
             tty: false,
             interactive: false,
+            background: false,
             started_at: None,
         }
     }
@@ -1113,6 +1187,7 @@ mod tests {
             launch_mode: CommandSessionLaunchMode::Shell,
             tty: false,
             interactive: false,
+            background: false,
             started_at: None,
         });
 
@@ -1139,6 +1214,33 @@ mod tests {
         // 终态会话在留存期内仍可读快照，但不再把线程标成在跑。
         assert!(!broker.has_running_tasks("sess_1"));
         assert!(broker.running_task_sessions("user_a").is_empty());
+    }
+
+    #[test]
+    fn background_projections_exclude_foreground_and_auto_detached_commands() {
+        let broker = CommandSessionBroker::new();
+        broker.start_session(build_start_spec());
+        let mut background = build_start_spec();
+        background.command_session_id = Some("cmd_background".to_string());
+        background.background = true;
+        broker.start_session(background);
+
+        assert_eq!(broker.running_tasks("user_a", "sess_1").len(), 2);
+        let tasks = broker.background_tasks("user_a", "sess_1");
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].id, "cmd_background");
+        assert_eq!(broker.background_task_count("user_a", "sess_1"), 1);
+        assert_eq!(broker.background_task_count("user_a", "sess_other"), 0);
+        assert!(broker.has_running_tasks("sess_1"));
+        assert!(broker.has_background_tasks("sess_1"));
+        assert!(broker.background_task_sessions("user_a").contains("sess_1"));
+
+        broker.finish_session("cmd_background", Some(0), false, None);
+        assert!(broker.background_tasks("user_a", "sess_1").is_empty());
+        assert_eq!(broker.background_task_count("user_a", "sess_1"), 0);
+        assert!(!broker.has_background_tasks("sess_1"));
+        assert!(broker.background_task_sessions("user_a").is_empty());
+        assert!(broker.has_running_tasks("sess_1"));
     }
 
     #[tokio::test]
@@ -1467,6 +1569,7 @@ mod tests {
             launch_mode: CommandSessionLaunchMode::Direct,
             tty: false,
             interactive: false,
+            background: false,
             started_at: None,
         });
         let own = Arc::new(CommandProcessHandle::new(None));

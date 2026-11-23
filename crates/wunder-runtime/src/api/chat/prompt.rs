@@ -6,7 +6,7 @@ use super::{
 use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::services::llm::{
-    build_llm_client, is_llm_model, resolve_tool_call_mode, ChatMessage, ToolCallMode,
+    ChatMessage, ToolCallMode, build_llm_client, is_llm_model, resolve_tool_call_mode,
 };
 use crate::state::AppState;
 use crate::user_access::{build_user_tool_context, compute_allowed_tool_names};
@@ -14,9 +14,9 @@ use crate::user_store::UserStore;
 use axum::extract::{Path as AxumPath, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
-use axum::{routing::post, Json, Router};
+use axum::{Json, Router, routing::post};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -469,6 +469,7 @@ fn build_system_prompt_model_request_preview(
         role: "system".to_string(),
         content: Value::String(system_prompt.to_string()),
         reasoning_content: None,
+        anthropic_thinking_blocks: None,
         tool_calls: None,
         tool_call_id: None,
     }];
@@ -477,6 +478,7 @@ fn build_system_prompt_model_request_preview(
             role: "user".to_string(),
             content: Value::String(question.to_string()),
             reasoning_content: None,
+            anthropic_thinking_blocks: None,
             tool_calls: None,
             tool_call_id: None,
         });

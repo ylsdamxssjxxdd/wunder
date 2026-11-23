@@ -3,8 +3,8 @@ use super::empty_output_guard::EmptyOutputGuard;
 use super::retry_governor::{RetryGovernor, SuccessProgressGovernor};
 use super::tool_calls::ToolCall;
 use super::tool_result_payload::{
-    default_observation_token_budget, OBSERVATION_MIN_TOKEN_BUDGET, OBSERVATION_TURN_MAX_TOKENS,
-    OBSERVATION_TURN_TARGET_TOKENS,
+    OBSERVATION_MIN_TOKEN_BUDGET, OBSERVATION_TURN_MAX_TOKENS, OBSERVATION_TURN_TARGET_TOKENS,
+    default_observation_token_budget,
 };
 use super::*;
 use crate::core::llm_speed::TurnDecodeSpeedAccumulator;
@@ -19,6 +19,12 @@ use super::execute_support::*;
 /// 服务端观测到的输入 token 单轮下降超过该值且本地未压缩时，记录一条轨迹，
 /// 解释模型为什么突然“忘了”此前的上下文。
 const CONTEXT_SHRINK_ALERT_TOKENS: i64 = 1024;
+
+fn attach_anthropic_thinking(target: &mut Value, blocks: &Option<Value>) {
+    if let Some(blocks) = blocks {
+        target["anthropic_thinking_blocks"] = blocks.clone();
+    }
+}
 
 /// 已持久化的 assistant `tool_calls` 必须在同一轮内全部落盘对应的结果。
 /// 模型协议要求调用与结果成对出现：取消、批量执行失败、预算/终止截断都可能
@@ -838,6 +844,33 @@ impl Orchestrator {
                     ),
                 );
                 messages = context_manager.normalize_messages(messages);
+                // Finalize image placeholders before the compaction summary is
+                // constructed so the summary and the live request replay the same prefix.
+                let image_report = match crate::services::image_context::enforce_request_limits(
+                    &mut messages,
+                    tools_payload,
+                    &image_policy,
+                ) {
+                    Ok(report) => report,
+                    Err(too_large) => {
+                        return Err(OrchestratorError::llm_request_too_large(
+                            too_large.message(),
+                            too_large.detail(),
+                        ));
+                    }
+                };
+                if image_report.changed() {
+                    let mut payload = image_report.to_payload();
+                    if let Value::Object(ref mut map) = payload {
+                        round_info.insert_into(map);
+                    }
+                    emitter.emit("context_image_budget", payload).await;
+                }
+                self.workspace.save_session_inline_image_count(
+                    &user_id,
+                    &session_id,
+                    image_report.images_after,
+                );
                 let request_budget = super::request_budget::RequestBudget::measure(
                     &compaction_llm_config,
                     &self.build_chat_messages(&messages),
@@ -951,35 +984,6 @@ impl Orchestrator {
                 let mut overflow_recovery_attempts = 0_u32;
                 self.apply_agent_messages(agent_inbox.as_ref().expect("active inbox"),
                     &user_id, &session_id, &mut messages, &emitter, round_info, false).await?;
-                // Visual iterations can append a new image every round. Keep the
-                // newest ones and replace stale/superseded images with path hints
-                // before hashing the prompt and paying the provider request size.
-                let image_report = match crate::services::image_context::enforce_request_limits(
-                    &mut messages,
-                    tools_payload,
-                    &image_policy,
-                ) {
-                    Ok(report) => report,
-                    Err(too_large) => {
-                        return Err(OrchestratorError::llm_request_too_large(
-                            too_large.message(),
-                            too_large.detail(),
-                        ));
-                    }
-                };
-                if image_report.changed() {
-                    let mut payload = image_report.to_payload();
-                    if let Value::Object(ref mut map) = payload {
-                        round_info.insert_into(map);
-                    }
-                    emitter.emit("context_image_budget", payload).await;
-                }
-                // 记住本轮真正内联的图片数，下一轮恢复占位时以此为预算。
-                self.workspace.save_session_inline_image_count(
-                    &user_id,
-                    &session_id,
-                    image_report.images_after,
-                );
                 let current_prefix_hashes: Vec<String> = messages
                     .iter()
                     .map(super::context::stable_json_message_hash)
@@ -1013,7 +1017,7 @@ impl Orchestrator {
                         "current_turn": round_info.user_round,
                     })).await;
                 }
-                last_sent_message_hashes = current_prefix_hashes.clone();
+                last_sent_message_hashes = current_prefix_hashes;
                 self.workspace.save_session_sent_prefix(
                     &user_id,
                     &session_id,
@@ -1224,6 +1228,7 @@ impl Orchestrator {
                 // 提示词不再包含此前的思考内容，是上下文数字骤降的已知成因，
                 // 必须在 observe 消费 output 之前留下。
                 let transport_recovery_used = output.transport_recovery_used;
+                let anthropic_thinking_blocks = output.anthropic_thinking_blocks.clone();
                 empty_output_guard.observe(output);
                 last_response = Some((content.clone(), reasoning.clone()));
                 turn_decode_speed.record_summary(&round_speed);
@@ -1413,6 +1418,10 @@ impl Orchestrator {
                     if !reasoning.trim().is_empty() {
                         assistant_model_message["reasoning_content"] = json!(reasoning.clone());
                     }
+                    attach_anthropic_thinking(
+                        &mut assistant_model_message,
+                        &anthropic_thinking_blocks,
+                    );
                     messages.push(assistant_model_message.clone());
                     if self.apply_agent_messages(agent_inbox.as_ref().expect("active inbox"),
                         &user_id, &session_id, &mut messages, &emitter, round_info, true).await? {
@@ -1438,13 +1447,18 @@ impl Orchestrator {
                             emitter.accumulated_billable_account_credits(is_admin),
                             emitter.accumulated_tool_calls(),
                         );
+                        let mut assistant_meta = json!({ "message_stats": message_stats });
+                        attach_anthropic_thinking(
+                            &mut assistant_meta,
+                            &anthropic_thinking_blocks,
+                        );
                         self.try_append_chat(
                             &user_id,
                             &session_id,
                             "assistant",
                             Some(&json!(assistant_content)),
                             None,
-                            Some(&json!({ "message_stats": message_stats })),
+                            Some(&assistant_meta),
                             Some(&reasoning),
                             None,
                             None,
@@ -1480,6 +1494,10 @@ impl Orchestrator {
                     if let Some(tool_calls_payload) = assistant_history.tool_calls.clone() {
                         assistant_message["tool_calls"] = tool_calls_payload;
                     }
+                    attach_anthropic_thinking(
+                        &mut assistant_message,
+                        &anthropic_thinking_blocks,
+                    );
                     messages.push(assistant_message);
                 }
                 if should_push_assistant_message {
@@ -1493,13 +1511,16 @@ impl Orchestrator {
                         emitter.accumulated_billable_account_credits(is_admin),
                         emitter.accumulated_tool_calls(),
                     );
+                    let mut assistant_meta =
+                        json!({ "type": "tool_call", "message_stats": message_stats });
+                    attach_anthropic_thinking(&mut assistant_meta, &anthropic_thinking_blocks);
                     self.try_append_chat(
                         &user_id,
                         &session_id,
                         "assistant",
                         Some(&json!(assistant_content)),
                         None,
-                        Some(&json!({ "type": "tool_call", "message_stats": message_stats })),
+                        Some(&assistant_meta),
                         Some(&assistant_reasoning),
                         assistant_history.persisted_tool_calls.as_ref(),
                         None,
@@ -2808,10 +2829,12 @@ mod observation_budget_tests {
         ] {
             let budgets = document_budgets(count);
             assert_eq!(budgets.per_result.len(), count);
-            assert!(budgets
-                .per_result
-                .iter()
-                .all(|budget| *budget == expected_each));
+            assert!(
+                budgets
+                    .per_result
+                    .iter()
+                    .all(|budget| *budget == expected_each)
+            );
             assert_eq!(budgets.per_result.iter().sum::<i64>(), expected_total);
             assert_eq!(budgets.total_tokens, expected_total);
             assert_eq!(
@@ -2879,10 +2902,12 @@ mod observation_budget_tests {
             below_protocol_reserve.total_tokens,
             below_protocol_reserve.protocol_reserve_tokens
         );
-        assert!(below_protocol_reserve
-            .per_result
-            .iter()
-            .all(|budget| *budget == OBSERVATION_MIN_TOKEN_BUDGET));
+        assert!(
+            below_protocol_reserve
+                .per_result
+                .iter()
+                .all(|budget| *budget == OBSERVATION_MIN_TOKEN_BUDGET)
+        );
 
         for observed_context in [63_000, 128_000, i64::MAX] {
             let exhausted = resolve_observation_token_budgets(
@@ -2893,10 +2918,12 @@ mod observation_budget_tests {
             );
             assert_eq!(exhausted.available_context_tokens, 0);
             assert_eq!(exhausted.per_result.len(), 20);
-            assert!(exhausted
-                .per_result
-                .iter()
-                .all(|budget| *budget == OBSERVATION_MIN_TOKEN_BUDGET));
+            assert!(
+                exhausted
+                    .per_result
+                    .iter()
+                    .all(|budget| *budget == OBSERVATION_MIN_TOKEN_BUDGET)
+            );
             assert_eq!(exhausted.total_tokens, exhausted.protocol_reserve_tokens);
         }
     }

@@ -99,6 +99,13 @@ IF Fixed THEN reset' = TRUE ELSE reset' = FALSE
 的下跌因此可解释、可观测。声明新纪元等价于把 `sent` 置空，所以 `AppendOnlyPrefix` 在
 `replay` 序列内恒成立，其余五条不变式不受影响。
 
+## 运行时补强（2026-11-23）
+
+- 图片预算在压缩摘要构造前完成，摘要与主请求共享同一图片视图；assistant/tool 尾部通过追加 user 指令重放完整前缀，不再因尾部角色或内联图片直接退回扁平化。
+- 工具面快照只在定义与执行映射等价时复用；schema、权限或映射变化递增 `schema_epoch`，明确开启新缓存纪元。
+- Anthropic 使用 tools/system/当前尾部断点，并在线程状态中保留上一请求尾部作为第四断点，覆盖 20 内容块回溯窗口；thinking/redacted_thinking 与签名无损进入历史重放。
+- OpenAI Responses 的 `input_tokens_details.cached_tokens` 与包含式 `input_tokens` 采用独立归一化口径；OpenAI 官方请求使用线程级 `prompt_cache_key`。
+
 ## 复验
 
 ```bash

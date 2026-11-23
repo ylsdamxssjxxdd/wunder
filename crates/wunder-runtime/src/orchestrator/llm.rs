@@ -173,6 +173,7 @@ fn sanitize_chat_messages_for_request(messages: &[ChatMessage]) -> ChatMessageRe
                 role: message.role.clone(),
                 content: message.content.clone(),
                 reasoning_content: message.reasoning_content.clone(),
+                anthropic_thinking_blocks: message.anthropic_thinking_blocks.clone(),
                 tool_calls,
                 tool_call_id: message.tool_call_id.clone(),
             }
@@ -511,10 +512,15 @@ impl Orchestrator {
                             Some(cleaned)
                         }
                     });
+                let anthropic_thinking_blocks = message
+                    .get("anthropic_thinking_blocks")
+                    .cloned()
+                    .filter(|value| value.as_array().is_some_and(|blocks| !blocks.is_empty()));
                 Some(ChatMessage {
                     role,
                     content,
                     reasoning_content,
+                    anthropic_thinking_blocks,
                     tool_calls,
                     tool_call_id,
                 })
@@ -610,6 +616,10 @@ impl Orchestrator {
                     emitter.emit("llm_output", output_payload).await;
                     let mut usage_payload = json!({
                         "input_tokens": usage.input,
+                        // 占用口径：prompt 三个桶（未缓存 + 缓存读 + 缓存写）之和。
+                        // `input_tokens` 只是其中未缓存的一份，客户端拿它当占用会掉到接近 0。
+                        "context_occupancy_tokens": usage.prompt_tokens(),
+                        "request_context_tokens": usage.prompt_tokens(),
                         "output_tokens": usage.output,
                         "total_tokens": usage.total,
                         "reasoning_tokens": usage.reasoning,
@@ -648,12 +658,43 @@ impl Orchestrator {
             }
         }
 
-        let client = build_llm_client(&effective_config, self.http.clone());
+        let cache_key = stable_json_hash(&json!({
+            "user_id": user_id,
+            "session_id": session_id,
+            "provider": effective_config.provider.as_deref(),
+            "model": effective_config.model.as_deref(),
+        }));
+        let client = build_llm_client(&effective_config, self.http.clone())
+            .with_prompt_cache_key(format!("wunder:{cache_key}"));
         let mut client = if virtual_replay {
             client
         } else {
             self.with_quota_tracking_admission(client, user_id, is_admin, emitter, round_info)
         };
+        let mut anthropic_cache_sink = None;
+        if user_question.is_some()
+            && crate::llm::normalize_provider(effective_config.provider.as_deref()) == "anthropic"
+        {
+            let state = self
+                .workspace
+                .load_session_anthropic_cache_state(user_id, session_id);
+            let previous_tail = state.as_ref().and_then(|value| value.get("tail")).cloned();
+            let previous_ts = state
+                .as_ref()
+                .and_then(|value| value.get("request_ts"))
+                .and_then(Value::as_f64);
+            let request_ts = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
+            let static_ttl_1h = previous_ts
+                .map(|previous| request_ts - previous > 240.0)
+                .unwrap_or(false);
+            let sink = std::sync::Arc::new(parking_lot::Mutex::new(None));
+            client = client.with_anthropic_cache_state(
+                previous_tail,
+                std::sync::Arc::clone(&sink),
+                static_ttl_1h,
+            );
+            anthropic_cache_sink = Some((sink, request_ts));
+        }
         // Cloud queue visibility (§4.4.4): forward queue positions from the
         // cloud channel wrapper as `cloud_queue` incremental events.
         if crate::llm::normalize_provider(effective_config.provider.as_deref())
@@ -685,8 +726,13 @@ impl Orchestrator {
                 "after_count": request_messages.len(),
             })
         });
-        let chat_messages =
+        let mut chat_messages =
             sanitize_chat_messages_for_request(&self.build_chat_messages(&request_messages));
+        if crate::llm::normalize_provider(effective_config.provider.as_deref()) != "anthropic" {
+            for message in &mut chat_messages.messages {
+                message.anthropic_thinking_blocks = None;
+            }
+        }
         // The image budget in the executor keeps the request well below the
         // provider ceiling; this is the final byte-level gate for every caller
         // (including compaction) and gives a readable failure instead of an
@@ -734,7 +780,17 @@ impl Orchestrator {
         )
         .then_some("native_tools_non_stream_policy");
         let initial_will_stream = stream && stream_disabled_reason.is_none();
-        let context_cache_probe = build_context_cache_probe(&chat_messages.messages, tools);
+        let mut context_cache_probe = build_context_cache_probe(&chat_messages.messages, tools);
+        context_cache_probe["request_envelope_hash"] = Value::String(stable_json_hash(&json!({
+            "message_hash": context_cache_probe["message_hash"].as_str(),
+            "tools_hash": context_cache_probe["tools_hash"].as_str(),
+            "provider": effective_config.provider.as_deref(),
+            "model": effective_config.model.as_deref(),
+            "api_mode": effective_config.api_mode.as_deref(),
+            "tool_call_mode": effective_config.tool_call_mode.as_deref(),
+            "thinking_token_budget": effective_config.thinking_token_budget,
+            "reasoning_effort": effective_config.reasoning_effort.as_deref(),
+        })));
         let virtual_turn = if virtual_replay {
             let app_config = self.config_store.get().await;
             // 用户消息可驱动两条测试约定：数字 -> 本次模型轮次；`subagent` / `s` 简拼
@@ -1100,6 +1156,8 @@ impl Orchestrator {
                         "virtual_replay": true,
                         "billable": false,
                         "input_tokens": usage.input,
+                        "context_occupancy_tokens": usage.prompt_tokens(),
+                        "request_context_tokens": usage.prompt_tokens(),
                         "output_tokens": usage.output,
                         "total_tokens": usage.total,
                             "reasoning_tokens": usage.reasoning,
@@ -1193,11 +1251,24 @@ impl Orchestrator {
                 self.await_with_cancel(session_id, timeout_s, fut).await?
             };
 
+            if result.is_ok() {
+                if let Some((sink, request_ts)) = anthropic_cache_sink.as_ref() {
+                    if let Some(tail) = sink.lock().clone() {
+                        self.workspace.save_session_anthropic_cache_state(
+                            user_id,
+                            session_id,
+                            &tail,
+                            *request_ts,
+                        );
+                    }
+                }
+            }
             match result {
                 Ok(response) => {
                     // Read the Copy flag before the response fields are moved.
                     let transport_recovery_used = response.transport_recovery_used;
                     let finish_reason = response.finish_reason;
+                    let anthropic_thinking_blocks = response.anthropic_thinking_blocks;
                     let response_finished_at = Instant::now();
                     let mut content = response.content;
                     let reasoning = response.reasoning;
@@ -1273,12 +1344,14 @@ impl Orchestrator {
                     let mut output =
                         OutputDiagnostics::new(&effective_config, finish_reason, &usage);
                     output.transport_recovery_used = transport_recovery_used;
+                    output.anthropic_thinking_blocks = anthropic_thinking_blocks;
                     if emit_events {
                         let tool_calls_snapshot = tool_calls.clone();
                         let mut output_payload = json!({
                             "content": content,
                             "reasoning": reasoning,
                             "usage": usage,
+                            "request_context_tokens": usage.prompt_tokens(),
                             "decode_output_tokens": decode_output_tokens,
                             "tool_calls": tool_calls_snapshot,
                             "prefill_duration_s": prefill_duration_s,
@@ -1293,6 +1366,8 @@ impl Orchestrator {
                         emitter.emit("llm_output", output_payload).await;
                         let mut usage_payload = json!({
                             "input_tokens": usage.input,
+                            "context_occupancy_tokens": usage.prompt_tokens(),
+                            "request_context_tokens": usage.prompt_tokens(),
                             "output_tokens": usage.output,
                             "total_tokens": usage.total,
                         "reasoning_tokens": usage.reasoning,
@@ -1476,14 +1551,14 @@ fn classify_llm_error(error: &anyhow::Error) -> LlmFailureKind {
             Some(crate::llm::ProviderFailureKind::InvalidRequest)
                 if is_context_window_error_text(&failure.to_string()) =>
             {
-                return LlmFailureKind::ContextWindow
+                return LlmFailureKind::ContextWindow;
             }
             Some(crate::llm::ProviderFailureKind::InvalidRequest) => {
-                return LlmFailureKind::Permanent
+                return LlmFailureKind::Permanent;
             }
             Some(crate::llm::ProviderFailureKind::Permanent) => return LlmFailureKind::Permanent,
             Some(crate::llm::ProviderFailureKind::ContextWindow) => {
-                return LlmFailureKind::ContextWindow
+                return LlmFailureKind::ContextWindow;
             }
             Some(crate::llm::ProviderFailureKind::Transient) => return LlmFailureKind::Unavailable,
             None => {}
@@ -1719,10 +1794,10 @@ fn parse_context_limit_number(raw: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::{
+        DEFAULT_LLM_MAX_ATTEMPTS, LLM_UNAVAILABLE_MIN_RETRIES, LlmFailureKind,
         build_context_cache_probe, classify_llm_failure, extract_context_window_limit_hint,
         is_context_window_error_text, is_llm_unavailable_error_text, llm_retry_reason,
-        resolve_llm_max_attempts, resolve_llm_retry_delay, LlmFailureKind,
-        DEFAULT_LLM_MAX_ATTEMPTS, LLM_UNAVAILABLE_MIN_RETRIES,
+        resolve_llm_max_attempts, resolve_llm_retry_delay,
     };
     use crate::core::config::LlmModelConfig;
     use crate::llm::ChatMessage;
@@ -1734,6 +1809,7 @@ mod tests {
             role: role.to_string(),
             content: json!(content),
             reasoning_content: None,
+            anthropic_thinking_blocks: None,
             tool_calls: None,
             tool_call_id: None,
         }

@@ -1631,7 +1631,7 @@ impl NativeDesktop {
         let mut background = state
             .control
             .command_sessions
-            .running_task_sessions(user_id);
+            .background_task_sessions(user_id);
         background.extend(state.monitor.running_child_run_parents());
         LiveWork {
             sessions: state.kernel.thread_runtime.live_work_sessions_now(user_id),
@@ -1646,7 +1646,7 @@ impl NativeDesktop {
         let mut background = state
             .control
             .command_sessions
-            .running_task_sessions(self.user_id());
+            .background_task_sessions(self.user_id());
         background.extend(state.monitor.running_child_run_parents());
         background
     }
@@ -1658,7 +1658,10 @@ impl NativeDesktop {
             return false;
         }
         let state = self.state();
-        state.control.command_sessions.has_running_tasks(session_id)
+        state
+            .control
+            .command_sessions
+            .has_background_tasks(session_id)
             || state.monitor.has_running_child_runs(session_id)
     }
 

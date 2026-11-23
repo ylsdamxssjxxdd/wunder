@@ -1434,6 +1434,30 @@ async fn the_footer_says_what_the_left_arrow_opens() {
     assert!(footer.contains("← enter thread center"), "{footer:?}");
 }
 
+#[tokio::test]
+async fn the_footer_shows_background_tasks_without_adding_a_row() {
+    let root = TempRoot::new("footer_background_tasks");
+    let mut app = fixture_app(root.path()).await;
+    let before = draw_rows(&mut app, 120, 24);
+    let session_id = app.session_id.clone();
+    app.background_task_footer = BackgroundTaskFooter::new(&session_id);
+    assert_eq!(
+        app.background_task_footer
+            .summary(&session_id, false, || 2)
+            .as_deref(),
+        Some("2 background terminals running")
+    );
+    assert_eq!(
+        app.background_task_summary().as_deref(),
+        Some("2 background terminals running")
+    );
+
+    let rows = draw_rows(&mut app, 120, 24);
+    let footer = rows.last().cloned().unwrap_or_default();
+    assert!(footer.contains("2 background terminals running"), "{footer:?}");
+    assert_eq!(rows.len(), before.len());
+}
+
 /// The footer's right cluster qualifies the context figure with the model it
 /// belongs to: model id first, then used over total.
 #[tokio::test]

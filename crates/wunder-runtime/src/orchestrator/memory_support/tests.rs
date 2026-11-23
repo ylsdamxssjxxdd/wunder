@@ -1,5 +1,5 @@
 use super::*;
-use crate::orchestrator::request_budget::{tools_tokens, RequestBudget};
+use crate::orchestrator::request_budget::{RequestBudget, tools_tokens};
 use serde_json::json;
 
 fn llm_config(value: Value) -> LlmModelConfig {
@@ -95,6 +95,7 @@ fn test_build_compaction_summary_config_disables_reasoning_in_payload() {
             role: "user".to_string(),
             content: json!("compress this"),
             reasoning_content: None,
+            anthropic_thinking_blocks: None,
             tool_calls: None,
             tool_call_id: None,
         }],
@@ -131,7 +132,10 @@ fn summary_preserves_structured_search_evidence() {
     }})
     .to_string();
     let summary = summarize_compaction_observation(&json!(content));
-    assert_eq!(summary, "Tool observation (search_content): success\n[{\"content_head\":\"value\",\"line\":7,\"path\":\"file\"}]");
+    assert_eq!(
+        summary,
+        "Tool observation (search_content): success\n[{\"content_head\":\"value\",\"line\":7,\"path\":\"file\"}]"
+    );
 }
 
 #[test]
@@ -279,12 +283,14 @@ fn test_build_compaction_summary_input_keeps_instruction_last() {
             .and_then(Value::as_str),
         Some("CONTEXT CHECKPOINT COMPACTION: summarize only")
     );
-    assert!(summary_input[..summary_input.len() - 1]
-        .iter()
-        .any(
-            |message| extract_guard_content_text(message.get("content").unwrap_or(&Value::Null))
-                .contains("script failed")
-        ));
+    assert!(
+        summary_input[..summary_input.len() - 1]
+            .iter()
+            .any(|message| extract_guard_content_text(
+                message.get("content").unwrap_or(&Value::Null)
+            )
+            .contains("script failed"))
+    );
 }
 
 #[test]
@@ -313,11 +319,13 @@ fn test_prepare_compaction_summary_messages_preserves_final_instruction_after_tr
             .and_then(Value::as_str),
         Some(instruction)
     );
-    assert!(prepared.iter().any(|message| message
-        .get("content")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .contains("Tool observation (execute_command): failed")));
+    assert!(prepared.iter().any(|message| {
+        message
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("Tool observation (execute_command): failed")
+    }));
 }
 
 #[test]
@@ -581,11 +589,13 @@ fn test_current_turn_replay_uses_user_continuation_after_tool_failure() {
         Some("user")
     );
     assert!(is_compaction_inflight_current_user_message(&replay_message));
-    assert!(replay_message
-        .get("content")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .contains("latest tool output reports failure"));
+    assert!(
+        replay_message
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("latest tool output reports failure")
+    );
 }
 
 #[test]
@@ -706,6 +716,7 @@ fn context_guard_matches_final_request_budget_at_4500_window_boundary() {
             role: message["role"].as_str().unwrap_or_default().to_string(),
             content: message["content"].clone(),
             reasoning_content: None,
+            anthropic_thinking_blocks: None,
             tool_calls: None,
             tool_call_id: None,
         })
@@ -718,8 +729,7 @@ fn context_guard_matches_final_request_budget_at_4500_window_boundary() {
 
 #[test]
 fn test_apply_rebuilt_context_guard_preserves_current_question_before_trimming_it() {
-    let current_question =
-            "Please analyze team size and salaries by department, draw a chart, and summarize in 3 points.";
+    let current_question = "Please analyze team size and salaries by department, draw a chart, and summarize in 3 points.";
     let summary = format!(
         "{}\n{}",
         i18n::t("history.compaction_prefix"),
@@ -837,11 +847,9 @@ fn test_apply_rebuilt_context_guard_summary_first_keeps_trimmed_retained_interac
         "summary-first compaction should keep the summary"
     );
     assert!(
-            messages
-                .iter()
-                .any(is_retained_interaction_message),
-            "summary-first compaction should keep a trimmed retained interaction when budget still allows it"
-        );
+        messages.iter().any(is_retained_interaction_message),
+        "summary-first compaction should keep a trimmed retained interaction when budget still allows it"
+    );
     assert!(estimate_messages_tokens(&messages) <= limit);
 }
 
@@ -879,11 +887,9 @@ fn test_apply_rebuilt_context_guard_summary_first_trims_summary_to_keep_retained
         "summary-first guard should trim summary before sacrificing the entire retained window"
     );
     assert!(
-            messages
-                .iter()
-                .any(is_retained_interaction_message),
-            "summary-first guard should keep some retained interaction content after trimming the summary"
-        );
+        messages.iter().any(is_retained_interaction_message),
+        "summary-first guard should keep some retained interaction content after trimming the summary"
+    );
     assert!(
         messages
             .iter()
@@ -1145,9 +1151,11 @@ fn test_split_messages_into_interaction_turns_merges_same_side_content_and_obser
             "assistant".to_string(),
         ]
     );
-    assert!(contents
-        .iter()
-        .all(|content| !content.contains("Assistant issued tool call(s):")));
+    assert!(
+        contents
+            .iter()
+            .all(|content| !content.contains("Assistant issued tool call(s):"))
+    );
     assert_eq!(
         contents,
         vec![
@@ -1259,9 +1267,11 @@ fn test_build_committed_replacement_history_from_rebuilt_strips_system_and_infli
     assert_eq!(committed.len(), 2);
     assert_eq!(committed[0]["role"], json!("assistant"));
     assert_eq!(committed[1]["role"], json!("user"));
-    assert!(committed
-        .iter()
-        .all(|item| !is_compaction_inflight_current_user_message(item)));
+    assert!(
+        committed
+            .iter()
+            .all(|item| !is_compaction_inflight_current_user_message(item))
+    );
 }
 
 #[test]
@@ -1400,20 +1410,38 @@ fn replay_compaction_prefix_keeps_every_token_before_the_tail() {
     // 前四条逐字保持：提供方缓存命中的正是这一段。
     assert_eq!(&replay[..4], &messages[..4]);
     assert_eq!(replay.len(), messages.len());
-    assert_eq!(
-        replay[4]["content"],
-        json!("next question\n\nCOMPACT NOW")
-    );
+    assert_eq!(replay[4]["content"], json!("next question\n\nCOMPACT NOW"));
 }
 
 #[test]
-fn replay_compaction_prefix_refuses_non_user_tail() {
+fn replay_compaction_prefix_appends_after_assistant_or_tool_tail() {
+    for tail in [
+        json!({"role":"assistant","content":"done"}),
+        json!({"role":"tool","tool_call_id":"c1","content":"result"}),
+    ] {
+        let messages = vec![json!({"role":"system","content":"frozen"}), tail];
+        let replay = replay_compaction_prefix(&messages, "COMPACT NOW").expect("replay");
+        assert_eq!(&replay[..messages.len()], messages.as_slice());
+        assert_eq!(replay.len(), messages.len() + 1);
+        assert_eq!(replay.last().unwrap()["role"], json!("user"));
+        assert_eq!(replay.last().unwrap()["content"], json!("COMPACT NOW"));
+    }
+}
+
+#[test]
+fn replay_compaction_prefix_keeps_finalized_inline_images() {
     let messages = vec![
         json!({"role":"system","content":"frozen"}),
-        json!({"role":"assistant","content":"done"}),
+        json!({"role":"user","content":[
+            {"type":"text","text":"inspect"},
+            {"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}
+        ]}),
     ];
-    // 追加第二条连续 assistant/user 会破坏交替约束，交给扁平化兜底。
-    assert!(replay_compaction_prefix(&messages, "COMPACT NOW").is_none());
+    let replay = replay_compaction_prefix(&messages, "COMPACT NOW").expect("replay");
+    assert_eq!(replay.len(), messages.len());
+    assert_eq!(replay[1]["content"][0], messages[1]["content"][0]);
+    assert_eq!(replay[1]["content"][1], messages[1]["content"][1]);
+    assert_eq!(replay[1]["content"][2]["text"], json!("COMPACT NOW"));
 }
 
 #[test]
@@ -1433,6 +1461,34 @@ fn prune_replayed_tool_results_keeps_pairing_and_drops_payload() {
     // 结构不变：前后两条消息原样保留。
     assert_eq!(messages[0]["content"], json!("frozen"));
     assert_eq!(messages[3]["content"], json!("next"));
+}
+
+#[test]
+fn prune_replayed_tool_results_preserves_the_longest_prefix() {
+    let mut messages = vec![
+        json!({"role":"tool","tool_call_id":"old","content":"x".repeat(40_000)}),
+        json!({"role":"tool","tool_call_id":"new","content":"y".repeat(40_000)}),
+        json!({"role":"user","content":"next"}),
+    ];
+    let budget = estimate_messages_tokens(&messages) - 1;
+    assert_eq!(prune_replayed_tool_results(&mut messages, budget), 1);
+    assert!(messages[0]["content"].as_str().unwrap().len() == 40_000);
+    assert!(
+        messages[1]["content"]
+            .as_str()
+            .unwrap()
+            .contains("tool result omitted")
+    );
+}
+
+#[test]
+fn prune_replayed_tool_results_terminates_on_an_impossible_budget() {
+    let mut messages = vec![
+        json!({"role":"tool","tool_call_id":"one","content":"first"}),
+        json!({"role":"tool","tool_call_id":"two","content":"second"}),
+        json!({"role":"user","content":"next"}),
+    ];
+    assert_eq!(prune_replayed_tool_results(&mut messages, 1), 2);
 }
 
 #[test]
