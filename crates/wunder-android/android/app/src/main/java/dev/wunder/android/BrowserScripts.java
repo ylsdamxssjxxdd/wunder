@@ -189,10 +189,19 @@ final class BrowserScripts {
                 + "var afterL=target?target.scrollLeft:0,afterT=target?target.scrollTop:0;"
                 + "var movedX=(afterX-beforeX)+(afterL-beforeL),movedY=(afterY-beforeY)+(afterT-beforeT);"
                 + "var moved=movedX!==0||movedY!==0;"
+                + "var docEl=document.scrollingElement||document.documentElement;"
+                + "var posX=target?target.scrollLeft:(window.scrollX||0);"
+                + "var posY=target?target.scrollTop:(window.scrollY||0);"
+                + "var maxX=target?Math.max(0,target.scrollWidth-target.clientWidth)"
+                + ":Math.max(0,docEl.scrollWidth-docEl.clientWidth);"
+                + "var maxY=target?Math.max(0,target.scrollHeight-target.clientHeight)"
+                + ":Math.max(0,docEl.scrollHeight-docEl.clientHeight);"
                 + "return JSON.stringify({status:'scrolled',moved:moved,handled:handled,"
                 + "x:afterX,y:afterY,left:afterL,top:afterT,"
                 + "fromX:beforeX,fromY:beforeY,fromLeft:beforeL,fromTop:beforeT,"
-                + "movedX:movedX,movedY:movedY,"
+                + "movedX:Math.round(movedX),movedY:Math.round(movedY),"
+                + "posX:Math.round(posX),posY:Math.round(posY),"
+                + "maxX:Math.round(maxX),maxY:Math.round(maxY),"
                 + "container:target?String(target.tagName||'').toLowerCase():'document',"
                 + "canvas:!!(pt&&String(pt.tagName||'').toUpperCase()==='CANVAS')});"
                 + "})()";
@@ -258,7 +267,9 @@ final class BrowserScripts {
     static String pageScroll() {
         return "(function(){var d=document.documentElement||document.body||{};"
                 + "return JSON.stringify({status:'ok',x:window.scrollX||0,y:window.scrollY||0,"
-                + "vw:d.clientWidth||0,vh:d.clientHeight||0});})()";
+                + "vw:d.clientWidth||0,vh:d.clientHeight||0,"
+                + "iw:window.innerWidth||0,ih:window.innerHeight||0,"
+                + "dpr:window.devicePixelRatio||1});})()";
     }
 
     static String fileUpload(String target, String filesJson) {

@@ -146,7 +146,6 @@ pub async fn update(
     icon_name: &str,
     icon_color: &str,
 ) -> Result<UserAgentRecord> {
-    validate_name(name)?;
     if description.len() > 16_384
         || system_prompt.len() > 65_536
         || model_name.len() > 512
@@ -175,7 +174,16 @@ pub async fn update(
     if record.agent_id == "__default__" && !model.is_empty() && model != config.llm.default {
         bail!("默认智能体跟随系统默认模型，请在模型配置中修改");
     }
-    record.name = name.trim().into();
+    // The built-in agent's name is preset-owned: 桌面版/安卓版/云端版都把它渲染成
+    // 只读字段，因此客户端回传的名称只是草稿，不能改写记录。否则一份陈旧草稿
+    // （或调用方自造的展示文案）会把用户看到的智能体名字改成无关文字。名称只
+    // 能通过内置 agent 自己的 worker-card 修改，那条通道在 inner_visible 里。
+    if record.agent_id == "__default__" {
+        default_agent_protocol::normalize_default_agent_name(&mut record.name);
+    } else {
+        validate_name(name)?;
+        record.name = name.trim().into();
+    }
     record.description = description.into();
     record.system_prompt = system_prompt.into();
     record.model_name = (!model.is_empty()).then(|| model.to_string());

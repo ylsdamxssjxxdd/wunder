@@ -1191,29 +1191,30 @@
 }
 
 .tt-tokenbar {
+  position: relative;
   flex: 1 1 0;
   min-width: 2px;
   max-width: 28px;
   align-self: flex-end;
   border-radius: 1px 1px 0 0;
-  background: var(--tt-brand);
+  background: var(--tt-amber-100);
   cursor: pointer;
+}
+
+.tt-tokenbar-cache {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: inherit;
+  background: var(--tt-amber);
+  pointer-events: none;
 }
 
 .tt-tokenbar:hover {
   box-shadow:
     0 0 0 1px var(--tt-bg),
     0 0 0 2px var(--tt-brand);
-}
-
-.tt-tokenbar-max {
-  background: var(--tt-amber);
-}
-
-.tt-tokenbar-max:hover {
-  box-shadow:
-    0 0 0 1px var(--tt-bg),
-    0 0 0 2px var(--tt-amber);
 }
 
 .tt-tokenbar-empty {

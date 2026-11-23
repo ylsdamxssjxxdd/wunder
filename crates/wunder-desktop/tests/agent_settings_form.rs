@@ -64,6 +64,7 @@ fn start_isolated() -> Result<NativeDesktop, Box<dyn std::error::Error>> {
 /// Mirrors `AgentSettingsEdit` as the settings page builds it.
 fn page_payload(tool_names: Vec<String>) -> wunder_desktop::AgentSettingsEdit {
     wunder_desktop::AgentSettingsEdit {
+        // 草稿名称：内置智能体的名称由预设拥有，引擎必须忽略它（见下方断言）。
         name: "本地助手".into(),
         description: "整理工作目录并执行本地命令。".into(),
         system_prompt: "你是运行在本机的助手。".into(),
@@ -84,6 +85,8 @@ fn page_payload(tool_names: Vec<String>) -> wunder_desktop::AgentSettingsEdit {
 fn every_agent_form_field_survives_the_facade_round_trip() {
     let _serial = serial();
     let runtime = start_isolated().expect("isolated runtime");
+    // 名称由预设拥有：桌面表单把它渲染成只读字段，回传的只是草稿。
+    let preset_name = runtime.default_agent().expect("default agent").name;
     let names = runtime
         .list_tools()
         .expect("tools")
@@ -96,7 +99,7 @@ fn every_agent_form_field_survives_the_facade_round_trip() {
             page_payload(names.clone()),
         )
         .expect("the settings page payload saves");
-    assert_eq!(saved.name, "本地助手");
+    assert_eq!(saved.name, preset_name);
     assert_eq!(saved.description, "整理工作目录并执行本地命令。");
     assert_eq!(saved.system_prompt, "你是运行在本机的助手。");
     assert_eq!(saved.model, "test-model");
@@ -117,7 +120,7 @@ fn every_agent_form_field_survives_the_facade_round_trip() {
 
     // A second read proves the values are stored, not just echoed back.
     let reread = runtime.default_agent().expect("default agent");
-    assert_eq!(reread.name, "本地助手");
+    assert_eq!(reread.name, preset_name);
     assert_eq!(reread.description, "整理工作目录并执行本地命令。");
     assert_eq!(reread.system_prompt, "你是运行在本机的助手。");
     assert_eq!(reread.model, "test-model");

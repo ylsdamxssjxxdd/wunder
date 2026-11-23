@@ -58,11 +58,14 @@ fn start_isolated() -> Result<IsolatedRuntime, Box<dyn std::error::Error>> {
 }
 
 fn save_tools(runtime: &NativeDesktop, tool_names: Vec<String>) -> wunder_desktop::AgentRecord {
+    // 内置智能体的名称由预设拥有（桌面表单只读），测试沿用记录里的名称，不编造
+    // 展示文案：万一隔离环境失效，也不会把别人的智能体改名成测试字符串。
+    let current = runtime.default_agent().expect("default agent");
     runtime
         .update_agent_settings(
             "__default__",
             wunder_desktop::AgentSettingsEdit {
-                name: "工具选择".into(),
+                name: current.name,
                 description: String::new(),
                 system_prompt: String::new(),
                 model_name: String::new(),
@@ -211,4 +214,48 @@ fn settings_updates_are_rejected_for_unknown_agents() {
         },
     );
     assert!(result.is_err(), "only the built-in agent is editable");
+}
+
+/// 回归：内置智能体的名称由预设拥有，桌面表单把它渲染成只读字段。客户端仍会
+/// 把当前名称随表单回传，所以引擎必须忽略这份名称草稿——否则一份陈旧或伪造的
+/// 草稿会把用户看到的智能体名称改成无关文案（工具勾选保存尤其常见）。
+#[test]
+fn builtin_agent_name_ignores_the_client_draft() {
+    let runtime = start_isolated().expect("isolated runtime");
+    let before = runtime.default_agent().expect("default agent");
+    assert!(!before.name.trim().is_empty(), "builtin agent needs a name");
+
+    let saved = runtime
+        .update_agent_settings(
+            "__default__",
+            wunder_desktop::AgentSettingsEdit {
+                name: "工具选择".into(),
+                description: before.description.clone(),
+                system_prompt: before.system_prompt.clone(),
+                model_name: String::new(),
+                icon_name: String::new(),
+                icon_color: String::new(),
+                icon: None,
+                tool_names: before.tool_names.clone(),
+                preset_questions: Vec::new(),
+                approval_mode: before.approval_mode.clone(),
+                preview_skill: false,
+                silent: false,
+                prefer_mother: false,
+            },
+        )
+        .expect("save settings");
+
+    assert_eq!(
+        saved.name, before.name,
+        "the built-in agent's name is preset-owned and must survive a client save"
+    );
+    assert_eq!(
+        runtime
+            .default_agent()
+            .expect("reload default agent")
+            .name,
+        before.name,
+        "the stored record must keep the preset name too"
+    );
 }

@@ -934,7 +934,8 @@ The Android build uses the system WebView, so action semantics match the desktop
 - **Text targeting**: `click` / `hover` accept `text` and pick the smallest visible interactive element containing it.
 - **Scroll**: `scroll` moves the nearest scrollable container and dispatches a real wheel event at the given point, so 3D canvas pages still zoom/rotate.
 - **Upload**: `file_upload` injects workspace files into `<input type=file>` directly, without opening the system picker; 16 MB total per call.
-- **Screenshot**: viewport only. `full_page` is ignored with a notice; scroll and capture in sections for long pages.
+- **Screenshot**: viewport only. `full_page` is ignored with a notice; scroll and capture in sections for long pages. The reply reports the CSS viewport and image size.
+- **Units**: `resize` width/height, `scroll` deltas and click coordinates are **CSS pixels**; screenshots are device pixels (possibly scaled to 900 px wide). Convert through the ratio in the screenshot reply before doing pixel-level positioning; never subtract scroll deltas from image coordinates directly.
 - **Wait**: `networkidle` approximates "document complete + 500 ms"; `observe_text` `next_cursor` is a character offset, so re-read after the page changes.
 
 ## Batch

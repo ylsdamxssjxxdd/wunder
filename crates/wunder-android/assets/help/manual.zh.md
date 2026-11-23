@@ -953,7 +953,8 @@ wunder-cli
 - **文字定位**：`click` / `hover` 支持用 `text` 按可见文字找最小的可交互元素，不必先观察 ref。
 - **滚动**：`scroll` 会滚动最近的可滚动容器，并在指定坐标发送真实滚轮事件，3D canvas 页面可照常缩放/旋转。
 - **上传**：`file_upload` 直接把工作区文件注入 `<input type=file>`；无需先点开系统文件选择器，单次总大小上限 16 MB。
-- **截图**：只支持当前视口；`full_page` 会被忽略并提示，长页请配合 `scroll` 分段截图。
+- **截图**：只支持当前视口；`full_page` 会被忽略并提示，长页请配合 `scroll` 分段截图。截图文本会给出 CSS 视口与图像尺寸。
+- **坐标单位**：`resize` 的 width/height、`scroll` 的 delta_x/delta_y、点击坐标都是 **CSS 像素**；截图是设备像素（并可能缩放到 900px 宽），按截图文本里的比例换算后再做像素定位，不要直接用截图坐标减 `scroll` 值。
 - **等待**：`networkidle` 以“文档加载完成 + 500ms”近似；`observe_text` 的 `next_cursor` 是字符偏移量，页面变化后应重新读取。
 
 ## 批处理

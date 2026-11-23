@@ -920,7 +920,14 @@ export function createTrajectoryView(host, options = {}) {
         const value = totalMode ? bar.total : bar.delta;
         const ratio = scaleMax > 0 ? value / scaleMax : 0;
         node.style.height = `${Math.max(4, Math.round(ratio * 100))}%`;
-        if (value === scaleMax && value > 0) node.classList.add("tt-tokenbar-max");
+      }
+      if (st.tokenMode === "total") {
+        const cacheHit = cacheHitPercent(bar);
+        if (cacheHit !== null) {
+          const cacheNode = h("span", "tt-tokenbar-cache");
+          cacheNode.style.height = `${cacheHit}%`;
+          node.appendChild(cacheNode);
+        }
       }
       if (needle && !matched.has(bar.assistantIndex)) node.classList.add("tt-tokenbar-dimmed");
       if (st.selectedIndex !== null && st.selectedIndex === bar.assistantIndex) node.classList.add("tt-tokenbar-selected");

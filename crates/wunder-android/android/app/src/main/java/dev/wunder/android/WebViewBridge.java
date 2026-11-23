@@ -1,25 +1,20 @@
 package dev.wunder.android;
 
 import android.content.Context;
-import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.PixelFormat;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.DocumentsContract;
-import android.provider.Settings;
 import android.util.Base64;
 import android.util.DisplayMetrics;
 import android.util.Log;
-import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.WindowManager;
 import android.webkit.ConsoleMessage;
 import android.webkit.CookieManager;
 import android.webkit.JsPromptResult;
@@ -33,8 +28,6 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
-import android.widget.LinearLayout;
-import android.widget.TextView;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -61,10 +54,10 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Process-scoped browser backed by the phone's system WebView.
  *
- * <p>The agent drives one floating browser window through a small action
- * contract. Nothing is packaged: Android already ships and updates the
- * Chromium-based WebView. All WebView and window operations happen on the main
- * thread; the engine calls `execute` from a blocking worker.
+ * <p>The agent drives one off-screen WebView through a small action contract.
+ * Nothing is packaged: Android already ships and updates the Chromium-based
+ * WebView. All WebView operations happen on the main thread; the engine calls
+ * `execute` from a blocking worker.
  */
 public final class WebViewBridge {
     private static final String TAG = "WunderWebView";
@@ -80,21 +73,12 @@ public final class WebViewBridge {
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
 
     private static Context app;
-    private static WindowManager windowManager;
+    private static FrameLayout browserRoot;
     private static WebView webView;
-    private static View overlay;
-    private static WindowManager.LayoutParams overlayParams;
-    private static TextView titleView;
-    private static TextView browserToggle;
-    private static int browserHeaderHeight;
-    private static int browserExpandedHeight;
-    /** 默认展开；用户可手动收起为一条标题栏，收起状态在同一进程内保留。 */
-    private static boolean browserMinimized = false;
     private static volatile CountDownLatch pageLatch;
     private static volatile String currentUrl = "";
     private static volatile String currentTitle = "";
     private static volatile String lastLoadError = "";
-    private static volatile long lastPermissionRequestAt;
     /** 当前预览的工作区根目录；为空时预览域名返回 503。 */
     private static volatile File previewRoot;
 
@@ -125,6 +109,19 @@ public final class WebViewBridge {
             this.defaultValue = defaultValue == null ? "" : defaultValue;
             this.result = result;
             this.promptResult = promptResult;
+        }
+    }
+
+    /** One encoded screenshot plus its pixel size, for unit hints in the reply. */
+    private static final class CapturedImage {
+        final String base64;
+        final int width;
+        final int height;
+
+        CapturedImage(String base64, int width, int height) {
+            this.base64 = base64;
+            this.width = width;
+            this.height = height;
         }
     }
 
@@ -199,8 +196,7 @@ public final class WebViewBridge {
                 case "status":
                     return status();
                 case "permission":
-                    requestOverlayPermission();
-                    return ok("已打开悬浮窗授权页面");
+                    return ok("后台浏览器无需悬浮窗权限");
                 default:
                     return error("不支持的动作：" + name);
             }
@@ -246,7 +242,7 @@ public final class WebViewBridge {
         CountDownLatch latch = new CountDownLatch(1);
         pageLatch = latch;
         lastLoadError = "";
-        // 浏览器窗口创建后才挂载预览根目录，避免初始化页面把状态清掉。
+        // 后台浏览器创建后才挂载预览根目录，避免初始化页面把状态清掉。
         previewRoot = previewRootForLoad;
         Boolean started = onMain(() -> {
             if (webView == null) {
@@ -256,7 +252,7 @@ public final class WebViewBridge {
             return Boolean.TRUE;
         }, 8_000L);
         if (!Boolean.TRUE.equals(started)) {
-            return error("无法启动浏览器窗口");
+            return error("无法启动后台浏览器");
         }
         await(latch, NAVIGATION_TIMEOUT_MS);
         sleep(350);
@@ -624,16 +620,39 @@ public final class WebViewBridge {
             }
             int movedX = reply.optInt("movedX", 0);
             int movedY = reply.optInt("movedY", 0);
-            String actual = movedX == deltaX && movedY == deltaY
-                    ? ""
-                    : "；请求 " + deltaX + "," + deltaY + "，实际 " + movedX + "," + movedY
-                        + "（可能已到边界）";
+            // 滚动位置按设备像素取整后与请求量可能差 1px，属于取整误差；
+            // 只有明显少滚且确实贴住可滚动范围端点时才提示“已到边界”。
+            final int tolerance = 2;
+            boolean shortX = Math.abs(movedX - deltaX) > tolerance;
+            boolean shortY = Math.abs(movedY - deltaY) > tolerance;
+            int posX = reply.optInt("posX", 0);
+            int posY = reply.optInt("posY", 0);
+            int maxX = reply.optInt("maxX", 0);
+            int maxY = reply.optInt("maxY", 0);
+            boolean boundary = (shortX
+                        && (deltaX > 0 ? maxX - posX <= tolerance : posX <= tolerance))
+                    || (shortY
+                        && (deltaY > 0 ? maxY - posY <= tolerance : posY <= tolerance));
+            String actual = shortX || shortY
+                    ? "；请求 " + deltaX + "," + deltaY + "，实际 " + movedX + "," + movedY
+                        + (boundary ? "（已到边界）" : "")
+                    : "";
             return pageText("已滚动 " + deltaX + "," + deltaY + "（" + position + "）" + actual);
         }
         if (reply.optBoolean("handled", false) || reply.optBoolean("canvas", false)) {
             return pageText("已向画布发送滚轮事件（页面自行处理，如 3D 缩放/旋转）");
         }
-        return pageText("已发送滚轮事件，但页面没有可滚动区域（可能已到顶/底）");
+        int idlePosX = reply.optInt("posX", 0);
+        int idlePosY = reply.optInt("posY", 0);
+        int idleMaxX = reply.optInt("maxX", 0);
+        int idleMaxY = reply.optInt("maxY", 0);
+        boolean atStart = (deltaY < 0 && idlePosY <= 2) || (deltaX < 0 && idlePosX <= 2);
+        boolean atEnd = (deltaY > 0 && idleMaxY - idlePosY <= 2)
+                || (deltaX > 0 && idleMaxX - idlePosX <= 2);
+        if (atStart || atEnd) {
+            return pageText("页面已到达滚动边界（" + (atStart ? "顶部/左侧" : "底部/右侧") + "）");
+        }
+        return pageText("已发送滚轮事件，但页面没有可滚动区域");
     }
 
     private static String screenshot(JSONObject args) {
@@ -644,18 +663,28 @@ public final class WebViewBridge {
         int scrollX = page == null ? 0 : page.optInt("x", 0);
         int scrollY = page == null ? 0 : page.optInt("y", 0);
         int layoutWidth = page == null ? 0 : page.optInt("vw", 0);
-        String base64 = captureViewportBase64(scrollX, scrollY, layoutWidth, 12_000L);
-        if (base64 == null || base64.isEmpty()) {
+        int cssWidth = page == null ? 0 : page.optInt("iw", 0);
+        int cssHeight = page == null ? 0 : page.optInt("ih", 0);
+        CapturedImage shot = captureViewport(scrollX, scrollY, layoutWidth, 12_000L);
+        if (shot == null || shot.base64.isEmpty()) {
             return error("截图失败");
+        }
+        String meta = "";
+        if (cssWidth > 0 && shot.width > 0) {
+            double pxPerCss = (double) shot.width / (double) cssWidth;
+            meta = "（CSS 视口 " + cssWidth + "×" + cssHeight
+                    + "，图像 " + shot.width + "×" + shot.height
+                    + "，1 CSS px≈" + String.format(Locale.ROOT, "%.2f", pxPerCss)
+                    + " 图像 px）";
         }
         try {
             JSONObject result = new JSONObject();
             result.put("ok", true);
             result.put("text", args.optBoolean("full_page", false)
                     ? "已截取当前视口（WebView 不支持整页截图，full_page 已忽略；"
-                        + "长页请配合 scroll 分段截图）"
-                    : "已截取当前页面");
-            result.put("image_base64", base64);
+                        + "长页请配合 scroll 分段截图）" + meta
+                    : "已截取当前页面" + meta);
+            result.put("image_base64", shot.base64);
             result.put("mime_type", "image/png");
             return result.toString();
         } catch (Throwable error) {
@@ -673,8 +702,8 @@ public final class WebViewBridge {
      * converted through the layout scale so the captured frame matches the
      * viewport at any scroll position.
      */
-    private static String captureViewportBase64(int scrollX, int scrollY, int layoutWidth,
-                                                long timeoutMs) {
+    private static CapturedImage captureViewport(int scrollX, int scrollY, int layoutWidth,
+                                                 long timeoutMs) {
         return onMain(() -> {
             WebView view = webView;
             if (view == null || view.getWidth() <= 0 || view.getHeight() <= 0) {
@@ -700,7 +729,7 @@ public final class WebViewBridge {
         }, timeoutMs);
     }
 
-    private static String encodeScaledPng(Bitmap bitmap) {
+    private static CapturedImage encodeScaledPng(Bitmap bitmap) {
         if (bitmap == null) {
             return null;
         }
@@ -712,10 +741,13 @@ public final class WebViewBridge {
                 output = Bitmap.createScaledBitmap(output, maxWidth, height, true);
                 bitmap.recycle();
             }
+            int width = output.getWidth();
+            int height = output.getHeight();
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             output.compress(Bitmap.CompressFormat.PNG, 100, out);
             output.recycle();
-            return Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP);
+            return new CapturedImage(
+                    Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP), width, height);
         } catch (Throwable error) {
             Log.w(TAG, "encode screenshot failed", error);
             return null;
@@ -740,7 +772,7 @@ public final class WebViewBridge {
         viewportWidthCss = width;
         viewportHeightCss = height;
         if (webView == null) {
-            return pageText("已设置视口 " + width + "x" + height + "，打开页面后生效");
+            return pageText("已设置视口 " + width + "x" + height + " CSS 像素，打开页面后生效");
         }
         Boolean applied = onMain(() -> {
             applyViewportLayoutOnMain();
@@ -754,7 +786,7 @@ public final class WebViewBridge {
                 "(function(){return (window.innerWidth||0)+'x'+(window.innerHeight||0);})()",
                 3_000L);
         String suffix = actual == null || actual.isEmpty() ? "" : "（实际 " + actual + "）";
-        return pageText("视口已设为 " + width + "x" + height + suffix);
+        return pageText("视口已设为 " + width + "x" + height + " CSS 像素" + suffix);
     }
 
     /** Re-layout the WebView at the logical viewport size, then scale it to fit. */
@@ -773,11 +805,23 @@ public final class WebViewBridge {
             params.height = Math.round(viewportHeightCss * density);
         }
         webView.setLayoutParams(params);
-        viewportHost.requestLayout();
-        viewportHost.post(WebViewBridge::applyViewportTransformOnMain);
+        layoutBackgroundBrowserOnMain();
     }
 
-    /** Keep the logical viewport visible by uniformly scaling it into the host. */
+    private static void layoutBackgroundBrowserOnMain() {
+        if (browserRoot == null) {
+            return;
+        }
+        int width = Math.max(1, screenWidth());
+        int height = Math.max(dp(160), (int) (screenHeight() * 0.62f));
+        browserRoot.measure(
+                View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
+        browserRoot.layout(0, 0, width, height);
+        applyViewportTransformOnMain();
+    }
+
+    /** Scale the logical viewport into the off-screen host without changing its CSS size. */
     private static void applyViewportTransformOnMain() {
         if (webView == null || viewportHost == null) {
             return;
@@ -1107,16 +1151,12 @@ public final class WebViewBridge {
         if (webView != null) {
             return;
         }
-        if (!Settings.canDrawOverlays(app)) {
-            requestOverlayPermission();
-            throw new IllegalStateException("需要悬浮窗权限，请在系统设置中允许安卓版显示在其他应用上层后重试");
-        }
         onMain(() -> {
             createBrowserOnMain();
             return null;
         }, 10_000L);
         if (webView == null) {
-            throw new IllegalStateException("无法创建浏览器窗口");
+            throw new IllegalStateException("无法创建后台浏览器");
         }
     }
 
@@ -1133,91 +1173,28 @@ public final class WebViewBridge {
         if (webView != null) {
             return;
         }
-        windowManager = (WindowManager) app.getSystemService(Context.WINDOW_SERVICE);
-        if (windowManager == null) {
-            throw new IllegalStateException("窗口服务不可用");
-        }
+        browserRoot = new FrameLayout(app);
+        browserRoot.setClipChildren(true);
+        browserRoot.setClipToPadding(true);
 
-        LinearLayout root = new LinearLayout(app);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(0xFFF7F7F5);
-        root.setClipChildren(true);
-        root.setClipToPadding(true);
-
-        LinearLayout header = new LinearLayout(app);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(dp(14), dp(8), dp(6), dp(8));
-        header.setBackgroundColor(0xFFFFFFFF);
-
-        titleView = new TextView(app);
-        titleView.setText("浏览器");
-        titleView.setTextSize(14);
-        titleView.setTextColor(0xFF2B2B2B);
-        titleView.setSingleLine(true);
-        titleView.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        titleView.setOnClickListener(v -> setBrowserMinimized(!browserMinimized));
-        header.addView(titleView, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        browserToggle = new TextView(app);
-        browserToggle.setTextSize(13);
-        browserToggle.setTextColor(0xFF2B6CB0);
-        browserToggle.setGravity(Gravity.CENTER);
-        browserToggle.setPadding(dp(10), 0, dp(10), 0);
-        browserToggle.setOnClickListener(v -> setBrowserMinimized(!browserMinimized));
-        header.addView(browserToggle, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)));
-
-        TextView close = new TextView(app);
-        close.setText("×");
-        close.setTextSize(24);
-        close.setTextColor(0xFF6B6B6B);
-        close.setGravity(Gravity.CENTER);
-        close.setPadding(dp(10), 0, dp(10), 0);
-        close.setOnClickListener(v -> destroyBrowserOnMain());
-        header.addView(close, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)));
-
-        browserHeaderHeight = dp(46);
-        root.addView(header, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, browserHeaderHeight));
-
-        webView = new WebView(app);
-        configureWebView(webView);
-        // WebView 始终按展开尺寸布局，收起时只裁剪窗口，页面视口与截图尺寸不变。
-        int panelHeight = Math.max(dp(160),
-                Math.max(dp(280), (int) (screenHeight() * 0.62f)) - browserHeaderHeight);
         viewportHost = new FrameLayout(app);
         viewportHost.setClipChildren(true);
         viewportHost.setClipToPadding(true);
         viewportHost.addOnLayoutChangeListener(
                 (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) ->
                         applyViewportTransformOnMain());
-        root.addView(viewportHost, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, panelHeight));
+        browserRoot.addView(viewportHost, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        webView = new WebView(app);
+        // Software drawing keeps WebView.draw(Canvas) usable without attaching
+        // the view to a visible window.
+        webView.setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+        configureWebView(webView);
         viewportHost.addView(webView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        browserExpandedHeight = browserHeaderHeight + panelHeight;
-
-        overlayParams = new WindowManager.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                browserMinimized ? browserHeaderHeight : browserExpandedHeight,
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                        | (browserMinimized
-                                ? WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                                : 0),
-                PixelFormat.TRANSLUCENT);
-        overlayParams.gravity = Gravity.TOP | Gravity.START;
-        overlayParams.x = 0;
-        overlayParams.y = dp(64);
-        windowManager.addView(root, overlayParams);
-        overlay = root;
-        updateBrowserToggle();
-        updateTitleOnMain();
         applyViewportLayoutOnMain();
-        Log.i(TAG, "webview overlay created");
+        Log.i(TAG, "background webview created");
     }
 
     private static void configureWebView(WebView view) {
@@ -1242,7 +1219,6 @@ public final class WebViewBridge {
             public void onReceivedTitle(WebView web, String title) {
                 if (title != null) {
                     currentTitle = title;
-                    updateTitleOnMain();
                 }
             }
 
@@ -1323,7 +1299,6 @@ public final class WebViewBridge {
                 if (title != null && !title.isEmpty()) {
                     currentTitle = title;
                 }
-                updateTitleOnMain();
                 CountDownLatch latch = pageLatch;
                 if (latch != null) {
                     latch.countDown();
@@ -1521,21 +1496,18 @@ public final class WebViewBridge {
                 webView.stopLoading();
                 webView.loadUrl("about:blank");
                 webView.clearHistory();
+                if (viewportHost != null) {
+                    viewportHost.removeView(webView);
+                }
                 webView.destroy();
             } catch (Throwable ignored) {
             }
             webView = null;
         }
-        if (overlay != null && windowManager != null) {
-            try {
-                windowManager.removeView(overlay);
-            } catch (Throwable ignored) {
-            }
+        if (browserRoot != null) {
+            browserRoot.removeAllViews();
         }
-        overlay = null;
-        overlayParams = null;
-        titleView = null;
-        browserToggle = null;
+        browserRoot = null;
         viewportHost = null;
         viewportWidthCss = 0;
         viewportHeightCss = 0;
@@ -1553,32 +1525,13 @@ public final class WebViewBridge {
             }
         }
         resetLogs();
-        browserHeaderHeight = 0;
-        browserExpandedHeight = 0;
         currentUrl = "";
         currentTitle = "";
         previewRoot = null;
-        Log.i(TAG, "webview overlay destroyed");
+        Log.i(TAG, "background webview destroyed");
     }
 
-    private static void requestOverlayPermission() {
-        long now = System.currentTimeMillis();
-        if (now - lastPermissionRequestAt < 8_000L) {
-            return;
-        }
-        lastPermissionRequestAt = now;
-        try {
-            Intent intent = new Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:" + app.getPackageName()));
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            app.startActivity(intent);
-        } catch (Throwable error) {
-            Log.w(TAG, "open overlay settings failed", error);
-        }
-    }
-
-    // ---- JS and window helpers --------------------------------------------
+    // ---- JS helpers --------------------------------------------------------
 
     private static String evalJs(String script, long timeoutMs) {
         if (webView == null) {
@@ -1712,60 +1665,6 @@ public final class WebViewBridge {
                 out.write(buffer, 0, read);
             }
             return out.toByteArray();
-        }
-    }
-
-    private static void updateTitleOnMain() {
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            applyTitle();
-        } else {
-            MAIN.post(WebViewBridge::applyTitle);
-        }
-    }
-
-    private static void applyTitle() {
-        if (titleView == null) {
-            return;
-        }
-        String title = currentTitle == null ? "" : currentTitle.trim();
-        if (title.isEmpty()) {
-            title = currentUrl == null ? "" : currentUrl.trim();
-        }
-        titleView.setText(title.isEmpty() ? "浏览器" : title);
-    }
-
-    /**
-     * Collapse the overlay to its title bar. The WebView keeps its expanded
-     * layout size, so the page viewport, JS coordinates and screenshots stay
-     * unchanged while the user gets the screen back.
-     */
-    private static void setBrowserMinimized(boolean minimized) {
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            MAIN.post(() -> setBrowserMinimized(minimized));
-            return;
-        }
-        browserMinimized = minimized;
-        if (overlay == null || overlayParams == null || windowManager == null) {
-            updateBrowserToggle();
-            return;
-        }
-        overlayParams.height = minimized ? browserHeaderHeight : browserExpandedHeight;
-        if (minimized) {
-            overlayParams.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
-        } else {
-            overlayParams.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
-        }
-        try {
-            windowManager.updateViewLayout(overlay, overlayParams);
-        } catch (Throwable error) {
-            Log.w(TAG, "resize browser overlay failed", error);
-        }
-        updateBrowserToggle();
-    }
-
-    private static void updateBrowserToggle() {
-        if (browserToggle != null) {
-            browserToggle.setText(browserMinimized ? "展开" : "收起");
         }
     }
 
@@ -1946,9 +1845,23 @@ public final class WebViewBridge {
         return Math.round(value * app.getResources().getDisplayMetrics().density);
     }
 
+    private static int screenWidth() {
+        DisplayMetrics metrics = new DisplayMetrics();
+        android.view.WindowManager manager =
+                (android.view.WindowManager) app.getSystemService(Context.WINDOW_SERVICE);
+        if (manager != null) {
+            manager.getDefaultDisplay().getRealMetrics(metrics);
+            if (metrics.widthPixels > 0) {
+                return metrics.widthPixels;
+            }
+        }
+        return app.getResources().getDisplayMetrics().widthPixels;
+    }
+
     private static int screenHeight() {
         DisplayMetrics metrics = new DisplayMetrics();
-        WindowManager manager = (WindowManager) app.getSystemService(Context.WINDOW_SERVICE);
+        android.view.WindowManager manager =
+                (android.view.WindowManager) app.getSystemService(Context.WINDOW_SERVICE);
         if (manager != null) {
             manager.getDefaultDisplay().getRealMetrics(metrics);
             if (metrics.heightPixels > 0) {

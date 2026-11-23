@@ -727,8 +727,15 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                     width: parent.width;
                                     height: bar.reported ? max(2px, parent.height * max(0.04, bar.ratio)) : 2px;
                                     border-radius: 1px;
-                                    background: !bar.reported ? TrajTokens.caption : bar.peak ? TrajTokens.amber : TrajTokens.brand;
+                                    background: !bar.reported ? TrajTokens.caption : TrajTokens.amber-soft;
                                     opacity: bar.reported ? 1.0 : 0.5;
+                                }
+                                if bar.reported && root.token-total && bar.cache-ratio > 0 : Rectangle {
+                                    y: parent.height - self.height;
+                                    width: parent.width;
+                                    height: bar-fill.height * bar.cache-ratio;
+                                    border-radius: 1px;
+                                    background: TrajTokens.amber;
                                 }
                                 // 与舰桥/蜂巢一致：点击时间线段或台账行后，对应柱子
                                 // 保持琥珀色选中环，反向点击柱子亦然（同走 select-span）。
@@ -740,7 +747,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                     height: bar-fill.height + 4px;
                                     border-radius: 3px;
                                     border-width: 1px;
-                                    border-color: bar-cell.is-selected ? TrajTokens.amber : bar.peak ? TrajTokens.amber : TrajTokens.brand;
+                                    border-color: bar-cell.is-selected ? TrajTokens.amber : TrajTokens.brand;
                                     background: transparent;
                                 }
                                 bar-touch := TouchArea {

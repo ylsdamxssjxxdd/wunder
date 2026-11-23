@@ -208,7 +208,13 @@
           @pointerenter="onTokenBarEnter(bar, $event)"
           @pointerleave="onSpanLeave"
           @click.stop="onTokenBarClick(bar)"
-        />
+        >
+          <span
+            v-if="tokenTotal && cacheHitPercent(bar) !== null"
+            class="tt-tokenbar-cache"
+            :style="{ height: `${cacheHitPercent(bar)}%` }"
+          />
+        </span>
       </div>
       <span class="tt-tokenbars-summary">{{
         stepUsage.reportedCount > 0
@@ -2530,11 +2536,8 @@ function tokenBarHeight(bar: StepUsageBar): string {
 }
 
 function tokenBarClasses(bar: StepUsageBar): Record<string, boolean> {
-  const value = tokenTotal.value ? bar.total : (bar.delta ?? 0)
-  const scaleMax = tokenTotal.value ? stepUsage.value.maxTotal : stepUsage.value.max
   return {
     'tt-tokenbar-empty': !bar.reported,
-    'tt-tokenbar-max': bar.reported && value === scaleMax && value > 0,
     'tt-tokenbar-selected': selectedIndex.value !== null && selectedIndex.value === bar.assistantIndex,
   }
 }

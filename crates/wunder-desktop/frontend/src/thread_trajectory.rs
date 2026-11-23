@@ -3424,6 +3424,7 @@ fn project_token_bars(app: &MainWindow, model: &SnapshotModel, texts: &Texts, to
         reported: bool,
         total: f64,
         delta: f64,
+        cache_ratio: f64,
         tooltip: String,
     }
     let zh = texts.zh;
@@ -3464,6 +3465,7 @@ fn project_token_bars(app: &MainWindow, model: &SnapshotModel, texts: &Texts, to
                 reported: false,
                 total: 0.0,
                 delta: 0.0,
+                cache_ratio: 0.0,
                 tooltip: lines.join("\n"),
             });
             continue;
@@ -3557,6 +3559,11 @@ fn project_token_bars(app: &MainWindow, model: &SnapshotModel, texts: &Texts, to
             reported: true,
             total,
             delta,
+            cache_ratio: if prompt_total > 0.0 {
+                (cache_read / prompt_total).clamp(0.0, 1.0)
+            } else {
+                0.0
+            },
             tooltip: lines.join("\n"),
         });
     }
@@ -3578,7 +3585,11 @@ fn project_token_bars(app: &MainWindow, model: &SnapshotModel, texts: &Texts, to
                     0.0
                 },
                 reported: info.reported,
-                peak: info.reported && value > 0.0 && value == scale_max,
+                cache_ratio: if token_total {
+                    info.cache_ratio as f32
+                } else {
+                    0.0
+                },
                 tooltip: info.tooltip.clone().into(),
             }
         })

@@ -617,6 +617,17 @@ test('cache hit percentage uses prompt tokens and is wired into both trajectory 
 
   const cloudView = readFileSync(resolve(__dirname, '../../frontend/src/views/ThreadTrajectoryView.vue'), 'utf8');
   const adminView = readWebModule('modules/trajectory-view.js');
+  const cloudCss = readFileSync(resolve(__dirname, '../../frontend/src/styles/pages/thread-trajectory.css'), 'utf8');
+  const adminCss = readWebModule('styles/trajectory.css');
   assert.ok(cloudView.includes("trajectory.usageCacheHit"));
   assert.ok(adminView.includes('usageCacheHit'));
+  assert.ok(cloudView.includes('v-if="tokenTotal && cacheHitPercent(bar) !== null"'));
+  assert.ok(adminView.includes('st.tokenMode === "total"'));
+  for (const css of [cloudCss, adminCss]) {
+    assert.ok(css.includes('background: var(--tt-amber-100)'));
+    assert.ok(css.includes('.tt-tokenbar-cache'));
+    assert.ok(!css.includes('.tt-tokenbar-max'));
+  }
+  assert.ok(!cloudView.includes('tt-tokenbar-max'));
+  assert.ok(!adminView.includes('tt-tokenbar-max'));
 });

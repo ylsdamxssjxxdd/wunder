@@ -92,6 +92,16 @@ pub fn is_builtin_default_agent_name(name: &str) -> bool {
         || cleaned.eq_ignore_ascii_case(DEFAULT_AGENT_LEGACY_ENGLISH_NAME)
 }
 
+/// The built-in agent's display name is preset-owned: every client renders the
+/// field read-only (桌面版、安卓版、云端版一致)，所以客户端回传的名称只是草稿，
+/// 不能改写记录。空白与已退休的英文写法回落到随包名称，其余原样保留（用户
+/// 仍可通过 agent 自己的 worker-card 改这张卡）。
+pub fn normalize_default_agent_name(name: &mut String) {
+    if is_builtin_default_agent_name(name) {
+        *name = DEFAULT_AGENT_NAME.to_string();
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DefaultAgentConfig {
     #[serde(default)]
