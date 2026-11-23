@@ -606,13 +606,21 @@ pub(super) fn insert_diff_fields(
 /// 每个变更块前后各带几行上下文。
 const UNIFIED_CONTEXT_LINES: usize = 2;
 
-/// 模型面 unified diff 的**病态体积安全阀**（字节），不是常规压缩。
+/// 模型面 unified diff 的行数预算。
 ///
-/// 写类结果必须完整到达模型，否则模型会忘记自己刚写的内容、下次只能回读文件。
-/// 常规 diff 的源受 [`MAX_DIFF_SOURCE_BYTES`] 限制在 512 KiB 内；源超限或结构化
-/// 块被裁剪时按完整文本重算区域。这里的 2 MiB 只拦截单行超长等病态输出，
-/// 正常文件（含几百 KB）的 diff 会完整返回。
-pub(super) const MAX_UNIFIED_DIFF_BYTES: usize = 2 * 1024 * 1024;
+/// 回显的用途是「确认改在哪里、改了多少」，不是把整段正文重放给模型：写类
+/// 调用参数里已经有模型自己给出的正文，磁盘上有权威结果，`changed_lines` 提供
+/// 定位。没有上限时一次 40 行重写就会带回 80+ 行 diff，并跟着之后每一次请求
+/// 重复计费（实测这一步能把写类结果从 ~4 KB 压到 ~0.6 KB）。
+const MAX_UNIFIED_DIFF_LINES: usize = MAX_DIFF_LINES;
+
+/// 模型面 unified diff 的字节预算；与行数预算共同生效，放不下的块折成
+/// 「块头 + 采样行 + 省略行数」。
+pub(super) const MAX_UNIFIED_DIFF_BYTES: usize = MAX_DIFF_TEXT_BYTES;
+
+/// 折叠一个超预算的块时，删除侧/新增侧各保留几行采样，让模型仍能看出
+/// 改动的内容长什么样，而不是只剩一个块头。
+const UNIFIED_FOLD_SAMPLE_LINES: usize = 3;
 
 /// 给末尾的省略说明预留的空间，保证它不会被预算本身挤掉。
 const UNIFIED_DIFF_MARKER_RESERVE: usize = 256;
@@ -631,11 +639,13 @@ impl UnifiedDiff {
     }
 }
 
-/// 写类回执的模型面形态：完整 unified diff + 是否因病态体积被安全阀折叠。
+/// 写类回执的模型面形态：**有界** unified diff + 是否发生了折叠。
 ///
-/// 不再按“内容就是调用参数”省略正文：模型必须看到自己刚写/改的内容，下一次
-/// edit 才能直接定位，不必整篇回读。只有超过 [`MAX_UNIFIED_DIFF_BYTES`] 的
-/// 病态输出才折叠，hunk 计数仍然准确。
+/// 预算由 [`MAX_UNIFIED_DIFF_LINES`] 与 [`MAX_UNIFIED_DIFF_BYTES`] 共同约束：
+/// 小改动（最常见的单点改几行）仍然整段可见；大改动只保留块头、删除/新增两侧
+/// 各 [`UNIFIED_FOLD_SAMPLE_LINES`] 行采样与准确的省略计数。写类调用参数里已经
+/// 有模型自己给出的正文，磁盘与 `changed_lines` 提供定位，正文没必要在之后每一次
+/// 请求里重复携带。
 pub(super) fn render_write_diff(
     path: &str,
     before: &str,
@@ -661,9 +671,9 @@ pub(super) fn changed_lines(diff: &LineDiff) -> Vec<usize> {
 /// 把（旧文本，新文本）渲染成 unified diff 文本：`---`/`+++`/`@@` + 上下文 + `-`/`+`。
 ///
 /// 写类工具（写入文件、文本编辑）的回执靠这段文本确认「自己刚写进去的到底是
-/// 什么」，所以它不受观察层的通用截断，默认完整输出。只有超过
-/// [`MAX_UNIFIED_DIFF_BYTES`] 的病态输出才把 hunk 折成「头 + 省略行数」，
-/// 计数始终准确，模型仍能看出改了哪里、改了多少。
+/// 什么」，所以它不受观察层的通用头尾截断，由本模块自己的行数/字节预算收口：
+/// 小改动整段可见，大改动折成「块头 + 两侧采样 + 省略行数」，计数始终准确，
+/// 模型仍能看出改了哪里、改了多少。
 ///
 /// 源文本超过 `MAX_DIFF_SOURCE_BYTES` 时调用方会给出 `diff_unavailable`，
 /// 但写类回执仍要尽力回显：这里按完整文本重算区域，再受安全阀约束。
@@ -741,7 +751,11 @@ pub(super) fn unified_diff(path: &str, before: &str, after: &str, diff: &LineDif
             + lines_bytes(removed)
             + lines_bytes(added)
             + lines_bytes(post);
-        if used + needed <= content_budget {
+        let needed_lines = 1 + pre.len() + removed.len() + added.len() + post.len();
+        // 末尾的省略说明要占一行，所以整块放行的条件是「行数 + 1」仍在预算内。
+        if used + needed <= content_budget
+            && out.len() + needed_lines + 1 <= MAX_UNIFIED_DIFF_LINES
+        {
             used += needed;
             out.push(header);
             push_lines(&mut out, " ", pre);
@@ -752,18 +766,34 @@ pub(super) fn unified_diff(path: &str, before: &str, after: &str, diff: &LineDif
             continue;
         }
 
-        // 整块放不下：留一行「头 + 省略行数」，模型仍能定位改动区间与规模。
-        let folded = format!(
-            "{header} ... {old_len} removed / {new_len} added line(s) omitted (diff budget)"
+        // 整块放不下：保留块头与两侧采样行，其余折成一行省略说明。模型仍能
+        // 看出「改了哪里、改了什么样子」，而正文由磁盘与 `changed_lines` 兜底。
+        let removed_sample = &removed[..removed.len().min(UNIFIED_FOLD_SAMPLE_LINES)];
+        let added_sample = &added[..added.len().min(UNIFIED_FOLD_SAMPLE_LINES)];
+        let folded_tail = format!(
+            "... {} removed / {} added line(s) omitted (diff budget; file on disk is authoritative)",
+            old_len.saturating_sub(removed_sample.len()),
+            new_len.saturating_sub(added_sample.len())
         );
-        if used + line_bytes(&folded) <= content_budget {
-            used += line_bytes(&folded);
-            out.push(folded);
-            omitted_lines += old_len + new_len;
+        let folded_bytes = line_bytes(&header)
+            + lines_bytes(removed_sample)
+            + lines_bytes(added_sample)
+            + line_bytes(&folded_tail);
+        let folded_lines = 2 + removed_sample.len() + added_sample.len();
+        if used + folded_bytes <= content_budget
+            && out.len() + folded_lines + 1 <= MAX_UNIFIED_DIFF_LINES
+        {
+            used += folded_bytes;
+            out.push(header);
+            push_lines(&mut out, "-", removed_sample);
+            push_lines(&mut out, "+", added_sample);
+            out.push(folded_tail);
+            omitted_lines += old_len.saturating_sub(removed_sample.len())
+                + new_len.saturating_sub(added_sample.len());
             emitted_old_end = post_to.max(post_from);
             continue;
         }
-        // 连折叠后的一行都放不下：后面的块只记账，不再输出。
+        // 连块头加采样都放不下：后面的块只记账，不再输出。
         exhausted = true;
         omitted_hunks += 1;
         omitted_lines += old_len + new_len;
@@ -826,9 +856,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_single_huge_line_is_echoed_whole_under_the_safety_valve() {
-        // 200 KB 单行：结构化块放不下（省略为 line_too_long），但模型面文本
-        // 在 2 MiB 安全阀内必须完整回显，模型才能确认自己写了什么。
+    fn a_single_huge_line_folds_to_counts_only() {
+        // 200 KB 单行：结构化块放不下（省略为 line_too_long），模型面文本连
+        // 采样行都放不下，于是只保留准确的省略计数——正文在磁盘上，模型自己
+        // 刚给过这份内容，没必要在回执里再背一遍。
         let before = "x".repeat(200 * 1024);
         let after = "y".repeat(200 * 1024);
         let diff = diff_replaced(&before, &after);
@@ -840,15 +871,19 @@ mod tests {
         assert_eq!(diff.omitted_lines, 2);
 
         let rendered = unified_diff("longline.txt", &before, &after, &diff);
-        assert!(!rendered.truncated());
-        assert!(rendered.text.len() > 200 * 1024, "{}", rendered.text.len());
+        assert!(rendered.truncated());
         assert!(
-            rendered.text.contains("@@ -1,1 +1,1 @@"),
+            rendered.text.len() <= MAX_UNIFIED_DIFF_BYTES,
             "{}",
-            &rendered.text[..64]
+            rendered.text.len()
         );
-        assert!(rendered.text.contains(&format!("-{before}")));
-        assert!(rendered.text.contains(&format!("+{after}")));
+        assert_eq!(rendered.omitted_lines, 2);
+        assert!(
+            rendered.text.contains("2 line(s) omitted (diff budget)"),
+            "{}",
+            rendered.text
+        );
+        assert!(!rendered.text.contains("xxxxxxxx"));
     }
 
     #[test]
@@ -864,8 +899,9 @@ mod tests {
     }
 
     #[test]
-    fn unified_diff_keeps_every_changed_line_past_the_block_budget() {
-        // 200 行全改：结构化块按 12 块/80 行预算折叠，模型回执必须是完整 diff。
+    fn unified_diff_bounds_a_full_rewrite_and_keeps_counts() {
+        // 200 行全改：结构化块按块/行预算折叠，模型面文本只留两侧采样，
+        // 其余折成准确的省略计数。
         let mut before = String::new();
         let mut after = String::new();
         for index in 0..200 {
@@ -876,20 +912,41 @@ mod tests {
         assert!(diff.omission().is_some(), "结构化块应当命中预算");
         assert_eq!(diff.added_lines, 200);
         assert_eq!(diff.deleted_lines, 200);
-        let text = unified_diff("x.txt", &before, &after, &diff).text;
-        assert!(text.contains("@@ -1,200 +1,200 @@"), "{}", &text[..64]);
-        for index in 0..200 {
-            let removed = format!("-line {index}");
-            let added = format!("+line {index}!");
-            assert!(text.lines().any(|line| line == removed), "{index}");
-            assert!(text.lines().any(|line| line == added), "{index}");
-        }
+        let rendered = unified_diff("x.txt", &before, &after, &diff);
+        let text = &rendered.text;
+        assert!(text.contains("@@ -1,200 +1,200 @@"), "{}", text);
+        let lines: Vec<&str> = text.lines().collect();
+        // 删除侧/新增侧各保留 UNIFIED_FOLD_SAMPLE_LINES 行采样。
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.starts_with('-') && !line.starts_with("---"))
+                .count(),
+            UNIFIED_FOLD_SAMPLE_LINES,
+            "{text}"
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+                .count(),
+            UNIFIED_FOLD_SAMPLE_LINES,
+            "{text}"
+        );
+        assert!(text.contains("-line 0"), "{text}");
+        assert!(text.contains("+line 0!"), "{text}");
+        assert!(
+            text.contains("197 removed / 197 added line(s) omitted"),
+            "{text}"
+        );
+        assert_eq!(rendered.omitted_lines, 394);
+        assert!(text.len() <= MAX_UNIFIED_DIFF_BYTES);
     }
 
     #[test]
-    fn unified_diff_keeps_thousands_of_hunks_below_the_safety_valve() {
-        // 5000 行里隔行改：2500 个 hunk，完整渲染约 200 KB，远低于 2 MiB 安全阀，
-        // 必须整份回显，而不是折叠成「头 + 省略行数」。
+    fn unified_diff_bounds_many_hunks_to_the_line_budget() {
+        // 5000 行里隔行改：2500 个 hunk，行数预算只放得下前几块，其余折成
+        // 「块头 + 采样 + 省略计数」，绝不按全量回显。
         let mut before = String::new();
         let mut after = String::new();
         for index in 0..5000 {
@@ -904,16 +961,26 @@ mod tests {
         let diff = diff_replaced(&before, &after);
         assert_eq!(diff.hunks, 2500);
         let rendered = unified_diff("big.txt", &before, &after, &diff);
-        assert!(!rendered.truncated());
-        assert_eq!(rendered.text.matches("@@ -").count(), 2500);
+        assert!(rendered.truncated());
+        assert!(
+            rendered.text.lines().count() <= MAX_UNIFIED_DIFF_LINES + 1,
+            "{}",
+            rendered.text.lines().count()
+        );
         assert!(rendered.text.contains("+key-0000-VALUE"));
-        assert!(rendered.text.contains("+key-4998-VALUE"));
+        assert!(!rendered.text.contains("+key-4998-VALUE"));
+        assert!(
+            rendered.omitted_hunks + rendered.omitted_lines > 0,
+            "omitted_hunks={} omitted_lines={}",
+            rendered.omitted_hunks,
+            rendered.omitted_lines
+        );
     }
 
     #[test]
-    fn unified_diff_folds_past_the_safety_valve_and_keeps_counts_exact() {
-        // 3 MiB 单行属于病态输出：结构化块与模型面文本都放不下，只保留
-        // 「头 + 省略行数」，但省略计数必须准确。
+    fn unified_diff_folds_a_pathological_line_and_keeps_counts_exact() {
+        // 3 MiB 单行属于病态输出：结构化块与模型面文本都放不下，只剩总计行，
+        // 但省略计数必须准确。
         let before = "x".repeat(3 * 1024 * 1024);
         let after = "y".repeat(3 * 1024 * 1024);
         let diff = diff_replaced(&before, &after);
@@ -925,17 +992,19 @@ mod tests {
             rendered.text.len()
         );
         assert_eq!(rendered.omitted_lines, 2);
-        assert!(rendered
-            .text
-            .contains("@@ -1,1 +1,1 @@ ... 1 removed / 1 added line(s) omitted (diff budget)"));
-        assert!(rendered
-            .text
-            .contains("... 2 line(s) omitted (diff budget)"));
+        assert!(
+            rendered
+                .text
+                .contains("2 line(s) omitted (diff budget)"),
+            "{}",
+            rendered.text
+        );
     }
 
     #[test]
-    fn a_fifty_kilobyte_edit_is_echoed_whole() {
-        // 3000 行 ≈ 51 KB：旧口径会折叠，现在必须完整回显（源文件上限 512 KiB）。
+    fn a_large_deletion_keeps_a_head_sample_and_counts() {
+        // 3000 行整体替换成一行：正文不再整段重放，只给块头 + 前 3 行采样 +
+        // 省略计数，`added_lines`/`deleted_lines` 仍然准确。
         let mut before = String::new();
         for index in 0..3000 {
             before.push_str(&format!("line {:05} value\n", index));
@@ -943,16 +1012,16 @@ mod tests {
         let after = "only line\n";
         let diff = diff_replaced(&before, after);
         let rendered = unified_diff("editme.txt", &before, after, &diff);
-        assert!(!rendered.truncated());
+        assert!(rendered.truncated());
         assert!(rendered.text.contains("-line 00000 value"));
-        assert!(rendered.text.contains("-line 02999 value"));
+        assert!(!rendered.text.contains("-line 02999 value"));
         assert!(rendered.text.contains("+only line"));
+        assert!(rendered.text.contains("2997 removed / 0 added"));
     }
 
     #[test]
-    fn a_whole_file_rewrite_folds_into_one_hunk_header() {
-        // 单行 10 KiB × 300 行 ≈ 3 MiB：一整个 hunk 超过安全阀，头部保留、
-        // 正文折成一行说明，末尾再给总计。
+    fn a_whole_file_rewrite_folds_into_counts_only() {
+        // 单行 10 KiB × 300 行 ≈ 3 MiB：连采样行都超预算，只保留总计行。
         let line_before = format!("{}\n", "o".repeat(10 * 1024));
         let line_after = format!("{}\n", "n".repeat(10 * 1024));
         let before = line_before.repeat(300);
@@ -960,22 +1029,15 @@ mod tests {
         let diff = diff_replaced(&before, &after);
         let rendered = unified_diff("rewrite.txt", &before, &after, &diff);
         assert!(rendered.truncated());
-        assert_eq!(rendered.omitted_hunks, 0);
+        assert_eq!(rendered.omitted_hunks, 1);
         assert_eq!(rendered.omitted_lines, 600);
         assert!(rendered.text.len() <= MAX_UNIFIED_DIFF_BYTES);
         assert!(
             rendered
                 .text
-                .contains("@@ -1,300 +1,300 @@ ... 300 removed / 300 added line(s) omitted"),
+                .contains("... 1 hunk(s) / 600 line(s) omitted (diff budget)"),
             "{}",
-            &rendered.text[..96]
-        );
-        assert!(
-            rendered
-                .text
-                .contains("... 600 line(s) omitted (diff budget)"),
-            "{}",
-            &rendered.text[rendered.text.len().saturating_sub(64)..]
+            rendered.text
         );
     }
 

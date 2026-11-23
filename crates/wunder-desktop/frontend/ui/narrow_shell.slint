@@ -3,7 +3,7 @@
 // action, plus the bottom model sheet the header chip opens.  The desktop
 // composer loses its action row at this width (see composer.slint `compact`),
 // so the model trigger has to live up here.
-import { Theme, ModelCard } from "theme.slint";
+import { Theme, ModelCard, CommandTask, SubagentItem } from "theme.slint";
 import { I18n } from "i18n.slint";
 import { Action } from "components.slint";
 import { ListView } from "std-widgets.slint";
@@ -157,6 +157,272 @@ export component NarrowHeader inherits Rectangle {
     }
 }
 
+// 面板里的活动区块（对齐安卓版）：桌面版把后台任务与子智能体挂在输入区的
+// 两个悬停浮层上，窄窗没有可靠的悬停区，因此收进点模型胶囊呼出的底部面板，
+// 紧跟上下文占用。两段都为空时高度为 0，面板保持原来的高度。
+component NarrowSectionTitle inherits Rectangle {
+    in property <string> title;
+    in property <string> note;
+
+    height: 24px;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 8px;
+        cross-axis-alignment: center;
+        Text {
+            text: root.title;
+            color: Theme.text;
+            font-size: Theme.font-xs;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        Rectangle { horizontal-stretch: 1; }
+        Text {
+            text: root.note;
+            color: Theme.muted;
+            font-size: Theme.font-2xs;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// 终止键：10px 字形包在 30px 触面里，命中的是整格而不是小图标。
+component NarrowStopKey inherits Rectangle {
+    in property <string> tip;
+    callback clicked();
+
+    width: 30px;
+    height: 30px;
+    border-radius: Theme.radius-tag;
+    background: stop-touch.has-hover ? Theme.danger-bg : transparent;
+    accessible-role: button;
+    accessible-label: root.tip;
+
+    Image {
+        x: (parent.width - 10px) / 2;
+        y: (parent.height - 10px) / 2;
+        width: 10px;
+        height: 10px;
+        source: @image-url("../assets/icons/xmark.svg");
+        colorize: stop-touch.has-hover ? Theme.danger : Theme.muted;
+        image-fit: contain;
+    }
+    stop-touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// 子智能体统计的一位：图标 + 数值，标签只进无障碍描述。
+component NarrowStat inherits Rectangle {
+    in property <image> icon;
+    in property <string> value;
+    in property <string> hint;
+
+    width: stat-row.preferred-width;
+    height: 14px;
+    accessible-role: text;
+    accessible-label: root.hint;
+
+    stat-row := HorizontalLayout {
+        spacing: 3px;
+        alignment: start;
+        Image {
+            width: 11px;
+            height: 14px;
+            source: root.icon;
+            colorize: Theme.muted;
+            image-fit: contain;
+        }
+        Text {
+            text: root.value;
+            color: Theme.text-secondary;
+            font-size: Theme.font-2xs;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component NarrowActivityBlock inherits VerticalLayout {
+    in property <[CommandTask]> tasks: [];
+    in property <int> task-count: 0;
+    in property <[SubagentItem]> subagents: [];
+    in property <int> subagent-count: 0;
+    callback stop-task(string);
+    callback stop-subagent(string);
+
+    private property <int> task-hidden: max(root.task-count - root.tasks.length, 0);
+    private property <int> subagent-hidden: max(root.subagent-count - root.subagents.length, 0);
+
+    spacing: 0px;
+
+    if root.task-count > 0 : NarrowSectionTitle {
+        title: I18n.hud_tasks_title;
+        note: I18n.hud_tasks_count("" + root.task-count);
+    }
+    for task in root.tasks : Rectangle {
+        height: 38px;
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 4px;
+            spacing: 8px;
+            cross-axis-alignment: center;
+            Image {
+                width: 14px;
+                height: 14px;
+                source: @image-url("../assets/icons/terminal.svg");
+                colorize: Theme.accent-ink;
+                image-fit: contain;
+            }
+            Text {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                text: task.command;
+                color: Theme.text;
+                font-size: Theme.font-xs;
+                font-family: Theme.font-mono;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Text {
+                text: task.elapsed;
+                color: Theme.muted;
+                font-size: Theme.font-2xs;
+                vertical-alignment: center;
+            }
+            NarrowStopKey {
+                tip: I18n.hud_tasks_stop;
+                clicked => { root.stop-task(task.id); }
+            }
+        }
+    }
+    if root.task-count > 0 && root.task-hidden > 0 : Rectangle {
+        height: 18px;
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 10px;
+            Text {
+                text: I18n.hud_tasks_more("" + root.task-hidden);
+                color: Theme.muted;
+                font-size: Theme.font-2xs;
+                vertical-alignment: center;
+            }
+        }
+    }
+    // 两段之间留 4px：收口行与下一段标题贴在一起会读成同一条目。
+    if root.task-count > 0 && root.subagent-count > 0 : Rectangle { height: 4px; }
+
+    if root.subagent-count > 0 : NarrowSectionTitle {
+        title: I18n.hud_subagents_title;
+        note: I18n.hud_subagents_count("" + root.subagent-count);
+    }
+    for item in root.subagents : Rectangle {
+        height: 60px;
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 4px;
+            spacing: 8px;
+            cross-axis-alignment: center;
+
+            VerticalLayout {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                spacing: 3px;
+
+                HorizontalLayout {
+                    height: 16px;
+                    spacing: 6px;
+                    cross-axis-alignment: center;
+                    Rectangle {
+                        width: 6px;
+                        height: 6px;
+                        border-radius: 3px;
+                        background: item.status-kind == 1 ? Theme.accent
+                            : item.status-kind == 2 ? Theme.danger : Theme.success;
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        min-width: 0px;
+                        text: item.title;
+                        color: Theme.text;
+                        font-size: Theme.font-xs;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: item.status-kind == 1 ? I18n.sub_status_running
+                            : item.status-kind == 2 ? I18n.sub_status_failed : I18n.sub_status_done;
+                        color: item.status-kind == 1 ? Theme.accent-ink
+                            : item.status-kind == 2 ? Theme.danger : Theme.muted;
+                        font-size: Theme.font-2xs;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Text {
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                    height: 14px;
+                    text: item.summary;
+                    color: Theme.muted;
+                    font-size: Theme.font-2xs;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    visible: item.summary != "";
+                }
+
+                HorizontalLayout {
+                    height: 14px;
+                    spacing: 10px;
+                    alignment: start;
+                    NarrowStat {
+                        icon: @image-url("../assets/icons/stopwatch.svg");
+                        value: item.duration;
+                        hint: I18n.sub_stat_duration + " " + item.duration;
+                    }
+                    NarrowStat {
+                        icon: @image-url("../assets/icons/coins.svg");
+                        value: item.credits;
+                        hint: I18n.sub_stat_credits + " " + item.credits;
+                    }
+                    NarrowStat {
+                        icon: @image-url("../assets/icons/layer-group.svg");
+                        value: item.context;
+                        hint: I18n.sub_stat_context + " " + item.context;
+                    }
+                }
+            }
+
+            if item.stoppable : NarrowStopKey {
+                tip: I18n.hud_subagents_stop;
+                clicked => { root.stop-subagent(item.id); }
+            }
+        }
+    }
+    if root.subagent-count > 0 && root.subagent-hidden > 0 : Rectangle {
+        height: 18px;
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 10px;
+            Text {
+                text: I18n.hud_subagents_more("" + root.subagent-hidden);
+                color: Theme.muted;
+                font-size: Theme.font-2xs;
+                vertical-alignment: center;
+            }
+        }
+    }
+    // 区块与模型列表之间补一条分隔线：三组列表连着出现时没有分隔会读成一片。
+    if root.task-count > 0 || root.subagent-count > 0 : Rectangle {
+        height: 1px;
+        background: Theme.border;
+    }
+}
+
 // Bottom model sheet.  Android opens it from the header chip over a phone
 // screen; the same card works over a 360–560px desktop window.  Selection
 // closes the sheet and hands the key back to the shell.
@@ -168,18 +434,31 @@ export component NarrowModelSheet inherits Rectangle {
     in property <string> context-counts: "";
     in property <bool> context-compacted: false;
     in property <bool> cloud-ready: true;
+    // 后台任务与子智能体：桌面版在输入区有悬停浮层，窄窗没有可靠的悬停区，
+    // 和安卓版一样收进这张面板，排在上下文占用下面。
+    in property <[CommandTask]> tasks: [];
+    in property <int> task-count: 0;
+    in property <[SubagentItem]> subagents: [];
+    in property <int> subagent-count: 0;
     callback close();
     callback select-model(int, string);
     callback open-settings();
+    callback stop-task(string);
+    callback stop-subagent(string);
 
     private property <color> context-tint:
         NarrowTone.usage-tint(root.context-usage, root.context-compacted);
     // 面板高度跟着条目数走：两条模型时不该留一大片空白，模型很多时封顶
     // 460px 再让列表自己滚。190px 是标题、占用行、两条分隔线、模型配置与
-    // 取消这些固定项连同 8px 内边距、2px 间距的总高。
+    // 取消这些固定项连同 8px 内边距、2px 间距的总高；活动区块有内容时
+    // 按它自己的高度往上长。
+    private property <length> content-height:
+        (root.models.length == 0 ? 300px : 190px + root.models.length * 54px)
+        + activity-block.preferred-height;
     private property <length> card-height:
-        min(root.height - 24px, 460px,
-            root.models.length == 0 ? 300px : 190px + root.models.length * 54px);
+        min(root.height - 24px,
+            460px + activity-block.preferred-height,
+            content-height);
     // 线程没有钉住模型时，引擎用的是默认模型——面板也要把对勾落在它身上，
     // 否则「当前模型」一片空白，用户以为没有选中任何模型。
     pure function is-current(index: int) -> bool {
@@ -268,6 +547,15 @@ export component NarrowModelSheet inherits Rectangle {
             }
 
             Rectangle { height: 1px; background: Theme.border; }
+
+            activity-block := NarrowActivityBlock {
+                tasks: root.tasks;
+                task-count: root.task-count;
+                subagents: root.subagents;
+                subagent-count: root.subagent-count;
+                stop-task(id) => { root.stop-task(id); }
+                stop-subagent(id) => { root.stop-subagent(id); }
+            }
 
             if root.models.length == 0 : Rectangle {
                 vertical-stretch: 1;

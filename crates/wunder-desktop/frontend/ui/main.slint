@@ -1923,6 +1923,13 @@ export component MainWindow inherits Window {
         context-counts: root.context-counts;
         context-compacted: root.context-compacted;
         cloud-ready: root.cloud-logged-in && !root.cloud-expired;
+        // 后台任务与子智能体：宽窗挂在输入区的悬停浮层上，窄窗收进这张面板。
+        tasks: root.running-tasks;
+        task-count: root.running-task-count;
+        subagents: root.subagent-items;
+        subagent-count: root.subagent-count;
+        stop-task(id) => { root.terminate-task(id); }
+        stop-subagent(id) => { root.dock-stop-subagent(id); }
         close => { root.model-sheet-open = false; }
         select-model(index, key) => {
             root.model-sheet-open = false;
