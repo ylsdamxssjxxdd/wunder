@@ -1,7 +1,7 @@
 ---
 title: 浏览器工具
 summary: 单一 `browser` action 工具的启用条件、严格动作 schema、视口、文件上传、对话框、网络与控制台观测、批处理、跨刷新 ref 恢复、降噪后的观察输出、截图回传与限额。
-updated_at: 2026-11-22
+updated_at: 2026-11-24
 ---
 
 # 浏览器工具
@@ -36,7 +36,7 @@ updated_at: 2026-11-22
 
 `observe_refs` 的文本会跳过没有可访问名称的链接/图标按钮，并合并同角色、同名称、同状态的重复控件（如导航栏里重复 20 次的同一个链接），重复数量只记在 `stats.duplicates`，不再逐条输出。
 
-`resize` 改变的是页面逻辑视口，与设备屏幕尺寸解耦；安卓系统 WebView 会把逻辑视口等比缩放到悬浮窗口内，页面 `window.innerWidth/innerHeight` 与工具视口一致。安卓端 `network` 只能记录请求级事件（无响应状态与响应体），`console`、`dialog`、`file_upload` 与桌面/云端语义一致。
+`resize` 改变的是页面逻辑视口，与设备屏幕尺寸解耦；安卓系统 WebView 在后台按逻辑视口离屏布局，不显示悬浮窗口，页面 `window.innerWidth/innerHeight` 与工具视口一致。安卓端 `network` 只能记录请求级事件（无响应状态与响应体），`console`、`dialog`、`file_upload` 与桌面/云端语义一致。
 
 ## 批处理
 

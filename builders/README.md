@@ -230,7 +230,7 @@ WUNDER_PACKS_SRC=/path/to/packs bash builders/stage-android-ubuntu.sh
 
 脚本会剔除 apt 列表、缓存、日志和设备节点，并执行工具自检。`ffmpeg`/`ffprobe` 使用静态上游构建，避免 Ubuntu 包把 Mesa/LLVM 拉进终端运行时；rootfs 中的 `/usr/share/doc/*/copyright` 随包保留，用于许可证合规。
 
-普通浏览器工具默认使用手机系统 WebView（`browser.provider=android-webview`）：安卓版通过悬浮窗承载 WebView，首次调用需要授予“显示在其他应用上层”权限。知识短片这类需要无头浏览器逐帧截图的技能则使用 Playwright 浏览器包：Playwright 1.40 的 arm64 wheels 加 Playwright Chromium 1091，安装到 `/opt/browser/chrome-linux`。发布 APK 会同时带上 common 与 browser 两个包，技能开箱即用；开发构建可以省略 browser 包，WebView 方案仍可用，只是浏览器渲染类技能会提示缺少运行时。
+普通浏览器工具默认使用手机系统 WebView（`browser.provider=android-webview`）：安卓版在应用进程内离屏运行 WebView，不弹出窗口，也不需要“显示在其他应用上层”权限。知识短片这类需要无头浏览器逐帧截图的技能则使用 Playwright 浏览器包：Playwright 1.40 的 arm64 wheels 加 Playwright Chromium 1091，安装到 `/opt/browser/chrome-linux`。发布 APK 会同时带上 common 与 browser 两个包，技能开箱即用；开发构建可以省略 browser 包，WebView 方案仍可用，只是浏览器渲染类技能会提示缺少运行时。
 
 browser 包以 `common-<abi>.tar.xz` 为基线做差量，设备上按“common → 浏览器包”顺序解压，因此不会覆盖常用工具包的文件。构建时必须显式指定与 common 包一致的基线；脚本缺省会找 `android/app/src/main/assets/ubuntu/packs/common.tar.xz`，找不到就失败，避免误按裸 rootfs 打出重复大包。
 

@@ -457,7 +457,7 @@ These tools work at file level only: proot has no block devices, no FUSE and no 
 
 | Case | What runs | Requirement |
 | --- | --- | --- |
-| Ordinary web work | The system WebView, hosted in a floating window | Grant "display over other apps" on first use |
+| Ordinary web work | The system WebView, running off-screen inside the app process without a window | No overlay permission needed |
 | Frame-by-frame rendering skills (e.g. knowledge shorts) | Playwright 1.40 with Chromium 1091, installed at `/opt/browser/chrome-linux` | Shipped inside the release APK, works offline |
 
 Development builds may omit the browser pack; the WebView path still works, but rendering skills report a missing runtime.
@@ -918,11 +918,18 @@ Enable both the browser-tool switch and the browser runtime. `browser` registers
 | `screenshot` | Capture an image | An optional workspace-relative `path` controls output; it is saved as a workspace attachment and the image is appended for the model to view |
 | `click` / `type` / `hover` / `select` / `drag` / `press` | Interact with the page | Element actions provide exactly one of `ref` or `selector`; drag provides complete source and target pairs |
 | `wait` | Wait for load, selector, text, URL, or bounded time | Prefer a known success condition to a fixed delay |
+| `resize` | Set the logical viewport in CSS pixels | Requires `width` and `height` within 240–3840; returns the effective viewport so responsive layouts can be checked at desktop sizes |
+| `file_upload` | Submit uploaded files | Click the upload control and answer its `filechooser`, or point `ref`/`selector` at an `input[type=file]`; `files` holds 1–16 workspace-relative paths |
+| `dialog` | Answer an alert/confirm/prompt | The page dialog stays pending; `accept` accepts or dismisses it and `prompt_text` fills a prompt |
+| `console` | Read console output and page errors | Bounded buffer; `clear` empties it after reading |
+| `network` | Read request, response and failure events | Bounded buffer; `clear` empties it after reading; response bodies are not included |
 | `batch` | Run 1–10 dependent steps in order | Steps use strict kind schemas and cannot nest batch |
 
 A common flow is `navigate` → `observe_refs` → interaction or `batch` → `wait` → `observe_text`. Ordinary DOM updates, SPA re-renders and same-URL refreshes do not kill a ref: the action re-resolves it from the recorded selector and waits up to about 0.8 s for a refreshed page to render it again. Re-observe only after a real navigation to another document where the selector is also gone.
 
 The observation text skips links and icon buttons with no accessible name and merges repeated controls with the same role, name and state (for example the same navigation link twenty times). The omitted count is reported as `stats.duplicates` instead of listing every copy.
+
+`resize` changes the page's logical viewport independently of the device screen. The Android system WebView lays out that viewport off-screen without showing a floating window, so `window.innerWidth/innerHeight` match the tool viewport. On Android, `network` records request-level events only (no response status or body); `console`, `dialog` and `file_upload` behave like desktop and cloud.
 
 ## Batch
 
@@ -1011,6 +1018,8 @@ To see the whole motion first, pass `sheet`: it works for GIFs and video and ret
 - A video is organized into a series of image frames; if the video has an audio track, the transcript is attached as well.
 - With `sheet: true` the frames are not returned one by one: the whole clip is sampled into a single contact sheet. For video the sampling is capped at 16 frames, cells are laid out in rows, and each frame is scaled to fit without stretching.
 - Cell aspect follows the real frame aspect (16:9 stays 16:9), so no picture band is cropped to fit a fixed cell; each cell is stamped with its 0-based frame index.
+- One contact sheet uses a single scale: when sampled frames differ in size (video, or some GIFs), a small frame is never blown up to fill its cell, so differing picture sizes reflect the source frames rather than the sheet. `sheet.frame_sizes` lists each cell's source size, and `warnings` explains it when `sheet.mixed_frame_sizes` is `true`.
+- `frame: N` on its own returns that frame as a PNG at native resolution (no contact sheet); `frame_scope` reports the index, timestamp and total frames. Add `crop` / `scale` / `stats` to inspect a single frame in detail.
 
 ## Comparing two images
 
@@ -1184,7 +1193,7 @@ The `wait` action reads desktop windows and screen state. Give a wait duration (
 
 - **Actions are real input injection with no rollback.** `left_hold` and `left_release` must be used in pairs, or the mouse state may be left dangling; `drag_drop` is press, smooth move, release.
 - Coordinates change with resolution; normalized coordinates only guarantee consistency between one observation and the action that follows it, so observe again after switching screens or changing resolution.
-- A screenshot is also copied into the user container at `temp/desktop_control/<session>/desktop_shot_<n>.png` (numbered inside that session directory); a persistence failure only logs a warning and does not affect the result.
+- A screenshot is also copied into the user container at `temp/desktop_control//`; a persistence failure only logs a warning and does not affect the result.
 - The screenshot directory keeps frames by count, holding only the most recent few (3 by default), so temporary files do not pile up without bound.
 - Authorization follows least privilege: it needs an explicit user switch, it does not silently capture the screen in the background, and it does not expose system capabilities to a remote party.
 

@@ -12,12 +12,16 @@ import android.app.Notification;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.content.res.Resources;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.SystemClock;
 import android.util.TypedValue;
 import android.service.notification.StatusBarNotification;
+import android.util.Base64;
 
 import androidx.lifecycle.Lifecycle;
 import androidx.test.core.app.ActivityScenario;
@@ -29,6 +33,8 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -353,6 +359,52 @@ public class WunderSmokeTest {
             // The archive is a cache artifact; do not leave test copies behind.
             //noinspection ResultOfMethodCallIgnored
             archive.delete();
+        }
+    }
+
+    @Test
+    public void webViewReadsAndCapturesPreviewInBackground() throws Exception {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        File root = new File(context.getCacheDir(), "webview-background-smoke");
+        assertTrue("preview directory should be creatable", root.isDirectory() || root.mkdirs());
+        File page = new File(root, "index.html");
+        String html = "<!doctype html><html><head><title>Background browser</title></head>"
+                + "<body style='margin:0;background:#ff0000'>background-browser-ok</body></html>";
+        try (FileOutputStream output = new FileOutputStream(page)) {
+            output.write(html.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+        try {
+            JSONObject navigation = new JSONObject();
+            navigation.put("preview_root", root.getAbsolutePath());
+            navigation.put("preview_path", page.getName());
+            JSONObject opened = new JSONObject(
+                    WebViewBridge.execute(context, "navigate", navigation.toString()));
+            assertTrue("background navigation should succeed: " + opened,
+                    opened.optBoolean("ok", false));
+
+            JSONObject read = new JSONObject(WebViewBridge.execute(context, "observe_text", "{}"));
+            assertTrue("background page should be readable: " + read,
+                    read.optString("text", "").contains("background-browser-ok"));
+
+            JSONObject shot = new JSONObject(WebViewBridge.execute(context, "screenshot", "{}"));
+            assertTrue("background screenshot should succeed: " + shot,
+                    shot.optBoolean("ok", false));
+            byte[] png = Base64.decode(shot.optString("image_base64", ""), Base64.DEFAULT);
+            Bitmap bitmap = BitmapFactory.decodeByteArray(png, 0, png.length);
+            assertNotNull("background screenshot should be a PNG", bitmap);
+            try {
+                int pixel = bitmap.getPixel(bitmap.getWidth() / 2, bitmap.getHeight() / 2);
+                assertTrue("background screenshot should contain rendered page pixels",
+                        Color.red(pixel) > 200 && Color.green(pixel) < 60 && Color.blue(pixel) < 60);
+            } finally {
+                bitmap.recycle();
+            }
+        } finally {
+            WebViewBridge.execute(context, "close", "{}");
+            //noinspection ResultOfMethodCallIgnored
+            page.delete();
+            //noinspection ResultOfMethodCallIgnored
+            root.delete();
         }
     }
 

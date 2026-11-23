@@ -2,7 +2,7 @@
 title: Android Runtime
 nav_title: Runtime
 summary: What actually ships inside the APK: the bundled Ubuntu rootfs and its tool list, the two browser engines, the permission it needs, and what proot cannot do.
-updated_at: 2026-11-14
+updated_at: 2026-11-24
 ---
 
 # Android Runtime
@@ -33,7 +33,7 @@ These tools work at file level only: proot has no block devices, no FUSE and no 
 
 | Case | What runs | Requirement |
 | --- | --- | --- |
-| Ordinary web work | The system WebView, hosted in a floating window; it opens expanded and can be collapsed to a title bar | Grant "display over other apps" on first use |
+| Ordinary web work | The system WebView, running off-screen inside the app process without a window | No overlay permission needed |
 | Frame-by-frame rendering skills (e.g. knowledge shorts) | Playwright 1.40 with Chromium 1091, installed at `/opt/browser/chrome-linux` | Shipped inside the release APK, works offline |
 
 Development builds may omit the browser pack; the WebView path still works, but rendering skills report a missing runtime.

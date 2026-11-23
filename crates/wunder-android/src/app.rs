@@ -4253,7 +4253,7 @@ pub fn install_preview_data(
         MobilePermission {
             id: "overlay".into(),
             title: "悬浮窗".into(),
-            description: "悬浮浏览器与桌面伙伴显示在其他应用上层".into(),
+            description: "桌面伙伴显示在其他应用上层".into(),
             state_text: "已开启".into(),
             action_text: "去管理".into(),
             granted: true,

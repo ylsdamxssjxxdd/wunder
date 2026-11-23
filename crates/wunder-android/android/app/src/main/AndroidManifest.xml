@@ -23,8 +23,8 @@
     <!-- Voice input records a short clip locally and transcribes it through
          the configured ASR model; nothing is kept unless the user sends it. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <!-- The agent browser is a floating WebView window, mirroring the
-         reference phone assistant. The user grants it in system settings. -->
+    <!-- Only the desktop companion draws over other apps. The agent browser
+         uses an off-screen WebView and does not need this permission. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- Workspaces can point at a user folder on shared storage. All-files

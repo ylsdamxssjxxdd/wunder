@@ -1,8 +1,8 @@
 //! Android system-WebView browser host.
 //!
-//! The Java side owns the WebView, the floating window and the JS snapshot
-//! scripts. This facade only forwards canonical `browser` actions. No proot,
-//! Playwright or packaged Chromium is involved.
+//! The Java side owns the off-screen WebView and the JS snapshot scripts. This
+//! facade only forwards canonical `browser` actions. No proot, Playwright or
+//! packaged Chromium is involved.
 
 use anyhow::{anyhow, Context, Result};
 use jni::objects::{GlobalRef, JObject, JString, JValue};

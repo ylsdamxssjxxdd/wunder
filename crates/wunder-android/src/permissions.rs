@@ -37,7 +37,7 @@ const ITEMS: &[Meta] = &[
     Meta {
         id: "overlay",
         title: "悬浮窗",
-        description: "悬浮浏览器与桌面伙伴显示在其他应用上层",
+        description: "桌面伙伴显示在其他应用上层",
     },
     Meta {
         id: "accessibility",

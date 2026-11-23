@@ -475,7 +475,7 @@ wunder-cli
 
 | 场景 | 用什么 | 前提 |
 | --- | --- | --- |
-| 普通网页操作 | 手机系统 WebView，由悬浮窗承载 | 首次调用需授予「显示在其他应用上层」权限 |
+| 普通网页操作 | 手机系统 WebView，在应用进程内离屏运行，不显示窗口 | 无需悬浮窗权限 |
 | 逐帧渲染类技能（如知识短片） | Playwright 1.40 与 Chromium 1091，装在 `/opt/browser/chrome-linux` | 随发布 APK 一起带上，开箱可用 |
 
 开发构建可以不带浏览器包，此时 WebView 仍然可用，只是渲染类技能会提示缺少运行时。
@@ -935,27 +935,20 @@ wunder-cli
 | `observe_refs` | 读取可访问性快照 | 返回后续点击和输入使用的 element ref；同页重渲染或刷新后仍会按 selector 自动恢复 |
 | `observe_text` | 分页读取当前页正文 | 可使用同一未变化页面返回的 `next_cursor` |
 | `screenshot` | 截图 | 可指定工作区相对 `path`；保存为工作区附件，并把图像追加给模型查看 |
-| `click` / `type` / `hover` / `select` / `drag` / `press` | 页面交互 | click/hover 提供且只提供 `ref`、`selector`、`text` 之一；其余元素动作提供 `ref` 或 `selector`；`drag` 提供完整来源和目标 |
+| `click` / `type` / `hover` / `select` / `drag` / `press` | 页面交互 | 元素动作提供且只提供一种 `ref` 或 `selector`；`drag` 提供完整来源和目标；type/select/press 有专属必填字段 |
 | `wait` | 等加载、选择器、文本、URL 或有界时间 | 已知成功条件优先于固定等待 |
+| `resize` | 设置逻辑视口（CSS 像素） | 需要 240–3840 的 `width` 与 `height`；返回实际视口，便于按桌面尺寸验证响应式页面 |
+| `file_upload` | 提交文件上传 | 先点击上传控件并处理 `filechooser`，或提供 `ref`/`selector` 指向 `input[type=file]`；`files` 为 1–16 个工作区相对路径 |
+| `dialog` | 处理页面 alert/confirm/prompt | 页面弹窗会保持待处理；`accept` 决定接受或取消，`prompt_text` 作为 prompt 的输入 |
+| `console` | 读取控制台与页面错误 | 有界缓存，`clear` 可在读取后清空 |
+| `network` | 读取请求、响应与失败事件 | 有界缓存，`clear` 可在读取后清空；不含响应体 |
 | `batch` | 顺序执行 1–10 个依赖步骤 | 每步使用严格 kind schema，不能嵌套 batch；步骤末尾可用 `back` / `observe_text` 直接取证 |
 
 典型流程：`navigate` → `observe_refs` → 交互或 `batch` → `wait` → `observe_text` 验证。普通 DOM 更新、SPA 重渲染或同 URL 自刷新不会让 ref 直接失效：动作会按 ref 记录的 selector 重新定位，页面短暂刷新时最多等待约 0.8 秒。只有真正导航到另一个文档、且 selector 也找不到时，才需要重新观察。
 
 `observe_refs` 的文本会跳过没有可访问名称的链接/图标按钮，并合并同角色、同名称、同状态的重复控件（如导航栏里重复 20 次的同一个链接），重复数量只记在 `stats.duplicates`，不再逐条输出。
 
-## 安卓版内置 WebView 的差异
-
-安卓版使用系统 WebView 作为浏览器，动作语义与桌面版一致，但有以下边界：
-
-- **单标签页**：`tabs_new` 等同当前页跳转；`tabs_select` 只接受 `index=0` 或 `target_id=tab-1`；`tabs_close` 传 `index=0` / `target_id=tab-1` 会关闭浏览器。
-- **批处理**：安卓版不支持 `batch`，请逐条调用动作。
-- **下拉框**：`select` 的 `value` 可以传 option 的 `value` 或页面上的可见文字；未命中会直接报错并列出可选项，不再假装成功。自定义下拉（非原生 `<select>`）请改用 `click` 逐项点击。
-- **文字定位**：`click` / `hover` 支持用 `text` 按可见文字找最小的可交互元素，不必先观察 ref。
-- **滚动**：`scroll` 会滚动最近的可滚动容器，并在指定坐标发送真实滚轮事件，3D canvas 页面可照常缩放/旋转。
-- **上传**：`file_upload` 直接把工作区文件注入 `<input type=file>`；无需先点开系统文件选择器，单次总大小上限 16 MB。
-- **截图**：只支持当前视口；`full_page` 会被忽略并提示，长页请配合 `scroll` 分段截图。截图文本会给出 CSS 视口与图像尺寸。
-- **坐标单位**：`resize` 的 width/height、`scroll` 的 delta_x/delta_y、点击坐标都是 **CSS 像素**；截图是设备像素（并可能缩放到 900px 宽），按截图文本里的比例换算后再做像素定位，不要直接用截图坐标减 `scroll` 值。
-- **等待**：`networkidle` 以“文档加载完成 + 500ms”近似；`observe_text` 的 `next_cursor` 是字符偏移量，页面变化后应重新读取。
+`resize` 改变的是页面逻辑视口，与设备屏幕尺寸解耦；安卓系统 WebView 在后台按逻辑视口离屏布局，不显示悬浮窗口，页面 `window.innerWidth/innerHeight` 与工具视口一致。安卓端 `network` 只能记录请求级事件（无响应状态与响应体），`console`、`dialog`、`file_upload` 与桌面/云端语义一致。
 
 ## 批处理
 
@@ -1047,6 +1040,8 @@ GIF 可以按帧号取帧，帧号从 0 开始，与联系表每格标注的数�
 - 视频会被整理成一串图片帧；如果视频里带音轨，还会附上转写出来的文字。
 - `sheet: true` 时不再逐帧回图，而是把整段均匀抽成一张联系表；视频会先把抽帧收敛到 16 帧以内，格子按行列排布，画面等比缩放、不拉伸。
 - 联系表的格子宽高比跟随真实帧比例（16:9 仍是 16:9），不会为了凑格子把画面裁掉一截；每格左下角写着它的 0-based 帧号。
+- 一张联系表只用一个缩放系数：采样帧尺寸不一致时（视频或个别动图），小尺寸帧不会被单独放大去撑满格子，格子里画面大小不同只反映源帧本身的大小。`sheet.frame_sizes` 给出每格的源帧尺寸，`sheet.mixed_frame_sizes` 为 `true` 时 `warnings` 也会写明。
+- `frame: N` 单独使用时返回第 N 帧的 PNG（原分辨率、不经过联系表），结果里的 `frame_scope` 写明帧号、时间戳与总帧数；再叠加 `crop` / `scale` / `stats` 才进入单帧细看流程。
 
 ## 对比两张图
 
@@ -1075,9 +1070,9 @@ GIF 之间也能比：主图用 `frame` 取帧，对照图是动图时用 `compa
 
 返回里会说明素材的类型和大小，但那只表示素材已经准备好，不是模型的分析结论。
 
-联系表会额外给出 `sheet.columns`、`sheet.rows`、`sheet.cell_width`、`sheet.cell_height` 和 `sheet.frame_indices`：后者按行列顺序列出每格对应的源帧序号，视频的 `warnings` 里还写明第 k 格大约对应第几秒。
+联系表会额外给出 `sheet.columns`、`sheet.rows`、`sheet.cell_width`、`sheet.cell_height`、`sheet.frame_indices` 和 `sheet.frame_sizes`：`frame_indices` 按行列顺序列出每格对应的源帧序号，`frame_sizes` 是对齐的源帧像素尺寸，视频的 `warnings` 里还写明第 k 格大约对应第几秒。
 
-按帧号取帧时会给出 `frame_scope`：总帧数、总时长，以及每帧的帧号、时间戳与落盘路径。差异对比会给出 `compare.metrics`（`ssim`、`mean_abs_diff`、`changed_ratio`）。
+按帧号取帧时会给出 `frame_scope`：总帧数、总时长，以及每帧的帧号、时间戳与落盘路径；只取一帧时 `mode` 为 `frame`，附件就是这一帧的 PNG。差异对比会给出 `compare.metrics`（`ssim`、`mean_abs_diff`、`changed_ratio`）。
 
 ## 错误与处理
 
@@ -1214,7 +1209,7 @@ GIF 之间也能比：主图用 `frame` 取帧，对照图是动图时用 `compa
 
 - **动作是真实输入注入，没有回滚。** `left_hold` 和 `left_release` 必须成对使用，否则鼠标状态可能残留；`drag_drop` 是按下、平滑移动、松开三步。
 - 坐标随分辨率变化，归一化坐标只保证同一次观察与动作之间一致；换屏或改分辨率后要重新观察。
-- 截图会另存一份到用户容器的 `temp/desktop_control/<session>/desktop_shot_<n>.png`（会话目录内按序号命名）；持久化失败只记警告，不影响结果。
+- 截图会另存一份到用户容器的 `temp/desktop_control//`；持久化失败只记警告，不影响结果。
 - 截图目录按帧保留，只留最近几张（默认 3），避免临时文件无限堆积。
 - 判定遵循最小权限：需要用户显式开关，不静默常驻截屏，也不把系统能力暴露给远端。
 

@@ -1,7 +1,7 @@
 ---
 title: Browser Tool
 summary: Enablement, strict actions, viewport, file upload, dialogs, network and console observation, batching, ref recovery across refreshes, denoised observations, screenshot delivery, and limits for the single `browser` tool.
-updated_at: 2026-11-22
+updated_at: 2026-11-24
 ---
 
 # Browser Tool
@@ -36,7 +36,7 @@ A common flow is `navigate` → `observe_refs` → interaction or `batch` → `w
 
 The observation text skips links and icon buttons with no accessible name and merges repeated controls with the same role, name and state (for example the same navigation link twenty times). The omitted count is reported as `stats.duplicates` instead of listing every copy.
 
-`resize` changes the page's logical viewport independently of the device screen. The Android system WebView scales that viewport uniformly inside its floating window, so `window.innerWidth/innerHeight` match the tool viewport. On Android, `network` records request-level events only (no response status or body); `console`, `dialog` and `file_upload` behave like desktop and cloud.
+`resize` changes the page's logical viewport independently of the device screen. The Android system WebView lays out that viewport off-screen without showing a floating window, so `window.innerWidth/innerHeight` match the tool viewport. On Android, `network` records request-level events only (no response status or body); `console`, `dialog` and `file_upload` behave like desktop and cloud.
 
 ## Batch
 
