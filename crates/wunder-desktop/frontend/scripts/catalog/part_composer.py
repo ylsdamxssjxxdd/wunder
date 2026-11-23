@@ -55,6 +55,9 @@ ENTRIES = [
     ("cp_model_default_tag", "默认", "Default"),
     ("cp_model_settings", "打开模型设置", "Open model settings"),
     ("cp_model_none", "未选择模型", "No model selected"),
+    # 极窄窗顶部模型条与底部模型面板（对齐安卓版）。
+    ("cp_model_choose", "选择模型", "Choose model"),
+    ("cp_model_thread_note", "当前线程使用的模型", "Model used by this thread"),
     ("cp_model_cloud", "云端模型", "Cloud model"),
     # ---- 未配置模型引导横幅 ----
     ("cp_model_setup_hint", "还没有配置模型，先添加一个模型再开始对话。", "No model configured yet. Add one to start chatting."),

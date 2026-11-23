@@ -1,0 +1,403 @@
+// Phone-width shell chrome for the desktop window, aligned with 安卓版:
+// one 48px header carrying the drawer, the thread's model and a new-thread
+// action, plus the bottom model sheet the header chip opens.  The desktop
+// composer loses its action row at this width (see composer.slint `compact`),
+// so the model trigger has to live up here.
+import { Theme, ModelCard } from "theme.slint";
+import { I18n } from "i18n.slint";
+import { Action } from "components.slint";
+import { ListView } from "std-widgets.slint";
+
+// Occupancy tone shared with the composer's liquid brain: amber in the safe
+// range, warning orange near the limit, danger red at the hard limit, and red
+// whenever the thread's history is a compaction summary.
+global NarrowTone {
+    public pure function usage-tint(usage: float, compacted: bool) -> color {
+        return compacted ? #DC2626 : usage >= 0.92 ? #DC2626 : usage >= 0.82 ? #EA580C : #F97316;
+    }
+}
+
+export component NarrowHeader inherits Rectangle {
+    in property <string> model-name: "";
+    in property <int> model-count: 0;
+    in property <bool> model-saving: false;
+    in property <float> context-usage: 0.0;
+    in property <bool> context-known: false;
+    in property <bool> context-compacted: false;
+    callback open-drawer();
+    callback open-model();
+    callback new-thread();
+
+    height: Theme.mobile-header-height;
+    background: Theme.surface;
+
+    private property <float> fill: min(1.0, max(0.0, root.context-usage));
+    private property <string> label-text:
+        root.model-count > 0 && root.model-name != "" ? root.model-name : I18n.cp_model_choose;
+    private property <color> fill-color: NarrowTone.usage-tint(root.context-usage, root.context-compacted);
+    private property <length> chip-width:
+        min(root.width - 100px, 56px + min(chip-label.preferred-width, 160px));
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 4px;
+        cross-axis-alignment: center;
+
+        Action {
+            width: 36px;
+            height: 36px;
+            icon-size: 18px;
+            icon: @image-url("../assets/icons/bars.svg");
+            label: I18n.ui_expand_sidebar;
+            focus-ring: false;
+            tooltip: false;
+            clicked => { root.open-drawer(); }
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+            height: parent.height;
+            chip := Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: 6px;
+                width: chip-width;
+                height: 36px;
+                border-radius: 18px;
+                background: chip-touch.has-hover ? Theme.hover : transparent;
+                accessible-role: button;
+                accessible-label: I18n.cp_model_pick;
+                accessible-action-default => { root.open-model(); }
+
+                // Hidden measurement so the chip elides the name, not the glyph.
+                chip-label := Text {
+                    visible: false;
+                    text: root.label-text;
+                    font-size: Theme.font-md;
+                    font-weight: 600;
+                }
+
+                // Liquid brain gauge: muted base, accent copy rises with use.
+                Rectangle {
+                    x: 10px;
+                    y: 10px;
+                    width: 16px;
+                    height: 16px;
+                    Image {
+                        width: 16px;
+                        height: 16px;
+                        source: @image-url("../assets/icons/brain.svg");
+                        colorize: Theme.muted;
+                        image-fit: contain;
+                    }
+                    Rectangle {
+                        x: 0px;
+                        y: 16px - 16px * root.fill;
+                        width: 16px;
+                        height: 16px * root.fill;
+                        clip: true;
+                        Image {
+                            y: -16px * (1.0 - root.fill);
+                            width: 16px;
+                            height: 16px;
+                            source: @image-url("../assets/icons/brain.svg");
+                            colorize: root.fill-color;
+                            image-fit: contain;
+                        }
+                    }
+                }
+
+                Text {
+                    x: 32px;
+                    width: chip-width - 52px;
+                    height: 100%;
+                    text: root.label-text;
+                    color: root.model-count > 0 ? Theme.text : Theme.muted;
+                    font-size: Theme.font-md;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                if root.model-saving : Rectangle {
+                    x: parent.width - 30px;
+                    y: 13px;
+                    width: 10px;
+                    height: 10px;
+                    border-radius: 5px;
+                    background: Theme.accent;
+                }
+
+                chip-touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => { root.open-model(); }
+                }
+            }
+        }
+
+        Action {
+            width: 36px;
+            height: 36px;
+            icon-size: 18px;
+            icon: @image-url("../assets/icons/fa-pen-to-square.svg");
+            label: I18n.chat_new_thread;
+            focus-ring: false;
+            tooltip: false;
+            clicked => { root.new-thread(); }
+        }
+    }
+
+    Rectangle {
+        y: parent.height - 1px;
+        width: parent.width;
+        height: 1px;
+        background: Theme.border;
+    }
+}
+
+// Bottom model sheet.  Android opens it from the header chip over a phone
+// screen; the same card works over a 360–560px desktop window.  Selection
+// closes the sheet and hands the key back to the shell.
+export component NarrowModelSheet inherits Rectangle {
+    in property <[ModelCard]> models: [];
+    in property <string> current-key: "";
+    in property <float> context-usage: 0.0;
+    in property <bool> context-known: false;
+    in property <string> context-counts: "";
+    in property <bool> context-compacted: false;
+    in property <bool> cloud-ready: true;
+    callback close();
+    callback select-model(int, string);
+    callback open-settings();
+
+    private property <color> context-tint:
+        NarrowTone.usage-tint(root.context-usage, root.context-compacted);
+    // 面板高度跟着条目数走：两条模型时不该留一大片空白，模型很多时封顶
+    // 460px 再让列表自己滚。190px 是标题、占用行、两条分隔线、模型配置与
+    // 取消这些固定项连同 8px 内边距、2px 间距的总高。
+    private property <length> card-height:
+        min(root.height - 24px, 460px,
+            root.models.length == 0 ? 300px : 190px + root.models.length * 54px);
+    // 线程没有钉住模型时，引擎用的是默认模型——面板也要把对勾落在它身上，
+    // 否则「当前模型」一片空白，用户以为没有选中任何模型。
+    pure function is-current(index: int) -> bool {
+        return root.current-key != ""
+            ? root.models[index].key == root.current-key
+            : root.models[index].is-default;
+    }
+
+    // Scrim: a click anywhere outside the card closes the sheet.
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: Theme.overlay;
+        TouchArea {
+            clicked => { root.close(); }
+        }
+    }
+
+    card := Rectangle {
+        x: 8px;
+        y: parent.height - self.height - 8px;
+        width: parent.width - 16px;
+        height: card-height;
+        border-radius: Theme.radius-lg;
+        background: Theme.surface;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-color: #00000033;
+        drop-shadow-blur: 24px;
+
+        // Swallow clicks on the card body.
+        TouchArea { clicked => { } }
+
+        VerticalLayout {
+            padding: 8px;
+            spacing: 2px;
+
+            Rectangle {
+                height: 48px;
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 1px;
+                    Text {
+                        text: I18n.cp_model_choose;
+                        color: Theme.text;
+                        font-size: Theme.font-md;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: I18n.cp_model_thread_note;
+                        color: Theme.muted;
+                        font-size: Theme.font-2xs;
+                        horizontal-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+
+            Rectangle {
+                height: 26px;
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    spacing: 8px;
+                    Text {
+                        text: I18n.cp_model_context;
+                        color: Theme.muted;
+                        font-size: Theme.font-xs;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        min-width: 0px;
+                        text: root.context-known
+                            ? root.context-counts + " · " + round(min(1.0, max(0.0, root.context-usage)) * 100.0) + "%"
+                            : "—";
+                        color: root.context-known ? root.context-tint : Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+
+            Rectangle { height: 1px; background: Theme.border; }
+
+            if root.models.length == 0 : Rectangle {
+                vertical-stretch: 1;
+                Text {
+                    width: 100%;
+                    height: 100%;
+                    text: I18n.cp_model_empty;
+                    color: Theme.muted;
+                    font-size: Theme.font-sm;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+
+            if root.models.length > 0 : list := ListView {
+                vertical-stretch: 1;
+                for model[index] in root.models : Rectangle {
+                    height: 52px;
+                    width: list.visible-width;
+                    border-radius: Theme.radius-sm;
+                    background: root.is-current(index) ? Theme.accent-soft
+                        : row-touch.has-hover ? Theme.hover : transparent;
+                    opacity: model.disabled || (model.is-cloud && !root.cloud-ready) ? 0.45 : 1.0;
+                    accessible-role: button;
+                    accessible-label: model.key;
+                    accessible-action-default => {
+                        if !model.disabled && (!model.is-cloud || root.cloud-ready) {
+                            root.select-model(index, model.key);
+                        }
+                    }
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 10px;
+                        cross-axis-alignment: center;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 2px;
+                            Text {
+                                text: model.key;
+                                color: root.is-current(index) ? Theme.accent-ink : Theme.text;
+                                font-size: Theme.font-md;
+                                font-weight: 600;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: model.provider + (model.model != "" ? " · " + model.model : "");
+                                color: Theme.muted;
+                                font-size: Theme.font-2xs;
+                                overflow: elide;
+                                visible: model.provider != "" || model.model != "";
+                            }
+                        }
+                        if root.is-current(index) : Image {
+                            width: 16px;
+                            height: 16px;
+                            source: @image-url("../assets/icons/circle-check.svg");
+                            colorize: Theme.accent;
+                            image-fit: contain;
+                        }
+                    }
+                    row-touch := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        enabled: !model.disabled && (!model.is-cloud || root.cloud-ready);
+                        mouse-cursor: pointer;
+                        clicked => { root.select-model(index, model.key); }
+                    }
+                }
+            }
+
+            Rectangle { height: 1px; background: Theme.border; }
+
+            Rectangle {
+                height: 44px;
+                border-radius: Theme.radius-sm;
+                background: settings-touch.has-hover ? Theme.hover : transparent;
+                accessible-role: button;
+                accessible-label: I18n.common_model_config;
+                accessible-action-default => { root.open-settings(); }
+                HorizontalLayout {
+                    padding-left: 12px;
+                    spacing: 8px;
+                    cross-axis-alignment: center;
+                    Image {
+                        width: 16px;
+                        height: 16px;
+                        source: @image-url("../assets/icons/gear.svg");
+                        colorize: Theme.accent-ink;
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        text: I18n.common_model_config;
+                        color: Theme.accent-ink;
+                        font-size: Theme.font-sm;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                }
+                settings-touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => { root.open-settings(); }
+                }
+            }
+
+            Rectangle {
+                height: 44px;
+                border-radius: Theme.radius-sm;
+                background: cancel-touch.has-hover ? Theme.hover : transparent;
+                accessible-role: button;
+                accessible-label: I18n.common_cancel;
+                HorizontalLayout {
+                    alignment: center;
+                    Text {
+                        text: I18n.common_cancel;
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-sm;
+                        vertical-alignment: center;
+                    }
+                }
+                cancel-touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => { root.close(); }
+                }
+            }
+        }
+    }
+}

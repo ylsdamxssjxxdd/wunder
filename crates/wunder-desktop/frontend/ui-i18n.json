@@ -1644,6 +1644,16 @@
   "en": "No model selected"
  },
  {
+  "key": "cp_model_choose",
+  "zh": "选择模型",
+  "en": "Choose model"
+ },
+ {
+  "key": "cp_model_thread_note",
+  "zh": "当前线程使用的模型",
+  "en": "Model used by this thread"
+ },
+ {
   "key": "cp_model_cloud",
   "zh": "云端模型",
   "en": "Cloud model"
@@ -4909,6 +4919,11 @@
   "en": "Model list, default model and parameters"
  },
  {
+  "key": "stc_model_count_suffix",
+  "zh": " 个配置",
+  "en": " configs"
+ },
+ {
   "key": "stc_tools",
   "zh": "工具管理",
   "en": "Tools"
@@ -5022,6 +5037,41 @@
   "key": "stc_help_note",
   "zh": "在本机打开使用手册",
   "en": "Open the user manual on this machine"
+ },
+ {
+  "key": "stc_group_system",
+  "zh": "系统",
+  "en": "System"
+ },
+ {
+  "key": "stc_group_intelligence",
+  "zh": "智能与工具",
+  "en": "Intelligence & tools"
+ },
+ {
+  "key": "stc_group_utility",
+  "zh": "辅助",
+  "en": "Utilities"
+ },
+ {
+  "key": "stc_runtime_note",
+  "zh": "命令执行环境与工具链路径",
+  "en": "Command runtime and toolchain paths"
+ },
+ {
+  "key": "stc_data_note",
+  "zh": "本地备份、恢复与崩溃日志",
+  "en": "Local backups, recovery and crash logs"
+ },
+ {
+  "key": "stc_mcp_note",
+  "zh": "连接外部 MCP 服务",
+  "en": "Connect external MCP servers"
+ },
+ {
+  "key": "stc_skills_note",
+  "zh": "导入、导出与编辑技能",
+  "en": "Import, export and edit skills"
  },
  {
   "key": "il_tunnel_title",

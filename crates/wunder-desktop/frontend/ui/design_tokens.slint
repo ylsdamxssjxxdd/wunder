@@ -210,6 +210,13 @@ export global Theme {
     // The hardware readout keeps only the background-task / subagent cells on
     // a narrow composer; CPU and memory yield first.
     out property <length> host-hud-compact-width: 560px;
+    // Below this width the shell switches to the phone chrome 安卓版 uses:
+    // a top model chip, a one-line composer and a settings home list.  The
+    // drawer already floats below `sidebar-overlay-width`; this second
+    // breakpoint is where the desktop form stops fitting at all.
+    out property <length> mobile-chrome-width: 560px;
+    // Header height of the narrow chat chrome (hamburger + model + new thread).
+    out property <length> mobile-header-height: 48px;
     // Below this width the plan capsule shortens its step text so the whole
     // pill (title, position and chevron) stays inside the input band.
     out property <length> plan-compact-width: 520px;

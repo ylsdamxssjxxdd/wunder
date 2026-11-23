@@ -67,6 +67,8 @@ component ThreadRow inherits ContextMenuArea {
     in property <SidebarRow> data;
     in property <bool> hover;
     in property <bool> selecting;
+    // 抽屉（极窄窗）没有可靠的悬停区：行内动作常驻，和安卓版一致。
+    in property <bool> actions-always: false;
     callback archive();
     callback begin-rename();
     callback open-trajectory();
@@ -94,7 +96,9 @@ component ThreadRow inherits ContextMenuArea {
         padding-left: root.selecting
             ? SidebarMetrics.row-padding + 15px + SidebarMetrics.icon-gap
             : SidebarMetrics.thread-indent - SidebarMetrics.gutter;
-        padding-right: SidebarMetrics.row-padding;
+        padding-right: root.hover || root.actions-always
+            ? SidebarMetrics.row-padding + 76px
+            : SidebarMetrics.row-padding;
         spacing: SidebarMetrics.icon-gap;
         StatusDot {
             y: (parent.height - self.height) / 2;
@@ -157,7 +161,7 @@ component ThreadRow inherits ContextMenuArea {
     // layout. Keep the band at a fixed width so the title never jumps when
     // the pointer enters or leaves a row. This mirrors the web order:
     // rename, trajectory view, archive.
-    if root.hover && !root.selecting : Rectangle {
+    if (root.hover || root.actions-always) && !root.selecting : Rectangle {
         // 动作条与行右内边距对齐：3×20px 按钮 + 4px 间隔 + 两侧 8px。
         x: parent.width - 84px;
         y: 0px;
@@ -166,7 +170,9 @@ component ThreadRow inherits ContextMenuArea {
         // 与行底色同一个弧角：左半边压在行内同色底上，圆不圆看不出来，右半边
         // 却必须跟着行角收住，否则悬停时右下角会冒出直角。
         border-radius: SidebarMetrics.row-fill-radius;
-        background: data.active ? Theme.selected : Theme.accent-soft;
+        // 抽屉里常驻动作不铺底色，图标直接坐在行上，和安卓版一样；鼠标悬停
+        // 时仍给一层浅底，明确这一组按钮可以点。
+        background: !root.hover ? transparent : data.active ? Theme.selected : Theme.accent-soft;
         Rectangle {
             x: 8px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: SidebarMetrics.row-radius;
             background: rename-touch.has-hover ? Theme.selected : transparent;
@@ -395,6 +401,10 @@ export component Sidebar inherits Rectangle {
     /// which read as a real identity that had simply failed to load.
     in property <bool> user-ready: true;
     in property <bool> busy;
+    // 极窄窗抽屉（对齐安卓版）：底部入口加版本号，行内动作常驻而不是
+    // 只在悬停时出现。桌面停靠列保持原来的紧凑节奏。
+    in property <bool> drawer: false;
+    in property <string> version: "";
     // Device selector: this 桌面版 is the local device; the signed-in account is
     // the cloud device. Only the selected device's workspace tree is shown.
     in property <bool> cloud-available: false;
@@ -553,7 +563,9 @@ export component Sidebar inherits Rectangle {
                     mouse-cursor: root.cloud-available ? pointer : default;
                     enabled: root.cloud-available;
                     accessible-role: button; accessible-label: I18n.sb_device_select;
-                    Tooltip { text: @markdown("\{I18n.sb_device_select}"); }
+                    // 抽屉从指针下方展开，指针正好落在这一行：提示会盖住下方
+                    // 的工作区行，抽屉里不给它。
+                    if !root.drawer : Tooltip { text: @markdown("\{I18n.sb_device_select}"); }
                     clicked => { root.device-menu-open = !root.device-menu-open; }
                 }
             }
@@ -654,6 +666,7 @@ export component Sidebar inherits Rectangle {
                             width: parent.width;
                             data: row;
                             hover: parent.hover;
+                            actions-always: root.drawer;
                             selecting: root.selection-mode;
                             archive => { root.archive-thread(row.thread-id); }
                             // Renaming needs a draft the user can still abandon, so
@@ -681,6 +694,7 @@ export component Sidebar inherits Rectangle {
                                 width: parent.width; height: parent.height;
                                 data: row;
                                 hover: cloud-thread-touch.has-hover;
+                                actions-always: root.drawer;
                                 selecting: false;
                                 allow-selection: false;
                                 archive => { root.cloud-archive-request(row.thread-id); }
@@ -956,20 +970,20 @@ export component Sidebar inherits Rectangle {
     // 设置入口钉在侧栏底部：窗口很矮时，列表内容的最小高度会把最后一个
     // 流式行推到窗口外，底部入口必须自己占位而不是排队。
     Rectangle {
-        y: root.height - 41px;
+        y: root.height - (root.drawer ? 49px : 41px);
         width: parent.width;
-        height: 41px;
+        height: root.drawer ? 49px : 41px;
         z: 5;
         background: Theme.sidebar;
         Rectangle { y: 0px; width: parent.width; height: 1px; background: Theme.border; }
         // Settings button: 4px 上气口 + 32px 行 + 4px 下气口，与树里的行同高同留白。
         Rectangle {
-            height: 40px; y: 1px;
+            height: root.drawer ? 48px : 40px; y: 1px;
             HorizontalLayout {
                 padding-left: SidebarMetrics.gutter; padding-right: SidebarMetrics.gutter;
                 padding-top: 4px; padding-bottom: 4px;
                 Rectangle {
-                    height: 32px; border-radius: SidebarMetrics.row-radius;
+                    height: root.drawer ? 40px : 32px; border-radius: SidebarMetrics.row-radius;
                     background: settings-touch.has-hover ? Theme.hover : transparent;
                     settings-touch := TouchArea {
                         mouse-cursor: pointer;
@@ -1001,6 +1015,15 @@ export component Sidebar inherits Rectangle {
                             }
                         }
                         Text { height: parent.height; text: I18n.sidebar_settings; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; }
+                        // 抽屉底部与安卓版一致：右侧给出版本号。
+                        if root.drawer && root.cloud-quota-text == "" : Rectangle { horizontal-stretch: 1; }
+                        if root.drawer && root.cloud-quota-text == "" && root.version != "" : Text {
+                            height: parent.height;
+                            text: "v" + root.version;
+                            color: Theme.muted;
+                            font-size: Theme.font-2xs;
+                            vertical-alignment: center;
+                        }
                     }
                     // Cloud quota pill (§6.1): the plain balance number next
                     // to the profile row, red at or below 10% of the daily

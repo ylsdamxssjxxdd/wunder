@@ -612,9 +612,23 @@ public final class WebViewBridge {
             return error("滚动失败：页面返回了未知状态");
         }
         if (reply.optBoolean("moved", false)) {
-            return pageText("已滚动 " + deltaX + "," + deltaY
-                    + "（位置 " + reply.optInt("x", 0) + "," + reply.optInt("y", 0)
-                    + "，容器 " + reply.optString("container", "document") + "）");
+            String container = reply.optString("container", "document");
+            String position;
+            if ("document".equals(container)) {
+                position = "页面位置 " + reply.optInt("fromX", 0) + "," + reply.optInt("fromY", 0)
+                        + " → " + reply.optInt("x", 0) + "," + reply.optInt("y", 0);
+            } else {
+                position = "容器 " + container + " 内部 "
+                        + reply.optInt("fromLeft", 0) + "," + reply.optInt("fromTop", 0)
+                        + " → " + reply.optInt("left", 0) + "," + reply.optInt("top", 0);
+            }
+            int movedX = reply.optInt("movedX", 0);
+            int movedY = reply.optInt("movedY", 0);
+            String actual = movedX == deltaX && movedY == deltaY
+                    ? ""
+                    : "；请求 " + deltaX + "," + deltaY + "，实际 " + movedX + "," + movedY
+                        + "（可能已到边界）";
+            return pageText("已滚动 " + deltaX + "," + deltaY + "（" + position + "）" + actual);
         }
         if (reply.optBoolean("handled", false) || reply.optBoolean("canvas", false)) {
             return pageText("已向画布发送滚轮事件（页面自行处理，如 3D 缩放/旋转）");
@@ -626,26 +640,11 @@ public final class WebViewBridge {
         if (!ensureReady()) {
             return error("浏览器尚未打开");
         }
-        String base64 = onMain(() -> {
-            if (webView == null || webView.getWidth() <= 0 || webView.getHeight() <= 0) {
-                return null;
-            }
-            Bitmap bitmap = Bitmap.createBitmap(
-                    webView.getWidth(), webView.getHeight(), Bitmap.Config.ARGB_8888);
-            Canvas canvas = new Canvas(bitmap);
-            webView.draw(canvas);
-            int maxWidth = 900;
-            if (bitmap.getWidth() > maxWidth) {
-                int height = Math.max(1, bitmap.getHeight() * maxWidth / bitmap.getWidth());
-                Bitmap scaled = Bitmap.createScaledBitmap(bitmap, maxWidth, height, true);
-                bitmap.recycle();
-                bitmap = scaled;
-            }
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out);
-            bitmap.recycle();
-            return Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP);
-        }, 12_000L);
+        JSONObject page = evalJsJson(BrowserScripts.pageScroll(), 3_000L);
+        int scrollX = page == null ? 0 : page.optInt("x", 0);
+        int scrollY = page == null ? 0 : page.optInt("y", 0);
+        int layoutWidth = page == null ? 0 : page.optInt("vw", 0);
+        String base64 = captureViewportBase64(scrollX, scrollY, layoutWidth, 12_000L);
         if (base64 == null || base64.isEmpty()) {
             return error("截图失败");
         }
@@ -661,6 +660,65 @@ public final class WebViewBridge {
             return result.toString();
         } catch (Throwable error) {
             return error(message(error));
+        }
+    }
+
+    /**
+     * Render the visible viewport into a bitmap.
+     *
+     * <p>`WebView.draw()` paints the page at document coordinates and does not
+     * apply the internal scroll offset, so without compensation a scrolled page
+     * leaves a background-colored band on top (a scroll beyond one viewport
+     * turns the whole frame blank). Translate the canvas by the page scroll
+     * converted through the layout scale so the captured frame matches the
+     * viewport at any scroll position.
+     */
+    private static String captureViewportBase64(int scrollX, int scrollY, int layoutWidth,
+                                                long timeoutMs) {
+        return onMain(() -> {
+            WebView view = webView;
+            if (view == null || view.getWidth() <= 0 || view.getHeight() <= 0) {
+                return null;
+            }
+            try {
+                Bitmap bitmap = Bitmap.createBitmap(
+                        view.getWidth(), view.getHeight(), Bitmap.Config.ARGB_8888);
+                Canvas canvas = new Canvas(bitmap);
+                float factor = app.getResources().getDisplayMetrics().density;
+                if (layoutWidth > 0) {
+                    factor = (float) view.getWidth() / (float) layoutWidth;
+                }
+                if (scrollX != 0 || scrollY != 0) {
+                    canvas.translate(-scrollX * factor, -scrollY * factor);
+                }
+                view.draw(canvas);
+                return encodeScaledPng(bitmap);
+            } catch (Throwable error) {
+                Log.w(TAG, "screenshot failed", error);
+                return null;
+            }
+        }, timeoutMs);
+    }
+
+    private static String encodeScaledPng(Bitmap bitmap) {
+        if (bitmap == null) {
+            return null;
+        }
+        try {
+            Bitmap output = bitmap;
+            int maxWidth = 900;
+            if (output.getWidth() > maxWidth) {
+                int height = Math.max(1, output.getHeight() * maxWidth / output.getWidth());
+                output = Bitmap.createScaledBitmap(output, maxWidth, height, true);
+                bitmap.recycle();
+            }
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            output.compress(Bitmap.CompressFormat.PNG, 100, out);
+            output.recycle();
+            return Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP);
+        } catch (Throwable error) {
+            Log.w(TAG, "encode screenshot failed", error);
+            return null;
         }
     }
 

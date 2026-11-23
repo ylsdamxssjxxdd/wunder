@@ -39,6 +39,96 @@ component SettingsNavItem inherits Rectangle {
     touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
+// Phone-width settings home (对齐安卓版): a grouped list of cards instead of
+// the 200px desktop navigation column.  Each row carries an icon tile, the
+// category name and one explanatory line, then opens the same settings panes.
+component SettingsHomeRow inherits Rectangle {
+    in property <image> icon;
+    in property <string> title;
+    in property <string> detail: "";
+    in property <bool> last: false;
+    callback clicked();
+    height: 58px;
+    background: touch.has-hover ? Theme.hover : transparent;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 10px;
+        spacing: 10px;
+        cross-axis-alignment: center;
+        Rectangle {
+            width: 32px;
+            height: 32px;
+            border-radius: 9px;
+            background: Theme.accent-soft;
+            Image {
+                x: 7px;
+                y: 7px;
+                width: 18px;
+                height: 18px;
+                source: root.icon;
+                colorize: Theme.accent-ink;
+                image-fit: contain;
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 1px;
+            Text {
+                text: root.title;
+                color: Theme.text;
+                font-size: Theme.font-md;
+                font-weight: 600;
+                overflow: elide;
+            }
+            if root.detail != "" : Text {
+                text: root.detail;
+                color: Theme.muted;
+                font-size: Theme.font-xs;
+                overflow: elide;
+            }
+        }
+        Image {
+            width: 12px;
+            height: 12px;
+            source: @image-url("../assets/icons/chevron-right.svg");
+            colorize: Theme.border-strong;
+        }
+    }
+    if !root.last : Rectangle {
+        y: parent.height - 1px;
+        x: 54px;
+        width: parent.width - 54px;
+        height: 1px;
+        background: Theme.border;
+    }
+    touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component SettingsHomeCard inherits Rectangle {
+    border-radius: Theme.radius-lg;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    clip: true;
+    VerticalLayout {
+        spacing: 0px;
+        @children
+    }
+}
+
+component SettingsHomeGroupTitle inherits Text {
+    height: 24px;
+    color: Theme.muted;
+    font-size: Theme.font-2xs;
+    font-weight: 700;
+    vertical-alignment: bottom;
+}
+
 // Flat "browse…" button that lines up with a FormField's input box. A FormField
 // row is 62px tall with the box at y=21/h=36, so callers mount this inside a
 // height-62 container with `alignment: end; padding-bottom: 5px` to share the
@@ -1002,6 +1092,22 @@ export component SettingsPage inherits Rectangle {
     // 窄窗（对齐云端版移动模式）：分类下拉由窗口标题行提供，本页只负责
     // 隐藏 200px 导航并让内容单列铺满。
     in property <bool> compact: false;
+    // 手机宽度（对齐安卓版）：先给分组首页，点分类再进对应面板。
+    in property <bool> home: false;
+    callback open-category(int);
+
+    pure function model-detail() -> string {
+        if (root.selected-model-name != "") {
+            return root.selected-model-name
+                + (root.models.length > 0 ? " · " + root.models.length + I18n.stc_model_count_suffix : "");
+        }
+        return root.models.length > 0
+            ? "" + root.models.length + I18n.stc_model_count_suffix
+            : I18n.stc_models_note;
+    }
+    pure function agent-detail() -> string {
+        return root.selected-agent-name == "" ? I18n.stc_agent_note : root.selected-agent-name;
+    }
 
     SettingsNav := Rectangle {
         x: 0px; y: 0px; width: root.compact ? 0px : 200px; height: parent.height; visible: !root.compact;
@@ -1155,11 +1261,127 @@ export component SettingsPage inherits Rectangle {
             }
         }
     }
+    // ---- phone-width home list (安卓版 settings home) ----
+    if root.compact && root.home : ScrollView {
+        vertical-stretch: 1;
+        horizontal-scrollbar-policy: always-off;
+
+        VerticalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            padding-top: 8px;
+            padding-bottom: 16px;
+            spacing: 8px;
+            alignment: start;
+
+            SettingsHomeGroupTitle { text: I18n.stc_group_system; }
+            SettingsHomeCard {
+                SettingsHomeRow {
+                    icon: @image-url("../assets/icons/lc-sliders-horizontal.svg");
+                    title: I18n.stc_general;
+                    detail: I18n.stc_general_note;
+                    clicked => { root.open-category(0); }
+                }
+                SettingsHomeRow {
+                    icon: @image-url("../assets/icons/lc-circle-user-round.svg");
+                    title: I18n.stc_account;
+                    detail: I18n.stc_account_note;
+                    clicked => { root.open-category(13); }
+                }
+                SettingsHomeRow {
+                    icon: @image-url("../assets/icons/terminal.svg");
+                    title: I18n.st_tab_runtime;
+                    detail: I18n.stc_runtime_note;
+                    last: true;
+                    clicked => { root.open-category(14); }
+                }
+            }
+
+            SettingsHomeGroupTitle { text: I18n.stc_group_intelligence; }
+            SettingsHomeCard {
+                SettingsHomeRow {
+                    icon: @image-url("../assets/icons/lc-brain.svg");
+                    title: I18n.stc_models;
+                    detail: root.model-detail();
+                    clicked => { root.open-category(1); }
+                }
+                SettingsHomeRow {
+                    icon: @image-url("../assets/icons/lc-bot.svg");
+                    title: I18n.stc_agent;
+                    detail: root.agent-detail();
+                    clicked => { root.open-category(3); }
+                }
+                SettingsHomeRow {
+                    icon: @image-url("../assets/icons/lc-plug.svg");
+                    title: I18n.stc_mcp;
+                    detail: I18n.stc_mcp_note;
+                    clicked => { root.open-category(2); }
+                }
+                SettingsHomeRow {
+                    icon: @image-url("../assets/icons/lc-book.svg");
+                    title: I18n.stc_skills;
+                    detail: I18n.stc_skills_note;
+                    last: true;
+                    clicked => { root.open-category(15); }
+                }
+            }
+
+            SettingsHomeGroupTitle { text: I18n.stc_group_utility; }
+            SettingsHomeCard {
+                SettingsHomeRow {
+                    icon: @image-url("../assets/icons/lc-clock.svg");
+                    title: I18n.stc_cron;
+                    detail: I18n.stc_cron_note;
+                    clicked => { root.open-category(5); }
+                }
+                SettingsHomeRow {
+                    icon: @image-url("../assets/icons/fluent-brain.svg");
+                    title: I18n.stc_memory;
+                    detail: I18n.stc_memory_note;
+                    clicked => { root.open-category(6); }
+                }
+                SettingsHomeRow {
+                    icon: @image-url("../assets/icons/lc-messages-square.svg");
+                    title: I18n.stc_channels;
+                    detail: I18n.stc_channels_note;
+                    clicked => { root.open-category(7); }
+                }
+                SettingsHomeRow {
+                    icon: @image-url("../assets/icons/lc-paw-print.svg");
+                    title: I18n.stc_pet;
+                    detail: I18n.stc_pet_note;
+                    clicked => { root.open-category(4); }
+                }
+                SettingsHomeRow {
+                    icon: @image-url("../assets/icons/lc-database.svg");
+                    title: I18n.stc_data;
+                    detail: I18n.stc_data_note;
+                    clicked => { root.open-category(16); }
+                }
+                SettingsHomeRow {
+                    icon: @image-url("../assets/icons/lc-archive.svg");
+                    title: I18n.stc_archives;
+                    detail: I18n.stc_archives_note;
+                    last: true;
+                    clicked => { root.open-category(10); }
+                }
+            }
+
+            Text {
+                text: I18n.stc_local_note;
+                color: Theme.muted;
+                font-size: Theme.font-2xs;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+        }
+    }
     Rectangle {
         x: root.compact ? 0px : SettingsNav.width;
         y: 0px;
         width: parent.width - self.x;
         height: parent.height;
+        visible: !(root.compact && root.home);
         // The model tab is a direct canvas child rather than a ScrollView.
         // Keep this column stretched so the canvas receives the full
         // overlay height instead of a zero preferred height.
@@ -1538,7 +1760,7 @@ export component SettingsPage inherits Rectangle {
                         x: 8px; y: 8px;
                         width: root.compact ? parent.width - 16px : 236px;
                         height: root.compact
-                            ? (root.selected-key == "" ? parent.height - 16px : min(220px, parent.height * 0.42))
+                            ? (root.selected-key == "" ? parent.height - 16px : min(parent.height * 0.42, 58px + root.models.length * 64px))
                             : parent.height - 16px;
                         VerticalLayout { padding: 12px; spacing: 10px;
                             HorizontalLayout { height: 30px; spacing: 6px;
@@ -1573,7 +1795,7 @@ export component SettingsPage inherits Rectangle {
                                             - (model.is-cloud ? root.model-cloud-badge-width : 0px)
                                             - (model.is-default && model.is-cloud ? root.model-badge-gap : 0px);
                                         Text { x: 36px; y: 11px; width: label-width; height: 18px; text: model.key; color: Theme.text; font-size: Theme.font-sm; font-weight: 600; overflow: elide; }
-                                        Text { x: 36px; y: 32px; width: label-width; height: 15px; text: (model.model == "" && model.base-url == "") ? I18n.st_models_no_info : (model.model + " · " + model.base-url); color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
+                                        Text { x: 36px; y: 32px; width: label-width; height: 15px; text: (model.model == "" && model.base-url == "") ? I18n.st_models_no_info : model.base-url == "" ? model.model : model.model == "" ? model.base-url : model.model + " · " + model.base-url; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
                                         // Engine-managed cloud entries (`cloud/<id>`): the
                                         // badge marks them in the list; they are
                                         // refreshed on sign-in and removed on logout.
@@ -1606,7 +1828,7 @@ export component SettingsPage inherits Rectangle {
                         visible: !root.compact || root.selected-key != "";
                         x: root.compact ? 8px : 258px;
                         y: root.compact
-                            ? 22px + (root.selected-key == "" ? parent.height - 16px : min(220px, parent.height * 0.42))
+                            ? 22px + (root.selected-key == "" ? parent.height - 16px : min(parent.height * 0.42, 58px + root.models.length * 64px))
                             : 8px;
                         width: root.compact ? parent.width - 16px : parent.width - 266px;
                         height: max(0px, parent.height - self.y - 8px);

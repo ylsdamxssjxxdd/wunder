@@ -181,14 +181,18 @@ final class BrowserScripts {
                 + "if(scrollable(node)){target=node;break;}node=node.parentElement;}"
                 + "var beforeX=window.scrollX||0,beforeY=window.scrollY||0;"
                 + "var beforeL=target?target.scrollLeft:0,beforeT=target?target.scrollTop:0;"
-                + "var movedX=(window.scrollX||0)-beforeX,movedY=(window.scrollY||0)-beforeY;"
-                + "if(target){movedX+=target.scrollLeft-beforeL;movedY+=target.scrollTop-beforeT;}"
-                + "var restX=handled?0:dx-movedX,restY=handled?0:dy-movedY;"
+                + "var wheelX=(window.scrollX||0)-beforeX,wheelY=(window.scrollY||0)-beforeY;"
+                + "if(target){wheelX+=target.scrollLeft-beforeL;wheelY+=target.scrollTop-beforeT;}"
+                + "var restX=handled?0:dx-wheelX,restY=handled?0:dy-wheelY;"
                 + "if(restX!==0||restY!==0){try{if(target){target.scrollBy({left:restX,top:restY,behavior:'auto'});}else{window.scrollBy(restX,restY);}}catch(e){}}"
                 + "var afterX=window.scrollX||0,afterY=window.scrollY||0;"
                 + "var afterL=target?target.scrollLeft:0,afterT=target?target.scrollTop:0;"
-                + "var moved=((afterX-beforeX)+(afterL-beforeL))!==0||((afterY-beforeY)+(afterT-beforeT))!==0;"
-                + "return JSON.stringify({status:'scrolled',moved:moved,handled:handled,x:afterX,y:afterY,"
+                + "var movedX=(afterX-beforeX)+(afterL-beforeL),movedY=(afterY-beforeY)+(afterT-beforeT);"
+                + "var moved=movedX!==0||movedY!==0;"
+                + "return JSON.stringify({status:'scrolled',moved:moved,handled:handled,"
+                + "x:afterX,y:afterY,left:afterL,top:afterT,"
+                + "fromX:beforeX,fromY:beforeY,fromLeft:beforeL,fromTop:beforeT,"
+                + "movedX:movedX,movedY:movedY,"
                 + "container:target?String(target.tagName||'').toLowerCase():'document',"
                 + "canvas:!!(pt&&String(pt.tagName||'').toUpperCase()==='CANVAS')});"
                 + "})()";
@@ -248,6 +252,13 @@ final class BrowserScripts {
     static String readText() {
         return "(function(){var b=document.body;"
                 + "return JSON.stringify({status:'ok',text:b?(b.innerText||b.textContent||''):''});})()";
+    }
+
+    /** Viewport scroll offsets and the layout viewport width used to scale them. */
+    static String pageScroll() {
+        return "(function(){var d=document.documentElement||document.body||{};"
+                + "return JSON.stringify({status:'ok',x:window.scrollX||0,y:window.scrollY||0,"
+                + "vw:d.clientWidth||0,vh:d.clientHeight||0});})()";
     }
 
     static String fileUpload(String target, String filesJson) {

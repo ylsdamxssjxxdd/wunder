@@ -30,6 +30,7 @@ ENTRIES = [
     ("stc_account_note", "云账号、登录状态与用量统计", "Cloud account, sign-in state and usage"),
     ("stc_models", "模型", "Models"),
     ("stc_models_note", "模型清单、默认模型与参数", "Model list, default model and parameters"),
+    ("stc_model_count_suffix", " 个配置", " configs"),
     ("stc_tools", "工具管理", "Tools"),
     ("stc_mcp", "MCP", "MCP"),
     ("stc_skills", "技能", "Skills"),
@@ -53,6 +54,14 @@ ENTRIES = [
     ("stc_archives_workspace_missing", "未知工作区", "Unknown workspace"),
     ("stc_help", "帮助", "Help"),
     ("stc_help_note", "在本机打开使用手册", "Open the user manual on this machine"),
+    # ---- phone-width settings home (对齐安卓版) ----
+    ("stc_group_system", "系统", "System"),
+    ("stc_group_intelligence", "智能与工具", "Intelligence & tools"),
+    ("stc_group_utility", "辅助", "Utilities"),
+    ("stc_runtime_note", "命令执行环境与工具链路径", "Command runtime and toolchain paths"),
+    ("stc_data_note", "本地备份、恢复与崩溃日志", "Local backups, recovery and crash logs"),
+    ("stc_mcp_note", "连接外部 MCP 服务", "Connect external MCP servers"),
+    ("stc_skills_note", "导入、导出与编辑技能", "Import, export and edit skills"),
 
     # ---- interlink (设备互通, category 12) ----
     ("il_tunnel_title", "互通隧道", "Interlink tunnel"),

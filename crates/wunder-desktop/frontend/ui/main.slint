@@ -47,6 +47,7 @@ import { ListView, ScrollView, ComboBox } from "std-widgets.slint";
 import { ModelPresets } from "model_presets.slint";
 export { ModelPresets }
 import { WindowChrome, WindowFrame } from "window_chrome.slint";
+import { NarrowHeader, NarrowModelSheet } from "narrow_shell.slint";
 // `TimelineView` is deliberately absent: nothing in Rust names it, and an
 // exported component that does not inherit Window only earns a build warning.
 export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, WorkflowLine, WorkflowSection, ToolWorkflowEntry, ProcessEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajMdSection, TrajTab, CronCard, CronRunCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkApproval, WorkspaceFileRow, LocalBackupRow }
@@ -144,15 +145,27 @@ export component MainWindow inherits Window {
     // 遮罩即退回。
     in-out property <bool> sidebar-collapsed: false;
     private property <bool> sidebar-overlay: root.width < Theme.sidebar-overlay-width;
+    // 手机宽度：顶部模型条、单行输入区、分组设置首页（对齐安卓版）。这是
+    // 桌面表单已经放不下的宽度，不是「有点窄」；760px 以下仍保留桌面对话区。
+    in-out property <bool> narrow: root.width < Theme.mobile-chrome-width;
+    // 顶部模型条打开的底部面板。
+    in-out property <bool> model-sheet-open: false;
+    // 极窄窗设置：先给分组首页，再进分类。
+    in-out property <bool> settings-home: false;
     private property <bool> sidebar-peek: false;
     private property <bool> sidebar-shown:
         !root.sidebar-collapsed && (!root.sidebar-overlay || root.sidebar-peek);
     // 浮层宽度永远给主区留出点击退出的位置；停靠时就是用户拖出来的宽度。
+    // 极窄窗按安卓版抽屉的比例给足宽度（86%，上限 340px），否则 240px 的
+    // 桌面列会把标题和行内动作一起挤掉。
     private property <length> sidebar-visual-width: root.sidebar-overlay
-        ? min(root.sidebar-width, max(180px, root.width - 56px))
+        ? (root.narrow
+            ? min(340px, root.width * 0.86)
+            : min(root.sidebar-width, max(180px, root.width - 56px)))
         : root.sidebar-width;
     // 跨过断点就回到「按宽度自动收起」：变窄时侧栏自动退场，变宽时重新停靠。
     changed sidebar-overlay => { root.sidebar-peek = false; }
+    changed narrow => { if !root.narrow { root.model-sheet-open = false; } }
 
     in-out property <bool> expert-loading;
     in-out property <bool> expert-saving;
@@ -714,11 +727,35 @@ export component MainWindow inherits Window {
             : index == 5 ? 15 : index == 6 ? 3 : index == 7 ? 4 : index == 8 ? 5
             : index == 9 ? 6 : index == 10 ? 7 : index == 11 ? 10 : index == 12 ? 16 : 0;
     }
+    // 退出设置时把极窄窗的「分组首页」也复位：下次打开（尤其是窗口先从
+    // 窄变宽再变窄）仍按当前分类展开，不会莫名回到首页。
+    function close-settings() {
+        root.settings-open = false;
+        root.settings-home = false;
+    }
     function select-settings-category(tab: int) {
         if (tab == 1) { root.refresh-settings(); }
         if (tab == 2) { root.tools-tab = 1; root.tools-selected = -1; root.refresh-settings(); }
         if (tab == 15) { root.tools-tab = 2; root.tools-selected = -1; root.refresh-settings(); }
         root.settings-active-panel = tab;
+    }
+    // 极窄窗设置标题：首页就叫「设置」，进入分类后显示分类名。分类编号与
+    // settings-tab 一致，不能按下拉的顺序推。
+    pure function settings-title() -> string {
+        if (root.settings-home) { return I18n.sidebar_settings; }
+        return root.settings-active-panel == 14 ? I18n.st_tab_runtime
+            : root.settings-active-panel == 13 ? I18n.stc_account
+            : root.settings-active-panel == 1 ? I18n.stc_models
+            : root.settings-active-panel == 2 ? I18n.stc_mcp
+            : root.settings-active-panel == 15 ? I18n.stc_skills
+            : root.settings-active-panel == 3 ? I18n.stc_agent
+            : root.settings-active-panel == 4 ? I18n.stc_pet
+            : root.settings-active-panel == 5 ? I18n.stc_cron
+            : root.settings-active-panel == 6 ? I18n.stc_memory
+            : root.settings-active-panel == 7 ? I18n.stc_channels
+            : root.settings-active-panel == 10 ? I18n.stc_archives
+            : root.settings-active-panel == 16 ? I18n.stc_data
+            : I18n.stc_general;
     }
     // Memory, usage and archive data are pulled on demand: the old expert page's
     // own tab strip is gone, so the active category is what selects the view.
@@ -1318,12 +1355,39 @@ export component MainWindow inherits Window {
         y: Theme.titlebar-height + (root.startup-banner-open ? 26px : 0px);
         width: parent.width;
         height: max(0px, parent.height - Theme.titlebar-height - (root.startup-banner-open ? 26px : 0px));
+        // 极窄窗顶部条（对齐安卓版）：抽屉入口、当前模型、新建线程。
+        // 桌面版把模型切换放在输入区动作行，窗口一窄动作行就整行退场，
+        // 模型条必须上移到这里，否则用户找不到模型。
+        if root.narrow : NarrowHeader {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: Theme.mobile-header-height;
+            z: 6;
+            model-name: root.selected-model-key != ""
+                ? root.selected-model-key
+                : root.selected-agent-model;
+            model-count: root.cloud-chat-active
+                ? root.cloud-thread-models.length
+                : root.model-catalogue-count;
+            model-saving: root.saving;
+            context-usage: root.context-usage;
+            context-known: root.context-known;
+            context-compacted: root.context-compacted;
+            open-drawer => {
+                root.sidebar-collapsed = false;
+                root.sidebar-peek = true;
+            }
+            open-model => { root.model-sheet-open = true; }
+            new-thread => { root.new-thread(); }
+        }
         // 主区整行：停靠时让出侧栏宽度，收起或窄窗浮层时铺满整行。
         // 侧栏不再作为这一行的布局子项，否则窄窗下它会把聊天列挤到不可用。
         chat_area := Rectangle {
             x: root.sidebar-shown && !root.sidebar-overlay ? root.sidebar-width + 6px : 0px;
+            y: root.narrow ? Theme.mobile-header-height : 0px;
             width: parent.width - self.x;
-            height: parent.height;
+            height: parent.height - self.y;
             clip: true;
             HorizontalLayout {
                 spacing: 0px;
@@ -1398,8 +1462,8 @@ export component MainWindow inherits Window {
                             input-band := VerticalLayout {
                                 width: parent.width;
                                 x: (parent.width - self.width) / 2;
-                                padding-left: 14px;
-                                padding-right: 14px;
+                                padding-left: root.narrow ? 10px : 14px;
+                                padding-right: root.narrow ? 10px : 14px;
                                 spacing: 0px;
                                 // 首次配置引导：本地聊天还没有任何真实模型。云端线程
                                 // 走自己的模型目录，不显示。用 visible 而不是 if，
@@ -1456,6 +1520,12 @@ export component MainWindow inherits Window {
                                     draft <=> root.draft; busy: root.command-pending || root.session-loading || root.creating-session || (root.chat-loading && !root.busy) || (root.cloud-chat-active && root.cloud-thread-busy);
                                     // 窄窗保留后台任务与子智能体计数，只收起 CPU/内存读数。
                                     compact-host-hud: root.width < Theme.host-hud-compact-width;
+                                    // 极窄窗换成安卓版的一行输入卡：加号与发送都在卡内，
+                                    // 动作行整行退场，模型选择交给顶部模型条。
+                                    compact: root.narrow;
+                                    show-host-hud: !root.narrow;
+                                    show-cli-action: !root.narrow;
+                                    editor-max-height: root.narrow ? min(160px, root.height * 0.3) : 200px;
                                 launch-cli => { root.launch-cli(); }
                                 send-key: root.runtime-send-key;
                                 context-usage: root.context-usage; context-known: root.context-known; context-counts: root.context-counts; context-compacted: root.context-compacted;
@@ -1469,7 +1539,7 @@ export component MainWindow inherits Window {
                                 model-key: root.selected-model-key;
                                 model-saving: root.saving;
                                 select-model(index, key) => { root.select-thread-model(key); }
-                                open-model-settings => { root.settings-open = true; root.settings-active-panel = 1; root.refresh-settings(); }
+                                open-model-settings => { root.settings-home = false; root.settings-open = true; root.settings-active-panel = 1; root.refresh-settings(); }
                                 branch-name: root.active-workspace-branch;
                                 host-cpu: root.host-cpu; host-memory: root.host-memory;
                                 host-net: root.host-net; host-disk: root.host-disk;
@@ -1681,6 +1751,9 @@ export component MainWindow inherits Window {
             drop-shadow-color: root.sidebar-overlay ? #00000038 : transparent;
             drop-shadow-blur: root.sidebar-overlay ? 18px : 0px;
             drop-shadow-offset-x: root.sidebar-overlay ? 4px : 0px;
+            // 极窄窗按安卓版抽屉排版：底部入口加版本号，行内动作常驻。
+            drawer: root.sidebar-overlay && root.narrow;
+            version: root.update-current-version;
             rows: root.sidebar-rows;
             active-thread-id: root.active-session-id;
             // Signed-in identity travels from the profile projection so the
@@ -1702,7 +1775,11 @@ export component MainWindow inherits Window {
             cloud-available: root.cloud-logged-in;
             local-workspace-count: root.workspaces.length;
             busy: root.creating-session || root.session-loading || root.chat-loading;
-            select-row(index) => { root.select-row(index); }
+            select-row(index) => {
+                // 抽屉里点线程就收抽屉：否则选中结果被浮层盖住，用户还得再点一次。
+                if root.sidebar-overlay { root.sidebar-peek = false; }
+                root.select-row(index);
+            }
             select-device(device) => { root.select-device(device); }
             new-cloud-thread => { root.cloud-new-thread(); }
             workspace-menu(workspace, action) => { root.workspace-menu(workspace, action); }
@@ -1739,7 +1816,13 @@ export component MainWindow inherits Window {
             toggle-selection(index) => { root.sidebar-toggle-selection(index); }
             select-all-threads => { root.sidebar-select-all(); }
             archive-selected => { root.sidebar-archive-selected(); }
-            open-settings => { root.settings-open = true; root.settings-active-panel = 0; root.refresh-settings(); }
+            open-settings => {
+                // 抽屉里的「设置」进入分组首页；宽窗仍落到常规分类。
+                if root.narrow { root.sidebar-peek = false; root.settings-home = true; }
+                else { root.settings-active-panel = 0; }
+                root.settings-open = true;
+                root.refresh-settings();
+            }
             // Working-directory region: model and actions live on the
             // window shell, the sidebar only forwards.
             file-rows: root.ws-file-rows;
@@ -1765,7 +1848,7 @@ export component MainWindow inherits Window {
             file-search-busy: root.ws-file-search-busy;
             file-search-active: root.ws-file-search-active;
             file-selected-count: root.ws-file-selected-count;
-            file-connect => { root.settings-open = true; root.settings-active-panel = 13; root.refresh-settings(); }
+            file-connect => { root.settings-home = false; root.settings-open = true; root.settings-active-panel = 13; root.refresh-settings(); }
             file-menu(index, action) => { root.ws-file-menu(index, action); }
             file-drag-begin(index) => { root.ws-file-drag-begin(index); }
             file-drag-hover(index) => { root.ws-file-drag-hover(index); }
@@ -1791,7 +1874,8 @@ export component MainWindow inherits Window {
         }
         // 收起后的恢复入口（对齐云端版）：侧栏整列退场后，聊天区拿到左上角，
         // 这颗常驻小按钮浮在那里；宽窗恢复停靠，窄窗则以浮层唤出。
-        if !root.sidebar-shown : Rectangle {
+        // 极窄窗不画它：顶部条已经常驻抽屉入口。
+        if !root.sidebar-shown && !root.narrow : Rectangle {
             x: 12px;
             y: 12px;
             z: 120;
@@ -1819,6 +1903,37 @@ export component MainWindow inherits Window {
                     root.sidebar-layout-changed();
                 }
             }
+        }
+    }
+
+    // 极窄窗模型面板（对齐安卓版）：从顶部模型条升起，盖住聊天区。
+    // 放在侧栏之后、标题栏之下，抽屉打开时不会和它抢层级。
+    if root.narrow && root.model-sheet-open : NarrowModelSheet {
+        x: 0px;
+        y: Theme.titlebar-height + (root.startup-banner-open ? 26px : 0px);
+        width: root.width;
+        height: max(0px, root.height - self.y);
+        z: 230;
+        models: root.cloud-chat-active ? root.cloud-thread-models : root.composer-models;
+        // 只传线程钉住的 key：空串表示「跟随默认模型」，面板据此把对勾落在
+        // 默认模型上；`selected-agent-model` 是展示名，不是 key，不能拿来做匹配。
+        current-key: root.selected-model-key;
+        context-usage: root.context-usage;
+        context-known: root.context-known;
+        context-counts: root.context-counts;
+        context-compacted: root.context-compacted;
+        cloud-ready: root.cloud-logged-in && !root.cloud-expired;
+        close => { root.model-sheet-open = false; }
+        select-model(index, key) => {
+            root.model-sheet-open = false;
+            root.select-thread-model(key);
+        }
+        open-settings => {
+            root.model-sheet-open = false;
+            root.settings-home = false;
+            root.settings-active-panel = 1;
+            root.settings-open = true;
+            root.refresh-settings();
         }
     }
 
@@ -1869,7 +1984,7 @@ export component MainWindow inherits Window {
         height: parent.height - Theme.titlebar-height;
         background: Theme.overlay;
         TouchArea {
-            clicked => { root.settings-open = false; }
+            clicked => { root.close-settings(); }
             // Wheel belongs to the overlay: a rejected wheel keeps travelling to the
             // siblings below and scrolled the page behind a scrim.
             scroll-event(event) => { return accept; }
@@ -1890,18 +2005,33 @@ export component MainWindow inherits Window {
             VerticalLayout {
                 spacing: 0px;
                 HorizontalLayout {
-                    height: 44px;
-                    padding-left: 16px; padding-right: 8px; spacing: 8px;
-                    Image { y: (parent.height - 18px) / 2; width: 18px; height: 18px; source: @image-url("../assets/icons/gear.svg"); colorize: Theme.muted; }
+                    height: root.narrow ? 48px : 44px;
+                    padding-left: root.narrow ? 8px : 16px;
+                    padding-right: 8px; spacing: root.narrow ? 4px : 8px;
+                    cross-axis-alignment: center;
+                    // 极窄窗（安卓版）：返回箭头先回分组首页，再退出设置。
+                    if root.narrow : Action {
+                        width: 34px; height: 34px; icon-size: 17px;
+                        icon: @image-url("../assets/icons/chevron-left.svg");
+                        label: I18n.traj_back;
+                        focus-ring: false;
+                        clicked => {
+                            if root.settings-home { root.close-settings(); }
+                            else { root.settings-home = true; }
+                        }
+                    }
+                    if !root.narrow : Image { width: 18px; height: 18px; source: @image-url("../assets/icons/gear.svg"); colorize: Theme.muted; }
                     Text {
                         height: parent.height;
-                        text: I18n.sidebar_settings;
-                        color: Theme.text; font-size: Theme.font-lg; font-weight: 600;
+                        text: root.narrow ? root.settings-title() : I18n.sidebar_settings;
+                        color: Theme.text;
+                        font-size: root.narrow ? Theme.font-md : Theme.font-lg;
+                        font-weight: 600;
                         vertical-alignment: center;
-                        horizontal-stretch: root.settings-compact ? 0 : 1;
+                        horizontal-stretch: root.settings-compact && !root.narrow ? 0 : 1;
                     }
-                    if root.settings-compact : Rectangle { horizontal-stretch: 1; }
-                    if root.settings-compact : ComboBox {
+                    if root.settings-compact && !root.narrow : Rectangle { horizontal-stretch: 1; }
+                    if root.settings-compact && !root.narrow : ComboBox {
                         width: min(168px, root.width * 0.42);
                         height: 32px;
                         model: [I18n.stc_general, I18n.st_tab_runtime, I18n.stc_account, I18n.stc_models,
@@ -1913,7 +2043,7 @@ export component MainWindow inherits Window {
                     Action {
                         width: 28px; height: 28px;
                         icon: @image-url("../assets/icons/xmark.svg");
-                        clicked => { root.settings-open = false; }
+                        clicked => { root.close-settings(); }
                     }
                 }
                 Rectangle { height: 1px; background: Theme.border; }
@@ -1921,6 +2051,12 @@ export component MainWindow inherits Window {
         horizontal-stretch: 1;
         vertical-stretch: 1;
         compact: root.settings-compact;
+        // 极窄窗：先分组首页；返回箭头或点分类在两者之间切换。
+        home: root.narrow && root.settings-home;
+        open-category(tab) => {
+            root.settings-home = false;
+            root.select-settings-category(tab);
+        }
         loading: root.settings-loading; saving: root.saving;
         status: root.status;
         settings-category-flags: root.settings-category-flags;

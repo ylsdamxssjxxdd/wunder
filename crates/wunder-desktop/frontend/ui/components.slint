@@ -17,6 +17,14 @@ export component Action inherits Rectangle {
     // Glyph size is per-instance: the composer tool row runs a size that fills
     // its 30px cell, while dense toolbars keep the compact default.
     in property <length> icon-size: 15px;
+    // Keyboard focus ring. Touch-like chrome (the phone header) turns it off:
+    // a mouse click there would otherwise leave an orange outline that reads
+    // as a selected state.
+    in property <bool> focus-ring: true;
+    // Hover tip. Phone-width chrome turns it off: clicking the drawer button
+    // opens a panel right under the pointer, and the tip would cover its first
+    // row for as long as the pointer rests there.
+    in property <bool> tooltip: true;
     // Overrides the derived glyph tint (rail/primary/danger stay white).
     in property <color> icon-color: root.rail || root.primary || root.danger ? white : Theme.muted;
     // Pulsing outline for live states (e.g. microphone capture). `pulse`
@@ -32,7 +40,7 @@ export component Action inherits Rectangle {
         : root.danger ? (root.enabled ? Theme.danger : Theme.danger.transparentize(0.6))
         : root.rail ? (root.selected || touch.has-hover ? #ffffff33 : transparent)
         : root.selected || touch.has-hover ? Theme.accent-soft : transparent;
-    border-width: focus.has-focus ? 1px : 0px;
+    border-width: root.focus-ring && focus.has-focus ? 1px : 0px;
     border-color: root.rail ? white : Theme.accent-ink;
     forward-focus: focus;
     accessible-role: button;
@@ -76,7 +84,7 @@ export component Action inherits Rectangle {
     }
     // Icon-only buttons explain themselves on hover; labelled buttons already
     // show their text.
-    if !root.show-label && root.label != "" : Tooltip { text: @markdown("\{root.label}"); }
+    if !root.show-label && root.tooltip && root.label != "" : Tooltip { text: @markdown("\{root.label}"); }
 }
 
 // Divider affordance for the collapsible side panes. The touch strip stays
