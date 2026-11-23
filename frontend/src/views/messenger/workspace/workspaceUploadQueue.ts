@@ -44,8 +44,11 @@ export type WorkspaceUploadQueueOptions = {
 };
 
 const UPLOAD_MAX_CONCURRENCY = 2;
-// 与单次拖放/选择的上限（200）对齐，否则整目录拖入时超出部分会被拒收。
-const UPLOAD_MAX_QUEUE = 200;
+/**
+ * 队列窗口：同时也是整目录分批投递的批大小。
+ * 调用方按这个窗口切分文件，队列始终保持有界。
+ */
+export const WORKSPACE_UPLOAD_WINDOW = 200;
 
 type InternalTask = WorkspaceUploadTask & {
   file: File;
@@ -56,7 +59,7 @@ let uploadTaskSeq = 0;
 
 export const createWorkspaceUploadQueue = (options: WorkspaceUploadQueueOptions = {}) => {
   const concurrency = Math.max(1, Math.min(UPLOAD_MAX_CONCURRENCY, Number(options.concurrency) || 2));
-  const maxQueue = Math.max(1, Number(options.maxQueue) || UPLOAD_MAX_QUEUE);
+  const maxQueue = Math.max(1, Number(options.maxQueue) || WORKSPACE_UPLOAD_WINDOW);
 
   const state = reactive({
     tasks: [] as WorkspaceUploadTask[]

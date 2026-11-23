@@ -1741,6 +1741,7 @@ pub(crate) fn apply_bridge_environment(
         "LD_LIBRARY_PATH",
         "WUNDER_BROWSER_BIN",
         "WUNDER_BROWSER_PYTHON",
+        "PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS",
     ] {
         if let Ok(value) = std::env::var(key) {
             command.env(key, value);

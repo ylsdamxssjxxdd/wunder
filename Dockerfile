@@ -233,6 +233,33 @@ RUN set -eux; \
 RUN python3 -m pip install --break-system-packages "mcp<2" \
   -i https://pypi.tuna.tsinghua.edu.cn/simple
 
+# 7-Zip (append-only): official static build, arch-aware; `7z` alias matches
+# the desktop supplement and the archive extractor's PATH lookup.
+ARG SEVEN_ZIP_VERSION=25.01
+RUN set -eux; \
+    arch="$(uname -m)"; \
+    case "$arch" in \
+      x86_64 | amd64) zarch=x64 ;; \
+      aarch64 | arm64) zarch=arm64 ;; \
+      *) printf 'unsupported arch: %s\n' "$arch" >&2; exit 1 ;; \
+    esac; \
+    apt-get update && apt-get install -y --no-install-recommends xz-utils zip unzip \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*; \
+    ver="$(printf '%s' "${SEVEN_ZIP_VERSION}" | tr -d '.')"; \
+    curl -fsSL --retry 3 --connect-timeout 20 -o /tmp/7z.tar.xz \
+      "https://www.7-zip.org/a/7z${ver}-linux-${zarch}.tar.xz"; \
+    tar -xJf /tmp/7z.tar.xz -C /tmp; \
+    install -m 0755 /tmp/7zzs /usr/local/bin/7zz; \
+    ln -sf 7zz /usr/local/bin/7z; \
+    rm -rf /tmp/7z.tar.xz /tmp/7zz /tmp/7zzs /tmp/readme.txt /tmp/History.txt /tmp/License.txt /tmp/MANUAL; \
+    7zz i >/dev/null
+
+# Common Python extras (append-only): pyecharts keeps chart output on par with
+# the desktop supplement; the rest cover tabular text, HDF5 data and ffmpeg.
+RUN python3 -m pip install --break-system-packages \
+    pyecharts==2.0.8 tabulate h5py ffmpeg-python \
+  -i https://pypi.tuna.tsinghua.edu.cn/simple
+
 WORKDIR /workspaces
 
 CMD ["/bin/bash"]

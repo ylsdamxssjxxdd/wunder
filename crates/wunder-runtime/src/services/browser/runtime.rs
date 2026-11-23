@@ -669,8 +669,8 @@ fn enrich_launch_error(raw: String, config: &EffectiveBrowserConfig) -> anyhow::
         "浏览器启动失败：未找到可用的浏览器程序。可选解决方式（任选其一）：\n\
          1. 在 wunder.yaml 中配置 browser.playwright.executable_path，直接指定浏览器可执行文件路径；\n\
          2. 或在 wunder.yaml 中配置 browser.playwright.channel 为 chrome 或 msedge，使用系统浏览器；\n\
-         3. 或导入包含浏览器的补充包（浏览器位于补充包根目录 opt/browser/ 下）；\n\
-         4. 或运行 playwright install chromium 安装 Playwright 默认浏览器。\n\
+         3. 或导入包含浏览器的补充包（浏览器位于补充包根目录 opt/browser/ 下，桌面版会自动探测，无需手动配置）；\n\
+         4. 或在支持的平台运行 playwright install chromium（Windows 7 不支持该构建，请优先使用补充包）。\n\
          本机浏览器探测结果：",
     );
     let mut any_found = false;

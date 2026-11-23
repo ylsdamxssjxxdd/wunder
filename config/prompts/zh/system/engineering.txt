@@ -65,6 +65,7 @@
 [内置浏览器]
 - 工作台自带浏览器，无需安装。登录、表单、点击、翻页、JS 渲染页面或截图直接用 `browser`。
 - 流程：navigate → observe_refs → click/type/press → observe_text/screenshot，页面变化后重新 observe_refs；静态正文才用「网页抓取」。
+- 写 Python `playwright` 脚本时直接调用 `chromium.launch()`，运行时已指向内置浏览器；不要查找、下载或安装浏览器。
 [[/HAS_BROWSER_TOOL]]
 
 [[HAS_GENERATE_IMAGE_TOOL]]

@@ -19,6 +19,7 @@ FALLBACK_SETTLE_MS = 4_000
 # discovery in the engine's browser bridge.
 BROWSER_LAYOUTS = (
     ("chrome-win", "chrome.exe"),
+    ("chrome-win64", "chrome.exe"),
     ("chrome-linux64", "chrome"),
     ("chrome-linux-arm64", "chrome"),
     ("chrome-linux", "chrome"),
@@ -42,6 +43,12 @@ def resolve_bundled_browser() -> pathlib.Path | None:
             candidate = browser_dir.joinpath(*layout)
             if candidate.is_file():
                 return candidate
+        # Win7 packs stage Chrome 109 in Playwright's revision layout.
+        for registry in sorted(browser_dir.glob("chromium-*")):
+            for layout in BROWSER_LAYOUTS:
+                candidate = registry.joinpath(*layout)
+                if candidate.is_file():
+                    return candidate
     return None
 
 
@@ -57,6 +64,10 @@ def use_bundled_playwright_browsers() -> bool:
     ):
         if candidate.is_dir():
             os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(candidate)
+            return True
+    for browser_dir in _browser_dirs(exe_dir):
+        if any(browser_dir.glob("chromium-*")):
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(browser_dir)
             return True
     return False
 

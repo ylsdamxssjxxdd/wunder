@@ -257,21 +257,71 @@ pub fn release_file_if_missing(target: &Path, bytes: &[u8]) -> Result<bool> {
 /// Publish a completely written staging inode at `target`.
 ///
 /// A hard link lets two competing publishers serialize on the destination path
-/// without either ever overwriting the other. Android's SELinux
-/// `untrusted_app` domain denies `link()` on app data (API 36), while rename
-/// stays permitted, so the mobile form publishes with rename instead; the
-/// single-activity app has no second process racing the same home directory.
+/// without either ever overwriting the other. Some filesystems cannot represent
+/// hard links at all: FAT32/exFAT and many network or shared-folder mounts
+/// return `ERROR_INVALID_FUNCTION` (Windows `os error 1`). Those volumes still
+/// support rename, so fall back to a pre-checked rename. The pair is not atomic,
+/// but competing publishers write identical immutable bytes for the same build
+/// and the release-manifest lock already serializes the bookkeeping; refusing to
+/// start on a portable FAT32 drive would be worse.
+///
+/// Android's SELinux `untrusted_app` domain denies `link()` on app data (API
+/// 36), while rename stays permitted, so the mobile form publishes with rename
+/// directly.
 #[cfg(not(target_os = "android"))]
 fn publish_staged(staging: &Path, target: &Path) -> std::io::Result<()> {
-    fs::hard_link(staging, target)
+    publish_staged_with(staging, target, |from, to| fs::hard_link(from, to))
 }
 
 #[cfg(target_os = "android")]
 fn publish_staged(staging: &Path, target: &Path) -> std::io::Result<()> {
-    if target.exists() {
-        return Err(std::io::ErrorKind::AlreadyExists.into());
+    publish_by_rename(staging, target)
+}
+
+#[cfg(not(target_os = "android"))]
+fn publish_staged_with(
+    staging: &Path,
+    target: &Path,
+    hard_link: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    match hard_link(staging, target) {
+        Ok(()) => Ok(()),
+        Err(error) if hard_links_unsupported(&error) => publish_by_rename(staging, target),
+        Err(error) => Err(error),
     }
-    fs::rename(staging, target)
+}
+
+/// Whether the filesystem refused the operation because it has no hard-link
+/// primitive, rather than because of a real path or permission problem.
+#[cfg(not(target_os = "android"))]
+fn hard_links_unsupported(error: &std::io::Error) -> bool {
+    if error.kind() == std::io::ErrorKind::Unsupported {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        // ERROR_INVALID_FUNCTION (FAT32/exFAT/UNC without hard links) and
+        // ERROR_NOT_SUPPORTED.
+        matches!(error.raw_os_error(), Some(1 | 50))
+    }
+    #[cfg(not(windows))]
+    {
+        // vfat/exfat return EPERM from link(2); some network/FUSE filesystems
+        // return EOPNOTSUPP.
+        matches!(error.raw_os_error(), Some(1 | 95))
+    }
+}
+
+fn publish_by_rename(staging: &Path, target: &Path) -> std::io::Result<()> {
+    // rename replaces an existing destination on every supported platform.
+    // Probe first so the create-if-absent contract is preserved for the normal
+    // single-publisher case; a competing publisher can only replace the file
+    // with identical bytes from the same build.
+    match fs::symlink_metadata(target) {
+        Ok(_) => Err(std::io::ErrorKind::AlreadyExists.into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => fs::rename(staging, target),
+        Err(error) => Err(error),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1033,6 +1083,72 @@ mod tests {
         assert!(release_file_if_missing(&file, b"first").unwrap());
         assert!(!release_file_if_missing(&file, b"second").unwrap());
         assert_eq!(fs::read(file).unwrap(), b"first");
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn unsupported_hard_link_falls_back_to_rename() {
+        let dir = tempdir().unwrap();
+        let staging = dir.path().join(".asset-test.tmp");
+        let target = dir.path().join("asset.txt");
+        fs::write(&staging, b"complete payload").unwrap();
+        publish_staged_with(&staging, &target, |_, _| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "filesystem has no hard links",
+            ))
+        })
+        .unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"complete payload");
+        assert!(!staging.exists());
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn unsupported_hard_link_fallback_keeps_existing_target() {
+        let dir = tempdir().unwrap();
+        let staging = dir.path().join(".asset-test.tmp");
+        let target = dir.path().join("asset.txt");
+        fs::write(&staging, b"new payload").unwrap();
+        fs::write(&target, b"user edit").unwrap();
+        let error = publish_staged_with(&staging, &target, |_, _| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "filesystem has no hard links",
+            ))
+        })
+        .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&target).unwrap(), b"user edit");
+        assert!(staging.exists());
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn other_hard_link_errors_are_not_hidden_by_the_fallback() {
+        let dir = tempdir().unwrap();
+        let staging = dir.path().join(".asset-test.tmp");
+        let target = dir.path().join("asset.txt");
+        fs::write(&staging, b"payload").unwrap();
+        let error = publish_staged_with(&staging, &target, |_, _| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "denied",
+            ))
+        })
+        .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(!target.exists());
+        assert!(staging.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_invalid_function_is_treated_as_missing_hard_links() {
+        for code in [1, 50] {
+            let error = std::io::Error::from_raw_os_error(code);
+            assert!(hard_links_unsupported(&error));
+        }
     }
 
     #[test]

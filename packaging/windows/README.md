@@ -178,9 +178,9 @@ wunder-win7-supplement.json
 
 ## 内置浏览器
 
-Win7 最高只支持到 Chrome 109（`109.0.5414.x`，最后一个支持 Windows 7 的 Chrome 版本）。补充包默认自动准备 Chrome 109 win32 浏览器，导入后桌面版的 `browser_*` 工具开箱可用。
+Win7 最高只支持到 Chrome 109（`109.0.5414.x`，最后一个支持 Windows 7 的 Chrome 版本）。补充包默认自动准备 Chrome 109 win32 浏览器，导入后桌面版的 `browser_*` 工具和普通 `playwright.chromium.launch()` 脚本都开箱可用。
 
-- 布局：浏览器解到补充包的 `opt/browser/`，默认要求存在 `opt/browser/chrome-win/chrome.exe`；`opt/browser/chrome.exe` 也是运行时认可的回退探测位置。若投喂的压缩包顶层只有一层包裹目录（如 `chrome-win/` 或 `chrome-win32/`），会保留其结构；若解开后找不到 `chrome-win/chrome.exe`，脚本会在解包结果中递归定位 `chrome.exe` 并重排到 `chrome-win/chrome.exe`，仍找不到则报错退出。ia32 档还会校验 `chrome.exe` 的 PE 架构必须是 32 位。
+- 布局：浏览器解到补充包的 `opt/browser/`，并使用 Playwright 1.40 的浏览器注册表布局 `opt/browser/chromium-1091/chrome-win/chrome.exe`（`chromium-1091` 由内置 Playwright 的 `browsers.json` 决定，构建脚本会校验 revision 与清单 `browser.expectedExe` 一致）；旧的 `opt/browser/chrome-win/chrome.exe` 仍是运行时回退探测位置。若投喂的压缩包顶层只有一层包裹目录（如 `chrome-win/` 或 `chrome-win32/`），脚本会保留其结构并重排到清单要求的注册表路径；若解开后找不到 `chrome.exe`，会在解包结果中递归定位并重排，仍找不到则报错退出。ia32 档还会校验 `chrome.exe` 的 PE 架构必须是 32 位。
 - 浏览器来源优先级：`-BrowserArchivePath` 显式路径、清单 `browser.archivePath`、仓库中已有的 Chrome 109 缓存；都找不到时，构建脚本自动下载清单中固定版本并校验 SHA-256，再用 7-Zip 解包。若本机没有 7-Zip，请安装 7-Zip 或显式传入已解开的浏览器目录。
 - 投喂方式（二选一）：
   - 命令行参数（优先级更高）：
@@ -193,7 +193,7 @@ Win7 最高只支持到 Chrome 109（`109.0.5414.x`，最后一个支持 Windows
   - `-BrowserArchivePath` 既接受 `.zip` 压缩包，也接受已解开的浏览器目录；`-SkipBrowser` 可跳过内置浏览器。
 - 获取途径：Chrome 官方旧版离线安装包（win32 的 109.0.5414.x）或可信镜像；解出安装包内的 `chrome.7z`/`chrome-win` 目录即可投喂。浏览器二进制是否允许再分发由投喂者自行确认，本仓库不替使用者做合规结论。
 - CI 构建：`.github/workflows/desktop-supplements.yml` 的 build-win7-ia32 已默认投喂 Chromium 109.0.5414.120 win32（Hibbiki/chromium-win32 发布页 `v109.0.5414.120-r1070088` 的 `mini_installer.sync.exe`，pin 死 URL 并强制 SHA256 校验，浏览器 pin 以字面量并入 win7 缓存键，变更即触发重建）；本地默认构建也使用同一份清单 URL/SHA-256 自动准备浏览器。
-- 运行时如何被发现：在桌面版设置中导入补充包后，运行时会自动探测 `WUNDER_HOME/opt/browser/chrome-win/chrome.exe`（回退 `opt/browser/chrome.exe`），`browser_*` 工具直接使用，无需手工修改 `wunder.yaml`。
+- 运行时如何被发现：在桌面版设置中导入补充包后，运行时会自动把 `PLAYWRIGHT_BROWSERS_PATH` 指向 `WUNDER_HOME/opt/browser`（旧包则探测 `opt/browser/chrome-win/chrome.exe`，回退 `opt/browser/chrome.exe`），并把浏览器路径发布为 `WUNDER_BROWSER_BIN`；`browser_*` 工具、技能脚本和普通 Playwright 脚本都直接使用，无需手工修改 `wunder.yaml`。
 
 ## 使用方式
 
@@ -218,6 +218,7 @@ Win7 最高只支持到 Chrome 109（`109.0.5414.x`，最后一个支持 Windows
 - 将共享 home 下的 `opt/python`、`opt/python/Scripts`、`opt/git/cmd`、`opt/git/bin`、`opt/bash/bin`、`opt/rg`、`opt/rg/bin`、`opt/ffmpeg/bin`、`opt/7zip`、`opt/powershell` 接入 `PATH`，重复导入不会重复累加
 - 把 `opt/python/Lib/site-packages/playwright/driver`（Playwright 自带的 `node.exe`，也是补充包里唯一的 Node）一并接入 `PATH`，`.js`/`.ts` 校验、技能脚本里的裸 `node` 才能解析到
 - 把 `opt/powershell/pwsh.exe` 的绝对路径发布为 `WUNDER_POWERSHELL_EXE`，执行命令工具探测成功后即以它为默认 shell
+- 把补充包浏览器路径发布为 `WUNDER_BROWSER_BIN`，并在未显式配置时把 `PLAYWRIGHT_BROWSERS_PATH` 指向补充包浏览器注册表根（Windows 7 同时跳过 Playwright 的 x64 宿主依赖检查），避免脚本再去查找或安装浏览器
 
 这样桥接层与智能体工具调用就能优先命中内置 Python / Git / rg / PowerShell。
 

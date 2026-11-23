@@ -80,23 +80,24 @@ pub fn probe_failed_launch_executable(browsers_path: Option<&str>) -> Option<Pat
 
 /// Every location the launch fallback knows about, for failure guidance.
 pub fn collect_browser_candidates(browsers_path: Option<&str>) -> Vec<BrowserCandidate> {
-    let mut candidates: Vec<BrowserCandidate> = playwright_chromium_executables(browsers_path)
+    let mut candidates: Vec<BrowserCandidate> = supplement_roots()
         .into_iter()
+        .flat_map(|root| supplement_browser_candidates(&root))
         .map(|path| BrowserCandidate {
-            source: "Playwright 默认 Chromium",
+            source: "补充包内置浏览器",
             exists: path.is_file(),
             path,
         })
         .collect();
-    candidates.extend(supplement_roots().into_iter().flat_map(|root| {
-        supplement_browser_candidates(&root)
+    candidates.extend(
+        playwright_chromium_executables(browsers_path)
             .into_iter()
             .map(|path| BrowserCandidate {
-                source: "补充包内置浏览器",
+                source: "Playwright 默认 Chromium",
                 exists: path.is_file(),
                 path,
-            })
-    }));
+            }),
+    );
     candidates.extend(
         system_browsers()
             .into_iter()
@@ -106,19 +107,39 @@ pub fn collect_browser_candidates(browsers_path: Option<&str>) -> Vec<BrowserCan
                 path,
             }),
     );
+    // The supplement registry layout may also be the active Playwright root;
+    // report it once, under the supplement label.
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|candidate| seen.insert(candidate.path.clone()));
     candidates
 }
 
 fn supplement_browser_candidates(root: &Path) -> Vec<PathBuf> {
-    vec![
-        root.join("opt/browser/chrome-win/chrome.exe"),
-        root.join("opt/browser/chrome-win64/chrome.exe"),
-        root.join("opt/browser/chrome-linux/chrome"),
-        root.join("opt/browser/chrome-linux64/chrome"),
-        root.join("opt/browser/chrome-linux-arm64/chrome"),
-        root.join("opt/browser/chrome-linux/chrome"),
-        root.join("opt/browser/chrome.exe"),
-    ]
+    const LAYOUTS: &[&str] = &[
+        "chrome-win/chrome.exe",
+        "chrome-win64/chrome.exe",
+        "chrome-linux64/chrome",
+        "chrome-linux-arm64/chrome",
+        "chrome-linux/chrome",
+        "chrome.exe",
+    ];
+    let browser_root = root.join("opt/browser");
+    let mut candidates = Vec::new();
+    // A Win7 pack stages Chrome 109 at the Playwright revision path so plain
+    // chromium.launch() resolves it without an explicit executable_path.
+    if let Ok(entries) = std::fs::read_dir(&browser_root) {
+        let mut dirs: Vec<PathBuf> = entries
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("chromium-"))
+            .map(|entry| entry.path())
+            .collect();
+        dirs.sort();
+        for dir in dirs {
+            candidates.extend(LAYOUTS.iter().map(|layout| dir.join(layout)));
+        }
+    }
+    candidates.extend(LAYOUTS.iter().map(|layout| browser_root.join(layout)));
+    candidates
 }
 
 /// Executable candidates of every `chromium-*` build under the Playwright
@@ -349,6 +370,21 @@ mod tests {
             &|_| false,
         );
         assert_eq!(selected, None);
+    }
+
+    #[test]
+    fn supplement_playwright_registry_layout_is_recognized() {
+        // A Win7 pack stages Chrome at the revision path Playwright resolves,
+        // so the probe must treat it like any other supplement browser.
+        let root = tempfile::tempdir().unwrap();
+        let supplement = root.path().join("supplement");
+        let exe = supplement.join("opt/browser/chromium-1091/chrome-win/chrome.exe");
+        touch(&exe);
+        let selected =
+            select_fallback_executable(&[], std::slice::from_ref(&supplement), &[], &|path| {
+                path.is_file()
+            });
+        assert_eq!(selected, Some(exe));
     }
 
     #[test]

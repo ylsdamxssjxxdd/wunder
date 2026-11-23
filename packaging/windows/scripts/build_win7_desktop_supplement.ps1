@@ -719,8 +719,9 @@ function Expand-GzipFile {
 function Install-BundledBrowser {
   # Stages a hand-prepared browser payload (.zip or directory) into the given
   # destination (opt/browser) and normalizes the layout so $ExpectedExe (by
-  # default chrome-win/chrome.exe) exists. The runtime probes
-  # opt/browser/<expectedExe> first and opt/browser/chrome.exe as fallback.
+  # default chromium-<revision>/chrome-win/chrome.exe) exists. The registry
+  # layout lets both the desktop probe and a plain playwright.chromium.launch()
+  # resolve the bundled browser; opt/browser/chrome.exe stays a fallback.
   param(
     [string]$Source,
     [string]$Destination,
@@ -1085,6 +1086,22 @@ if (-not (Test-Path -LiteralPath $playwrightDriverNode)) {
 }
 Assert-PeMachine -Path $playwrightDriverNode -Arch $Arch
 
+# Chrome 109 is staged in Playwright's browser-registry layout, so the directory
+# name has to match the revision the pinned driver resolves. A Playwright bump
+# that changes the revision must be reviewed together with the Chrome 109
+# pairing instead of silently shipping a path the driver never looks at.
+$playwrightBrowsersJson = Join-Path $pythonRoot 'Lib\site-packages\playwright\driver\package\browsers.json'
+if (-not (Test-Path -LiteralPath $playwrightBrowsersJson)) {
+  Fail "Playwright browsers.json missing: $playwrightBrowsersJson"
+}
+$playwrightBrowsers = @((Get-Content -LiteralPath $playwrightBrowsersJson -Raw -Encoding UTF8 | ConvertFrom-Json).browsers)
+$playwrightChromium = @($playwrightBrowsers | Where-Object { [string]$_.name -eq 'chromium' } | Select-Object -First 1)[0]
+$playwrightChromiumRevision = [string]$playwrightChromium.revision
+if ([string]::IsNullOrWhiteSpace($playwrightChromiumRevision)) {
+  Fail "Playwright browsers.json has no chromium revision: $playwrightBrowsersJson"
+}
+$playwrightBrowserExeRel = "chromium-$playwrightChromiumRevision/chrome-win/chrome.exe"
+
 # ---------------------------------------------------------------------------
 # Playwright browsers (manifest-driven; off for the Win7 pack)
 # ---------------------------------------------------------------------------
@@ -1359,6 +1376,9 @@ $browserEnabled = [bool](Get-PropertyValue -Object $browserMeta -Name 'enabled' 
 $browserVersion = [string](Get-PropertyValue -Object $browserMeta -Name 'version' -Default '')
 $browserExeRel = [string](Get-PropertyValue -Object $browserMeta -Name 'expectedExe' -Default 'chrome-win/chrome.exe')
 $browserDestRel = [string](Get-PropertyValue -Object $browserMeta -Name 'dest' -Default 'opt\browser')
+if ($browserEnabled -and $browserExeRel -ne $playwrightBrowserExeRel) {
+  Fail "browser.expectedExe must be '$playwrightBrowserExeRel' so the pinned Playwright driver resolves the bundled browser (got '$browserExeRel')"
+}
 $browserBundled = $false
 $browserSourceLeaf = ''
 if ($browserEnabled) {
@@ -1440,7 +1460,7 @@ foreach ($mod in $validate) {
 # ---------------------------------------------------------------------------
 # Metadata + archive
 # ---------------------------------------------------------------------------
-$browserNote = if ($browserBundled) { "bundled Chrome $browserVersion at opt/browser/$browserExeRel (win32); the browser_* tools detect it automatically" } elseif ($browserInstalled) { 'Playwright Chromium in opt/python/ms-playwright' } else { 'not bundled; the browser_* tools reuse a locally installed browser' }
+$browserNote = if ($browserBundled) { "bundled Chrome $browserVersion at opt/browser/$browserExeRel (win32, Playwright registry layout); the browser_* tools and plain playwright.chromium.launch() resolve it automatically" } elseif ($browserInstalled) { 'Playwright Chromium in opt/python/ms-playwright' } else { 'not bundled; the browser_* tools reuse a locally installed browser' }
 $readmeText = @'
 Wunder Desktop Windows supplement (__ARCH__, profile: __PROFILE__)
 

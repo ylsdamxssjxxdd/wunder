@@ -452,9 +452,8 @@ async fn workspace_upload(
                     .text()
                     .await
                     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-                if !value.trim().is_empty() {
-                    relative_paths.push(value.trim().to_string());
-                }
+                // 空值也占一个位置：否则后面文件的下标会前移，路径与文件错配。
+                relative_paths.push(value.trim().to_string());
             }
             "files" => {
                 let filename = field.file_name().unwrap_or("upload").to_string();
@@ -529,7 +528,9 @@ async fn workspace_upload(
     for (index, file) in pending_files.iter().enumerate() {
         let raw_path = relative_paths
             .get(index)
-            .cloned()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string())
             .unwrap_or_else(|| file.filename.clone());
         let normalized = raw_path.replace('\\', "/").trim().to_string();
         let normalized = normalized.trim_start_matches('/').to_string();

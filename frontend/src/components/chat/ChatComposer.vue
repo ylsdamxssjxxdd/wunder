@@ -309,7 +309,7 @@ import ContextUsageIcon from '@/components/chat/ContextUsageIcon.vue';
 import ModelPickerPopover from '@/components/chat/ModelPickerPopover.vue';
 
 import { processChatMediaAttachment, convertChatAttachment } from '@/api/chat';
-import { uploadWunderWorkspace } from '@/api/workspace';
+import { createWunderWorkspaceDir, uploadWunderWorkspace } from '@/api/workspace';
 import {
   clearComposerDraftState,
   readComposerDraftState,
@@ -327,6 +327,13 @@ import { scheduleChatQueueRefresh } from '@/stores/chatQueueState';
 import { useChatStore } from '@/stores/chat';
 import { chatDebugLog } from '@/utils/chatDebug';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
+import {
+  collectWorkspaceDropTree,
+  resolveEmptyDropDirectories,
+  type WorkspaceDroppedFile,
+  type WorkspaceDropEntry,
+  type WorkspaceDroppedTree
+} from '@/utils/workspaceDrop';
 import { normalizeWorkspacePath } from '@/utils/workspaceTreeCache';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { clearWorkspaceDragPaths, hasWorkspaceDragPaths, readWorkspaceDragPaths } from '@/components/chat/workspaceDrag';
@@ -540,30 +547,6 @@ type ProcessedMediaResponse = {
   attachments?: ProcessedMediaAttachment[];
 };
 
-type DirectoryReaderLike = {
-  readEntries: (
-    successCallback: (entries: FileSystemEntryLike[]) => void,
-    errorCallback?: (reason: DOMException) => void
-  ) => void;
-};
-
-type FileSystemEntryLike = {
-  isFile?: boolean;
-  isDirectory?: boolean;
-  name?: string;
-  file?: (successCallback: (file: File) => void, errorCallback?: (reason: DOMException) => void) => void;
-  createReader?: () => DirectoryReaderLike;
-};
-
-type DataTransferItemLike = DataTransferItem & {
-  webkitGetAsEntry?: () => FileSystemEntryLike | null;
-};
-
-type WorkspaceDroppedFile = {
-  file: File;
-  relativePath: string;
-};
-
 type ApprovalModeOption = {
   value: string;
   label: string;
@@ -580,7 +563,6 @@ type SlashCommandDefinition = {
 };
 // 1-8 rows of 14px text at 1.45 line-height, then the textarea scrolls internally.
 const INPUT_MAX_HEIGHT = 168;
-const MAX_WORKSPACE_UPLOAD_BYTES = 1024 * 1024 * 1024;
 const resolveDraftKey = (): string => String(props.draftKey || '').trim();
 const resolveKeyboardKeyCode = (event: KeyboardEvent): number =>
   Number(
@@ -818,22 +800,6 @@ const buildAttachmentId = () => `${Date.now()}_${Math.random().toString(16).slic
 
 const resolveUploadError = (error, fallback) =>
   error?.response?.data?.detail || error?.message || fallback;
-
-const formatBytes = (value: unknown): string => {
-  const bytes = Number(value);
-  if (!Number.isFinite(bytes) || bytes <= 0) {
-    return '0 B';
-  }
-  const units = ['B', 'KB', 'MB', 'GB'];
-  let size = bytes;
-  let unitIndex = 0;
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024;
-    unitIndex += 1;
-  }
-  const digits = size >= 10 || unitIndex === 0 ? 0 : 1;
-  return `${size.toFixed(digits)} ${units[unitIndex]}`;
-};
 
 const resolveFileExtension = (filename) => {
   const parts = String(filename || '').trim().split('.');
@@ -1712,108 +1678,117 @@ const appendWorkspacePathsToComposer = (paths: string[]) => {
   appendTextToComposer(normalized.join('\n'));
 };
 
-const readDirectoryEntries = (reader: DirectoryReaderLike): Promise<FileSystemEntryLike[]> =>
-  new Promise((resolve) => {
-    const entries: FileSystemEntryLike[] = [];
-    const readBatch = () => {
-      reader.readEntries(
-        (batch: FileSystemEntryLike[]) => {
-          if (!batch.length) {
-            resolve(entries);
-            return;
-          }
-          entries.push(...batch);
-          readBatch();
-        },
-        () => resolve(entries)
-      );
-    };
-    readBatch();
-  });
+const UPLOAD_REQUEST_MAX_FILES = 100;
+const UPLOAD_REQUEST_MAX_BYTES = 200 * 1024 * 1024;
 
-const walkDroppedEntry = async (
-  entry: FileSystemEntryLike,
-  prefix: string
-): Promise<WorkspaceDroppedFile[]> => {
-  if (!entry) return [];
-  if (entry.isFile) {
-    const file = await new Promise<File | null>((resolve) => {
-      entry.file?.((target) => resolve(target), () => resolve(null));
-    });
-    if (!file) return [];
-    return [{ file, relativePath: `${prefix}${file.name}` }];
-  }
-  if (entry.isDirectory) {
-    const reader = entry.createReader?.();
-    if (!reader) return [];
-    const nextPrefix = `${prefix}${entry.name || ''}/`;
-    const children = await readDirectoryEntries(reader);
-    const nested = await Promise.all(children.map((child) => walkDroppedEntry(child, nextPrefix)));
-    return nested.flat();
-  }
-  return [];
-};
-
-const collectDroppedWorkspaceFiles = async (
+const collectDroppedWorkspaceTree = async (
   dataTransfer: DataTransfer | null | undefined
-): Promise<WorkspaceDroppedFile[]> => {
-  const items = Array.from(dataTransfer?.items || []) as DataTransferItemLike[];
-  if (items.length) {
-    const batches = await Promise.all(
-      items.map((item) => {
-        const entry = item.webkitGetAsEntry?.();
-        if (entry) {
-          return walkDroppedEntry(entry, '');
-        }
-        const file = item.getAsFile();
-        return file ? [{ file, relativePath: file.name || 'upload' }] : [];
-      })
-    );
-    return batches.flat();
+): Promise<WorkspaceDroppedTree> => {
+  const items = Array.from(dataTransfer?.items || []);
+  const entries: WorkspaceDropEntry[] = [];
+  const flatFiles: WorkspaceDroppedFile[] = [];
+  items.forEach((item) => {
+    const entry = typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null;
+    if (entry) {
+      entries.push(entry as unknown as WorkspaceDropEntry);
+      return;
+    }
+    const file = item.getAsFile();
+    if (file) flatFiles.push({ file, relativePath: file.name || 'upload' });
+  });
+  if (entries.length) {
+    const tree = await collectWorkspaceDropTree(entries);
+    return { ...tree, files: [...tree.files, ...flatFiles] };
   }
-  return Array.from(dataTransfer?.files || []).map((file) => ({
-    file,
-    relativePath: file.webkitRelativePath || file.name || 'upload'
-  }));
+  const files = flatFiles.length
+    ? flatFiles
+    : Array.from(dataTransfer?.files || []).map((file) => ({
+        file,
+        relativePath: file.webkitRelativePath || file.name || 'upload'
+      }));
+  return { files, directories: [], unreadable: 0, depthSkipped: 0 };
 };
 
-const uploadDroppedFilesToWorkspace = async (items: WorkspaceDroppedFile[]): Promise<string[]> => {
-  const fileList = items.map((item) => item.file).filter(Boolean);
-  if (!fileList.length) return [];
-  const totalBytes = fileList.reduce((sum, file) => sum + (Number(file?.size) || 0), 0);
-  if (totalBytes > MAX_WORKSPACE_UPLOAD_BYTES) {
-    throw new Error(t('workspace.upload.tooLarge', { limit: formatBytes(MAX_WORKSPACE_UPLOAD_BYTES) }));
+const createEmptyWorkspaceDirectories = async (directories: string[]): Promise<number> => {
+  let failed = 0;
+  for (let index = 0; index < directories.length; index += 4) {
+    const batch = directories.slice(index, index + 4);
+    const results = await Promise.allSettled(
+      batch.map((directory) => createWunderWorkspaceDir({ path: normalizeWorkspacePath(directory) }))
+    );
+    failed += results.filter((result) => result.status === 'rejected').length;
   }
-  const formData = new FormData();
-  formData.append('path', resolveWorkspaceDropPath(''));
+  return failed;
+};
+
+/**
+ * 目录上传按「文件数 + 总字节」切分请求：单次请求不再受 1 GiB 限制，
+ * 大目录不会整批失败；分片全部结束后只发一次刷新事件。
+ */
+const uploadDroppedFilesToWorkspace = async (
+  items: WorkspaceDroppedFile[],
+  extraPaths: string[] = []
+): Promise<string[]> => {
+  const fileItems = items.filter((item) => Boolean(item?.file));
+  if (!fileItems.length) return [];
   const agentId = String(props.workspaceAgentId || '').trim();
   const containerId = resolveComposerWorkspaceContainerId();
-  if (agentId) {
-    formData.append('agent_id', agentId);
-  }
-  // No `container_id` field: the cloud workspace is a single per-user root.
-  fileList.forEach((file, index) => {
-    formData.append('files', file, file.name || 'upload');
-    formData.append('relative_paths', normalizeWorkspacePath(items[index]?.relativePath || file.name || 'upload'));
-  });
-  const response = await uploadWunderWorkspace(formData);
-  const uploadedPaths = resolveUploadedWorkspacePaths(response?.data);
-  const refreshDetail = {
-    reason: 'composer-drop-upload',
-    containerId,
-    paths: uploadedPaths,
-    treeVersion: response?.data?.tree_version,
-    tree_version: response?.data?.tree_version
+  const uploadedPaths: string[] = [];
+  let lastTreeVersion: unknown;
+  let batch: WorkspaceDroppedFile[] = [];
+  let batchBytes = 0;
+
+  const flushBatch = async () => {
+    if (!batch.length) return;
+    const formData = new FormData();
+    formData.append('path', resolveWorkspaceDropPath(''));
+    if (agentId) {
+      formData.append('agent_id', agentId);
+    }
+    // No `container_id` field: the cloud workspace is a single per-user root.
+    batch.forEach((item) => {
+      const file = item.file;
+      formData.append('files', file, file.name || 'upload');
+      formData.append('relative_paths', normalizeWorkspacePath(item.relativePath || file.name || 'upload'));
+    });
+    const response = await uploadWunderWorkspace(formData);
+    uploadedPaths.push(...resolveUploadedWorkspacePaths(response?.data));
+    lastTreeVersion = response?.data?.tree_version;
+    batch = [];
+    batchBytes = 0;
   };
-  emitWorkspaceRefresh(
-    agentId
-      ? {
-          ...refreshDetail,
-          agentId,
-          agent_id: agentId
-        }
-      : refreshDetail
-  );
+
+  try {
+    for (const item of fileItems) {
+      const size = Number(item.file.size) || 0;
+      if (batch.length && (batch.length >= UPLOAD_REQUEST_MAX_FILES || batchBytes + size > UPLOAD_REQUEST_MAX_BYTES)) {
+        await flushBatch();
+      }
+      batch.push(item);
+      batchBytes += size;
+    }
+    await flushBatch();
+  } finally {
+    // 分片中途失败时也要让已上传的部分出现在工作目录里。
+    if (uploadedPaths.length || extraPaths.length) {
+      const refreshDetail = {
+        reason: 'composer-drop-upload',
+        containerId,
+        paths: [...uploadedPaths, ...extraPaths],
+        treeVersion: lastTreeVersion,
+        tree_version: lastTreeVersion
+      };
+      emitWorkspaceRefresh(
+        agentId
+          ? {
+              ...refreshDetail,
+              agentId,
+              agent_id: agentId
+            }
+          : refreshDetail
+      );
+    }
+  }
   return uploadedPaths;
 };
 
@@ -1821,13 +1796,29 @@ const uploadDroppedFilesToWorkspace = async (items: WorkspaceDroppedFile[]): Pro
  * Shared entry for "upload into the workspace" from drag/drop and from the
  * "+" menu. Busy accounting keeps the send button disabled until it settles.
  */
-const ingestComposerFiles = async (items: WorkspaceDroppedFile[]) => {
-  const files = (Array.isArray(items) ? items : []).filter((item) => Boolean(item?.file));
-  if (!files.length) return;
+const ingestComposerFiles = async (tree: WorkspaceDroppedTree) => {
+  const files = (Array.isArray(tree?.files) ? tree.files : []).filter((item) => Boolean(item?.file));
+  const emptyDirectories = resolveEmptyDropDirectories(tree?.directories || [], files);
+  if (!files.length && !emptyDirectories.length) return;
   closeComposerPanels();
   workspaceDropBusy.value += 1;
   try {
-    const uploadedPaths = await uploadDroppedFilesToWorkspace(files);
+    if (emptyDirectories.length) {
+      const failed = await createEmptyWorkspaceDirectories(emptyDirectories);
+      if (failed > 0) {
+        ElMessage.warning(t('messenger.filesArea.uploadEmptyDirFailed', { count: failed }));
+      }
+    }
+    if (!files.length) {
+      emitWorkspaceRefresh({
+        reason: 'composer-drop-upload',
+        containerId: resolveComposerWorkspaceContainerId(),
+        paths: emptyDirectories
+      });
+      ElMessage.success(t('messenger.filesArea.uploadEmptyDirsDone'));
+      return;
+    }
+    const uploadedPaths = await uploadDroppedFilesToWorkspace(files, emptyDirectories);
     addWorkspaceFileReferences(uploadedPaths.length ? uploadedPaths : files.map(item => item.relativePath || item.file.name));
     ElMessage.success(t('chat.workspaceDrop.uploaded', { count: uploadedPaths.length || files.length }));
   } catch (error) {
@@ -1894,9 +1885,15 @@ const handleDrop = async (event) => {
     ElMessage.warning(chatBusyMessage.value);
     return;
   }
-  const droppedItems = await collectDroppedWorkspaceFiles(event.dataTransfer);
-  if (!droppedItems.length) return;
-  await ingestComposerFiles(droppedItems);
+  const droppedTree = await collectDroppedWorkspaceTree(event.dataTransfer);
+  if (!droppedTree.files.length && !droppedTree.directories.length) return;
+  if (droppedTree.depthSkipped > 0) {
+    ElMessage.warning(t('messenger.filesArea.uploadDepthSkipped', { count: droppedTree.depthSkipped }));
+  }
+  if (droppedTree.unreadable > 0) {
+    ElMessage.warning(t('messenger.filesArea.uploadUnreadable', { count: droppedTree.unreadable }));
+  }
+  await ingestComposerFiles(droppedTree);
 };
 
 const requestMediaProcessing = async (formData: FormData): Promise<ProcessedMediaResponse> => {

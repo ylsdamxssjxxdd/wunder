@@ -200,6 +200,77 @@ pub fn local_roots() -> Vec<PathBuf> {
     roots(&home, &app_dir, appimage)
 }
 
+/// Browser executable shipped in a supplement.
+///
+/// Win7 stages Chrome 109 inside the Playwright browser-registry layout
+/// (`opt/browser/chromium-<revision>/chrome-win/chrome.exe`) so a plain
+/// `playwright.chromium.launch()` resolves it; older packs keep the bare
+/// `opt/browser/chrome-win/chrome.exe` layout, which stays a fallback.
+pub fn bundled_browser_bin(roots: &[PathBuf]) -> Option<PathBuf> {
+    let layouts: &[&str] = if cfg!(windows) {
+        &[
+            "chrome-win/chrome.exe",
+            "chrome-win64/chrome.exe",
+            "chrome.exe",
+        ]
+    } else {
+        &[
+            "chrome-linux64/chrome",
+            "chrome-linux-arm64/chrome",
+            "chrome-linux/chrome",
+            "chrome",
+        ]
+    };
+    roots.iter().find_map(|root| {
+        let browser_root = root.join("opt/browser");
+        if let Some(path) = layouts
+            .iter()
+            .map(|layout| browser_root.join(layout))
+            .find(|path| path.is_file())
+        {
+            return Some(path);
+        }
+        registry_browser_dirs(&browser_root)
+            .into_iter()
+            .find_map(|dir| {
+                layouts
+                    .iter()
+                    .map(|layout| dir.join(layout))
+                    .find(|path| path.is_file())
+            })
+    })
+}
+
+/// Root directory Playwright's browser registry should resolve against: the
+/// Playwright install shipped with the supplement first, then an `opt/browser`
+/// tree that already uses the `chromium-<revision>` registry layout.
+pub fn playwright_browsers_root(roots: &[PathBuf]) -> Option<PathBuf> {
+    roots.iter().find_map(|root| {
+        let standard = root.join("opt/python/ms-playwright");
+        if standard.is_dir() {
+            return Some(standard);
+        }
+        let browser_root = root.join("opt/browser");
+        if registry_browser_dirs(&browser_root).is_empty() {
+            return None;
+        }
+        Some(browser_root)
+    })
+}
+
+fn registry_browser_dirs(browser_root: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(browser_root) else {
+        return Vec::new();
+    };
+    let mut dirs: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("chromium-"))
+        .map(|entry| entry.path())
+        .collect();
+    dirs.sort();
+    dirs
+}
+
 /// Register the complete local supplement toolchain for child processes.
 ///
 /// PATH is kept as the primary command interface, while explicit variables
@@ -214,6 +285,26 @@ pub fn configure_runtime_env(roots: &[PathBuf]) {
     // environment or Node refuses to start.
     if cfg!(windows) {
         std::env::set_var("NODE_SKIP_PLATFORM_CHECK", "1");
+    }
+    // Skills and ad-hoc Python scripts launch Playwright directly, and without
+    // this the driver only looks in its per-user cache, never at the browser
+    // shipped with the supplement. An explicit caller value always wins.
+    if let Some(browsers_root) = playwright_browsers_root(roots) {
+        if std::env::var_os("PLAYWRIGHT_BROWSERS_PATH").is_none() {
+            std::env::set_var("PLAYWRIGHT_BROWSERS_PATH", &browsers_root);
+        }
+        if cfg!(windows) && std::env::var_os("PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS").is_none()
+        {
+            // The Win7 pack registers Chrome 109 under a Playwright revision
+            // directory. That build predates the host-dependency gate run on
+            // x64 Windows, so skip it; a missing DLL still fails at launch.
+            std::env::set_var("PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS", "1");
+        }
+    }
+    if let Some(browser) = bundled_browser_bin(roots) {
+        if std::env::var_os("WUNDER_BROWSER_BIN").is_none() {
+            std::env::set_var("WUNDER_BROWSER_BIN", &browser);
+        }
     }
     let first_file = |candidates: &[&str]| -> Option<PathBuf> {
         roots.iter().find_map(|root| {
@@ -469,6 +560,43 @@ mod tests {
         let roots = roots(&home, &home, None);
         assert_eq!(find_tool(&roots, Tool::Bash), Some(staged));
         assert!(path_entries(&roots).contains(&home.join("opt/bash/bin")));
+    }
+
+    #[test]
+    fn playwright_registry_layout_resolves_the_bundled_browser() {
+        // Win7 stages Chrome 109 as a Playwright revision directory so a plain
+        // chromium.launch() finds it without any executable_path argument.
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("profile");
+        let exe = if cfg!(windows) {
+            "opt/browser/chromium-1091/chrome-win/chrome.exe"
+        } else {
+            "opt/browser/chromium-1091/chrome-linux64/chrome"
+        };
+        std::fs::create_dir_all(home.join(exe).parent().unwrap()).unwrap();
+        std::fs::write(home.join(exe), b"fixture").unwrap();
+        let roots = roots(&home, &home, None);
+        assert_eq!(bundled_browser_bin(&roots), Some(home.join(exe)));
+        assert_eq!(
+            playwright_browsers_root(&roots),
+            Some(home.join("opt/browser"))
+        );
+    }
+
+    #[test]
+    fn bare_supplement_browser_keeps_working_without_a_registry_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("profile");
+        let exe = if cfg!(windows) {
+            "opt/browser/chrome-win/chrome.exe"
+        } else {
+            "opt/browser/chrome-linux64/chrome"
+        };
+        std::fs::create_dir_all(home.join(exe).parent().unwrap()).unwrap();
+        std::fs::write(home.join(exe), b"fixture").unwrap();
+        let roots = roots(&home, &home, None);
+        assert_eq!(bundled_browser_bin(&roots), Some(home.join(exe)));
+        assert_eq!(playwright_browsers_root(&roots), None);
     }
 
     #[test]

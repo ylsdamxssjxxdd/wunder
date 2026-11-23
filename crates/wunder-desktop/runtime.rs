@@ -1563,32 +1563,14 @@ fn resolve_embedded_ffmpeg_bin(app_dir: &Path) -> Option<PathBuf> {
         })
 }
 
-/// Chromium ships in the supplement under `opt/browser/chrome-win/chrome.exe`;
-/// the browser tool enum has no Browser arm, so the roots are searched directly.
+/// Chromium ships in the supplement under `opt/browser`, either in the bare
+/// `chrome-win/` layout or in Playwright's `chromium-<revision>/` registry
+/// layout; the browser tool enum has no Browser arm, so roots are searched
+/// through the shared supplement helper.
 fn resolve_embedded_browser_bin(app_dir: &Path) -> Option<PathBuf> {
-    let names: &[&str] = if cfg!(windows) {
-        &[
-            "opt/browser/chrome-win/chrome.exe",
-            "opt/browser/chrome-win64/chrome.exe",
-            "opt/browser/chrome.exe",
-        ]
-    } else {
-        // amd64 supplements stage Chrome for Testing as chrome-linux64, arm64
-        // uses the Playwright archive layout chrome-linux.
-        &[
-            "opt/browser/chrome-linux64/chrome",
-            "opt/browser/chrome-linux/chrome",
-            "opt/browser/chrome",
-        ]
-    };
-    embedded_supplement_roots_for_env(app_dir)
-        .iter()
-        .find_map(|root| {
-            names
-                .iter()
-                .map(|name| root.join(name))
-                .find(|path| path.is_file())
-        })
+    wunder_server::local_bootstrap::supplement::bundled_browser_bin(
+        &embedded_supplement_roots_for_env(app_dir),
+    )
 }
 
 fn resolve_embedded_powershell_bin(app_dir: &Path) -> Option<PathBuf> {

@@ -279,8 +279,13 @@ import {
 } from './workspaceFileModel';
 import { useWorkspaceFileTree } from './workspaceFileTree';
 import { createWorkspaceDirectoryRefresh } from './workspaceDirectoryRefresh';
-import { createWorkspaceUploadQueue, type WorkspaceUploadTask } from './workspaceUploadQueue';
+import { createWorkspaceUploadQueue, WORKSPACE_UPLOAD_WINDOW, type WorkspaceUploadTask } from './workspaceUploadQueue';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
+import {
+  collectWorkspaceDropTree,
+  resolveEmptyDropDirectories,
+  type WorkspaceDropEntry
+} from '@/utils/workspaceDrop';
 import { WORKSPACE_DOCUMENT_TEXT_MAX_BYTES, loadWorkspaceDocumentPreview } from './workspaceDocumentPreview';
 
 // The heavy editors are loaded only when the user actually opens such a file.
@@ -294,7 +299,6 @@ const DrawioEditorDialog = defineAsyncComponent(
 const { t } = useI18n();
 
 /** Text/code editing is capped; larger files are download-only (plan §6.3). */
-const UPLOAD_MAX_FILES_PER_DROP = 200;
 const SEARCH_DEBOUNCE_MS = 250;
 const SEARCH_RESULT_LIMIT = 200;
 const METAFILE_EXTENSIONS = new Set(['wmf', 'emf']);
@@ -717,15 +721,33 @@ const enterRemoteWorkspace = async (): Promise<void> => {
 
 // ------------------------------------------------------------------ uploads
 
+type WorkspaceUploadItem = { file: File; relativePath?: string };
+type WorkspaceUploadWindow = { items: WorkspaceUploadItem[]; targetPath: string };
+
+/**
+ * 整目录上传不再按单次上限截断：遍历结果按队列窗口分批投递，
+ * 队列本身保持有界，后段文件不会被静默丢掉。
+ */
+const uploadWindows: WorkspaceUploadWindow[] = [];
+const uploadTotals = { done: 0 };
+
 const uploadQueue = createWorkspaceUploadQueue({
   concurrency: 2,
   onUploaded: (task) => {
+    uploadTotals.done += 1;
     void handleUploadFinished(task);
   },
   onDrained: () => {
-    const tasks = uploadQueue.tasks;
-    const failed = tasks.filter((task) => task.status === 'failed').length;
-    const done = tasks.filter((task) => task.status === 'done').length;
+    // 还有未投递的窗口：清掉已完成行，继续下一批，不提示完成。
+    if (uploadWindows.length) {
+      uploadQueue.clearSucceeded();
+      pumpUploadWindows();
+      return;
+    }
+    // 失败行会保留在列表里（可重试），这里按当前状态统计才不会被历史失败误导。
+    const failed = uploadQueue.tasks.filter((task) => task.status === 'failed').length;
+    const done = uploadTotals.done;
+    uploadTotals.done = 0;
     if (failed > 0) {
       // Failed rows stay visible so the user can retry them.
       ElMessage.error(t('messenger.filesArea.uploadFailedCount', { count: failed }));
@@ -738,6 +760,24 @@ const uploadQueue = createWorkspaceUploadQueue({
     }
   }
 });
+
+const pumpUploadWindows = () => {
+  while (uploadWindows.length) {
+    const window = uploadWindows[0];
+    let result = uploadQueue.enqueue(window.items, window.targetPath);
+    if (result.rejected > 0 && result.accepted === 0) {
+      // 队列里滞留的已完成/失败行占满了容量：清掉后重试，避免整批卡死。
+      uploadQueue.clearSettled();
+      result = uploadQueue.enqueue(window.items, window.targetPath);
+    }
+    if (result.rejected > 0) {
+      // 队列仍被在途任务占用，保留剩余文件，等队列清空后再投递。
+      window.items = window.items.slice(result.accepted);
+      return;
+    }
+    uploadWindows.shift();
+  }
+};
 // 整目录拖入可能一次排队上百个文件；侧栏只展示未完成项（外加最近完成项），
 // 避免上传条把文件树挤没，总数量仍由标题行展示。
 const UPLOAD_VISIBLE_TASKS = 12;
@@ -799,17 +839,23 @@ const resolveTopLevelUploadPath = (path: string, targetPath: string): string => 
   return head ? joinWorkspacePath(target, head) : path;
 };
 
-type WorkspaceUploadItem = { file: File; relativePath?: string };
-
 const enqueueFiles = (items: WorkspaceUploadItem[], targetPath: string) => {
   if (!items.length) return;
   // A new batch starts from a clean slate; finished rows from the last batch
   // would otherwise pile up in a 240px-wide column.
-  uploadQueue.clearSettled();
-  const result = uploadQueue.enqueue(items, targetPath);
-  if (result.rejected > 0) {
-    ElMessage.warning(t('messenger.filesArea.uploadQueueFull', { count: result.rejected }));
+  const idle = !uploadWindows.length
+    && !uploadQueue.tasks.some((task) => task.status === 'queued' || task.status === 'uploading');
+  if (idle) {
+    uploadQueue.clearSettled();
+    uploadTotals.done = 0;
   }
+  for (let index = 0; index < items.length; index += WORKSPACE_UPLOAD_WINDOW) {
+    uploadWindows.push({
+      items: items.slice(index, index + WORKSPACE_UPLOAD_WINDOW),
+      targetPath
+    });
+  }
+  pumpUploadWindows();
 };
 
 const openUploadPicker = () => {
@@ -824,7 +870,7 @@ const handleUploadInputChange = (event: Event) => {
   // new upload request instead of being ignored by the browser change event.
   if (input) input.value = '';
   enqueueFiles(
-    files.slice(0, UPLOAD_MAX_FILES_PER_DROP).map((file) => ({ file })),
+    files.map((file) => ({ file })),
     uploadTarget.value
   );
 };
@@ -865,24 +911,21 @@ const handleDrop = async (event: DragEvent) => {
   // 这里再兜一层：拖起的条目松手在面板空白处时，不能被当成文件落盘。
   if (hasWorkspaceDragPaths(transfer)) return;
   const collected: WorkspaceUploadItem[] = [];
-  let sawDirectory = false;
-
-  type DroppedEntry = {
-    name?: string;
-    isDirectory: boolean;
-    isFile: boolean;
-    file?: (callback: (file: File) => void) => void;
-    createReader?: () => { readEntries: (callback: (items: unknown[]) => void) => void };
-  };
-
   const entries = Array.from(transfer.items || [])
     .map((item) => (typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null))
-    .filter(Boolean) as unknown as DroppedEntry[];
+    .filter(Boolean) as unknown as WorkspaceDropEntry[];
+  let tree: Awaited<ReturnType<typeof collectWorkspaceDropTree>> | null = null;
 
   if (entries.length) {
-    await collectDroppedEntries(entries, collected, 0, '', () => {
-      sawDirectory = true;
-    });
+    // 完整展开目录树：不设文件数上限，深层与空目录都在清单里。
+    tree = await collectWorkspaceDropTree(entries);
+    collected.push(...tree.files);
+    if (tree.depthSkipped > 0) {
+      ElMessage.warning(t('messenger.filesArea.uploadDepthSkipped', { count: tree.depthSkipped }));
+    }
+    if (tree.unreadable > 0) {
+      ElMessage.warning(t('messenger.filesArea.uploadUnreadable', { count: tree.unreadable }));
+    }
   } else {
     // 没有 FileSystemEntry 通道时退回扁平文件列表，尽量保留浏览器给出的相对路径。
     Array.from(transfer.files || []).forEach((file) => {
@@ -893,73 +936,43 @@ const handleDrop = async (event: DragEvent) => {
     });
   }
 
-  if (!collected.length && sawDirectory) {
+  // 只有文件没有空目录信息时创建不出空目录；这里按「无文件后代」补齐。
+  const sawDirectory = Boolean(tree?.directories.length);
+  const emptyDirectories = tree ? resolveEmptyDropDirectories(tree.directories, tree.files) : [];
+  if (emptyDirectories.length) {
+    const failed = await createEmptyDropDirectories(emptyDirectories, uploadTarget.value);
+    if (failed > 0) {
+      ElMessage.warning(t('messenger.filesArea.uploadEmptyDirFailed', { count: failed }));
+    }
+  }
+
+  if (!collected.length) {
+    if (!sawDirectory) return;
+    if (emptyDirectories.length) {
+      await directoryRefresh.request({ paths: [uploadTarget.value], forceTree: true });
+      ElMessage.success(t('messenger.filesArea.uploadEmptyDirsDone'));
+      return;
+    }
     ElMessage.info(t('messenger.filesArea.folderUnsupported'));
     return;
   }
-  enqueueFiles(collected.slice(0, UPLOAD_MAX_FILES_PER_DROP), uploadTarget.value);
+  enqueueFiles(collected, uploadTarget.value);
 };
 
 /**
- * 有界深度优先遍历拖入的目录树，并为每个文件带上包含目录名的相对路径。
- * 后端按 relative_paths 还原目录层级，拖入的目录因此不会只剩散开的文件。
+ * 创建拖入目录里没有任何文件后代的目录；create_dir_all 会补出祖先，
+ * 所以只给最深一层的空目录即可。并发 4 条，失败计数交给调用方提示。
  */
-const collectDroppedEntries = async (
-  entries: Array<{
-    name?: string;
-    isDirectory: boolean;
-    isFile: boolean;
-    file?: (callback: (file: File) => void) => void;
-    createReader?: () => { readEntries: (callback: (items: unknown[]) => void) => void };
-  }>,
-  output: WorkspaceUploadItem[],
-  depth: number,
-  prefix: string,
-  markDirectory: () => void
-): Promise<void> => {
-  if (depth > 6 || output.length >= UPLOAD_MAX_FILES_PER_DROP) return;
-  for (const entry of entries) {
-    if (output.length >= UPLOAD_MAX_FILES_PER_DROP) return;
-    const name = String(entry.name || '');
-    if (entry.isFile && entry.file) {
-      const file = await new Promise<File | null>((resolve) => {
-        entry.file?.((value) => resolve(value || null));
-      });
-      if (file) {
-        output.push({
-          file,
-          relativePath: prefix ? `${prefix}/${name || file.name}` : ''
-        });
-      }
-      continue;
-    }
-    if (entry.isDirectory) {
-      markDirectory();
-      if (!name) continue;
-      const nextPrefix = prefix ? `${prefix}/${name}` : name;
-      const reader = entry.createReader?.();
-      if (!reader) continue;
-      // readEntries 每次最多返回约 100 项，必须循环读到空，否则大目录会漏文件。
-      const children: unknown[] = [];
-      const entryBudget = UPLOAD_MAX_FILES_PER_DROP * 4;
-      while (children.length < entryBudget) {
-        const batch = await new Promise<unknown[]>((resolve) => {
-          reader.readEntries((items) => resolve(items || []));
-        });
-        if (!batch.length) break;
-        children.push(...batch);
-      }
-      if (children.length) {
-        await collectDroppedEntries(
-          children as Parameters<typeof collectDroppedEntries>[0],
-          output,
-          depth + 1,
-          nextPrefix,
-          markDirectory
-        );
-      }
-    }
+const createEmptyDropDirectories = async (directories: string[], targetPath: string): Promise<number> => {
+  let failed = 0;
+  for (let index = 0; index < directories.length; index += 4) {
+    const batch = directories.slice(index, index + 4);
+    const results = await Promise.allSettled(
+      batch.map((directory) => createWorkspaceDirectory(targetPath, directory))
+    );
+    failed += results.filter((result) => result.status === 'rejected').length;
   }
+  return failed;
 };
 
 // --------------------------------------------------------------- tree wiring

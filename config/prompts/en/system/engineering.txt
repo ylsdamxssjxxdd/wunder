@@ -68,6 +68,7 @@ Run commands only inside the working directory or other allowed paths.
 [Built-in browser]
 - A browser is built into the workspace; do not install one. Use `browser` for logins, forms, clicks, pagination, JavaScript pages, or screenshots.
 - Flow: `navigate` -> `observe_refs` -> `click`/`type`/`press` -> `observe_text`/`screenshot`; re-observe after page changes. Use `web_fetch` only for static pages.
+- Python `playwright` already resolves the bundled browser; call `chromium.launch()` directly and never search for, download, or install a browser.
 [[/HAS_BROWSER_TOOL]]
 
 [[HAS_GENERATE_IMAGE_TOOL]]

@@ -43,6 +43,11 @@ from urllib.parse import quote, unquote, urlparse
 # x64 driver node with a 32-bit Node 16 build; Node 16 otherwise refuses to
 # start on Windows 7 unless this platform gate is skipped.
 os.environ.setdefault("NODE_SKIP_PLATFORM_CHECK", "1")
+# The Win7 pack registers Chrome 109 under the Playwright revision directory.
+# That build predates the host-dependency gate Playwright applies on x64
+# Windows, which would otherwise reject it before launch.
+if sys.platform == "win32":
+    os.environ.setdefault("PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS", "1")
 
 # A constant-time revision check precedes every ref action. Mutation observers
 # cover the document and open shadow roots without rescanning the DOM per click.
@@ -1029,7 +1034,11 @@ class BridgeSession:
             respond(
                 {
                     "success": False,
-                    "error": "playwright not installed. Run: pip install playwright && playwright install chromium",
+                    "error": (
+                        "playwright not installed in the active Python runtime. "
+                        "Use the bundled supplement/runtime image; do not pip install "
+                        "playwright or run playwright install for this deployment."
+                    ),
                 }
             )
             raise SystemExit(0)
@@ -3079,40 +3088,50 @@ def main():
     parser.add_argument("--allow-host", dest="allow_host", action="append", default=[])
     args = parser.parse_args()
 
-    # Bundled supplements install Google Chrome under opt/browser and
-    # Playwright browsers under
-    # <python_root>/ms-playwright. Prefer that bundled Chromium by default so
-    # browser tasks never depend on the user's own browser and still run
-    # offline. The Rust launcher normally supplies the bundled Chrome through
-    # --executable-path; this environment fallback covers direct bridge use.
-    # The interpreter lives either
-    # directly in <python_root> (Windows embeddable) or in <python_root>/bin
-    # (Linux python-build-standalone), so probe both layouts.
+    # Bundled supplements install the browser under opt/browser and Playwright
+    # browsers under <python_root>/ms-playwright. Prefer that bundled Chromium
+    # by default so browser tasks never depend on the user's own browser and
+    # still run offline. The Rust launcher normally supplies the bundled Chrome
+    # through --executable-path; this environment fallback covers direct bridge
+    # use. The interpreter lives either directly in <python_root> (Windows
+    # embeddable) or in <python_root>/bin (Linux python-build-standalone), so
+    # probe both layouts.
+    exe_dir = Path(sys.executable).resolve().parent
+    supplement_roots = (exe_dir.parent.parent, exe_dir.parent.parent.parent)
     if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
-        exe_dir = Path(sys.executable).resolve().parent
-        for bundled in (
+        playwright_dirs = [
             exe_dir / "ms-playwright",
             exe_dir.parent / "ms-playwright",
             exe_dir.parent.parent / "ms-playwright",
-        ):
-            if bundled.is_dir():
+        ]
+        for root in supplement_roots:
+            playwright_dirs.extend((root / "browser", root / "opt" / "browser"))
+        for bundled in playwright_dirs:
+            # The Win7 pack stages Chrome 109 as chromium-<revision>/ so the
+            # registry resolves it; a bare opt/browser tree is not a registry.
+            if bundled.is_dir() and any(bundled.glob("chromium-*")):
                 os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(bundled)
                 break
 
     if not os.environ.get("WUNDER_BROWSER_BIN"):
-        exe_dir = Path(sys.executable).resolve().parent
+        browser_layouts = (
+            "chrome-win/chrome.exe",
+            "chrome-win64/chrome.exe",
+            "chrome-linux64/chrome",
+            "chrome-linux-arm64/chrome",
+            "chrome-linux/chrome",
+            "chrome.exe",
+            "chrome",
+        )
         browser_candidates = []
-        for root in (exe_dir.parent.parent, exe_dir.parent.parent.parent):
-            browser_candidates.extend(
-                (
-                    root / "browser" / "chrome-linux64" / "chrome",
-                    root / "browser" / "chrome-linux-arm64" / "chrome",
-                    root / "browser" / "chrome-linux" / "chrome",
-                    root / "opt" / "browser" / "chrome-linux64" / "chrome",
-                    root / "opt" / "browser" / "chrome-linux-arm64" / "chrome",
-                    root / "opt" / "browser" / "chrome-linux" / "chrome",
-                )
-            )
+        for browser_dir in (
+            browser_dir
+            for root in supplement_roots
+            for browser_dir in (root / "browser", root / "opt" / "browser")
+        ):
+            for registry in sorted(browser_dir.glob("chromium-*")):
+                browser_candidates.extend(registry / layout for layout in browser_layouts)
+            browser_candidates.extend(browser_dir / layout for layout in browser_layouts)
         for bundled_chrome in browser_candidates:
             if bundled_chrome.is_file() and os.access(str(bundled_chrome), os.X_OK):
                 os.environ["WUNDER_BROWSER_BIN"] = str(bundled_chrome)

@@ -293,7 +293,7 @@ def playwright_chromium():
 
 def chrome_executable():
     """优先用补充包里的 Chrome；其次用 Playwright 自带 Chromium。"""
-    env = os.environ.get("WUNDER_CHROME_PATH", "").strip()
+    env = os.environ.get("WUNDER_CHROME_PATH", "").strip() or os.environ.get("WUNDER_BROWSER_BIN", "").strip()
     if env and Path(env).is_file():
         return Path(env)
     roots = []
