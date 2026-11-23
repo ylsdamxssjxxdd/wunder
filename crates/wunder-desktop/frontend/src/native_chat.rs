@@ -4616,6 +4616,42 @@ fn write_session_row(app: &MainWindow, session: &str, status: &str, phase: Phase
     write_session_row_settled(app, session, status, phase, None);
 }
 
+thread_local! {
+    /// 每条线程最后一次「已经通知过工作目录结算」的持久化结算时刻。
+    /// 观察者每次轮询都会把已结束那条线程的终态重新投影一遍，没有这道闸
+    /// 就会每轮都触发一次整棵工作目录树的重列。
+    static WORKDIR_SETTLE_FENCE: RefCell<std::collections::HashMap<String, f32>> =
+        RefCell::new(std::collections::HashMap::new());
+}
+
+/// Ask the working directory to settle once per real terminal.
+///
+/// A live transition carries no settle time of its own and is always news. A
+/// terminal read back from storage carries the turn's own timestamp, and the
+/// durable poll re-reports that same value every tick — those repeats must not
+/// re-list the tree.
+fn note_workdir_settle(app: &MainWindow, session: &str, phase: Phase, settled_at: Option<f32>) {
+    if !phase.terminal() {
+        WORKDIR_SETTLE_FENCE.with(|slot| slot.borrow_mut().remove(session));
+        return;
+    }
+    let Some(stamp) = settled_at else {
+        crate::workspace_files::note_execution_finished(app);
+        return;
+    };
+    let repeat = WORKDIR_SETTLE_FENCE.with(|slot| {
+        let mut settled = slot.borrow_mut();
+        if settled.get(session) == Some(&stamp) {
+            return true;
+        }
+        settled.insert(session.to_string(), stamp);
+        false
+    });
+    if !repeat {
+        crate::workspace_files::note_execution_finished(app);
+    }
+}
+
 /// Write one thread row. `settled_at` is the moment the turn actually ended:
 /// `None` means "this just happened here" (a live transition), while `Some`
 /// carries the settle time read back from storage. The distinction is what
@@ -4659,9 +4695,8 @@ fn write_session_row_settled(
     // completion path writes it here, so the working directory catches up on
     // the artifacts even when this window never pumped the turn's stream
     // (a goal round, background work ending, a thread opened afterwards).
-    if phase.terminal() {
-        crate::workspace_files::note_execution_finished(app);
-    }
+    // Repeated projections of the same stored terminal are fenced out.
+    note_workdir_settle(app, session, phase, settled_at);
 }
 
 /// Settled news is short-lived; the row's outcome is not. This timer expires

@@ -139,16 +139,22 @@ export component WorkspaceFilesPanel inherits Rectangle {
     callback connect();
     callback menu(int, int);
     callback drag-row(int);
-    callback drop(DropEvent);
+    // Explorer 拖入：落点由指针所在的行决定（-1 = 空白处/根目录）。面板里上一次
+    // 点中的文件夹不再决定落点，拖到哪一行就进哪一行所在的目录。
+    callback drop(DropEvent, int);
+    // 空白处按下或面板失去焦点：收回工作目录的焦点行。
+    callback clear-active();
     callback key-action(int);
     private property <bool> empty: !root.offline && !root.loading && !root.search-active
         && root.error == "" && root.rows.length == 0;
-    private property <bool> writeable: !root.read-only && !root.busy && (root.local || !root.offline);
+    private property <bool> writeable: !root.read-only && (root.local || !root.offline);
 
-    DropArea {
-        enabled: !root.resource-mode && !root.offline && !root.busy;
-        can-drop(event) => { return root.offline || root.busy ? DragAction.none : DragAction.copy; }
-        dropped(event) => { root.drop(event); return DragAction.copy; }
+    // 拖入只在离线/只读时拒绝。目录刷新或写操作进行中照常接收：落点在行上由行
+    // 自己的 DropArea 接管，其余算根目录。列表在刷新不该让拖入看起来「没反应」。
+    panel-drop := DropArea {
+        enabled: !root.resource-mode && !root.offline && !root.read-only;
+        can-drop(event) => { return root.offline || root.read-only ? DragAction.none : DragAction.copy; }
+        dropped(event) => { root.drop(event, -1); return DragAction.copy; }
         VerticalLayout {
             padding-left: SidebarMetrics.gutter; padding-right: SidebarMetrics.gutter;
             padding-top: 2px; padding-bottom: 6px;
@@ -237,6 +243,9 @@ export component WorkspaceFilesPanel inherits Rectangle {
                 refresh => { root.refresh(); }
                 keyboard := FocusScope {
                     enabled: !root.offline;
+                    // 焦点离开面板（点进输入区、设置等可聚焦控件）就收回焦点行，
+                    // 免得面板还在替上一次点中的文件夹接管键盘与新建位置。
+                    changed has-focus => { if !self.has-focus { root.clear-active(); } }
                     capture-key-pressed(event) => {
                         if event.text == Key.Escape && root.search-open {
                             root.search-query = ""; root.search-open = false; root.search-cancel();
@@ -310,14 +319,17 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                 background: row.path == root.active-path && !root.search-active && row.kind != 2 ? Theme.selected
                                     : row.selected ? Theme.accent-soft
                                     : root.dragging && row.path == root.drop-path ? Theme.accent-soft
+                                    : row-drop.has-drag ? Theme.accent-soft
                                     : row-touch.has-hover ? Theme.hover : transparent;
                                 // 拖拽落点描边：悬停目标一目了然（文件行不是容器，
                                 // 落到它上面高亮的是它所在目录，不会落在这里）。
-                                border-width: root.dragging && row.path == root.drop-path ? 1px : 0px;
+                                border-width: (root.dragging && row.path == root.drop-path) || row-drop.has-drag ? 1px : 0px;
                                 border-color: Theme.accent-ink;
                                 row-touch := TouchArea {
                                     mouse-cursor: pointer;
-                                    enabled: !root.busy && (row.kind != 2 || !row.loading);
+                                    // 目录刷新/写操作进行中也保持可点：面板不该因为一次
+                                    // 后台刷新就整块失去响应。
+                                    enabled: row.kind != 2 || !row.loading;
                                     accessible-role: button; accessible-label: row.name;
                                     accessible-action-default => { root.toggle(index); }
                                     property <length> press-x;
@@ -505,6 +517,14 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                         Tooltip { text: @markdown("\{row.path}  \{row.size-text}"); }
                                     }
                                 }
+                                // Explorer 拖入的行级落点：指针停在哪一行，文件就进
+                                // 哪一行所在的目录（文件行落到它的父目录）。落点因此
+                                // 跟着指针走，而不是跟着上一次点中的文件夹。
+                                row-drop := DropArea {
+                                    enabled: !root.resource-mode && !root.offline && !root.read-only;
+                                    can-drop(event) => { return root.offline || root.read-only ? DragAction.none : DragAction.copy; }
+                                    dropped(event) => { root.drop(event, index); return DragAction.copy; }
+                                }
                             }
                         }
                         // Flickable captures clicks on its unused viewport too.
@@ -548,11 +568,18 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                     y: row.depth * 28px;
                                     width: pin-stack.width;
                                     height: 28px;
-                                    background: pin-touch.has-hover ? Theme.hover : Theme.sidebar;
+                                    background: pin-drop.has-drag ? Theme.accent-soft
+                                        : pin-touch.has-hover ? Theme.hover : Theme.sidebar;
                                     pin-touch := TouchArea {
-                                        enabled: !root.busy;
                                         mouse-cursor: pointer;
                                         clicked => { root.toggle(index); }
+                                    }
+                                    // 钉住的文件夹同样是落点：它挡住的是列表顶端，
+                                    // 拖到这里应当进这个文件夹，而不是掉回根目录。
+                                    pin-drop := DropArea {
+                                        enabled: !root.resource-mode && !root.offline && !root.read-only;
+                                        can-drop(event) => { return root.offline || root.read-only ? DragAction.none : DragAction.copy; }
+                                        dropped(event) => { root.drop(event, index); return DragAction.copy; }
                                     }
                                     HorizontalLayout {
                                         padding-left: SidebarMetrics.row-padding + row.depth * 12px;

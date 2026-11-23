@@ -936,9 +936,13 @@ impl NativeDesktop {
             .skip(offset as usize)
             .take(LOCAL_PAGE)
             .map(|mut entry| {
-                entry.size = std::fs::metadata(dir.join(&entry.name))
-                    .map(|metadata| metadata.len())
-                    .unwrap_or(0);
+                // 目录不显示大小：少一次 stat（Windows 上每页就是两百次
+                // 重新解析路径 + 打开句柄，杀软在场时最贵的那一部分）。
+                if entry.kind != "dir" {
+                    entry.size = std::fs::metadata(dir.join(&entry.name))
+                        .map(|metadata| metadata.len())
+                        .unwrap_or(0);
+                }
                 entry
             })
             .collect();

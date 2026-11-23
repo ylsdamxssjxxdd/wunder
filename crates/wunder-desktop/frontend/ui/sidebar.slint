@@ -506,9 +506,10 @@ export component Sidebar inherits Rectangle {
     in property <bool> file-drop-root;
     // Right-click menu action (row index, action code) and the OS drop
     // upload. The shell owns the handlers; the region and the shell share
-    // the DropEvent type.
+    // the DropEvent type. The drop carries its landing row (-1 = blank/root).
     callback file-menu(int, int);
-    callback file-drop(DropEvent);
+    callback file-drop(DropEvent, int);
+    callback file-clear-active();
 
     VerticalLayout {
         spacing: 0px;
@@ -952,7 +953,8 @@ export component Sidebar inherits Rectangle {
             drag-begin(index) => { root.file-drag-begin(index); }
             drag-hover(index) => { root.file-drag-hover(index); }
             drag-drop(index) => { root.file-drag-drop(index); }
-            drop(event) => { root.file-drop(event); }
+            drop(event, index) => { root.file-drop(event, index); }
+            clear-active => { root.file-clear-active(); }
             selection-action(action) => { root.file-selection-action(action); }
             search-edit(text) => { root.file-search-edit(text); }
             search-accept(text) => { root.file-search-accept(text); }

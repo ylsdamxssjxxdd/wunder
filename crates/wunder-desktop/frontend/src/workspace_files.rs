@@ -7,6 +7,14 @@
 //! A locally bound workspace folder mirrors the same tree from the disk with
 //! the same menu (minus the cloud-only download/archive/clear trio) and
 //! executes its writes directly through the `workspace_local_*` façade.
+//!
+//! Two interaction rules keep the region responsive while a turn is running:
+//! a listing never takes the tree away (rows, menus and drops stay live, and a
+//! drop is queued rather than swallowed), and a user write refreshes only the
+//! directories it touched (`RefreshScope::Dirs`) instead of every open branch.
+//! An Explorer drop lands in the directory under the pointer — the hovered
+//! folder, the parent of a hovered file, or the root for blank space — so a
+//! folder clicked earlier never captures a later drag-in.
 use crate::{MainWindow, WorkspaceFileRow};
 use anyhow::Result;
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
@@ -104,7 +112,41 @@ struct Panel {
     /// Page cache keyed by directory path; the root lives under `""`.
     dirs: HashMap<String, DirState>,
     in_flight: u32,
-    refresh_pending: bool,
+    /// Refresh parked while the panel was busy; merged so a burst of writes
+    /// costs one listing pass instead of one per write.
+    pending: Option<RefreshScope>,
+}
+
+/// Which directories a refresh has to re-list. `All` is the explicit refresh
+/// and the post-execution settle (the agent may have written anywhere);
+/// `Dirs` is a user write, which can only have changed the directory it ran
+/// in — re-listing up to 12 open branches for one rename is pure latency.
+#[derive(Clone, Debug, PartialEq)]
+enum RefreshScope {
+    All,
+    Dirs(Vec<String>),
+}
+
+/// Fold a new request into the parked one: `All` dominates, directory sets
+/// union.
+fn merge_scope(pending: Option<RefreshScope>, scope: RefreshScope) -> RefreshScope {
+    match (pending, scope) {
+        (Some(RefreshScope::All), _) | (_, RefreshScope::All) => RefreshScope::All,
+        (Some(RefreshScope::Dirs(mut have)), RefreshScope::Dirs(extra)) => {
+            for path in extra {
+                if !have.contains(&path) {
+                    have.push(path);
+                }
+            }
+            RefreshScope::Dirs(have)
+        }
+        (None, scope) => scope,
+    }
+}
+
+fn defer_refresh(panel: &mut Panel, scope: RefreshScope) {
+    let pending = panel.pending.take();
+    panel.pending = Some(merge_scope(pending, scope));
 }
 
 thread_local! {
@@ -274,7 +316,7 @@ fn reflect_target(app: &MainWindow) {
         panel.dirs.clear();
         panel.model.set_vec(Vec::new());
         panel.in_flight = 0;
-        panel.refresh_pending = false;
+        panel.pending = None;
     });
     // An empty listing pins nothing; the panel derives the chain from rows.
     app.set_ws_file_active_path("".into());
@@ -328,7 +370,7 @@ fn with_panel<R>(run: impl FnOnce(&mut Panel) -> R) -> Option<R> {
             model: Rc::new(VecModel::default()),
             dirs: HashMap::new(),
             in_flight: 0,
-            refresh_pending: false,
+            pending: None,
         });
         Some(run(panel))
     })
@@ -477,7 +519,9 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let row = (index >= 0)
             .then(|| app.get_ws_file_rows().row_data(index as usize))
             .flatten();
-        if (app.get_ws_file_busy() || app.get_ws_prompt_open())
+        // 面板在刷新时也要能打开写操作菜单：一次后台列目录不该把整块区域
+        // 变成「点了没反应」。重命名/删除/新建只要求没有第二个对话框在等。
+        if app.get_ws_prompt_open()
             && matches!(
                 action,
                 MENU_RENAME | MENU_DELETE | MENU_NEW_DIR | MENU_NEW_FILE | MENU_CLEAR
@@ -661,19 +705,16 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         commit_drag_drop(&app, drop_api.clone(), index);
     });
 
-    // Drag-in: Explorer drops land inside the active target — text uploads
-    // into the selected cloud directory (the gesture approves
-    // the write), or a plain copy into the browsed local folder. A drop
-    // carrying nothing uploadable simply does nothing here.
+    // Drag-in: Explorer drops land in the directory under the pointer — the
+    // hovered folder itself, the parent of a hovered file, or the root for the
+    // blank area (index -1). Nothing is refused just because a refresh is in
+    // flight: the drop waits its turn like any other request.
     let weak = app.as_weak();
     let drop_api = api.clone();
-    app.on_ws_file_drop(move |event| {
+    app.on_ws_file_drop(move |event, index| {
         let Some(app) = weak.upgrade() else {
             return;
         };
-        if app.get_ws_file_busy() {
-            return;
-        }
         if is_cloud_target() && app.get_ws_file_offline() {
             return;
         }
@@ -685,14 +726,22 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             Err(_) => Vec::new(),
         };
         if paths.is_empty() {
-            app.set_status(if is_cloud_target() {
-                "落点没有可上传的文件（仅支持文本文件）".into()
-            } else {
-                "落点没有可复制的文件".into()
-            });
             return;
         }
-        start_transfer(&app, drop_api.clone(), paths);
+        let Some(directory) = drop_directory(&app, index) else {
+            return;
+        };
+        start_transfer(&app, drop_api.clone(), directory, paths);
+    });
+
+    // Blank click / focus loss: drop the row highlight so the tree stops
+    // claiming the folder the user last clicked.
+    let weak = app.as_weak();
+    app.on_ws_file_clear_active(move || {
+        let Some(app) = weak.upgrade() else {
+            return;
+        };
+        clear_active(&app);
     });
 
     // Files dropped on the composer become ordinary editable path references;
@@ -768,6 +817,12 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             app.set_ws_prompt_busy(true);
             let kind = op.kind;
             let path = op.path.clone();
+            // 本地写入只可能改动它所在的那个目录：重命名/删除列父目录（被改
+            // 名的目录缓存已经丢掉），新建列写入的目标目录。
+            let refresh_dir = match kind {
+                PromptKind::Rename | PromptKind::Delete => parent_cloud_dir(&path),
+                _ => path.clone(),
+            };
             let weak = app.as_weak();
             let local_api = prompt_api.clone();
             let refresh_api = prompt_api.clone();
@@ -801,7 +856,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                             close_prompt(&app);
                             PROMPT.with(|slot| *slot.borrow_mut() = None);
                             app.set_status(done_message(kind, &value).into());
-                            settle(&app, refresh_api);
+                            settle_dirs(&app, refresh_api, vec![refresh_dir]);
                         }
                         Err(error) => {
                             app.set_ws_prompt_busy(false);
@@ -967,15 +1022,19 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
 
 // ---------------------------------------------------------------- transfer
 
-/// One bounded copy/upload fan-out into the active directory — the drop
-/// gesture and the skill file area's upload tile share it. The file work runs
-/// on a worker; the panel settles and reports once it lands.
-fn start_transfer(app: &MainWindow, api: Arc<NativeDesktop>, paths: Vec<PathBuf>) {
+/// One bounded copy/upload fan-out into one directory — the drop gesture and
+/// the skill file area's upload tile share it. The file work runs on a worker;
+/// the panel settles and reports once it lands.
+fn start_transfer(
+    app: &MainWindow,
+    api: Arc<NativeDesktop>,
+    directory: String,
+    paths: Vec<PathBuf>,
+) {
     let Some(request) = begin_busy(app) else {
         app.set_status("操作正在处理中，请稍后重试".into());
         return;
     };
-    let directory = active_directory(app);
     let local = !is_cloud_target();
     let count = paths.len();
     app.set_status(
@@ -988,6 +1047,7 @@ fn start_transfer(app: &MainWindow, api: Arc<NativeDesktop>, paths: Vec<PathBuf>
     );
     let weak = app.as_weak();
     let target = current_target();
+    let refresh_dir = directory.clone();
     std::thread::spawn(move || {
         let (done, failed) = match &target {
             Target::Local(root) => copy_files(&api, root, &directory, &paths),
@@ -998,7 +1058,7 @@ fn start_transfer(app: &MainWindow, api: Arc<NativeDesktop>, paths: Vec<PathBuf>
             if !is_current(request) {
                 return;
             }
-            settle(&app, api);
+            settle_dirs(&app, api, vec![refresh_dir]);
             let mut message = format!(
                 "已{verb} {done}/{count} 个文件",
                 verb = if local { "复制" } else { "上传" }
@@ -1236,7 +1296,7 @@ fn install_selection(app: &MainWindow, api: Arc<NativeDesktop>) {
             }
             1 => batch_download(&app, action_api.clone()),
             2 => {
-                if app.get_ws_file_busy() || app.get_ws_prompt_open() {
+                if app.get_ws_prompt_open() {
                     return;
                 }
                 let paths = SELECTED.with(|slot| slot.borrow().clone());
@@ -1405,6 +1465,36 @@ fn resolve_drop_dir(app: &MainWindow, index: i32) -> Option<String> {
     }
 }
 
+/// The directory an Explorer drop lands in: the hovered directory itself, the
+/// parent of a hovered file, the folder a load-more tail belongs to, or the
+/// root for the blank area (`-1`). The landing row comes from the pointer, so
+/// a folder clicked earlier never captures a later drag-in.
+fn drop_directory(app: &MainWindow, index: i32) -> Option<String> {
+    match index {
+        -1 => Some(String::new()),
+        index if index >= 0 => match app.get_ws_file_rows().row_data(index as usize) {
+            Some(row) => Some(match row.kind {
+                1 => row.path.to_string(),
+                0 => parent_cloud_dir(&row.path),
+                _ => row.path.to_string(),
+            }),
+            // 行在拖放之间被刷新掉了：退回根目录，别让用户拖进来的文件凭空消失。
+            None => Some(String::new()),
+        },
+        _ => None,
+    }
+}
+
+/// Drop the row highlight on a blank click or when the panel loses focus, so
+/// the tree stops presenting the last-clicked folder as the place writes go.
+fn clear_active(app: &MainWindow) {
+    if app.get_ws_file_active_path().is_empty() && app.get_ws_file_active_index() < 0 {
+        return;
+    }
+    app.set_ws_file_active_path("".into());
+    app.set_ws_file_active_index(-1);
+}
+
 /// Whether one dragged path can move into the target directory: not itself,
 /// not its own subtree, and not already living there.
 fn movable_to(path: &str, target_dir: &str) -> bool {
@@ -1478,10 +1568,6 @@ fn perform_move(
     items: Vec<(String, i32)>,
     target_dir: String,
 ) {
-    if app.get_ws_file_busy() {
-        app.set_status("操作正在处理中，请稍后重试".into());
-        return;
-    }
     let Some(request) = begin_busy(app) else {
         app.set_status("操作正在处理中，请稍后重试".into());
         return;
@@ -1490,6 +1576,14 @@ fn perform_move(
     app.set_status(format!("正在移动 {total} 项…").into());
     let weak = app.as_weak();
     let target = current_target();
+    // 源目录与目标目录都要重列；被搬走的目录连同子树缓存失效。
+    let mut refresh_dirs = vec![target_dir.clone()];
+    for (path, _) in &items {
+        let parent = parent_cloud_dir(path);
+        if !refresh_dirs.contains(&parent) {
+            refresh_dirs.push(parent);
+        }
+    }
     std::thread::spawn(move || {
         let mut done = 0usize;
         let mut failed: Vec<String> = Vec::new();
@@ -1508,8 +1602,10 @@ fn perform_move(
                 Ok(CloudOpOutcome::Done(_)) => {
                     done += 1;
                     moved.push(path.clone());
-                    // 源目录的缓存列表已过期；目标目录统一在循环后失效。
-                    drop_dir_cache(&parent_cloud_dir(path));
+                    // 目录搬走后它和子树的页面缓存都属于旧路径。
+                    if *kind == 1 {
+                        drop_dir_cache(path);
+                    }
                 }
                 Ok(CloudOpOutcome::NeedsApproval { .. }) => {
                     failed.push(format!("{path}（云端命令仍待确认）"))
@@ -1517,9 +1613,6 @@ fn perform_move(
                 Ok(CloudOpOutcome::Failed(reason)) => failed.push(format!("{path}（{reason}）")),
                 Err(error) => failed.push(format!("{path}（{error}）")),
             }
-        }
-        if !target_dir.is_empty() {
-            drop_dir_cache(&target_dir);
         }
         let _ = weak.upgrade_in_event_loop(move |app| {
             end_busy(&app, api.clone(), request);
@@ -1537,7 +1630,7 @@ fn perform_move(
                 message.push_str(&format!("；失败：{}", failed.join("；")));
             }
             app.set_status(message.into());
-            settle(&app, api);
+            settle_dirs(&app, api, refresh_dirs);
         });
     });
 }
@@ -1638,9 +1731,6 @@ fn run_batch_download(
     targets: Vec<(String, i32)>,
     destination: String,
 ) {
-    if app.get_ws_file_busy() {
-        return;
-    }
     let Some(request) = begin_busy(app) else {
         app.set_status("操作正在处理中，请稍后重试".into());
         return;
@@ -1700,6 +1790,14 @@ fn batch_delete(app: &MainWindow, api: Arc<NativeDesktop>, paths: Vec<String>) {
     app.set_status(format!("正在删除 {} 项…", paths.len()).into());
     let weak = app.as_weak();
     let target = current_target();
+    // 删除只会改动每一行所在的目录。
+    let mut refresh_dirs: Vec<String> = Vec::new();
+    for path in &paths {
+        let parent = parent_cloud_dir(path);
+        if !refresh_dirs.contains(&parent) {
+            refresh_dirs.push(parent);
+        }
+    }
     std::thread::spawn(move || {
         let mut done = 0usize;
         let mut failed: Vec<String> = Vec::new();
@@ -1738,7 +1836,7 @@ fn batch_delete(app: &MainWindow, api: Arc<NativeDesktop>, paths: Vec<String>) {
                 message.push_str(&format!("；失败：{}", failed.join("；")));
             }
             app.set_status(message.into());
-            settle(&app, api);
+            settle_dirs(&app, api, refresh_dirs);
         });
     });
 }
@@ -1752,6 +1850,24 @@ fn settle(app: &MainWindow, api: Arc<NativeDesktop>) {
         return;
     }
     refresh(app, api);
+}
+
+/// Post-write settle scoped to the directories the write touched. A rename,
+/// delete, new entry, move or drop changes exactly the directories it names;
+/// re-listing every open branch for those was the whole cost of the operation.
+fn settle_dirs(app: &MainWindow, api: Arc<NativeDesktop>, dirs: Vec<String>) {
+    if search_active(app) {
+        let query = app.get_ws_file_search_query().to_string();
+        run_search(&app.as_weak(), api, query);
+        return;
+    }
+    let mut unique: Vec<String> = Vec::new();
+    for path in dirs {
+        if !unique.contains(&path) {
+            unique.push(path);
+        }
+    }
+    refresh_scope(app, api, RefreshScope::Dirs(unique));
 }
 
 /// Open the shared prompt dialog for one workspace write (cloud or local);
@@ -2101,9 +2217,6 @@ fn open_file(app: &MainWindow, api: Arc<NativeDesktop>, path: String, name: Stri
 /// Download one cloud file: the same staged local pull as drag-out, without
 /// handing it to the OS. The local workspace copy is the download target.
 fn download_file(app: &MainWindow, api: Arc<NativeDesktop>, path: String, name: String) {
-    if app.get_ws_file_busy() {
-        return;
-    }
     let Some(request) = begin_busy(app) else {
         return;
     };
@@ -2126,9 +2239,6 @@ fn download_file(app: &MainWindow, api: Arc<NativeDesktop>, path: String, name: 
 
 /// 打包下载：请求云端把目录（空白区为当前根）打成 zip，落到本地工作区并交给系统打开。
 fn archive_dir(app: &MainWindow, api: Arc<NativeDesktop>, path: String, name: String) {
-    if app.get_ws_file_busy() {
-        return;
-    }
     let Some(request) = begin_busy(app) else {
         return;
     };
@@ -2153,9 +2263,6 @@ fn archive_dir(app: &MainWindow, api: Arc<NativeDesktop>, path: String, name: St
 
 /// 清空工作目录根，随后整面板刷新（对齐云端版空白区菜单）。
 fn clear_root(app: &MainWindow, api: Arc<NativeDesktop>) {
-    if app.get_ws_file_busy() {
-        return;
-    }
     let Some(request) = begin_busy(app) else {
         return;
     };
@@ -2261,7 +2368,7 @@ fn load_dir(weak: &slint::Weak<MainWindow>, api: Arc<NativeDesktop>, path: Strin
                 panel.dirs.entry(path).or_default().expanded = true;
             }
         });
-        with_panel(|panel| panel.refresh_pending = true);
+        with_panel(|panel| defer_refresh(panel, RefreshScope::All));
         return;
     };
     with_panel(|panel| {
@@ -2286,35 +2393,75 @@ fn load_dir(weak: &slint::Weak<MainWindow>, api: Arc<NativeDesktop>, path: Strin
     });
 }
 
-/// Refresh: usage line, root page and the expanded directories (bounded), all
-/// sequentially on one background thread so the panel flips states once.
+/// Refresh everything the tree currently shows: the root page and the expanded
+/// directories (bounded), all sequentially on one background thread so the
+/// panel flips states once.
 fn refresh(app: &MainWindow, api: Arc<NativeDesktop>) {
+    refresh_scope(app, api, RefreshScope::All);
+}
+
+/// Refresh one scope. A user write only re-lists the directories it could have
+/// changed, so renaming one file never walks every open branch; the busy window
+/// — during which the tree reads as frozen — shrinks to a single listing.
+fn refresh_scope(app: &MainWindow, api: Arc<NativeDesktop>, scope: RefreshScope) {
     if app.get_ws_file_busy() {
-        with_panel(|panel| panel.refresh_pending = true);
+        with_panel(|panel| defer_refresh(panel, scope));
         return;
     }
-    let expanded: Vec<(String, usize)> = with_panel(|panel| {
-        let mut expanded: Vec<_> = panel
-            .dirs
-            .iter()
-            .filter(|(path, dir)| dir.expanded || path.is_empty())
-            .map(|(path, dir)| (path.clone(), dir.entries.len()))
-            .collect();
-        if !expanded.iter().any(|(path, _)| path.is_empty()) {
-            expanded.push((String::new(), 0));
+    let expanded: Vec<(String, usize)> = with_panel(|panel| match &scope {
+        RefreshScope::All => {
+            let mut expanded: Vec<_> = panel
+                .dirs
+                .iter()
+                .filter(|(path, dir)| dir.expanded || path.is_empty())
+                .map(|(path, dir)| (path.clone(), dir.entries.len()))
+                .collect();
+            if !expanded.iter().any(|(path, _)| path.is_empty()) {
+                expanded.push((String::new(), 0));
+            }
+            expanded.sort_by(|a, b| {
+                a.0.matches('/')
+                    .count()
+                    .cmp(&b.0.matches('/').count())
+                    .then_with(|| a.0.cmp(&b.0))
+            });
+            expanded.truncate(REFRESH_DIR_CAP);
+            expanded
         }
-        expanded.sort_by(|a, b| {
-            a.0.matches('/')
-                .count()
-                .cmp(&b.0.matches('/').count())
-                .then_with(|| a.0.cmp(&b.0))
-        });
-        expanded.truncate(REFRESH_DIR_CAP);
-        expanded
+        RefreshScope::Dirs(dirs) => {
+            // Parents first, so a child page lands after the listing that
+            // decided it still exists. Unknown branches are skipped: they were
+            // never opened or were just invalidated by a rename/delete.
+            let mut wanted: Vec<(String, usize)> = Vec::new();
+            for path in dirs {
+                if wanted.iter().any(|(known, _)| known == path) {
+                    continue;
+                }
+                let loaded = match panel.dirs.get(path) {
+                    Some(dir) => dir.entries.len(),
+                    None if path.is_empty() => 0,
+                    None => continue,
+                };
+                wanted.push((path.clone(), loaded));
+            }
+            wanted.sort_by(|a, b| {
+                a.0.matches('/')
+                    .count()
+                    .cmp(&b.0.matches('/').count())
+                    .then_with(|| a.0.cmp(&b.0))
+            });
+            wanted.truncate(REFRESH_DIR_CAP);
+            wanted
+        }
     })
     .unwrap_or_default();
+    if expanded.is_empty() {
+        // A scoped refresh whose directories all vanished (renamed away,
+        // collapsed) has nothing to list and must not hold the panel busy.
+        return;
+    }
     let Some(request) = begin_busy(app) else {
-        with_panel(|panel| panel.refresh_pending = true);
+        with_panel(|panel| defer_refresh(panel, scope));
         return;
     };
     // Reserve the refreshed directories so a simultaneous load-more cannot
@@ -2425,6 +2572,11 @@ fn apply_listing_state(
     match listing_status(&result) {
         "succeeded" => {
             with_panel(|panel| {
+                // 页面在途时目录被改名/删除：缓存已作废，这页属于旧路径，
+                // 落到缓存里只会把旧名字（和旧子树）又画回来。
+                if !path.is_empty() && !panel.dirs.contains_key(&path) {
+                    return;
+                }
                 let budget = MAX_CACHED_ENTRIES.saturating_sub(
                     panel
                         .dirs
@@ -2745,16 +2897,19 @@ fn end_busy(app: &MainWindow, api: Arc<NativeDesktop>, request: u64) {
             panel.in_flight = panel.in_flight.saturating_sub(1);
         }
         let busy = panel.in_flight > 0;
-        let pending = !busy && panel.refresh_pending && BUSY.with(Cell::get) < MAX_REQUESTS;
-        if pending {
-            panel.refresh_pending = false;
-        }
+        // Parked refreshes resume only once nothing is in flight and the
+        // request budget has room again; until then they stay merged.
+        let pending = if !busy && BUSY.with(Cell::get) < MAX_REQUESTS {
+            panel.pending.take()
+        } else {
+            None
+        };
         (busy, pending)
     })
     .unwrap_or_default();
     app.set_ws_file_busy(busy);
-    if pending {
-        refresh(app, api);
+    if let Some(scope) = pending {
+        refresh_scope(app, api, scope);
     }
 }
 
@@ -2781,7 +2936,7 @@ mod tests {
                 model: Rc::new(VecModel::default()),
                 dirs: HashMap::new(),
                 in_flight: 0,
-                refresh_pending: false,
+                pending: None,
             });
         });
         with_panel(|panel| {
@@ -3093,5 +3248,71 @@ mod tests {
         for index in [1usize, 3, 4, 5, 6, 7] {
             assert_eq!(rows[index].subtree_end, rows.len() as i32, "第 {index} 行");
         }
+    }
+
+    /// Parked refreshes merge instead of stacking: an explicit refresh covers
+    /// everything and directory requests union, so a burst of writes costs one
+    /// listing pass per directory rather than one full pass per write.
+    #[test]
+    fn parked_refreshes_merge_scopes() {
+        assert_eq!(
+            merge_scope(None, RefreshScope::Dirs(vec!["a".into()])),
+            RefreshScope::Dirs(vec!["a".into()])
+        );
+        assert_eq!(
+            merge_scope(
+                Some(RefreshScope::Dirs(vec!["a".into()])),
+                RefreshScope::Dirs(vec!["a".into(), "b".into()])
+            ),
+            RefreshScope::Dirs(vec!["a".into(), "b".into()])
+        );
+        assert_eq!(
+            merge_scope(
+                Some(RefreshScope::Dirs(vec!["a".into()])),
+                RefreshScope::All
+            ),
+            RefreshScope::All
+        );
+        assert_eq!(
+            merge_scope(
+                Some(RefreshScope::All),
+                RefreshScope::Dirs(vec!["b".into()])
+            ),
+            RefreshScope::All
+        );
+    }
+
+    /// A drop lands where the pointer is: the hovered folder, the parent of a
+    /// hovered file, or the root for the blank area — never the folder that
+    /// merely happened to be clicked earlier.
+    #[test]
+    fn drop_targets_follow_the_hovered_row() {
+        let _ui = crate::test_support::lock();
+        crate::register_bundled_font().expect("register fixture font");
+        let app = MainWindow::new().unwrap();
+        PANEL.with(|slot| *slot.borrow_mut() = None);
+        let model = with_panel(|panel| panel.model.clone()).unwrap();
+        app.set_ws_file_rows(ModelRc::from(model));
+        with_panel(|panel| {
+            panel.model.set_vec(vec![
+                list_row("notes", 1),
+                list_row("notes/todo.md", 0),
+                list_row("notes/sub", 1),
+            ]);
+        });
+        assert_eq!(drop_directory(&app, 0).as_deref(), Some("notes"));
+        assert_eq!(drop_directory(&app, 1).as_deref(), Some("notes"));
+        assert_eq!(drop_directory(&app, 2).as_deref(), Some("notes/sub"));
+        assert_eq!(drop_directory(&app, -1).as_deref(), Some(""));
+        assert_eq!(drop_directory(&app, -3), None);
+        // 落点行在两帧之间被刷新掉了：退回根目录，而不是丢掉这次拖入。
+        assert_eq!(drop_directory(&app, 9).as_deref(), Some(""));
+
+        app.set_ws_file_active_path("notes".into());
+        app.set_ws_file_active_index(0);
+        clear_active(&app);
+        assert_eq!(app.get_ws_file_active_path().as_str(), "");
+        assert_eq!(app.get_ws_file_active_index(), -1);
+        PANEL.with(|slot| *slot.borrow_mut() = None);
     }
 }
