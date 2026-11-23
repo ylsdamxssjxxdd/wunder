@@ -9,6 +9,8 @@
   --tt-brand: rgb(65, 118, 230);
   --tt-brand-dim: rgba(65, 118, 230, 0.55);
   --tt-brand-faint: rgba(65, 118, 230, 0.1);
+  /* 消耗柱底：上下文占用用实心品牌蓝（不做半透明/叠白），缓存命中内柱仍为琥珀。 */
+  --tt-occupy: rgb(65, 118, 230);
   --tt-green: rgb(34, 197, 94);
   --tt-green-mix: rgb(54, 167, 98);
   --tt-green-100: rgb(230, 250, 237);
@@ -1206,7 +1208,7 @@
   min-width: 2px;
   align-self: flex-end;
   border-radius: 1px 1px 0 0;
-  background: var(--tt-amber-100);
+  background: var(--tt-occupy);
   cursor: pointer;
 }
 
