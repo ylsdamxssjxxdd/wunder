@@ -198,6 +198,17 @@ pub fn install(app: &MainWindow) {
     });
 
     let weak = app.as_weak();
+    app.on_select_row(move |index| {
+        let Some(app) = weak.upgrade() else { return };
+        let Some(row) = app.get_sidebar_rows().row_data(index as usize) else {
+            return;
+        };
+        if row.kind == 1 {
+            app.invoke_select_conversation(row.payload);
+        }
+    });
+
+    let weak = app.as_weak();
     let select_models = models.clone();
     let select_drafts = drafts.clone();
     let select_active = active.clone();
@@ -211,6 +222,7 @@ pub fn install(app: &MainWindow) {
         let target = index as usize;
         select_drafts.borrow_mut()[slot(&select_active)] = app.get_draft().to_string();
         *select_active.borrow_mut() = target;
+        app.set_active_session_id(format!("t{}", target + 1).into());
         app.set_timeline(ModelRc::from(select_models[target].clone()));
         app.set_draft(select_drafts.borrow()[target].as_str().into());
         scroll_to_end(&app);
@@ -221,6 +233,7 @@ pub fn install(app: &MainWindow) {
     let new_active = active.clone();
     app.on_new_thread(move || {
         let Some(app) = weak.upgrade() else { return };
+        app.invoke_focus_input();
         let slot = slot(&new_active);
         new_models[slot].set_vec(vec![]);
         app.set_timeline(ModelRc::from(new_models[slot].clone()));

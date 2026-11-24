@@ -122,6 +122,17 @@ export component MainWindow inherits Window {
     out property <length> composer-editor-width: composer.editor-width;
     out property <length> composer-editor-height: composer.editor-height;
     out property <bool> composer-editor-has-focus: composer.editor-has-focus;
+    public function focus-input() {
+        if root.page != DesktopPage.messages || root.settings-open || root.model-sheet-open { return; }
+        if root.split-count > 1 { split_workspace.focus-active(); }
+        else { composer.focus-editor(); }
+    }
+    changed page => { root.focus-input(); }
+    changed settings-open => { root.focus-input(); }
+    changed model-sheet-open => { root.focus-input(); }
+    changed active-session-id => { root.focus-input(); }
+    changed cloud-active-thread-id => { root.focus-input(); }
+    changed split-count => { root.focus-input(); }
     public function dismiss-composer-popovers() { composer.dismiss-popovers(); }
     callback sidebar-begin-selection();
     callback sidebar-exit-selection();
@@ -1393,7 +1404,7 @@ export component MainWindow inherits Window {
                 root.sidebar-peek = true;
             }
             open-model => { root.model-sheet-open = true; }
-            new-thread => { root.new-thread(); }
+            new-thread => { root.new-thread(); root.focus-input(); }
         }
         // 主区整行：停靠时让出侧栏宽度，收起或窄窗浮层时铺满整行。
         // 侧栏不再作为这一行的布局子项，否则窄窗下它会把聊天列挤到不可用。
@@ -1795,16 +1806,16 @@ export component MainWindow inherits Window {
                 // 抽屉里只有点线程才收抽屉：否则选中结果被浮层盖住，用户还得
                 // 再点一次。工作区标题行只是线程树的开关，点它要留在抽屉里
                 // 看线程展开，不能被顺手关掉（会被误读成「返回主页」）。
-                if root.sidebar-overlay && index >= 0 && index < root.sidebar-rows.length {
-                    let kind = root.sidebar-rows[index].kind;
-                    if kind == 1 || kind == 3 {
-                        root.sidebar-peek = false;
-                    }
+                let kind = index >= 0 && index < root.sidebar-rows.length
+                    ? root.sidebar-rows[index].kind : -1;
+                if root.sidebar-overlay && (kind == 1 || kind == 3) {
+                    root.sidebar-peek = false;
                 }
                 root.select-row(index);
+                if kind == 1 || kind == 3 { root.focus-input(); }
             }
             select-device(device) => { root.select-device(device); }
-            new-cloud-thread => { root.cloud-new-thread(); }
+            new-cloud-thread => { root.cloud-new-thread(); root.focus-input(); }
             workspace-menu(workspace, action) => { root.workspace-menu(workspace, action); }
             new-workspace => { root.new-workspace(); }
             move-row(index, travel) => { root.move-row(index, travel); }

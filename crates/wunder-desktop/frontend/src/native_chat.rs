@@ -2383,6 +2383,7 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         let Some(row) = app.get_conversations().row_data(index as usize) else {
             return;
         };
+        app.invoke_focus_input();
         crate::cloud_threads::leave(&app);
         let id = row.id.to_string();
         let desktop = state.borrow().desktop.clone();

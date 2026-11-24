@@ -7,6 +7,7 @@ export type ComposerDraftAttachment = {
   converter?: string;
   public_path?: string;
   workspace_path?: string;
+  preview_url?: string;
   source_public_path?: string;
   derived_attachments?: ComposerDraftAttachment[];
   requested_frame_rate?: number;
@@ -38,6 +39,7 @@ const cloneAttachment = (attachment: ComposerDraftAttachment): ComposerDraftAtta
   ...(attachment.converter ? { converter: String(attachment.converter) } : {}),
   ...(attachment.public_path ? { public_path: String(attachment.public_path) } : {}),
   ...(attachment.workspace_path ? { workspace_path: String(attachment.workspace_path) } : {}),
+  ...(attachment.preview_url ? { preview_url: String(attachment.preview_url) } : {}),
   ...(attachment.source_public_path
     ? { source_public_path: String(attachment.source_public_path) }
     : {}),

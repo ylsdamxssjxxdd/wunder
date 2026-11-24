@@ -1795,6 +1795,10 @@ export component Composer inherits Rectangle {
     public function focus-editor() {
         editor.focus-input();
     }
+    function submit() {
+        root.send();
+        root.focus-editor();
+    }
     public function dismiss-popovers() {
         root.model-open = false;
         root.plus-open = false;
@@ -2030,13 +2034,13 @@ export component Composer inherits Rectangle {
                         // is claimed either way so a disabled send never turns
                         // into an editor newline.
                         if !event.modifiers.control { return reject; }
-                        if root.send-enabled { root.send(); }
+                        if root.send-enabled { root.submit(); }
                         return accept;
                     }
                     // Default (and unknown-value) mode: plain Enter sends,
                     // Ctrl+Enter stays a newline.
                     if event.modifiers.control { return reject; }
-                    if root.send-enabled { root.send(); }
+                    if root.send-enabled { root.submit(); }
                     return accept;
                 }
                 return reject;
@@ -2066,18 +2070,6 @@ export component Composer inherits Rectangle {
                         color: root.recording ? Theme.danger : Theme.muted;
                         font-size: Theme.font-xs; vertical-alignment: center;
                     }
-                }
-            }
-            composer-drop := DropArea {
-                x: 0px; y: 0px; width: 100%; height: 100%;
-                can-drop(event) => { return DragAction.copy; }
-                dropped(event) => {
-                    let caret-offset = root.file-drop(event);
-                    // 路径写入后恢复焦点并把光标放到草稿末尾，用户直接输入
-                    // 就是续写，不必再点一次输入框或手工移动光标。
-                    root.focus-editor();
-                    editor.set-selection-offsets(caret-offset, caret-offset);
-                    return DragAction.copy;
                 }
             }
             }
@@ -2163,7 +2155,7 @@ export component Composer inherits Rectangle {
                         if root.stop-action {
                             if !root.stopping { root.stop(); }
                         } else if root.send-enabled {
-                            root.send();
+                            root.submit();
                         }
                     }
                     mobile-send-touch := TouchArea {
@@ -2172,7 +2164,7 @@ export component Composer inherits Rectangle {
                         enabled: root.stop-action ? !root.stopping : root.send-enabled;
                         mouse-cursor: pointer;
                         clicked => {
-                            if root.stop-action { root.stop(); } else { root.send(); }
+                            if root.stop-action { root.stop(); } else { root.submit(); }
                         }
                     }
                 }
@@ -2339,7 +2331,7 @@ export component Composer inherits Rectangle {
                     root.plus-open = false;
                     root.close-submenus();
                 }
-                select-model(index, name) => { root.select-model(index, name); }
+                select-model(index, name) => { root.select-model(index, name); root.focus-editor(); }
                 open-settings => { root.open-model-settings(); }
             }
             // While a reply streams, the square itself becomes the stop action;
@@ -2373,14 +2365,14 @@ export component Composer inherits Rectangle {
                         if root.stop-action {
                             if !root.stopping { root.stop(); }
                         } else if root.send-enabled {
-                            root.send();
+                            root.submit();
                         }
                     }
                     send-touch := TouchArea {
                         enabled: root.stop-action ? !root.stopping : root.send-enabled;
                         mouse-cursor: pointer;
                         clicked => {
-                            if root.stop-action { root.stop(); } else { root.send(); }
+                            if root.stop-action { root.stop(); } else { root.submit(); }
                         }
                     }
                 }
@@ -2406,6 +2398,48 @@ export component Composer inherits Rectangle {
             // which then sizes itself to the content and leaves the rest of the
             // screen empty. Every row in the width chain needs one stretchable item.
             Rectangle { horizontal-stretch: 1; }
+        }
+    }
+
+    composer-drop := DropArea {
+        x: 0px; y: 0px; width: 100%; height: 100%;
+        z: 20;
+        can-drop(event) => { return DragAction.copy; }
+        dropped(event) => {
+            let caret-offset = root.file-drop(event);
+            root.focus-editor();
+            editor.set-selection-offsets(caret-offset, caret-offset);
+            return DragAction.copy;
+        }
+        if composer-drop.has-drag : Rectangle {
+            x: editor.absolute-position.x - root.absolute-position.x;
+            y: editor.absolute-position.y - root.absolute-position.y;
+            width: editor.width;
+            height: editor.height;
+            border-radius: 16px;
+            background: Theme.accent-soft;
+            border-width: 1px;
+            border-color: Theme.accent-ink;
+            HorizontalLayout {
+                alignment: center;
+                spacing: 8px;
+                padding: 8px;
+                Image {
+                    width: 18px;
+                    height: 18px;
+                    source: @image-url("../assets/icons/fa-arrow-up-from-bracket.svg");
+                    colorize: Theme.accent-ink;
+                    image-fit: contain;
+                }
+                Text {
+                    text: I18n.cp_drop_hint;
+                    color: Theme.accent-ink;
+                    font-size: Theme.font-md;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
         }
     }
 

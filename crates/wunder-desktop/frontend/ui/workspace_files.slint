@@ -631,6 +631,40 @@ export component WorkspaceFilesPanel inherits Rectangle {
             }
         }
     }
+    if panel-drop.has-drag : Rectangle {
+        x: 6px;
+        y: 34px;
+        width: max(0px, parent.width - 12px);
+        height: 42px;
+        border-radius: Theme.radius-md;
+        background: Theme.surface;
+        border-width: 1px;
+        border-color: Theme.accent-ink;
+        drop-shadow-color: #0F172A14;
+        drop-shadow-blur: 8px;
+        drop-shadow-offset-y: 2px;
+        HorizontalLayout {
+            alignment: center;
+            spacing: 7px;
+            padding-left: 8px;
+            padding-right: 8px;
+            Image {
+                width: 16px;
+                height: 16px;
+                source: @image-url("../assets/icons/fa-arrow-up-from-bracket.svg");
+                colorize: Theme.accent-ink;
+                image-fit: contain;
+            }
+            Text {
+                text: I18n.wf_drop_hint;
+                color: Theme.accent-ink;
+                font-size: Theme.font-xs;
+                font-weight: 600;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
 }
 
 // One small dialog for the working-directory's bounded interactions: rename,

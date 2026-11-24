@@ -50,10 +50,27 @@
             @keydown.enter.prevent="(attachment.type === 'video' || attachment.type === 'gif') && toggleVideoControl(attachment.id)"
             @keydown.space.prevent="(attachment.type === 'video' || attachment.type === 'gif') && toggleVideoControl(attachment.id)"
           >
-            <i
-              :class="['fa-solid', resolveAttachmentIconClass(attachment), 'upload-preview-icon']"
-              aria-hidden="true"
-            ></i>
+            <div class="upload-preview-visual" aria-hidden="true">
+              <img
+                v-if="attachment.preview_url"
+                class="upload-preview-image"
+                :src="attachment.preview_url"
+                alt=""
+                draggable="false"
+                @error="handleAttachmentPreviewError(attachment.id)"
+              />
+              <img
+                v-else-if="attachment.type === 'workspace'"
+                class="upload-preview-doc-icon"
+                :src="resolveComposerAttachmentIcon(attachment.name)"
+                alt=""
+                draggable="false"
+              />
+              <i
+                v-else
+                :class="['fa-solid', resolveAttachmentIconClass(attachment), 'upload-preview-icon']"
+              ></i>
+            </div>
             <div class="upload-preview-copy">
               <span class="upload-preview-name" :title="attachment.name">{{ attachment.name }}</span>
               <span v-if="resolveAttachmentMeta(attachment)" class="upload-preview-meta">
@@ -347,6 +364,12 @@ import {
 import { normalizeWorkspacePath } from '@/utils/workspaceTreeCache';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { clearWorkspaceDragPaths, hasWorkspaceDragPaths, readWorkspaceDragPaths } from '@/components/chat/workspaceDrag';
+import {
+  createComposerImagePreview,
+  normalizeClipboardDroppedFile,
+  resolveComposerAttachmentIcon,
+  revokeComposerImagePreview
+} from '@/components/chat/composerAttachments';
 
 import { useSessionContextUsage } from '@/views/messenger/sessionContextUsage';
 import { readChatLiveContextUsage } from '@/realtime/chat/chatLiveContextUsage';
@@ -1309,6 +1332,8 @@ const normalizeDraftAttachment = (value: unknown): ComposerDraftAttachment | nul
     content
   };
   if (workspacePath) attachment.workspace_path = workspacePath;
+  const previewUrl = String(source.preview_url || '').trim();
+  if (previewUrl) attachment.preview_url = previewUrl;
   const mimeType = String(source.mime_type ?? source.content_type ?? '').trim();
   if (mimeType) attachment.mime_type = mimeType;
   const converter = String(source.converter || '').trim();
@@ -1567,15 +1592,24 @@ const buildWorkspaceFileNotice = (paths: string[]): string => {
   return lines.join('\n');
 };
 
-const addWorkspaceFileReferences = (paths: string[]) => {
+const addWorkspaceFileReferences = (paths: string[], sources: WorkspaceDroppedFile[] = []) => {
   const existing = new Set(attachments.value.map(item => item.workspace_path).filter(Boolean));
   const additions: ComposerDraftAttachment[] = [];
-  for (const rawPath of paths) {
+  for (const [index, rawPath] of paths.entries()) {
     const path = normalizeWorkspacePath(rawPath);
     if (!path || existing.has(path)) continue;
     existing.add(path);
-    additions.push({ id: buildAttachmentId(), type: 'workspace', name: path.split('/').pop() || path,
-      content: '', workspace_path: path });
+    const source = sources[index]?.file;
+    const previewUrl = source ? createComposerImagePreview(source) : '';
+    additions.push({
+      id: buildAttachmentId(),
+      type: 'workspace',
+      name: path.split('/').pop() || path,
+      content: '',
+      workspace_path: path,
+      ...(source?.type ? { mime_type: source.type } : {}),
+      ...(previewUrl ? { preview_url: previewUrl } : {})
+    });
   }
   if (!additions.length) return;
   attachments.value = [...attachments.value, ...additions];
@@ -1591,6 +1625,12 @@ const appendWorkspacePathsToComposer = (paths: string[]) => {
 
 const UPLOAD_REQUEST_MAX_FILES = 100;
 const UPLOAD_REQUEST_MAX_BYTES = 200 * 1024 * 1024;
+const COMPOSER_ATTACHMENT_ROOT = 'temp/chat_attachments';
+
+const buildComposerAttachmentPath = (): string => {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `${COMPOSER_ATTACHMENT_ROOT}/${timestamp}-${Math.random().toString(36).slice(2, 10)}`;
+};
 
 const collectDroppedWorkspaceTree = async (
   dataTransfer: DataTransfer | null | undefined
@@ -1611,12 +1651,13 @@ const collectDroppedWorkspaceTree = async (
     const tree = await collectWorkspaceDropTree(entries);
     return { ...tree, files: [...tree.files, ...flatFiles] };
   }
-  const files = flatFiles.length
-    ? flatFiles
-    : Array.from(dataTransfer?.files || []).map((file) => ({
-        file,
-        relativePath: file.webkitRelativePath || file.name || 'upload'
-      }));
+  const transferFiles = Array.from(dataTransfer?.files || []).map((file) => ({
+    file,
+    relativePath: file.webkitRelativePath || file.name || 'upload'
+  }));
+  const files = transferFiles.length
+    ? transferFiles
+    : flatFiles;
   return { files, directories: [], unreadable: 0, depthSkipped: 0 };
 };
 
@@ -1633,11 +1674,12 @@ const createEmptyWorkspaceDirectories = async (directories: string[]): Promise<n
 };
 
 /**
- * 目录上传按「文件数 + 总字节」切分请求：单次请求不再受 1 GiB 限制，
+ * 附件上传按「文件数 + 总字节」切分请求：单次请求不再受 1 GiB 限制，
  * 大目录不会整批失败；分片全部结束后只发一次刷新事件。
  */
 const uploadDroppedFilesToWorkspace = async (
   items: WorkspaceDroppedFile[],
+  targetPath: string,
   extraPaths: string[] = []
 ): Promise<string[]> => {
   const fileItems = items.filter((item) => Boolean(item?.file));
@@ -1652,7 +1694,7 @@ const uploadDroppedFilesToWorkspace = async (
   const flushBatch = async () => {
     if (!batch.length) return;
     const formData = new FormData();
-    formData.append('path', resolveWorkspaceDropPath(''));
+    formData.append('path', resolveWorkspaceDropPath(targetPath));
     if (agentId) {
       formData.append('agent_id', agentId);
     }
@@ -1704,17 +1746,22 @@ const uploadDroppedFilesToWorkspace = async (
 };
 
 /**
- * 文件选择、剪贴板粘贴与拖拽统一落到工作目录，再以附件路径随下一条消息发送。
+ * 文件选择、剪贴板粘贴与拖拽统一落到 temp/chat_attachments 的独立批次目录，
+ * 再以实际附件路径随下一条消息发送；重名文件不会跨批覆盖。
  */
 const ingestComposerFiles = async (tree: WorkspaceDroppedTree) => {
   const files = (Array.isArray(tree?.files) ? tree.files : []).filter((item) => Boolean(item?.file));
   const emptyDirectories = resolveEmptyDropDirectories(tree?.directories || [], files);
   if (!files.length && !emptyDirectories.length) return;
+  const attachmentPath = buildComposerAttachmentPath();
+  const emptyAttachmentDirectories = emptyDirectories.map(
+    (directory) => `${attachmentPath}/${directory}`
+  );
   closeComposerPanels();
   workspaceDropBusy.value += 1;
   try {
-    if (emptyDirectories.length) {
-      const failed = await createEmptyWorkspaceDirectories(emptyDirectories);
+    if (emptyAttachmentDirectories.length) {
+      const failed = await createEmptyWorkspaceDirectories(emptyAttachmentDirectories);
       if (failed > 0) {
         ElMessage.warning(t('messenger.filesArea.uploadEmptyDirFailed', { count: failed }));
       }
@@ -1723,14 +1770,18 @@ const ingestComposerFiles = async (tree: WorkspaceDroppedTree) => {
       emitWorkspaceRefresh({
         reason: 'composer-drop-upload',
         containerId: resolveComposerWorkspaceContainerId(),
-        paths: emptyDirectories
+        paths: emptyAttachmentDirectories
       });
       ElMessage.success(t('messenger.filesArea.uploadEmptyDirsDone'));
       return;
     }
-    const uploadedPaths = await uploadDroppedFilesToWorkspace(files, emptyDirectories);
-    addWorkspaceFileReferences(uploadedPaths.length ? uploadedPaths : files.map(item => item.relativePath || item.file.name));
-    ElMessage.success(t('chat.workspaceDrop.uploaded', { count: uploadedPaths.length || files.length }));
+    const uploadedPaths = await uploadDroppedFilesToWorkspace(
+      files,
+      attachmentPath,
+      emptyAttachmentDirectories
+    );
+    addWorkspaceFileReferences(uploadedPaths, files);
+    ElMessage.success(t('chat.workspaceDrop.uploaded', { count: uploadedPaths.length }));
   } catch (error) {
     ElMessage.error(resolveUploadError(error, t('chat.workspaceDrop.failed')));
   } finally {
@@ -1807,6 +1858,7 @@ const handleDrop = async (event) => {
 
 const handleComposerPaste = async (event: ClipboardEvent) => {
   const pastedTree = collectWorkspaceClipboardFiles(event.clipboardData);
+  pastedTree.files = pastedTree.files.map(normalizeClipboardDroppedFile);
   if (!pastedTree.files.length) return;
   event.preventDefault();
   if (composerBusy.value > 0) {
@@ -1939,13 +1991,24 @@ const applyGifFrameStep = async (attachmentId: string) => {
   }
 };
 
+const handleAttachmentPreviewError = (id: string) => {
+  const current = attachments.value.find((item) => item.id === id);
+  revokeComposerImagePreview(current?.preview_url);
+  attachments.value = attachments.value.map((item) =>
+    item.id === id ? { ...item, preview_url: '' } : item
+  );
+};
+
 const removeAttachment = (id) => {
+  const current = attachments.value.find((item) => item.id === id);
+  revokeComposerImagePreview(current?.preview_url);
   attachments.value = attachments.value.filter((item) => item.id !== id);
   markAttachmentProcessing(id, false);
   syncVideoAttachmentDrafts();
 };
 
 const clearAttachments = () => {
+  attachments.value.forEach((item) => revokeComposerImagePreview(item.preview_url));
   attachments.value = [];
   attachmentProcessingIds.value = [];
   expandedVideoAttachmentId.value = '';

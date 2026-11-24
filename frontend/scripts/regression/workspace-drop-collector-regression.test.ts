@@ -90,19 +90,30 @@ test('无法读取的条目会被计数而不是静默忽略', async () => {
   assert.equal(tree.unreadable, 1);
 });
 
-test('剪贴板图片和文档从文件项提取且不重复', () => {
+test('剪贴板 files 列表优先，避免文件项漏掉文档', () => {
   const image = mockFile('image.png');
   const document = mockFile('notes.pdf');
   const tree = collectWorkspaceClipboardFiles({
     files: [image, document],
     items: [
       { kind: 'file', getAsFile: () => image },
-      { kind: 'string', getAsFile: () => null },
-      { kind: 'file', getAsFile: () => document }
+      { kind: 'string', getAsFile: () => null }
     ]
   } as unknown as DataTransfer);
   assert.deepEqual(tree.files.map((item) => item.relativePath), ['image.png', 'notes.pdf']);
   assert.deepEqual(tree.directories, []);
+});
+
+test('剪贴板 files 为空时回退到文件项并跳过读取异常', () => {
+  const document = mockFile('report.docx');
+  const tree = collectWorkspaceClipboardFiles({
+    files: [],
+    items: [
+      { kind: 'file', getAsFile: () => { throw new DOMException('denied'); } },
+      { kind: 'file', getAsFile: () => document }
+    ]
+  } as unknown as DataTransfer);
+  assert.deepEqual(tree.files.map((item) => item.relativePath), ['report.docx']);
 });
 
 test('剪贴板只有 files 时使用文件名并忽略空列表', () => {

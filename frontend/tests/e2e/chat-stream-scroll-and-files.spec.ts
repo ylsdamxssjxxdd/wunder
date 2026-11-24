@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { readFileSync } from 'node:fs';
 import { ChatMockService, MOCK_SESSION } from '../support/chatMockService';
 
 test('long replies retain every line across durable updates and keep scroll intent', async ({ page }) => {
@@ -126,17 +127,19 @@ test('dropped files appear above the draft, can be removed, and serialize only o
     : route.continue());
   let uploadCount = 0;
   const uploadPayloads: string[] = [];
+  const uploadPaths: string[] = [];
   await page.route('**/wunder/workspace/upload*', async route => {
     uploadCount++;
     const payload = route.request().postDataBuffer()?.toString('latin1') || '';
     uploadPayloads.push(payload);
-    const files = payload.includes('selected-image.png')
-      ? ['selected-image.png', 'selected-report.pdf']
-      : payload.includes('pasted-image.png')
-        ? ['pasted-image.png', 'pasted-report.docx']
-        : ['fixtures/notes.txt', 'fixtures/data.csv'];
+    const targetPath = payload.match(/name="path"\r\n\r\n([^\r\n]+)/)?.[1] || '';
+    const relativePaths = Array.from(
+      payload.matchAll(/name="relative_paths"\r\n\r\n([^\r\n]+)/g),
+      (match) => match[1]
+    );
+    uploadPaths.push(targetPath);
     await route.fulfill({ status: 200, contentType: 'application/json',
-      body: JSON.stringify({ files }) });
+      body: JSON.stringify({ files: relativePaths.map((path) => `${targetPath}/${path}`) }) });
   });
   await page.goto('/__e2e/composer-b4');
   const input = page.getByTestId('chat-composer-input');
@@ -148,8 +151,28 @@ test('dropped files appear above the draft, can be removed, and serialize only o
       transfer.items.add(new File(['value\n1'], 'data.csv', { type: 'text/csv' }));
       return transfer;
     });
+    await input.dispatchEvent('dragenter', { dataTransfer: transfer });
+    await expect(page.locator('.input-container--world')).toHaveClass(/dragover/);
+    await expect(page.locator('.input-box--world')).toHaveCSS('outline-style', 'dashed');
     await input.dispatchEvent('drop', { dataTransfer: transfer });
+    await expect(page.locator('.input-container--world')).not.toHaveClass(/dragover/);
     await transfer.dispose();
+  };
+  const paste = async (files: Array<{ name: string; mimeType: string; content: string; encoding?: 'base64' }>) => {
+    await input.evaluate((element, specs) => {
+      const transfer = new DataTransfer();
+      for (const spec of specs) {
+        const content = spec.encoding === 'base64'
+          ? Uint8Array.from(atob(spec.content), (char) => char.charCodeAt(0))
+          : spec.content;
+        transfer.items.add(new File([content], spec.name, { type: spec.mimeType }));
+      }
+      element.dispatchEvent(new ClipboardEvent('paste', {
+        clipboardData: transfer,
+        bubbles: true,
+        cancelable: true
+      }));
+    }, files);
   };
   await input.fill('Fixture draft');
   await drop();
@@ -162,21 +185,23 @@ test('dropped files appear above the draft, can be removed, and serialize only o
   await send.click();
   const log = page.getByTestId('composer-b4-log');
   await expect(log).toContainText('Fixture draft');
-  await expect(log).toContainText('fixtures/notes.txt');
-  await expect(log).not.toContainText('fixtures/data.csv');
+  await expect(log).toContainText('temp/chat_attachments/');
+  await expect(log).toContainText('notes.txt');
+  await expect(log).not.toContainText('data.csv');
   await expect(input).toHaveValue('');
   await expect(cards).toHaveCount(0);
 
-  // An attachment alone is sendable. Repeated drops reuse the same cards.
+  // An attachment alone is sendable. Repeated drops create independent temp batches.
   await drop();
   await drop();
-  await expect(cards.locator('.upload-preview-item')).toHaveCount(2);
+  await expect(cards.locator('.upload-preview-item')).toHaveCount(4);
   await expect(input).toHaveValue('');
   await expect(send).toBeEnabled();
   expect(uploadCount).toBe(3);
+  expect(uploadPaths[1]).not.toBe(uploadPaths[2]);
   await send.click();
   await expect(cards).toHaveCount(0);
-  await expect(log).toContainText('fixtures/data.csv');
+  await expect(log).toContainText('data.csv');
 
   // A workspace file drag references the existing file without uploading it.
   const reference = await page.evaluateHandle(() => {
@@ -197,13 +222,17 @@ test('dropped files appear above the draft, can be removed, and serialize only o
   await page.getByTestId('chat-composer-plus').click();
   await page.getByTestId('chat-composer-upload-files').click();
   await page.getByTestId('chat-composer-file-input').setInputFiles([
-    { name: 'selected-image.png', mimeType: 'image/png', buffer: Buffer.from('fixture image') },
+    { name: 'selected-image.png', mimeType: 'image/png', buffer: readFileSync('tests/e2e/fixtures/preview-wide.png') },
     { name: 'selected-report.pdf', mimeType: 'application/pdf', buffer: Buffer.from('fixture document') }
   ]);
   await expect(cards.locator('.upload-preview-item')).toHaveCount(2);
   await expect(cards).toContainText('selected-image.png');
   await expect(cards).toContainText('selected-report.pdf');
+  await expect(cards.locator('.upload-preview-image')).toHaveCount(1);
+  await expect(cards.locator('.upload-preview-image')).toHaveAttribute('src', /^blob:/);
+  await expect(cards.locator('.upload-preview-doc-icon')).toHaveCount(1);
   expect(uploadCount).toBe(4);
+  expect(uploadPaths[3]).toMatch(/^temp\/chat_attachments\//);
   expect(uploadPayloads[3]).toContain('selected-image.png');
   expect(uploadPayloads[3]).toContain('selected-report.pdf');
   await send.click();
@@ -211,26 +240,35 @@ test('dropped files appear above the draft, can be removed, and serialize only o
   await expect(log).toContainText('selected-image.png');
 
   // 剪贴板里的图片/文档不插入文件名文本，而是复用工作目录上传链路。
-  await input.evaluate((element) => {
-    const transfer = new DataTransfer();
-    transfer.items.add(new File(['pasted image'], 'pasted-image.png', { type: 'image/png' }));
-    transfer.items.add(new File(['pasted document'], 'pasted-report.docx', {
-      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-    }));
-    element.dispatchEvent(new ClipboardEvent('paste', {
-      clipboardData: transfer,
-      bubbles: true,
-      cancelable: true
-    }));
-  });
+  await paste([
+    { name: 'image.png', mimeType: 'image/png', content: readFileSync('tests/e2e/fixtures/preview-wide.png').toString('base64'), encoding: 'base64' },
+    { name: 'pasted-report.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', content: 'pasted document' }
+  ]);
   await expect(cards.locator('.upload-preview-item')).toHaveCount(2);
-  await expect(cards).toContainText('pasted-image.png');
+  await expect(cards).toContainText(/pasted-.*\.png/);
   await expect(cards).toContainText('pasted-report.docx');
+  await expect(cards.locator('.upload-preview-image')).toHaveCount(1);
+  await expect(cards.locator('.upload-preview-doc-icon')).toHaveCount(1);
   await expect(input).toHaveValue('');
   expect(uploadCount).toBe(5);
-  expect(uploadPayloads[4]).toContain('pasted-image.png');
+  expect(uploadPaths[4]).toMatch(/^temp\/chat_attachments\//);
+  expect(uploadPayloads[4]).toMatch(/pasted-.*\.png/);
   expect(uploadPayloads[4]).toContain('pasted-report.docx');
+
+  // 再次粘贴同名图片会进入新批次，不会覆盖上一张。
+  await paste([
+    { name: 'image.png', mimeType: 'image/png', content: readFileSync('tests/e2e/fixtures/preview-wide.png').toString('base64'), encoding: 'base64' }
+  ]);
+  await expect(cards.locator('.upload-preview-item')).toHaveCount(3);
+  expect(uploadCount).toBe(6);
+  expect(uploadPaths[5]).toMatch(/^temp\/chat_attachments\//);
+  expect(uploadPaths[5]).not.toBe(uploadPaths[4]);
+  const firstPastedName = uploadPayloads[4].match(/name="relative_paths"\r\n\r\n([^\r\n]+)/)?.[1];
+  const secondPastedName = uploadPayloads[5].match(/name="relative_paths"\r\n\r\n([^\r\n]+)/)?.[1];
+  expect(secondPastedName).not.toBe(firstPastedName);
   await send.click();
   await expect(cards).toHaveCount(0);
   await expect(log).toContainText('pasted-report.docx');
+  await expect(log).toContainText(uploadPaths[4]);
+  await expect(log).toContainText(uploadPaths[5]);
 });

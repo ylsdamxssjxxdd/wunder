@@ -949,6 +949,7 @@ fn open_recent_session(app: &MainWindow) {
     crate::native_window::restore_and_focus(app.window());
     app.window().request_redraw();
     app.set_page(crate::DesktopPage::Messages);
+    app.invoke_focus_input();
     if !app.get_active_session_id().is_empty() {
         return;
     }

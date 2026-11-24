@@ -81,6 +81,25 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
         app.get_composer_editor_has_focus(),
         "clicking the blank right side of the composer did not focus the editor",
     )?;
+    click(app, 100.0, 156.0)?;
+    require(
+        app.get_active_session_id() == "t2" && app.get_composer_editor_has_focus(),
+        "selecting a thread row did not return focus to the composer",
+    )?;
+    app.window()
+        .dispatch_event_with_result(slint::platform::WindowEvent::KeyPressed {
+            text: "x".into(),
+        })?;
+    require(
+        app.get_draft() == "x",
+        "typing immediately after a thread-row click did not reach the composer",
+    )?;
+    app.set_draft("".into());
+    click(app, 100.0, 116.0)?;
+    require(
+        app.get_active_session_id() == "t1" && app.get_composer_editor_has_focus(),
+        "switching back to the original thread did not focus the composer",
+    )?;
     let was_offline = app.get_ws_file_offline();
     let was_local = app.get_ws_file_local();
     app.set_ws_file_offline(false);
@@ -197,6 +216,10 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
         !app.get_settings_open(),
         "closing the settings window required another click",
     )?;
+    require(
+        app.get_composer_editor_has_focus(),
+        "closing settings did not return focus to the composer",
+    )?;
     let count = app.invoke_timeline_counts().rows;
     app.set_draft("  \n ".into());
     app.invoke_send_message();
@@ -211,10 +234,17 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
         "oversized input appended",
     )?;
     app.set_draft("测试消息".into());
-    app.invoke_send_message();
+    app.window()
+        .dispatch_event_with_result(slint::platform::WindowEvent::KeyPressed {
+            text: "\n".into(),
+        })?;
     require(
         app.invoke_timeline_counts().rows > count && app.get_draft().is_empty(),
         "send failed",
+    )?;
+    require(
+        app.get_composer_editor_has_focus(),
+        "sending from the keyboard did not keep the composer focused",
     )?;
     require(
         app.invoke_timeline_last_answer().contains("测试消息"),
@@ -225,6 +255,10 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
     require(
         app.invoke_timeline_counts().rows == 0 && app.get_draft().is_empty(),
         "conversation isolation failed",
+    )?;
+    require(
+        app.get_composer_editor_has_focus(),
+        "programmatic thread selection did not focus the composer",
     )?;
     app.invoke_select_conversation(0);
     require(
@@ -243,6 +277,10 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
     require(
         app.invoke_timeline_counts().rows == 0 && app.get_draft().is_empty(),
         "new task failed",
+    )?;
+    require(
+        app.get_composer_editor_has_focus(),
+        "creating a task did not focus the composer",
     )?;
     // The prototype follows the original light visual and no longer exposes
     // a theme switch. Keep a light snapshot for regression.

@@ -1304,6 +1304,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     app.on_cloud_select_thread(move |index| {
         if let Some(app) = weak.upgrade() {
+            app.invoke_focus_input();
             let id = CATALOG.with(|catalog| {
                 catalog
                     .borrow()

@@ -43,13 +43,20 @@ export type WorkspaceDroppedTree = {
 export const collectWorkspaceClipboardFiles = (
   dataTransfer: Pick<DataTransfer, 'files' | 'items'> | null | undefined
 ): WorkspaceDroppedTree => {
-  const itemFiles = Array.from(dataTransfer?.items || [])
-    .filter((item) => item.kind === 'file')
-    .map((item) => item.getAsFile())
-    .filter((file): file is File => Boolean(file));
-  const files = itemFiles.length
-    ? itemFiles
-    : Array.from(dataTransfer?.files || []);
+  const transferFiles = Array.from(dataTransfer?.files || []);
+  const itemFiles: File[] = [];
+  if (!transferFiles.length) {
+    for (const item of Array.from(dataTransfer?.items || [])) {
+      if (item.kind !== 'file') continue;
+      try {
+        const file = item.getAsFile();
+        if (file) itemFiles.push(file);
+      } catch {
+        // 某些浏览器对自定义文件项会拒绝 getAsFile()，继续尝试其他项。
+      }
+    }
+  }
+  const files = transferFiles.length ? transferFiles : itemFiles;
   return {
     files: files.map((file) => ({
       file,

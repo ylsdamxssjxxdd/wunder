@@ -30,6 +30,8 @@ component SplitPane inherits Rectangle {
     in property <SplitContext> context: { usage: 0.0, known: false, counts: "", compacted: false };
     out property <length> close-x: close-button.absolute-position.x;
     out property <length> close-y: close-button.absolute-position.y + close-button.height / 2;
+    out property <bool> editor-has-focus: composer.editor-has-focus;
+    public function focus-editor() { composer.focus-editor(); }
     callback close();
     callback activate();
     callback send();
@@ -50,7 +52,7 @@ component SplitPane inherits Rectangle {
             background: active ? Theme.selected : Theme.surface;
             border-width: 1px;
             border-color: active ? Theme.accent-soft : Theme.border;
-            TouchArea { clicked => { root.activate(); } }
+            TouchArea { clicked => { root.activate(); composer.focus-editor(); } }
             HorizontalLayout {
                 padding-left: 12px; padding-right: 4px; spacing: 8px;
                 Rectangle {
@@ -173,6 +175,12 @@ export component ChatSplitWorkspace inherits Rectangle {
     out property <length> drop-height: grid.height;
     out property <length> close-x: pane-0.close-x + 12px;
     out property <length> close-y: pane-0.close-y;
+    public function focus-active() {
+        if root.active-session == root.session-0 { pane-0.focus-editor(); }
+        else if root.active-session == root.session-1 { pane-1.focus-editor(); }
+        else if root.active-session == root.session-2 { pane-2.focus-editor(); }
+        else if root.active-session == root.session-3 { pane-3.focus-editor(); }
+    }
     callback layout-changed(int);
     callback close-pane(int);
     callback activate-pane(int);
@@ -232,7 +240,7 @@ export component ChatSplitWorkspace inherits Rectangle {
                 toggle(index) => { root.toggle-row(0, index); } process-page(index, direction) => { root.process-page(0, index, direction); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
                 select-model(key) => { root.select-pane-model(0, key); }
             }
-            SplitPane {
+            pane-1 := SplitPane {
                 slot: 1; x: root.pane-x(1); y: root.pane-y(1); width: root.pane-width(1); height: root.pane-height(1);
                 visible: root.session-1 != ""; session-id: root.session-1; title: root.title-1; rows: root.rows-1;
                 draft <=> root.draft-1; active: root.active-session == root.session-1; busy: root.busy-1; loading: root.loading-1;
@@ -245,7 +253,7 @@ export component ChatSplitWorkspace inherits Rectangle {
                 toggle(index) => { root.toggle-row(1, index); } process-page(index, direction) => { root.process-page(1, index, direction); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
                 select-model(key) => { root.select-pane-model(1, key); }
             }
-            SplitPane {
+            pane-2 := SplitPane {
                 slot: 2; x: root.pane-x(2); y: root.pane-y(2); width: root.pane-width(2); height: root.pane-height(2);
                 visible: root.effective-count == 4 && root.session-2 != ""; session-id: root.session-2; title: root.title-2; rows: root.rows-2;
                 draft <=> root.draft-2; active: root.active-session == root.session-2; busy: root.busy-2; loading: root.loading-2;
@@ -258,7 +266,7 @@ export component ChatSplitWorkspace inherits Rectangle {
                 toggle(index) => { root.toggle-row(2, index); } process-page(index, direction) => { root.process-page(2, index, direction); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
                 select-model(key) => { root.select-pane-model(2, key); }
             }
-            SplitPane {
+            pane-3 := SplitPane {
                 slot: 3; x: root.pane-x(3); y: root.pane-y(3); width: root.pane-width(3); height: root.pane-height(3);
                 visible: root.effective-count == 4 && root.session-3 != ""; session-id: root.session-3; title: root.title-3; rows: root.rows-3;
                 draft <=> root.draft-3; active: root.active-session == root.session-3; busy: root.busy-3; loading: root.loading-3;
