@@ -6699,6 +6699,40 @@ mod turn_tests {
     }
 
     #[test]
+    fn provider_retry_keeps_detailed_running_status() {
+        let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
+        let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
+        let mut live = timeline.borrow_mut();
+        live.begin_turn("fixture-root", "Fixture input");
+        apply_event(
+            &mut output,
+            &mut live,
+            &serde_json::json!({
+                "event":"llm_stream_retry", "data":{
+                    "attempt":2, "max_attempts":5, "delay_s":4.0, "will_retry":true
+                }
+            }),
+        )
+        .unwrap();
+        assert_eq!(output.phase, Phase::Running);
+        assert_eq!(
+            output.state(),
+            "模型服务暂时不可用 · 正在重试 2/5（4 秒后）"
+        );
+        live.set_turn_status(output.state(), 1);
+        let footer = live
+            .model()
+            .iter()
+            .find(|row| row.kind == crate::timeline::KIND_FOOTER)
+            .unwrap();
+        assert_eq!(footer.status_kind, crate::timeline::STATUS_RUNNING);
+        assert_eq!(
+            footer.stats.row_data(0).unwrap().value,
+            "模型服务暂时不可用 · 正在重试 2/5（4 秒后）"
+        );
+    }
+
+    #[test]
     fn error_message_language_cannot_turn_failure_into_success() {
         let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
         let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());

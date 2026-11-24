@@ -271,6 +271,96 @@ fn registry_browser_dirs(browser_root: &Path) -> Vec<PathBuf> {
     dirs
 }
 
+fn first_file(roots: &[PathBuf], candidates: &[&str]) -> Option<PathBuf> {
+    roots.iter().find_map(|root| {
+        candidates
+            .iter()
+            .map(|name| root.join(name))
+            .find(|path| path.is_file())
+    })
+}
+
+/// Media encoder shipped in a supplement (`opt/ffmpeg`).
+pub fn find_ffmpeg(roots: &[PathBuf]) -> Option<PathBuf> {
+    first_file(
+        roots,
+        if cfg!(windows) {
+            &["opt/ffmpeg/bin/ffmpeg.exe", "opt/ffmpeg/ffmpeg.exe"]
+        } else {
+            &["opt/ffmpeg/bin/ffmpeg", "opt/ffmpeg/ffmpeg"]
+        },
+    )
+}
+
+/// Media probe shipped next to [`find_ffmpeg`].
+pub fn find_ffprobe(roots: &[PathBuf]) -> Option<PathBuf> {
+    first_file(
+        roots,
+        if cfg!(windows) {
+            &["opt/ffmpeg/bin/ffprobe.exe", "opt/ffmpeg/ffprobe.exe"]
+        } else {
+            &["opt/ffmpeg/bin/ffprobe", "opt/ffmpeg/ffprobe"]
+        },
+    )
+}
+
+/// Archive tool shipped in a supplement (`opt/7zip`).
+pub fn find_seven_zip(roots: &[PathBuf]) -> Option<PathBuf> {
+    first_file(
+        roots,
+        if cfg!(windows) {
+            &[
+                "opt/7zip/7z.exe",
+                "opt/7zip/bin/7z.exe",
+                "opt/7zip/7za.exe",
+                "opt/7zip/bin/7za.exe",
+            ]
+        } else {
+            &[
+                "opt/7zip/7z",
+                "opt/7zip/bin/7z",
+                "opt/7zip/7za",
+                "opt/7zip/bin/7za",
+            ]
+        },
+    )
+}
+
+/// One runtime the supplement ships, named the way tool specs and prompts
+/// refer to it. `name` is a stable bare command (`python`, `ffmpeg`, …) so the
+/// same inventory can feed both the system prompt and diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BundledRuntime {
+    pub name: &'static str,
+    pub path: PathBuf,
+}
+
+/// Every supplement runtime that actually exists under `roots`.
+///
+/// The system prompt has to describe the offline toolchain instead of letting
+/// the model guess host paths: the bundled runtimes live under `<home>/opt`,
+/// which is not in any standard search location. Discovery stays here so the
+/// prompt, the process environment and the settings panel agree on one answer.
+pub fn inventory(roots: &[PathBuf]) -> Vec<BundledRuntime> {
+    let mut runtimes = Vec::new();
+    let mut push = |name: &'static str, path: Option<PathBuf>| {
+        if let Some(path) = path {
+            runtimes.push(BundledRuntime { name, path });
+        }
+    };
+    push("python", find_tool(roots, Tool::Python));
+    push("node", find_tool(roots, Tool::Node));
+    push("git", find_tool(roots, Tool::Git));
+    push("rg", find_tool(roots, Tool::Rg));
+    push("bash", find_tool(roots, Tool::Bash));
+    push("pwsh", find_tool(roots, Tool::PowerShell));
+    push("ffmpeg", find_ffmpeg(roots));
+    push("ffprobe", find_ffprobe(roots));
+    push("7z", find_seven_zip(roots));
+    push("browser", bundled_browser_bin(roots));
+    runtimes
+}
+
 /// Register the complete local supplement toolchain for child processes.
 ///
 /// PATH is kept as the primary command interface, while explicit variables
@@ -306,26 +396,10 @@ pub fn configure_runtime_env(roots: &[PathBuf]) {
             std::env::set_var("WUNDER_BROWSER_BIN", &browser);
         }
     }
-    let first_file = |candidates: &[&str]| -> Option<PathBuf> {
-        roots.iter().find_map(|root| {
-            candidates
-                .iter()
-                .map(|name| root.join(name))
-                .find(|path| path.is_file())
-        })
-    };
-    if let Some(ffmpeg) = first_file(if cfg!(windows) {
-        &["opt/ffmpeg/bin/ffmpeg.exe", "opt/ffmpeg/ffmpeg.exe"]
-    } else {
-        &["opt/ffmpeg/bin/ffmpeg", "opt/ffmpeg/ffmpeg"]
-    }) {
+    if let Some(ffmpeg) = find_ffmpeg(roots) {
         std::env::set_var("WUNDER_FFMPEG_BIN", &ffmpeg);
     }
-    if let Some(ffprobe) = first_file(if cfg!(windows) {
-        &["opt/ffmpeg/bin/ffprobe.exe", "opt/ffmpeg/ffprobe.exe"]
-    } else {
-        &["opt/ffmpeg/bin/ffprobe", "opt/ffmpeg/ffprobe"]
-    }) {
+    if let Some(ffprobe) = find_ffprobe(roots) {
         std::env::set_var("WUNDER_FFPROBE_BIN", &ffprobe);
     }
     // The portable PowerShell is `pwsh.exe`, so PATH alone cannot redirect the

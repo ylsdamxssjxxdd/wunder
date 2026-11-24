@@ -749,14 +749,15 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     app.on_composer_file_drop(move |event| {
         let Some(app) = weak.upgrade() else {
-            return;
+            return 0;
         };
         let Ok(paths) = event.data.file_paths() else {
-            return;
+            return 0;
         };
         for path in paths.take(MAX_DROP_FILES) {
             append_chat_reference(&app, &path.to_string_lossy());
         }
+        app.get_draft().len() as i32
     });
 
     // Prompt dialog: one callback serves both stages (issue the cloud write,

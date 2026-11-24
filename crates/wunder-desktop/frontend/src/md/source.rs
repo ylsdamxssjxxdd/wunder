@@ -64,14 +64,40 @@ pub fn is_document(source: &str) -> bool {
 /// schemes (`http`, `data`, `file`, …) are left untouched.
 pub fn normalize_destination(source: &str) -> String {
     let trimmed = source.trim();
+    let stripped = strip_reference_prefix(trimmed);
+    normalize_windows_separators(stripped)
+}
+
+fn strip_reference_prefix(trimmed: &str) -> &str {
     for prefix in ["reference_path:", "reference-path:"] {
         if let Some(rest) = trimmed.get(..prefix.len()) {
             if rest.eq_ignore_ascii_case(prefix) {
-                return trimmed[prefix.len()..].trim().to_string();
+                return trimmed[prefix.len()..].trim();
             }
         }
     }
-    trimmed.to_string()
+    trimmed
+}
+
+/// A Windows drive path in a Markdown destination keeps working no matter
+/// which separator the model wrote.
+///
+/// `\` is an escape character for every Markdown parser, so a path can reach
+/// this module with backslashes intact (escapes only apply to punctuation) or
+/// with some of them already consumed. Rewriting the surviving ones to `/`
+/// makes both shapes resolve to the same file and keeps the label readable on
+/// the card. Only drive-absolute paths are touched: a UNC destination starting
+/// with `//` would be mistaken for a protocol-relative URL.
+fn normalize_windows_separators(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let drive_absolute = bytes.len() > 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/');
+    if drive_absolute && path.contains('\\') {
+        return path.replace('\\', "/");
+    }
+    path.to_string()
 }
 
 /// The bare path of a reference, or `None` when it cannot address the
@@ -147,5 +173,30 @@ mod tests {
         assert!(is_image(&normalize_destination(
             "reference_path:/tmp/workspace/a.gif"
         )));
+    }
+
+    /// A Windows drive path must reach the loader with forward slashes even
+    /// when the model wrote backslashes, and a relative path or a URL keeps
+    /// whatever it had.
+    #[test]
+    fn windows_drive_paths_are_rewritten_to_forward_slashes() {
+        assert_eq!(
+            normalize_destination(r"F:\wunder\workspace\成品.gif"),
+            "F:/wunder/workspace/成品.gif"
+        );
+        assert_eq!(
+            normalize_destination(r"reference_path:F:\shots\a b.png"),
+            "F:/shots/a b.png"
+        );
+        assert_eq!(
+            normalize_destination("F:/wunder/workspace/成品.gif"),
+            "F:/wunder/workspace/成品.gif"
+        );
+        assert_eq!(
+            normalize_destination(r"https://example.com\a.png"),
+            r"https://example.com\a.png"
+        );
+        assert_eq!(normalize_destination(r"notes\a.png"), r"notes\a.png");
+        assert!(is_image(&normalize_destination(r"F:\shots\a.png")));
     }
 }

@@ -155,6 +155,7 @@ impl Phase {
             || value.starts_with("正在")
             || value.starts_with("目标")
             || value.starts_with("模型响应")
+            || value.starts_with("模型服务暂时不可用")
             || value.starts_with("后台运行")
             || value.contains("压缩中")
         {
@@ -178,6 +179,9 @@ mod tests {
             "正在思考…",
             "正在执行工具…",
             "模型响应中",
+            "模型服务暂时不可用 · 正在重试 2/5（4 秒后）",
+            "模型服务暂时不可用 · 正在重试…",
+            "正在重试…",
             "目标继续执行…",
             "上下文压缩中…",
             "后台运行中",

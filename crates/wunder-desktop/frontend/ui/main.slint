@@ -896,7 +896,7 @@ export component MainWindow inherits Window {
     callback ws-file-drop(DropEvent, int);
     // 收回工作目录的焦点行（空白处按下 / 面板失焦）。
     callback ws-file-clear-active();
-    callback composer-file-drop(DropEvent);
+    callback composer-file-drop(DropEvent) -> int;
     // 侧栏宽度：以窗口坐标为准（追踪通道给的是真实光标位置），起点由按下时
     // 记录，因此拖多远就宽多少，不受布局反馈滞后影响。
     // 缩到 140px 以内直接收起（对齐云端版：侧栏不会缩成一条缝，而是整列退场，
@@ -1430,6 +1430,9 @@ export component MainWindow inherits Window {
                             timeline_view := TimelineView {
                                 visible: true;
                                 rows: root.timeline;
+                                // 收窄到移动模式：工具条目右侧的上下文与耗时
+                                // 隐去，把宽度留给名称和摘要。
+                                compact: root.narrow;
                                 loading: root.chat-loading || root.session-loading || !root.threads-ready
                                     || (root.cloud-chat-active && root.cloud-thread-busy);
                                 loading-text: root.session-loading ? (I18n.zh ? "正在打开线程，读取历史记录…" : "Opening thread and reading history…")
@@ -1589,7 +1592,7 @@ export component MainWindow inherits Window {
                                 send => { root.send-message(); }
                                 screenshot() => { root.capture-screenshot(); }
                                 paste-image() => { return root.paste-image(); }
-                                file-drop(event) => { root.composer-file-drop(event); }
+                                file-drop(event) => { return root.composer-file-drop(event); }
                                 record-voice => { root.record-voice(); }
                                 remove-attachment(index) => { root.remove-attachment(index); }
                                 }

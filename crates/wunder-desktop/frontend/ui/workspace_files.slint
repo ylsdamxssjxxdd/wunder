@@ -148,6 +148,11 @@ export component WorkspaceFilesPanel inherits Rectangle {
     private property <bool> empty: !root.offline && !root.loading && !root.search-active
         && root.error == "" && root.rows.length == 0;
     private property <bool> writeable: !root.read-only && (root.local || !root.offline);
+    // 与云端版一致：可接收的外部文件进入面板时，整个根目录落点给出
+    // 底色和描边；目录行仍由各自的 DropArea 提供更精确的落点反馈。
+    background: panel-drop.has-drag ? Theme.accent-soft : transparent;
+    border-width: panel-drop.has-drag ? 1px : 0px;
+    border-color: Theme.accent-ink;
 
     // 拖入只在离线/只读时拒绝。目录刷新或写操作进行中照常接收：落点在行上由行
     // 自己的 DropArea 接管，其余算根目录。列表在刷新不该让拖入看起来「没反应」。

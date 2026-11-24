@@ -1663,7 +1663,8 @@ export component Composer inherits Rectangle {
     callback launch-cli();
     callback screenshot();
     callback paste-image() -> bool;
-    callback file-drop(DropEvent);
+    // Returns the updated draft's UTF-8 byte length for caret placement.
+    callback file-drop(DropEvent) -> int;
     // ---- 发送队列 (§发送队列) ----
     // Parked turns come straight from the engine's queue projection; the strip
     // never keeps its own copy, so a reorder or a withdraw that raced with a
@@ -1813,9 +1814,9 @@ export component Composer inherits Rectangle {
         width: parent.width;
         height: max(0px, root.height - self.y - 10px);
         border-radius: 16px;
-        background: Theme.surface;
+        background: composer-drop.has-drag ? Theme.accent-soft : Theme.surface;
         border-width: 1px;
-        border-color: editor.has-focus ? Theme.accent-ink : Theme.border;
+        border-color: composer-drop.has-drag || editor.has-focus ? Theme.accent-ink : Theme.border;
         // 卡片空白处（含底部动作行空位）也把焦点交给编辑器；按钮与编辑器
         // 自身在更上层，仍先拿到点击。
         TouchArea {
@@ -1927,9 +1928,9 @@ export component Composer inherits Rectangle {
                 editor := TextEditBase {
                 x: 0px; y: 0px; width: parent.width; height: parent.height;
                 border-radius: 16px;
-                background: root.touch-layout ? Theme.surface : transparent;
+                background: composer-drop.has-drag ? Theme.accent-soft : (root.touch-layout ? Theme.surface : transparent);
                 border-width: root.touch-layout ? 1px : 0px;
-                border-color: self.has-focus ? Theme.accent-ink : Theme.border;
+                border-color: composer-drop.has-drag || self.has-focus ? Theme.accent-ink : Theme.border;
                 scroll-view-padding: root.touch-layout ? 11px : 14px;
                 accessible-role: text-input;
                 accessible-value <=> self.text;
@@ -2067,10 +2068,17 @@ export component Composer inherits Rectangle {
                     }
                 }
             }
-            DropArea {
+            composer-drop := DropArea {
                 x: 0px; y: 0px; width: 100%; height: 100%;
                 can-drop(event) => { return DragAction.copy; }
-                dropped(event) => { root.file-drop(event); return DragAction.copy; }
+                dropped(event) => {
+                    let caret-offset = root.file-drop(event);
+                    // 路径写入后恢复焦点并把光标放到草稿末尾，用户直接输入
+                    // 就是续写，不必再点一次输入框或手工移动光标。
+                    root.focus-editor();
+                    editor.set-selection-offsets(caret-offset, caret-offset);
+                    return DragAction.copy;
+                }
             }
             }
             // 手机上没有草稿可发时，右侧这颗键就是麦克风：按住说话，松手

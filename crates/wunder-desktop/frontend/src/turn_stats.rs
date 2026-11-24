@@ -137,6 +137,9 @@ pub fn with_status(metrics: Vec<Metric>, state: &str) -> Vec<Metric> {
         _ if state.starts_with("正在执行工具") => ("status-tool", "使用工具中"),
         _ if state.starts_with("上下文压缩中") => ("status-compacting", "上下文压缩中"),
         _ if state.starts_with("模型响应中") => ("status-requesting", "请求中"),
+        _ if state.starts_with("模型服务暂时不可用") || state.starts_with("正在重试") => {
+            ("status-running", state)
+        }
         _ if state.starts_with("正在思考") || state.starts_with("正在生成") => {
             ("status-outputting", "模型输出中")
         }
@@ -345,6 +348,19 @@ mod tests {
         let subagent = with_status(Vec::new(), "subagent_running");
         assert_eq!(subagent[0].icon, "status-subagent");
         assert_eq!(subagent[0].value, "子智能体执行中");
+    }
+
+    #[test]
+    fn provider_retry_preserves_attempt_and_backoff_in_live_footer() {
+        for state in [
+            "模型服务暂时不可用 · 正在重试 2/5（4 秒后）",
+            "模型服务暂时不可用 · 正在重试…",
+            "正在重试…",
+        ] {
+            let status = with_status(Vec::new(), state);
+            assert_eq!(status[0].icon, "status-running");
+            assert_eq!(status[0].value, state);
+        }
     }
 
     #[test]

@@ -136,31 +136,27 @@ fn catalogue_matches_local(local_status: &str, catalogue_status: &str) -> bool {
 }
 
 fn status_kind(status: &str) -> &'static str {
-    if matches!(
-        status,
-        "pending" | "queued" | "waiting_input" | "waiting_user_input"
-    ) || status.starts_with("正在排队")
-        || status.starts_with("任务已排队")
-        || status.starts_with("等待")
-        || status.starts_with("请求中")
-        || matches!(status, "running" | "streaming" | "executing")
-        || status.starts_with("正在")
-        || status.starts_with("目标")
-    {
-        "hot"
-    } else if matches!(status, "done" | "finished" | "completed" | "success")
-        || status.starts_with("任务完成")
-        || status.starts_with("输出已结束")
-    {
-        "done"
-    } else {
-        "other"
+    match Phase::of(status) {
+        Phase::Pending | Phase::Running | Phase::Inquiry => "hot",
+        Phase::Done => "done",
+        Phase::Idle | Phase::Error | Phase::Stopped => "other",
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_retry_and_catalogue_running_are_both_live() {
+        for status in [
+            "模型服务暂时不可用 · 正在重试 2/5（4 秒后）",
+            "模型服务暂时不可用 · 正在重试…",
+            "正在重试…",
+        ] {
+            assert!(catalogue_matches_local(status, "running"));
+        }
+    }
 
     #[test]
     fn an_old_read_is_rejected_even_after_the_local_owner_has_settled() {

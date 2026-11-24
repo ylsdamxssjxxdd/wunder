@@ -13,6 +13,9 @@ component ProcessEntryCard inherits Rectangle {
     // Mobile grows the detail inline so the chat keeps a single vertical
     // scroll; desktop keeps the bounded inner scroll.
     in property <bool> mobile: false;
+    // 极窄窗（桌面移动模式）把右侧的上下文与耗时让给工具名和摘要，但保留
+    // 桌面版的展开方式：`mobile` 会连详情一起改成内联，这里只收窄统计列。
+    in property <bool> compact: false;
     callback toggle(int);
     callback copy-text(string);
     callback open-resource(string);
@@ -166,15 +169,15 @@ component ProcessEntryCard inherits Rectangle {
                     font-size: Theme.font-xs; font-family: Theme.font-mono;
                     horizontal-alignment: left; vertical-alignment: center;
                 }
-                // A phone row drops the token count and duration: the narrow
-                // width is better spent on the tool name, file and summary.
-                if !root.mobile && (root.entry.tokens != "" || root.entry.duration != "") : Text {
+                // A phone or narrow window drops the token count and duration:
+                // the width is better spent on the tool name, file and summary.
+                if !root.mobile && !root.compact && (root.entry.tokens != "" || root.entry.duration != "") : Text {
                     width: 44px * Theme.font-scale; height: parent.height;
                     text: root.entry.tokens; color: Theme.muted;
                     font-size: Theme.font-xs; font-family: Theme.font-mono;
                     horizontal-alignment: left; vertical-alignment: center;
                 }
-                if !root.mobile && (root.entry.tokens != "" || root.entry.duration != "") : Text {
+                if !root.mobile && !root.compact && (root.entry.tokens != "" || root.entry.duration != "") : Text {
                     width: 40px * Theme.font-scale; height: parent.height;
                     text: root.entry.duration; color: Theme.muted;
                     font-size: Theme.font-xs; font-family: Theme.font-mono;
@@ -297,6 +300,8 @@ export component ToolProcess inherits Rectangle {
     // Touch shells render every loaded step inline and let the transcript's
     // single ScrollView move them; desktop keeps the capped inner list.
     in property <bool> mobile: false;
+    // 极窄窗（桌面移动模式）：只收掉行尾的上下文与耗时两列。
+    in property <bool> compact: false;
     callback page(int);
     in property <length> viewport-limit: Theme.workflow-height;
     callback toggle(int);
@@ -443,6 +448,7 @@ export component ToolProcess inherits Rectangle {
             width: process-list.visible-width;
             entry: entry;
             mobile: root.mobile;
+            compact: root.compact;
             toggle(index) => { root.toggle(index); }
             copy-text(text) => { root.copy-text(text); }
             open-resource(path) => { root.open-resource(path); }

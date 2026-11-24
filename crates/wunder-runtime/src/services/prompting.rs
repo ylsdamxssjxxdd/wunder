@@ -263,8 +263,11 @@ impl PromptComposer {
             } else {
                 tool_specs
             };
+            // 本地形态把工作目录也写成正斜杠：工具结果、技能路径与工具描述都已
+            // 是正斜杠，只有这里保留反斜杠会让模型以为回复里也该用 `F:\…`，
+            // 而反斜杠在 Markdown 中是转义字符，图片与文件引用会加载失败。
             let workdir_display = if is_local_runtime_mode(&config.server.mode) {
-                absolute_path_str(workdir)
+                markdown_path(&absolute_path_str(workdir))
             } else {
                 workspace.display_path(workspace_id, workdir)
             };
@@ -570,6 +573,21 @@ fn build_system_prompt_skeleton(
             .iter()
             .any(|name| resolve_tool_name(name) == "图像生成"),
     );
+    // Windows 的本机绝对路径用反斜杠，而 Markdown 把反斜杠当转义字符：模型
+    // 照抄 `F:\…` 写进最终回复，用户端图片与文件就会加载失败。给出正斜杠的
+    // 现成形式，比让模型自己改写可靠。
+    engineering_flags.insert("RUNTIME_WINDOWS".to_string(), is_local && cfg!(windows));
+    // 补充包里那套离线运行时不在任何标准搜索路径下，模型只有被明确告知才
+    // 知道 python、ffmpeg、pwsh 和浏览器就在那里；没有补充包时不渲染该块。
+    let supplement_runtimes = if is_local {
+        render_supplement_runtimes()
+    } else {
+        String::new()
+    };
+    engineering_flags.insert(
+        "HAS_SUPPLEMENT".to_string(),
+        !supplement_runtimes.is_empty(),
+    );
 
     let engineering_template = read_prompt_template_from_scope(
         config,
@@ -583,6 +601,8 @@ fn build_system_prompt_skeleton(
             ("OS".to_string(), os_name),
             ("DATE".to_string(), date_str),
             ("DIR".to_string(), workdir_display.to_string()),
+            ("DIR_MARKDOWN".to_string(), markdown_path(workdir_display)),
+            ("SUPPLEMENT_TOOLS".to_string(), supplement_runtimes),
             ("WORKSPACE_TREE".to_string(), workspace_tree.to_string()),
         ]),
     );
@@ -784,7 +804,7 @@ fn render_preview_skill_list(skills: &[SkillSpec]) -> String {
             Err(_) => continue,
         };
         let skill_path = absolute_path_str_from_text(&spec.path);
-        let skill_root = absolute_path_str(&spec.root);
+        let skill_root = markdown_path(&absolute_path_str(&spec.root));
         let rendered = render_skill_markdown_for_model(&raw, &skill_root);
         blocks.push(format!(
             "## {}\nSKILL.md: {}\n\n{}",
@@ -1050,7 +1070,34 @@ fn absolute_path_str_from_text(raw: &str) -> String {
         return String::new();
     }
     let path = PathBuf::from(raw);
-    absolute_path_str(&path)
+    markdown_path(&absolute_path_str(&path))
+}
+
+/// A path in the form Markdown can carry: Windows separators become forward
+/// slashes, because `\` is an escape character in Markdown and a destination
+/// copied verbatim from a tool result silently loses characters.
+fn markdown_path(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
+/// The supplement's offline runtimes, one `- name: path` line each.
+///
+/// They are unpacked under the shared home's `opt/` directory, which no shell
+/// search path covers, so the model cannot discover them by probing. The list
+/// is rebuilt when a thread's system prompt is frozen; an import that lands
+/// later is picked up by the next thread. An empty result removes the block.
+fn render_supplement_runtimes() -> String {
+    let roots = wunder_core::local_bootstrap::supplement::local_roots();
+    let runtimes = wunder_core::local_bootstrap::supplement::inventory(&roots);
+    let mut lines = Vec::with_capacity(runtimes.len());
+    for runtime in runtimes {
+        lines.push(format!(
+            "- {}: {}",
+            runtime.name,
+            markdown_path(&runtime.path.to_string_lossy())
+        ));
+    }
+    lines.join("\n")
 }
 
 #[derive(Clone)]
@@ -1154,6 +1201,18 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn markdown_paths_use_forward_slashes() {
+        assert_eq!(
+            markdown_path(r"F:\wunder\workspace\成品.png"),
+            "F:/wunder/workspace/成品.png"
+        );
+        assert_eq!(
+            markdown_path("/workspaces/demo/temp_dir/a.md"),
+            "/workspaces/demo/temp_dir/a.md"
+        );
+    }
+
+    #[test]
     fn rewrite_workspace_paths_for_local_text_handles_placeholder() {
         let output = rewrite_workspace_paths_for_local_text(
             "![Report](/workspaces/{user_id}/temp_dir/report.md)",
@@ -1204,6 +1263,36 @@ mod tests {
             schema["properties"]["content"]["description"].as_str(),
             Some("![x](C:/Users/test/Desktop/workspace/a.png)")
         );
+    }
+
+    /// 补充包清单与 Windows 路径规则都必须跟着开关走：没有补充包时不能渲染
+    /// 清单（否则模型会去找不存在的运行时），非 Windows 宿主也不需要正斜杠
+    /// 的改写指令。
+    #[test]
+    fn shipped_engineering_prompt_gates_supplement_and_windows_paths() {
+        let template = include_str!("../../../../config/prompts/en/system/engineering.txt");
+        assert!(template.contains("[[RUNTIME_WINDOWS]]"));
+        assert!(template.contains("[[HAS_SUPPLEMENT]]"));
+        let shown = apply_prompt_flags(
+            template,
+            &HashMap::from([
+                ("HAS_SUPPLEMENT".to_string(), true),
+                ("RUNTIME_WINDOWS".to_string(), true),
+            ]),
+        );
+        assert!(shown.contains("[Supplement runtimes]"));
+        assert!(shown.contains("{SUPPLEMENT_TOOLS}"));
+        assert!(shown.contains("{DIR_MARKDOWN}"));
+        let hidden = apply_prompt_flags(
+            template,
+            &HashMap::from([
+                ("HAS_SUPPLEMENT".to_string(), false),
+                ("RUNTIME_WINDOWS".to_string(), false),
+            ]),
+        );
+        assert!(!hidden.contains("[Supplement runtimes]"));
+        assert!(!hidden.contains("{DIR_MARKDOWN}"));
+        assert!(!hidden.contains("{SUPPLEMENT_TOOLS}"));
     }
 
     #[test]
@@ -1302,9 +1391,15 @@ mod tests {
     ///
     /// 上限从 10.4k 调到 12.8k：模型面统一英文后按英文计费，function_call 模式
     /// 实测约 10.8k、text 协议约 12.0k（英文模板比中文更长），基线按英文重新校准。
+    ///
+    /// 再调到 13.4k：新增的 Windows 路径规则与补充包运行时清单合起来约 250 token，
+    /// 换来的是「引用图片/文件不再因反斜杠失效」和「离线运行时与浏览器不必靠试错
+    /// 找」，省下的往返远多于这点固定成本；清单只在装了补充包时才真正渲染（这里按
+    /// 最坏情况整篇计入）。
     #[test]
-    fn first_turn_prompt_budget_stays_under_12k_tokens() {
+    fn first_turn_prompt_budget_stays_within_cap() {
         const RESERVE_TOKENS: usize = 1_200;
+        const MAX_TOTAL_TOKENS: usize = 13_400;
         fn estimate(text: &str) -> usize {
             let units: f64 = text
                 .chars()
@@ -1372,14 +1467,14 @@ mod tests {
             let tools_tokens = estimate(&tools_text);
             let total = static_tokens + tools_tokens + RESERVE_TOKENS;
             println!(
-                "FIRST_TURN_BUDGET locale={locale} mode={} tools={} static_chars={} tools_chars={} static_tokens={static_tokens} tools_tokens={tools_tokens} reserve={RESERVE_TOKENS} total_tokens={total}",
+                "FIRST_TURN_BUDGET locale={locale} mode={} tools={} static_chars={} tools_chars={} static_tokens={static_tokens} tools_tokens={tools_tokens} reserve={RESERVE_TOKENS} cap={MAX_TOTAL_TOKENS} total_tokens={total}",
                 if function_call { "function_call" } else { "text" },
                 tools.len(),
                 static_text.chars().count(),
                 tools_text.chars().count()
             );
             assert!(
-                total < 12_800,
+                total < MAX_TOTAL_TOKENS,
                 "first-turn prompt is ~{total} tokens in {locale} mode (static {static_tokens}, tools {tools_tokens})"
             );
         }

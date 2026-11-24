@@ -81,6 +81,49 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
         app.get_composer_editor_has_focus(),
         "clicking the blank right side of the composer did not focus the editor",
     )?;
+    let was_offline = app.get_ws_file_offline();
+    let was_local = app.get_ws_file_local();
+    app.set_ws_file_offline(false);
+    app.set_ws_file_local(true);
+    file_drag(app, 100.0, 500.0, false)?;
+    snapshot(app, &directory.join("native-workspace-dragover.png"))?;
+    file_drag_leave(app);
+    app.set_ws_file_offline(was_offline);
+    app.set_ws_file_local(was_local);
+    // The demo has no filesystem façade. Supply only its path insertion so the
+    // real Slint DropArea pipeline can be checked without a runtime or disk IO.
+    let drop_weak = app.as_weak();
+    app.on_composer_file_drop(move |event| {
+        let Some(app) = drop_weak.upgrade() else { return 0 };
+        let Ok(paths) = event.data.file_paths() else { return 0 };
+        for path in paths.take(1) {
+            app.set_draft(format!("@\"{}\" ", path.to_string_lossy()).into());
+        }
+        app.get_draft().len() as i32
+    });
+    app.set_draft("".into());
+    let drop_x = editor_x + editor_width * 0.5;
+    let drop_y = editor_y + editor_height * 0.5;
+    file_drag(app, drop_x, drop_y, false)?;
+    snapshot(app, &directory.join("native-composer-dragover.png"))?;
+    file_drag(app, drop_x, drop_y, true)?;
+    require(
+        app.get_draft().contains("@\"/sample/资料.txt\" "),
+        "dropping a file did not insert its path into the composer",
+    )?;
+    require(
+        app.get_composer_editor_has_focus(),
+        "dropping a file did not return focus to the composer editor",
+    )?;
+    app.window()
+        .dispatch_event_with_result(slint::platform::WindowEvent::KeyPressed {
+            text: "x".into(),
+        })?;
+    require(
+        app.get_draft().ends_with(" x"),
+        "typing after a file drop did not append after the inserted path",
+    )?;
+    app.set_draft("".into());
     drag(app, 100.0, 156.0, 800.0, 400.0)?;
     require(
         app.get_split_count() == 2 && app.get_split_session_1() == "t2",
@@ -877,6 +920,39 @@ pub(crate) fn click(app: &MainWindow, x: f32, y: f32) -> Result<(), Box<dyn std:
             button: PointerEventButton::Left,
         })?;
     Ok(())
+}
+
+fn file_drag(
+    app: &MainWindow,
+    x: f32,
+    y: f32,
+    drop: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use i_slint_core::input::BackendDragEvent;
+    use i_slint_core::items::{AllowedDragActions, DragAction, DropEvent};
+    use i_slint_core::window::WindowInner;
+
+    let mut data = i_slint_core::DataTransfer::default();
+    data.set_file_paths(["/sample/资料.txt"]);
+    let event = DropEvent::new(data, slint::LogicalPosition::new(x, y), DragAction::Copy);
+    let allowed = AllowedDragActions { copy: true, move_: true, link: true };
+    let window = WindowInner::from_pub(app.window());
+    let hovered = window.process_drag_event(BackendDragEvent::Move {
+        event: event.clone(),
+        allowed,
+    });
+    require(hovered == Some(DragAction::Copy), "file drag was not accepted by its target")?;
+    if drop {
+        let dropped = window.process_drag_event(BackendDragEvent::Drop { event, allowed });
+        require(dropped == Some(DragAction::Copy), "file drop was not accepted by its target")?;
+    }
+    Ok(())
+}
+
+fn file_drag_leave(app: &MainWindow) {
+    use i_slint_core::input::BackendDragEvent;
+    use i_slint_core::window::WindowInner;
+    WindowInner::from_pub(app.window()).process_drag_event(BackendDragEvent::Leave);
 }
 
 pub(crate) fn drag(
