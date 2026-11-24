@@ -1792,8 +1792,15 @@ export component MainWindow inherits Window {
             local-workspace-count: root.workspaces.length;
             busy: root.creating-session || root.session-loading || root.chat-loading;
             select-row(index) => {
-                // 抽屉里点线程就收抽屉：否则选中结果被浮层盖住，用户还得再点一次。
-                if root.sidebar-overlay { root.sidebar-peek = false; }
+                // 抽屉里只有点线程才收抽屉：否则选中结果被浮层盖住，用户还得
+                // 再点一次。工作区标题行只是线程树的开关，点它要留在抽屉里
+                // 看线程展开，不能被顺手关掉（会被误读成「返回主页」）。
+                if root.sidebar-overlay && index >= 0 && index < root.sidebar-rows.length {
+                    let kind = root.sidebar-rows[index].kind;
+                    if kind == 1 || kind == 3 {
+                        root.sidebar-peek = false;
+                    }
+                }
                 root.select-row(index);
             }
             select-device(device) => { root.select-device(device); }
