@@ -1510,14 +1510,27 @@ impl Orchestrator {
             return Err(err);
         }
         let messages = context_manager.normalize_messages(messages);
-        let context_tokens = 0_i64;
+        // The rebuilt history is smaller, not empty. Publishing the unobserved
+        // zero here drew 0 / max on every context gauge right after `/compact`,
+        // and that false zero even became the response's `final_context_tokens`,
+        // so clients only recovered on the next provider count. Report what the
+        // rebuilt request actually measures instead; the next live request adds
+        // the tool definitions and the provider's own count.
+        let rebuilt_request_tokens = super::request_budget::estimate_request_tokens(
+            &self.build_chat_messages(&messages),
+            None,
+        );
+        let context_tokens = rebuilt_request_tokens;
+        // Accounting stays "no provider observation": occupancy is a local
+        // measurement until the next request reports the exact prompt size.
         self.workspace
-            .save_session_context_tokens_async(user_id, session_id, context_tokens)
+            .save_session_context_tokens_async(user_id, session_id, 0)
             .await;
         let mut context_payload = json!({
             "context_tokens": context_tokens,
-            "observed_context_tokens": context_tokens,
-            "context_usage_source": "unobserved_after_manual_compaction",
+            "context_occupancy_tokens": context_tokens,
+            "observed_context_tokens": 0,
+            "context_usage_source": "rebuilt_history_projection",
             "message_count": messages.len(),
         });
         if let Value::Object(ref mut map) = context_payload {

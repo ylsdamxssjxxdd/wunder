@@ -18,9 +18,8 @@ export component ChatGreeting inherits Rectangle {
     in property <string> text: I18n.chat_greeting;
     in property <bool> loading: false;
     callback preview();
-    // The eva01 head opens the greeting. No plate behind it: the artwork is cut
-    // flat where the model was cropped, so the prepared mark asset carries the
-    // air (85% fill) and fades its neckline instead of ending on a hard edge.
+    // The eva01 head opens the greeting without a plate; the prepared asset
+    // carries its own transparent margin and complete V-shaped chest.
     private property <length> mark: 40px;
     private property <length> mark-gap: 10px;
     private property <length> top: 6px;
@@ -33,13 +32,10 @@ export component ChatGreeting inherits Rectangle {
         x: Theme.timeline-padding;
         y: root.mark-y;
         width: root.mark; height: root.mark;
-        // The asset is prepared for this slot: trimmed to the artwork, 85 %
-        // fill inside its square and a 40-cell grid blown up 4x, so the whole
-        // silhouette — fins, shoulders, V-shaped chest — survives the shrink
-        // (see scripts/generate_eva01_mark.py). Pixelated rendering maps one
-        // grid cell to one device pixel instead of smearing the cells together.
+        // Direct 4x Lanczos resampling retains the source shading and thin
+        // silhouette (see scripts/generate_eva01_mark.py).
         source: @image-url("../assets/eva01-mark.png");
-        image-rendering: pixelated;
+        image-rendering: smooth;
     }
     greeting-row := HorizontalLayout {
         x: Theme.timeline-padding + root.mark + root.mark-gap; y: root.top;

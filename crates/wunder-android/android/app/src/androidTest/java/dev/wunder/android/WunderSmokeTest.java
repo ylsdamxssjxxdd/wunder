@@ -69,6 +69,17 @@ public class WunderSmokeTest {
         }
     }
 
+    @Test
+    public void duplicateBackCallbacksCollapseIntoOneRequest() {
+        UiBridge.takeBackRequests();
+        UiBridge.requestBack();
+        UiBridge.requestBack();
+
+        assertEquals("both dispatcher callbacks must share one queue", 1,
+                UiBridge.takeBackRequests());
+        assertEquals("the drained request must not repeat", 0, UiBridge.takeBackRequests());
+    }
+
     /**
      * device_info is the one PhoneBridge action that works without the
      * accessibility service, which makes it the cheapest end-to-end check of

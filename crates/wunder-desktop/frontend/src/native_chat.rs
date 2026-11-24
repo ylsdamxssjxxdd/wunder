@@ -2995,7 +2995,16 @@ fn bind_thread_model(app: &MainWindow, state: Rc<RefCell<State>>) {
                     return;
                 }
                 match result {
-                    Ok(()) => app.set_status("已切换本线程模型".into()),
+                    Ok(()) => {
+                        app.set_status("已切换本线程模型".into());
+                        // The window size belongs to the model, so the gauge's
+                        // denominator changed with the switch. Re-read it now
+                        // instead of leaving the previous model's percentage
+                        // until the next request reports its own limit.
+                        if let Some(state) = CHAT_STATE.with(|slot| slot.borrow().upgrade()) {
+                            refresh_context_async(&app, &state, &session);
+                        }
+                    }
                     Err(error) => {
                         crate::native_pages::select_model_key(&app, &previous_key);
                         app.set_status(format!("无法切换模型：{error}").into());

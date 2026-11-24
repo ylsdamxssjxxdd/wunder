@@ -261,6 +261,9 @@ class SlintInputView extends View {
 
     // num_handles: 0=hidden, 1=cursor handle, 2=selection handles
     public void setCursorPos(int left_x, int left_y, int right_x, int right_y, int cursor_height, int num_handles) {
+        if (mHandlesSuppressed) {
+            num_handles = 0;
+        }
         int handleHeight = 0;
         if (num_handles == 1) {
             if (mLeftHandle != null) {
@@ -339,6 +342,14 @@ class SlintInputView extends View {
     }
 
     private ActionMode mCurrentActionMode;
+    private boolean mHandlesSuppressed;
+
+    public void setHandlesSuppressed(boolean suppressed) {
+        mHandlesSuppressed = suppressed;
+        if (suppressed) {
+            setCursorPos(0, 0, 0, 0, 0, 0);
+        }
+    }
 
     public void showActionMenu() {
         if (mCurrentActionMode != null) {
@@ -434,6 +445,8 @@ public class SlintAndroidJavaHelper {
     public SlintAndroidJavaHelper(Activity activity) {
         this.mActivity = activity;
         this.mInputView = new SlintInputView(activity);
+        UiBridge.registerHandlesSuppression(suppressed ->
+                mInputView.post(() -> mInputView.setHandlesSuppressed(suppressed)));
         this.mActivity.runOnUiThread(new Runnable() {
             @Override
             public void run() {
@@ -457,10 +470,10 @@ public class SlintAndroidJavaHelper {
                                 }
                             });
                 }
-                // On API 34+, Back arrives via OnBackInvokedDispatcher; forward
-                // it into Slint's key-event pipeline.
+                // Keep the same app-owned queue as WunderActivity regardless of
+                // which default-priority callback was registered last.
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && mBackCallback == null) {
-                    mBackCallback = () -> SlintAndroidJavaHelper.onBackInvoked();
+                    mBackCallback = () -> UiBridge.requestBack();
                     mActivity.getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
                             OnBackInvokedDispatcher.PRIORITY_DEFAULT, mBackCallback);
                 }
@@ -556,6 +569,7 @@ public class SlintAndroidJavaHelper {
         mActivity.runOnUiThread(new Runnable() {
             @Override
             public void run() {
+                mInputView.setHandlesSuppressed(false);
                 mInputView.requestFocus();
                 InputMethodManager imm = (InputMethodManager) mActivity.getSystemService(Context.INPUT_METHOD_SERVICE);
                 imm.showSoftInput(mInputView, 0);
@@ -569,6 +583,7 @@ public class SlintAndroidJavaHelper {
             public void run() {
                 InputMethodManager imm = (InputMethodManager) mActivity.getSystemService(Context.INPUT_METHOD_SERVICE);
                 imm.hideSoftInputFromWindow(mInputView.getWindowToken(), 0);
+                mInputView.setHandlesSuppressed(true);
                 mInputView.clearFocus();
                 mInputView.setCursorPos(0, 0, 0, 0, 0, 0);
             }

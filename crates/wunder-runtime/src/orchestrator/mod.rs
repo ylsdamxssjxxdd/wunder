@@ -124,6 +124,9 @@ mod workflow_metrics_tests;
 
 use context::ContextManager;
 pub(crate) use error::OrchestratorError;
+// The session-facing readers (capacity for the composer gauge) must apply the
+// same card-versus-provider-hint rule the request loop admits work against.
+pub(crate) use execute_support::merge_context_window_limit_hint;
 use event_stream::EventEmitter;
 use event_stream::StreamSignal;
 use limiter::RequestLimiter;

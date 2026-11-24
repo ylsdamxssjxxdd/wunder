@@ -2509,33 +2509,39 @@ export component SettingsPage inherits Rectangle {
                                 color: Theme.muted; font-size: Theme.font-sm;
                                 wrap: word-wrap; vertical-alignment: center;
                             }
-                            // 点一行即选中；按钮仍然要按一次，恢复是不可撤销的危险动作。
-                            for backup in root.data-backups : Rectangle {
-                                height: 50px;
-                                border-radius: Theme.radius-sm;
-                                background: backup.path == root.data-restore-path ? Theme.accent-soft : transparent;
-                                border-width: 1px;
-                                border-color: backup.path == root.data-restore-path ? Theme.accent : Theme.border;
-                                Text {
-                                    x: 10px; y: 7px; width: max(0px, parent.width - 48px); height: 19px;
-                                    text: backup.name; color: Theme.text; font-size: Theme.font-sm; font-weight: 600;
-                                    vertical-alignment: center; overflow: elide;
-                                }
-                                Text {
-                                    x: 10px; y: 26px; width: max(0px, parent.width - 48px); height: 16px;
-                                    text: backup.detail; color: Theme.muted; font-size: Theme.font-xs;
-                                    vertical-alignment: center; overflow: elide;
-                                }
-                                Rectangle {
-                                    x: parent.width - 28px; y: 17px; width: 16px; height: 16px;
-                                    border-radius: 8px;
-                                    background: backup.path == root.data-restore-path ? Theme.accent : transparent;
+                            // 备份清单自成一块：与标题分隔线、与下方按钮行都留出呼吸间距，
+                            // 条目之间也不再边框贴边框。
+                            if root.data-backups.length > 0 : VerticalLayout {
+                                padding-top: 12px;
+                                spacing: 8px;
+                                // 点一行即选中；按钮仍然要按一次，恢复是不可撤销的危险动作。
+                                for backup in root.data-backups : Rectangle {
+                                    height: 50px;
+                                    border-radius: Theme.radius-sm;
+                                    background: backup.path == root.data-restore-path ? Theme.accent-soft : transparent;
                                     border-width: 1px;
-                                    border-color: backup.path == root.data-restore-path ? Theme.accent : Theme.border-strong;
+                                    border-color: backup.path == root.data-restore-path ? Theme.accent : Theme.border;
+                                    Text {
+                                        x: 10px; y: 7px; width: max(0px, parent.width - 48px); height: 19px;
+                                        text: backup.name; color: Theme.text; font-size: Theme.font-sm; font-weight: 600;
+                                        vertical-alignment: center; overflow: elide;
+                                    }
+                                    Text {
+                                        x: 10px; y: 26px; width: max(0px, parent.width - 48px); height: 16px;
+                                        text: backup.detail; color: Theme.muted; font-size: Theme.font-xs;
+                                        vertical-alignment: center; overflow: elide;
+                                    }
+                                    Rectangle {
+                                        x: parent.width - 28px; y: 17px; width: 16px; height: 16px;
+                                        border-radius: 8px;
+                                        background: backup.path == root.data-restore-path ? Theme.accent : transparent;
+                                        border-width: 1px;
+                                        border-color: backup.path == root.data-restore-path ? Theme.accent : Theme.border-strong;
+                                    }
+                                    backup-row := TouchArea { mouse-cursor: pointer; clicked => { root.data-restore-path = backup.path; } }
                                 }
-                                backup-row := TouchArea { mouse-cursor: pointer; clicked => { root.data-restore-path = backup.path; } }
                             }
-                            HorizontalLayout { height: 42px; spacing: 8px;
+                            HorizontalLayout { height: 46px; padding-top: 12px; spacing: 8px;
                                 Action {
                                     width: 112px; height: 34px;
                                     label: I18n.st_data_pick_file;
@@ -2553,13 +2559,17 @@ export component SettingsPage inherits Rectangle {
                                     clicked => { root.data-restore-confirm = true; }
                                 }
                             }
-                            if root.data-backup-restart : Rectangle {
-                                height: 42px; border-radius: Theme.radius-sm; background: Theme.accent-soft;
-                                Text {
-                                    x: 10px; width: parent.width - 20px; height: parent.height;
-                                    text: I18n.st_data_restore_ready;
-                                    color: Theme.accent-ink; font-size: Theme.font-xs;
-                                    wrap: word-wrap; vertical-alignment: center;
+                            // 重启提示同样与按钮行留出间距，避免贴住按钮。
+                            if root.data-backup-restart : VerticalLayout {
+                                padding-top: 12px;
+                                Rectangle {
+                                    height: 42px; border-radius: Theme.radius-sm; background: Theme.accent-soft;
+                                    Text {
+                                        x: 10px; width: parent.width - 20px; height: parent.height;
+                                        text: I18n.st_data_restore_ready;
+                                        color: Theme.accent-ink; font-size: Theme.font-xs;
+                                        wrap: word-wrap; vertical-alignment: center;
+                                    }
                                 }
                             }
                         }

@@ -788,7 +788,7 @@ pub(super) fn should_recover_from_context_overflow(err: &OrchestratorError) -> b
             && super::llm::is_context_window_error_text(err.message()))
 }
 
-pub(super) fn merge_context_window_limit_hint(
+pub(crate) fn merge_context_window_limit_hint(
     current: Option<i64>,
     next: Option<i64>,
 ) -> Option<i64> {

@@ -689,12 +689,21 @@ pub async fn native_chat_context_capacity(
     let session_model_override = state
         .workspace
         .load_session_model_override(user_id, session_id);
-    Ok(
-        resolve_thread_model_name(&config, agent.as_ref(), session_model_override.as_deref())
-            .and_then(|key| config.llm.models.get(&key))
-            .and_then(|model| model.max_context)
-            .filter(|value| *value > 0),
-    )
+    let model_limit = resolve_thread_model_name(&config, agent.as_ref(), session_model_override.as_deref())
+        .and_then(|key| config.llm.models.get(&key))
+        .and_then(|model| model.max_context)
+        .map(i64::from);
+    // A provider can enforce a tighter window than the model card claims; the
+    // engine learns that limit from an overflow error and admits every request
+    // against it. The occupancy percentage must divide by the same number, or
+    // the gauge and the compaction threshold disagree on the same prompt.
+    let limit = crate::orchestrator::merge_context_window_limit_hint(
+        model_limit,
+        state.workspace.load_session_context_limit_hint(user_id, session_id),
+    );
+    Ok(limit
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0))
 }
 
 /// Build a local desktop request without going through the HTTP adapter.

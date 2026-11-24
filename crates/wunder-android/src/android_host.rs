@@ -115,12 +115,29 @@ pub fn hide_keyboard() {
     }
 }
 
+pub fn set_input_overlay_open(open: bool) {
+    let Some(host) = HOST.get() else {
+        return;
+    };
+    let Ok(mut env) = host.vm.attach_current_thread() else {
+        return;
+    };
+    let result = env.call_static_method(
+        &host.ui_bridge,
+        "setInputOverlayOpen",
+        "(Z)V",
+        &[JValue::Bool(open as u8)],
+    );
+    if result.is_err() {
+        clear_java_exception(&mut env);
+    }
+}
+
 /// Back 走 Slint 按键派发时记下的次数（`MobileWindow.back-requested`）。
 ///
-/// 系统手势在 API 34+ 上由 Slint 自己的 OnBackInvoked 回调转成 `Key.Back`，
-/// 旧版本与硬件返回键则从 android-activity 的输入队列进来；两条路都不经过
-/// Java 的 `UiBridge.requestBack`，所以在这里单独攒一份，和那边的计数器一起
-/// 由渲染 tick 消费，最终仍走同一个 `handle_back`。
+/// 系统手势由 Activity 与 Slint 的 Java 回调统一送入 `UiBridge.requestBack`；
+/// 旧版本与硬件返回键还可能从 android-activity 的输入队列转成 `Key.Back`。
+/// 后者在这里单独攒一份，和 Java 计数器一起由渲染 tick 消费。
 static SLINT_BACK_REQUESTS: AtomicI32 = AtomicI32::new(0);
 
 /// Record one Back press that arrived through Slint's key pipeline.

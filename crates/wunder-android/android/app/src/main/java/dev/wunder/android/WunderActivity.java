@@ -130,8 +130,8 @@ public class WunderActivity extends NativeActivity {
         }
         OnBackInvokedCallback callback = () -> UiBridge.requestBack();
         // PRIORITY_OVERLAY keeps the shell ahead of the backend's own
-        // default-priority callback (the Slint helper registers one that
-        // finishes the activity when the key is unhandled). It is a hint:
+        // default-priority callback. Both callbacks feed the same app queue,
+        // so registration order cannot change page navigation. It is a hint:
         // when the platform refuses it, fall back to default instead of
         // leaving the app without any callback.
         boolean registered = false;

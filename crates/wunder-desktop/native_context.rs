@@ -110,7 +110,12 @@ pub(super) async fn snapshot(
         .await?
         .map(f64::from);
     Ok(NativeContextUsage {
-        used: Some(used.max(0) as f64),
+        // Zero means "never counted by the provider" — a fresh thread, or the
+        // history that a compaction just replaced. Reporting it as an occupancy
+        // drew 0 / max on the gauge while the real prompt already held the
+        // system prompt and every tool definition, so the shells show "unknown"
+        // until the first request publishes a measurement.
+        used: (used > 0).then_some(used as f64),
         capacity,
         compacted,
     })
@@ -137,6 +142,21 @@ mod tests {
             NativeContextUsage::from_value(&json!({"context_tokens":0,"max_context":8000})).used,
             Some(0.0)
         );
+    }
+    #[test]
+    fn unobserved_zero_yields_to_the_measured_request_projection() {
+        // The pre-request frame of a fresh or freshly compacted thread carries
+        // no provider count, only the measured outgoing request: reading the
+        // zero instead drew an empty gauge over a prompt that already held the
+        // system prompt and the tool definitions.
+        let usage = NativeContextUsage::from_value(&json!({
+            "context_tokens": 0,
+            "context_occupancy_tokens": 13000,
+            "context_usage_source": "request_projection",
+            "max_context": 400000
+        }));
+        assert_eq!(usage.used, Some(13000.0));
+        assert_eq!(usage.capacity, Some(400000.0));
     }
     #[test]
     fn persisted_aliases_and_numeric_strings_do_not_use_billing_totals() {

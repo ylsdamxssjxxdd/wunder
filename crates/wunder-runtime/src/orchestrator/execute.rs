@@ -917,14 +917,48 @@ impl Orchestrator {
                 messages = context_manager.normalize_messages(messages);
                 let context_tokens = persisted_context_tokens.max(0);
                 let context_tokens_before_request = context_tokens;
-                let projected_request_tokens = context_tokens;
+                // A thread that has never had a provider count — a fresh thread,
+                // or the first request after a compaction — used to publish the
+                // persisted zero here. The gauge then drew empty while a prompt
+                // that already carries the system prompt and every tool
+                // definition was on the wire, and only looked right from the
+                // second round on. Measure the request that is about to leave
+                // instead; the provider's own count replaces it one frame later.
+                let unobserved = context_tokens == 0;
+                let projected_request_tokens = if unobserved {
+                    super::request_budget::estimate_request_tokens(
+                        &self.build_chat_messages(&messages),
+                        tools_payload,
+                    )
+                } else {
+                    0
+                };
+                // Once the provider has counted a prompt, that exact number is
+                // the gauge; only the unobserved case falls back to the estimate.
+                let shows_projection = unobserved && projected_request_tokens > 0;
+                let displayed_context_tokens = if shows_projection {
+                    projected_request_tokens
+                } else {
+                    context_tokens
+                };
                 let mut context_payload = json!({
                     "context_tokens": context_tokens,
+                    "context_occupancy_tokens": displayed_context_tokens,
                     "persisted_context_tokens": persisted_context_tokens,
                     "observed_context_tokens": context_tokens,
-                    "projected_request_tokens": projected_request_tokens,
+                    "projected_request_tokens": if shows_projection {
+                        projected_request_tokens
+                    } else {
+                        context_tokens
+                    },
                     "request_overhead_tokens": request_overhead_tokens,
-                    "context_usage_source": if context_tokens > 0 { "provider_observed" } else { "unobserved" },
+                    "context_usage_source": if shows_projection {
+                        "request_projection"
+                    } else if context_tokens > 0 {
+                        "provider_observed"
+                    } else {
+                        "unobserved"
+                    },
                     "message_count": messages.len(),
                 });
                 if let Value::Object(ref mut map) = context_payload {

@@ -2424,6 +2424,8 @@ fn start_tick(
     let mut editor_was_open = false;
     #[cfg(target_os = "android")]
     let mut last_back: Option<Instant> = None;
+    #[cfg(target_os = "android")]
+    let mut last_overlay_state = 0;
     let mut host_ticks = 0u32;
     let mut last_images = 0u64;
     let mut last_selection = String::new();
@@ -2443,6 +2445,14 @@ fn start_tick(
             ui.set_ime_height(ime);
             ime_settle(ime);
             start_ime_follow(&ui);
+        }
+        #[cfg(target_os = "android")]
+        {
+            let overlay_state = ui.get_overlay_state();
+            if overlay_state != last_overlay_state {
+                crate::android_host::set_input_overlay_open(overlay_state > 0);
+                last_overlay_state = overlay_state;
+            }
         }
         // 首装引导的液面动画相位：只在引导页打开时推进，页面关闭后不再产生
         // 任何属性更新。相位单调递增（以 4s 波浪周期为单位），不取模：气泡

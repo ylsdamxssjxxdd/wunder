@@ -51,6 +51,7 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Small, process-scoped UI affordances the native shell needs.
@@ -77,6 +78,7 @@ public final class UiBridge {
     private static final int KEEP_VOICE_FILES = 2;
 
     private static WeakReference<Activity> activity = new WeakReference<>(null);
+    private static volatile Consumer<Boolean> handlesSuppression;
     private static String pendingSaveSource;
     private static String pendingSaveName;
     /** Where the in-flight camera capture must write, or null. */
@@ -119,8 +121,20 @@ public final class UiBridge {
         activity = new WeakReference<>(current);
     }
 
+    public static void registerHandlesSuppression(Consumer<Boolean> controller) {
+        handlesSuppression = controller;
+    }
+
+    private static void suppressHandles(boolean suppressed) {
+        Consumer<Boolean> controller = handlesSuppression;
+        if (controller != null) {
+            controller.accept(suppressed);
+        }
+    }
+
     /** Dismiss the soft keyboard, e.g. when the plus function panel opens. */
     public static void hideKeyboard() {
+        suppressHandles(true);
         Activity current = activity.get();
         if (current == null) {
             return;
@@ -133,6 +147,14 @@ public final class UiBridge {
             View decor = current.getWindow().getDecorView();
             imm.hideSoftInputFromWindow(decor.getWindowToken(), 0);
         });
+    }
+
+    public static void setInputOverlayOpen(boolean open) {
+        if (open) {
+            hideKeyboard();
+        } else {
+            suppressHandles(false);
+        }
     }
 
     /**

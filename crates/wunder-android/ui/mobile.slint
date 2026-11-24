@@ -864,6 +864,40 @@ export component MobileWindow inherits Window {
     callback cancel-channel-qr();
     callback save-channel-qr();
 
+    out property <int> overlay-state:
+        ((root.env-setup-open ? 1 : 0)
+        + (root.drawer-open ? 1 : 0)
+        + (root.settings-open ? 1 : 0)
+        + (root.trajectory-open ? 1 : 0)
+        + (root.workspaces-open ? 1 : 0)
+        + (root.workspace-overlay > 0 ? 1 : 0)
+        + (root.workspace-open ? 1 : 0)
+        + (root.workspace-clear-open ? 1 : 0)
+        + (root.device-sheet-open ? 1 : 0)
+        + (root.workspace-sheet-open ? 1 : 0)
+        + (root.file-sheet-open ? 1 : 0)
+        + (root.file-rename-open ? 1 : 0)
+        + (root.file-delete-open ? 1 : 0)
+        + (root.file-move-open ? 1 : 0)
+        + (root.rename-open ? 1 : 0)
+        + (root.model-sheet-open ? 1 : 0)
+        + (root.plus-sheet-open ? 1 : 0)
+        + (root.prompt-preview-open ? 1 : 0)
+        + (root.settings-approval-open ? 1 : 0)
+        + (root.chat-approval-open ? 1 : 0)
+        + (root.editor-open ? 1 : 0)
+        + (root.settings-tool-editor-kind > 0 ? 1 : 0)
+        + (root.settings-tool-file-open ? 1 : 0)
+        + (root.settings-cron-runs-open ? 1 : 0)
+        + (root.settings-cron-editor-open ? 1 : 0)
+        + (root.settings-memory-editor-open ? 1 : 0)
+        + (root.settings-help-topic-open ? 1 : 0)
+        + (root.settings-channel-logs-open ? 1 : 0)
+        + (root.settings-channel-editor-open ? 1 : 0)
+        + (root.settings-channel-qr-open ? 1 : 0)
+        + (root.activity-plan-expanded ? 1 : 0)) * 100
+        + (root.settings-open ? root.settings-page : 0);
+
     private property <length> inset-top: self.safe-area-insets.top;
     private property <length> inset-bottom: self.safe-area-insets.bottom;
     private property <length> header-height: 52px;
@@ -947,9 +981,8 @@ export component MobileWindow inherits Window {
     }
 
     // ---- 加号面板 ------------------------------------------------------
-    // 打开时不收键盘：面板就浮在键盘上沿，选完预设问题后编辑器仍在原焦点
-    // 上，键盘不会来回弹一次。
     function open-plus-sheet() {
+        root.keyboard-dismiss();
         root.plus-sheet-page = 0;
         root.plus-sheet-open = true;
     }
@@ -982,9 +1015,9 @@ export component MobileWindow inherits Window {
     }
 
     // ---- back ---------------------------------------------------------
-    // 整窗一层 FocusScope 专门接 Back：系统手势（Slint 侧 OnBackInvoked）、
-    // 旧版按键（android-activity 的输入队列）以及硬件返回键最后都会落到
-    // Slint 的按键派发上，Back 从获得焦点的子项冒泡到这里，交回 Rust 做
+    // 整窗一层 FocusScope 专门接 Back：旧版按键（android-activity 的输入队列）
+    // 以及硬件返回键会落到 Slint 的按键派发上，Back 从获得焦点的子项冒泡到这里，
+    // 交回 Rust 做
     // 同一套分级返回（与 Java 侧 UiBridge 队列共用 handle_back）。
     // 没有这层时 Slint 会把未处理的 Back 当作「结束 Activity」，设置页这类
     // 没有输入焦点的页面一次手势就会退回系统桌面。
@@ -2470,8 +2503,8 @@ export component MobileWindow inherits Window {
         }
 
         // ---- 加号面板 ----------------------------------------------------
-        // 键盘不收起：面板浮在键盘上沿，选完预设问题后编辑器还在原焦点上，
-        // 键盘不会来回弹一次。第二页是预设问题列表，第二层返回在标题行里。
+        // 打开时先收键盘，面板随 inset 动画落到底部；选完预设问题再聚焦编辑器。
+        // 第二页是预设问题列表，第二层返回在标题行里。
         if root.plus-sheet-open : Rectangle {
             width: 100%;
             height: parent.height - root.ime-height;
