@@ -313,9 +313,20 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
     app.set_model_type_draft("llm".into());
     app.invoke_save_model();
     app.invoke_set_default_model("测试模型".into());
+    // The settings editor and the thread composer have separate selections.
+    // Setting a default must update the edited catalogue card, not pin the
+    // active thread to that model.
     require(
-        app.get_selected_model_key() == "测试模型" && app.get_selected_model_is_default(),
+        app.get_settings_model_key() == "测试模型" && app.get_settings_model_is_default(),
         "model/default update failed",
+    )?;
+    require(
+        app.get_models()
+            .iter()
+            .filter(|model| model.model_type == "llm" && model.is_default)
+            .count()
+            == 1,
+        "model/default update left multiple LLM defaults",
     )?;
     snapshot(app, &directory.join("native-settings.png"))?;
     // The standalone profile page is gone; the sheet's general category is

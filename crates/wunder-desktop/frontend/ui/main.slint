@@ -1552,7 +1552,6 @@ export component MainWindow inherits Window {
                                     // 动作行整行退场，模型选择交给顶部模型条。
                                     compact: root.narrow;
                                     show-host-hud: !root.narrow;
-                                    show-cli-action: !root.narrow;
                                     editor-max-height: root.narrow ? min(160px, root.height * 0.3) : 200px;
                                 launch-cli => { root.launch-cli(); }
                                 send-key: root.runtime-send-key;

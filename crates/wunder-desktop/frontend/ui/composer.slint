@@ -1690,7 +1690,7 @@ export component Composer inherits Rectangle {
     private property <bool> touch-layout: root.mobile || root.compact;
     // 极窄窗：卡内加号在输入卡里的顶边（用于把级联菜单锚到它上方）。
     private property <length> compact-plus-top:
-        8px + (max(root.action-row-height, root.editor-box-height) - 40px) / 2;
+        8px + (max(root.action-row-height, root.editor-box-height) - root.action-row-height) / 2;
     // A running turn no longer swallows the send: the engine parks the turn and
     // the strip above the input shows it. What still blocks is a slash command
     // in flight or a thread that is still loading.
@@ -1708,7 +1708,7 @@ export component Composer inherits Rectangle {
         : 0px;
     // Desktop keeps the action band compact and directly below the editor gap.
     // Mobile keeps its touch band.
-    private property <length> action-row-height: root.touch-layout ? 40px : 36px;
+    private property <length> action-row-height: root.mobile ? 40px : 36px;
     // ---- 输入区随草稿行数增高 ----
     // 基准高度按一行文本给定；每多一行按内容实际需要增高，到上限后由编辑器
     // 内部滚动（TextEditBase 的 ScrollView 负责跟随光标）。inset 是编辑器
@@ -1717,8 +1717,8 @@ export component Composer inherits Rectangle {
     // 上限由宿主给：手机键盘弹起后整页只剩半屏，输入卡不能把对话挤没，
     // 所以安卓版按剩余高度算一个比 200px 小得多的值传进来。
     in property <length> editor-max-height: 200px;
-    private property <length> editor-min-height: root.touch-layout ? 46px : 70px;
-    private property <length> editor-inset: (root.touch-layout ? 11px : 14px) * 2;
+    private property <length> editor-min-height: root.mobile ? 46px : root.compact ? 36px : 70px;
+    private property <length> editor-inset: (root.mobile ? 11px : root.compact ? 8px : 14px) * 2;
     private property <length> editor-box-height: min(
         root.editor-max-height,
         max(root.editor-min-height, editor.text-preferred-height + root.editor-inset)
@@ -1875,23 +1875,23 @@ export component Composer inherits Rectangle {
             // 而卡片高度又绑定父级，最终塌成 0px，整张输入卡不再绘制。
             cross-axis-alignment: root.touch-layout ? CrossAxisAlignment.center : CrossAxisAlignment.stretch;
             if root.touch-layout : Rectangle {
-                width: 40px;
-                height: 40px;
+                width: root.mobile ? 40px : 24px;
+                height: root.action-row-height;
                 mobile-plus-btn := Rectangle {
-                    x: 2px;
-                    y: 2px;
-                    width: 36px;
-                    height: 36px;
-                    border-radius: Theme.radius-md;
+                    x: root.mobile ? 2px : 0px;
+                    y: root.mobile ? 2px : 3px;
+                    width: root.mobile ? 36px : 24px;
+                    height: root.mobile ? 36px : 24px;
+                    border-radius: root.mobile ? Theme.radius-md : Theme.radius-sm;
                     background: root.plus-open ? Theme.accent-soft : Theme.surface;
                     border-width: 1px;
                     border-color: root.plus-open ? Theme.accent-secondary : Theme.border-strong;
                     drop-shadow-color: #1F23290F; drop-shadow-blur: 2px; drop-shadow-offset-y: 1px;
                     Image {
-                        x: 8px;
-                        y: 8px;
-                        width: 20px;
-                        height: 20px;
+                        x: root.mobile ? 8px : 4px;
+                        y: root.mobile ? 8px : 4px;
+                        width: root.mobile ? 20px : 16px;
+                        height: root.mobile ? 20px : 16px;
                         source: root.plus-open ? @image-url("../assets/icons/xmark.svg") : @image-url("../assets/icons/plus-plain.svg");
                         colorize: root.plus-open ? Theme.accent-ink : Theme.text-secondary;
                         image-fit: contain;
@@ -1935,7 +1935,7 @@ export component Composer inherits Rectangle {
                 background: composer-drop.has-drag ? Theme.accent-soft : (root.touch-layout ? Theme.surface : transparent);
                 border-width: root.touch-layout ? 1px : 0px;
                 border-color: composer-drop.has-drag || self.has-focus ? Theme.accent-ink : Theme.border;
-                scroll-view-padding: root.touch-layout ? 11px : 14px;
+                scroll-view-padding: root.mobile ? 11px : root.compact ? 8px : 14px;
                 accessible-role: text-input;
                 accessible-value <=> self.text;
                 accessible-placeholder-text: self.placeholder-text;
@@ -2129,20 +2129,20 @@ export component Composer inherits Rectangle {
                 }
             }
             if root.touch-layout && (root.stop-action || root.send-enabled) : Rectangle {
-                width: 40px;
-                height: 40px;
+                width: root.mobile ? 40px : 28px;
+                height: root.action-row-height;
                 mobile-send-btn := Rectangle {
-                    x: 2px;
-                    y: 2px;
-                    width: 36px;
-                    height: 36px;
-                    border-radius: Theme.radius-md;
+                    x: root.mobile ? 2px : 0px;
+                    y: root.mobile ? 2px : 1px;
+                    width: root.mobile ? 36px : 28px;
+                    height: root.mobile ? 36px : 28px;
+                    border-radius: root.mobile ? Theme.radius-md : Theme.radius-sm;
                     background: root.stop-action
                         ? (root.stopping ? Theme.border-strong : Theme.accent-ink)
                         : (root.send-enabled ? (mobile-send-touch.has-hover ? Theme.accent-deep : Theme.accent) : Theme.border-strong);
                     Image {
-                        x: root.stop-action ? 12px : 10px;
-                        y: root.stop-action ? 12px : 10px;
+                        x: root.stop-action ? (root.mobile ? 12px : 8px) : (root.mobile ? 10px : 6px);
+                        y: root.stop-action ? (root.mobile ? 12px : 8px) : (root.mobile ? 10px : 6px);
                         width: root.stop-action ? 12px : 16px;
                         height: root.stop-action ? 12px : 16px;
                         source: root.stop-action ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/arrow-up.svg");
@@ -2172,18 +2172,18 @@ export component Composer inherits Rectangle {
             // 桌面极窄窗没有语音键：空草稿时保留一个灰色的发送方块，位置固定，
             // 用户不会把「按钮消失」读成输入区坏了。
             if root.compact && !root.stop-action && !root.send-enabled : Rectangle {
-                width: 40px;
-                height: 40px;
+                width: 28px;
+                height: root.action-row-height;
                 Rectangle {
-                    x: 2px;
-                    y: 2px;
-                    width: 36px;
-                    height: 36px;
-                    border-radius: Theme.radius-md;
+                    x: 0px;
+                    y: 1px;
+                    width: 28px;
+                    height: 28px;
+                    border-radius: Theme.radius-sm;
                     background: Theme.border-strong;
                     Image {
-                        x: 10px;
-                        y: 10px;
+                        x: 6px;
+                        y: 6px;
                         width: 16px;
                         height: 16px;
                         source: @image-url("../assets/icons/arrow-up.svg");
