@@ -347,6 +347,14 @@ deltas).
   that notification is deduplicated. This clears Slint's grabbed/pressed state
   for every native context menu, including workspace rename and chat-reference
   actions, instead of relying on a per-dialog synthetic left release.
+- Nested `WM_PAINT` delivery is posted back to the window queue instead of
+  retrying `RedrawWindow` inside the active paint callback. Native menu actions
+  often request a frame while the outer right-button dispatch is still borrowed;
+  the old path consumed `redraw_requested` without ever emitting
+  `RedrawRequested`, leaving the action applied but the window frozen on its old
+  frame until minimize/restore. The posted paint runs after the callback/modal
+  loop unwinds. A real-window regression covers menu exit followed by a nested
+  paint request and requires exactly one deferred redraw.
 - `winit` 0.30.2 no longer drops non-ASCII keyboard text while an IMM32
   composition is active. Some legacy Chinese IMEs submit full-width punctuation
   through standalone `WM_CHAR` messages, with neither a keydown nor a

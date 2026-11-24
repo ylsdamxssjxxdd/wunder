@@ -979,11 +979,16 @@ fn file_drag(
     let event = DropEvent::new(data, slint::LogicalPosition::new(x, y), DragAction::Copy);
     let allowed = AllowedDragActions { copy: true, move_: true, link: true };
     let window = WindowInner::from_pub(app.window());
-    let hovered = window.process_drag_event(BackendDragEvent::Move {
-        event: event.clone(),
-        allowed,
-    });
-    require(hovered == Some(DragAction::Copy), "file drag was not accepted by its target")?;
+    for _ in 0..2 {
+        let hovered = window.process_drag_event(BackendDragEvent::Move {
+            event: event.clone(),
+            allowed,
+        });
+        require(
+            hovered == Some(DragAction::Copy),
+            "file drag was not accepted by its target",
+        )?;
+    }
     if drop {
         let dropped = window.process_drag_event(BackendDragEvent::Drop { event, allowed });
         require(dropped == Some(DragAction::Copy), "file drop was not accepted by its target")?;

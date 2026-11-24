@@ -1164,6 +1164,7 @@
 .tt-tokenbars {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr) auto;
+  grid-template-rows: 40px auto;
   flex: none;
   padding: 4px 0 8px;
   border-bottom: 0.5px solid var(--tt-border-2);
@@ -1182,6 +1183,7 @@
   white-space: nowrap;
 }
 
+/* 柱子最小 6px：步骤多时不再把上百步挤成一条实心带，改为横向滚动。 */
 .tt-tokenbars-track {
   display: flex;
   align-items: flex-end;
@@ -1189,13 +1191,21 @@
   height: 40px;
   min-width: 0;
   padding: 0 4px;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.tt-tokenbars-track::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .tt-tokenbar {
   position: relative;
   flex: 1 1 0;
-  min-width: 2px;
+  min-width: 6px;
   max-width: 28px;
   align-self: flex-end;
   border-radius: 1px 1px 0 0;
@@ -1241,4 +1251,31 @@
   line-height: 1;
   color: var(--tt-text-3);
   white-space: nowrap;
+}
+
+/* 柱子区横向滚动条：只在柱子总宽超出可视宽度时出现。云端版全局隐藏了原生
+   滚动条，这里用与时间轴一致的轨道 + 品牌色 thumb，避免出现不可见的可滚动区。 */
+.tt-tokenbars-scroll {
+  grid-column: 2;
+  grid-row: 2;
+  position: relative;
+  height: 8px;
+  margin: 2px 4px 0;
+  border-radius: 3px;
+  background: var(--tt-border-2);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.tt-tokenbars-scroll-thumb {
+  position: absolute;
+  top: 0;
+  height: 8px;
+  border-radius: 3px;
+  background: var(--tt-brand);
+  opacity: 0.75;
+}
+
+.tt-tokenbars-scroll-thumb:hover {
+  opacity: 1;
 }

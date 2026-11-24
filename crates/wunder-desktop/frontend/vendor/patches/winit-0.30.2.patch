@@ -2270,7 +2270,7 @@ index 776689fe2..6f1f5e33f 100644
          }
  
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/linux/x11/event_processor.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/linux/x11/event_processor.rs
-index 9c6b95a2a..b86a7edbe 100644
+index 9c6b95a2a..b97afe929 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/linux/x11/event_processor.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/linux/x11/event_processor.rs
 @@ -66,7 +66,21 @@ pub struct EventProcessor {
@@ -2547,7 +2547,51 @@ index 9c6b95a2a..b86a7edbe 100644
      pub fn init_device(&self, device: xinput::DeviceId) {
          let window_target = Self::window_target(&self.target);
          let mut devices = self.devices.borrow_mut();
-@@ -929,7 +1102,7 @@ impl EventProcessor {
+@@ -459,14 +632,35 @@ impl EventProcessor {
+ 
+             let source_window = xev.data.get_long(0) as xproto::Window;
+ 
+-            // Equivalent to `(x << shift) | y`
+-            // where `shift = mem::size_of::<c_short>() * 8`
+-            // Note that coordinates are in "desktop space", not "window space"
+-            // (in X11 parlance, they're root window coordinates)
+-            // let packed_coordinates = xev.data.get_long(2);
+-            // let shift = mem::size_of::<libc::c_short>() * 8;
+-            // let x = packed_coordinates >> shift;
+-            // let y = packed_coordinates & !(x << shift);
++            // XDND owns the pointer while a foreign drag is active, so normal
++            // XI2 motion events are not a reliable position source. Report the
++            // root coordinates carried by every XdndPosition as client-space
++            // CursorMoved events; Slint uses them to move its DropArea hover.
++            let packed_coordinates = xev.data.get_long(2) as u32;
++            let root_x = (packed_coordinates >> 16) as i16;
++            let root_y = packed_coordinates as i16;
++            let position = wt
++                .xconn
++                .xcb_connection()
++                .translate_coordinates(wt.root, window, root_x, root_y)
++                .ok()
++                .and_then(|cookie| cookie.reply().ok());
++            if let Some(position) = position {
++                let position = PhysicalPosition::new(
++                    f64::from(position.dst_x),
++                    f64::from(position.dst_y),
++                );
++                self.with_window(window, |window| {
++                    window.shared_state_lock().cursor_pos = Some((position.x, position.y));
++                });
++                callback(&self.target, Event::WindowEvent {
++                    window_id,
++                    event: WindowEvent::CursorMoved {
++                        device_id: unsafe { crate::event::DeviceId::dummy() },
++                        position,
++                    },
++                });
++            }
+ 
+             // By our own state flow, `version` should never be `None` at this point.
+             let version = self.dnd.version.unwrap_or(5);
+@@ -929,7 +1123,7 @@ impl EventProcessor {
          // itself are out of sync due to XkbState being delivered before XKeyEvent, since it's
          // being replayed by the XIM, thus we should replay ourselves.
          let replay = if let Some(position) =
@@ -3203,7 +3247,7 @@ index 38cb5c54d..9d8ccb15c 100644
          unsafe { &mut *(this as *mut _) }
      }
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/event_loop.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/event_loop.rs
-index 4fc31553f..78e3cceb8 100644
+index 4fc31553f..757788d11 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/event_loop.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/event_loop.rs
 @@ -2,7 +2,7 @@
@@ -3455,7 +3499,40 @@ index 4fc31553f..78e3cceb8 100644
              userdata.send_event(Event::WindowEvent {
                  window_id: RootWindowId(WindowId(window)),
                  event: KeyboardInput {
-@@ -1403,6 +1579,7 @@ unsafe fn public_window_callback_inner(
+@@ -1164,13 +1340,13 @@ unsafe fn public_window_callback_inner(
+         },
+ 
+         WM_PAINT => {
+-            userdata.window_state_lock().redraw_requested =
+-                userdata.event_loop_runner.should_buffer();
++            let should_buffer = userdata.event_loop_runner.should_buffer();
++            userdata.window_state_lock().redraw_requested = should_buffer;
+ 
+             // We'll buffer only in response to `UpdateWindow`, if win32 decides to redraw the
+             // window outside the normal flow of the event loop. This way mark event as handled
+             // and request a normal redraw with `RedrawWindow`.
+-            if !userdata.event_loop_runner.should_buffer() {
++            if !should_buffer {
+                 userdata.send_event(Event::WindowEvent {
+                     window_id: RootWindowId(WindowId(window)),
+                     event: WindowEvent::RedrawRequested,
+@@ -1180,9 +1356,13 @@ unsafe fn public_window_callback_inner(
+             // NOTE: calling `RedrawWindow` during `WM_PAINT` does nothing, since to mark
+             // `WM_PAINT` as handled we should call the `DefWindowProcW`. Call it and check whether
+             // user asked for redraw during `RedrawRequested` event handling and request it again
+-            // after marking `WM_PAINT` as handled.
++            // after marking `WM_PAINT` as handled. A nested paint is posted
++            // instead: it runs after the callback/modal loop unwinds, when
++            // RedrawRequested may be dispatched again.
+             result = ProcResult::Value(unsafe { DefWindowProcW(window, msg, wparam, lparam) });
+-            if std::mem::take(&mut userdata.window_state_lock().redraw_requested) {
++            if should_buffer {
++                unsafe { PostMessageW(window, WM_PAINT, 0, 0) };
++            } else if std::mem::take(&mut userdata.window_state_lock().redraw_requested) {
+                 unsafe { RedrawWindow(window, ptr::null(), 0, RDW_INTERNALPAINT) };
+             }
+         },
+@@ -1403,6 +1583,7 @@ unsafe fn public_window_callback_inner(
          WM_IME_STARTCOMPOSITION => {
              let ime_allowed = userdata.window_state_lock().ime_allowed;
              if ime_allowed {
@@ -3463,7 +3540,7 @@ index 4fc31553f..78e3cceb8 100644
                  userdata.window_state_lock().ime_state = ImeState::Enabled;
  
                  userdata.send_event(Event::WindowEvent {
-@@ -1436,15 +1613,16 @@ unsafe fn public_window_callback_inner(
+@@ -1436,15 +1617,16 @@ unsafe fn public_window_callback_inner(
                  if (lparam as u32 & GCS_RESULTSTR) != 0 {
                      if let Some(text) = unsafe { ime_context.get_composed_text() } {
                          userdata.window_state_lock().ime_state = ImeState::Enabled;
@@ -3484,7 +3561,7 @@ index 4fc31553f..78e3cceb8 100644
                      }
                  }
  
-@@ -1474,19 +1652,19 @@ unsafe fn public_window_callback_inner(
+@@ -1474,19 +1656,19 @@ unsafe fn public_window_callback_inner(
                  w.ime_allowed || w.ime_state != ImeState::Disabled
              };
              if ime_allowed_or_composing {
@@ -3511,7 +3588,7 @@ index 4fc31553f..78e3cceb8 100644
                      }
                  }
  
-@@ -1502,9 +1680,9 @@ unsafe fn public_window_callback_inner(
+@@ -1502,9 +1684,9 @@ unsafe fn public_window_callback_inner(
          },
  
          WM_IME_SETCONTEXT => {
@@ -3524,7 +3601,7 @@ index 4fc31553f..78e3cceb8 100644
          },
  
          // this is necessary for us to maintain minimize/restore state
-@@ -1673,7 +1851,7 @@ unsafe fn public_window_callback_inner(
+@@ -1673,7 +1855,7 @@ unsafe fn public_window_callback_inner(
              use crate::event::MouseButton::Left;
              use crate::event::WindowEvent::MouseInput;
  
@@ -3533,7 +3610,7 @@ index 4fc31553f..78e3cceb8 100644
  
              update_modifiers(window, userdata);
  
-@@ -1705,7 +1883,9 @@ unsafe fn public_window_callback_inner(
+@@ -1705,7 +1887,9 @@ unsafe fn public_window_callback_inner(
              use crate::event::MouseButton::Right;
              use crate::event::WindowEvent::MouseInput;
  
@@ -3544,7 +3621,7 @@ index 4fc31553f..78e3cceb8 100644
  
              update_modifiers(window, userdata);
  
-@@ -1721,14 +1901,18 @@ unsafe fn public_window_callback_inner(
+@@ -1721,14 +1905,18 @@ unsafe fn public_window_callback_inner(
              use crate::event::MouseButton::Right;
              use crate::event::WindowEvent::MouseInput;
  
@@ -3567,7 +3644,7 @@ index 4fc31553f..78e3cceb8 100644
              result = ProcResult::Value(0);
          },
  
-@@ -1737,7 +1921,7 @@ unsafe fn public_window_callback_inner(
+@@ -1737,7 +1925,7 @@ unsafe fn public_window_callback_inner(
              use crate::event::MouseButton::Middle;
              use crate::event::WindowEvent::MouseInput;
  
@@ -3576,7 +3653,7 @@ index 4fc31553f..78e3cceb8 100644
  
              update_modifiers(window, userdata);
  
-@@ -1770,7 +1954,7 @@ unsafe fn public_window_callback_inner(
+@@ -1770,7 +1958,7 @@ unsafe fn public_window_callback_inner(
              use crate::event::WindowEvent::MouseInput;
              let xbutton = super::get_xbutton_wparam(wparam as u32);
  
@@ -3585,7 +3662,7 @@ index 4fc31553f..78e3cceb8 100644
  
              update_modifiers(window, userdata);
  
-@@ -1814,6 +1998,26 @@ unsafe fn public_window_callback_inner(
+@@ -1814,6 +2002,27 @@ unsafe fn public_window_callback_inner(
              result = ProcResult::Value(0);
          },
  
@@ -3606,13 +3683,14 @@ index 4fc31553f..78e3cceb8 100644
 +                    event: MouseInput { device_id: DEVICE_ID, state: Released, button: Right },
 +                });
 +            }
++
 +            result = ProcResult::Value(0);
 +        },
 +
          WM_CAPTURECHANGED => {
              // lparam here is a handle to the window which is gaining mouse capture.
              // If it is the same as our window, then we're essentially retaining the capture. This
-@@ -2021,7 +2225,12 @@ unsafe fn public_window_callback_inner(
+@@ -2021,7 +2230,12 @@ unsafe fn public_window_callback_inner(
  
          WM_NCACTIVATE => {
              let is_active = wparam != false.into();
@@ -3626,7 +3704,7 @@ index 4fc31553f..78e3cceb8 100644
              if active_focus_changed {
                  if is_active {
                      unsafe { gain_active_focus(window, userdata) };
-@@ -2029,7 +2238,28 @@ unsafe fn public_window_callback_inner(
+@@ -2029,7 +2243,28 @@ unsafe fn public_window_callback_inner(
                      unsafe { lose_active_focus(window, userdata) };
                  }
              }
@@ -3656,7 +3734,7 @@ index 4fc31553f..78e3cceb8 100644
          },
  
          WM_SETFOCUS => {
-@@ -2083,6 +2313,38 @@ unsafe fn public_window_callback_inner(
+@@ -2083,6 +2318,38 @@ unsafe fn public_window_callback_inner(
              let window_state = userdata.window_state_lock();
              let window_flags = window_state.window_flags;
  
@@ -3695,7 +3773,7 @@ index 4fc31553f..78e3cceb8 100644
              if window_state.min_size.is_some() || window_state.max_size.is_some() {
                  if let Some(min_size) = window_state.min_size {
                      let min_size = min_size.to_physical(window_state.scale_factor);
-@@ -2362,6 +2624,253 @@ unsafe fn public_window_callback_inner(
+@@ -2362,6 +2629,278 @@ unsafe fn public_window_callback_inner(
      }
  }
  
@@ -3768,10 +3846,12 @@ index 4fc31553f..78e3cceb8 100644
 +
 +    #[test]
 +    fn ime_messages_commit_results_and_forward_direct_text_through_a_real_window() {
-+        use std::cell::RefCell;
++        use std::cell::{Cell, RefCell};
 +        use std::rc::Rc;
 +
-+        use windows_sys::Win32::UI::WindowsAndMessaging::{SendMessageW, WM_CHAR};
++        use windows_sys::Win32::UI::WindowsAndMessaging::{
++            DispatchMessageW, PeekMessageW, SendMessageW, MSG, PM_REMOVE, WM_CHAR, WM_PAINT,
++        };
 +
 +        use crate::event::{ElementState, Event, Ime, MouseButton, WindowEvent};
 +        use crate::event_loop::EventLoop;
@@ -3805,6 +3885,9 @@ index 4fc31553f..78e3cceb8 100644
 +        let received_keyboard_texts = Rc::clone(&keyboard_texts);
 +        let mouse_buttons = Rc::new(RefCell::new(Vec::new()));
 +        let received_mouse_buttons = Rc::clone(&mouse_buttons);
++        let redraws = Rc::new(Cell::new(0usize));
++        let received_redraws = Rc::clone(&redraws);
++        let menu_modal_started = Cell::new(false);
 +        unsafe {
 +            userdata.event_loop_runner.set_event_handler(move |event| {
 +                match event {
@@ -3821,6 +3904,16 @@ index 4fc31553f..78e3cceb8 100644
 +                        ..
 +                    } => {
 +                        received_mouse_buttons.borrow_mut().push(state);
++                        if state == ElementState::Pressed && !menu_modal_started.replace(true) {
++                            // The menu action can arrive just after the exit
++                            // notification, while the outer right-button
++                            // callback still owns the nested dispatch.
++                            SendMessageW(hwnd, WM_EXITMENULOOP, 0, 0);
++                            SendMessageW(hwnd, WM_PAINT, 0, 0);
++                        }
++                    }
++                    Event::WindowEvent { event: WindowEvent::RedrawRequested, .. } => {
++                        received_redraws.set(received_redraws.get() + 1);
 +                    }
 +                    _ => {}
 +                }
@@ -3930,6 +4023,16 @@ index 4fc31553f..78e3cceb8 100644
 +        send(WM_RBUTTONUP, 0);
 +        assert_eq!(&*mouse_buttons.borrow(), &[ElementState::Pressed, ElementState::Released]);
 +
++        // The paint requested inside the modal loop must be posted after that
++        // loop unwinds, not left as a redraw_requested flag forever.
++        unsafe {
++            let mut message = std::mem::zeroed::<MSG>();
++            while PeekMessageW(&mut message, hwnd, 0, 0, PM_REMOVE) != 0 {
++                DispatchMessageW(&message);
++            }
++        }
++        assert_eq!(redraws.get(), 1);
++
 +        // If Windows did deliver the real release, menu exit adds nothing.
 +        send(WM_RBUTTONDOWN, 0);
 +        send(WM_RBUTTONUP, 0);
@@ -3949,7 +4052,7 @@ index 4fc31553f..78e3cceb8 100644
  unsafe extern "system" fn thread_event_target_callback(
      window: HWND,
      msg: u32,
-@@ -2441,7 +2950,7 @@ unsafe extern "system" fn thread_event_target_callback(
+@@ -2441,7 +2980,7 @@ unsafe extern "system" fn thread_event_target_callback(
      if userdata_removed {
          drop(userdata);
      } else {

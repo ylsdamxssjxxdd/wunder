@@ -1340,13 +1340,13 @@ unsafe fn public_window_callback_inner(
         },
 
         WM_PAINT => {
-            userdata.window_state_lock().redraw_requested =
-                userdata.event_loop_runner.should_buffer();
+            let should_buffer = userdata.event_loop_runner.should_buffer();
+            userdata.window_state_lock().redraw_requested = should_buffer;
 
             // We'll buffer only in response to `UpdateWindow`, if win32 decides to redraw the
             // window outside the normal flow of the event loop. This way mark event as handled
             // and request a normal redraw with `RedrawWindow`.
-            if !userdata.event_loop_runner.should_buffer() {
+            if !should_buffer {
                 userdata.send_event(Event::WindowEvent {
                     window_id: RootWindowId(WindowId(window)),
                     event: WindowEvent::RedrawRequested,
@@ -1356,9 +1356,13 @@ unsafe fn public_window_callback_inner(
             // NOTE: calling `RedrawWindow` during `WM_PAINT` does nothing, since to mark
             // `WM_PAINT` as handled we should call the `DefWindowProcW`. Call it and check whether
             // user asked for redraw during `RedrawRequested` event handling and request it again
-            // after marking `WM_PAINT` as handled.
+            // after marking `WM_PAINT` as handled. A nested paint is posted
+            // instead: it runs after the callback/modal loop unwinds, when
+            // RedrawRequested may be dispatched again.
             result = ProcResult::Value(unsafe { DefWindowProcW(window, msg, wparam, lparam) });
-            if std::mem::take(&mut userdata.window_state_lock().redraw_requested) {
+            if should_buffer {
+                unsafe { PostMessageW(window, WM_PAINT, 0, 0) };
+            } else if std::mem::take(&mut userdata.window_state_lock().redraw_requested) {
                 unsafe { RedrawWindow(window, ptr::null(), 0, RDW_INTERNALPAINT) };
             }
         },
@@ -2015,6 +2019,7 @@ unsafe fn public_window_callback_inner(
                     event: MouseInput { device_id: DEVICE_ID, state: Released, button: Right },
                 });
             }
+
             result = ProcResult::Value(0);
         },
 
@@ -2693,10 +2698,12 @@ mod tests {
 
     #[test]
     fn ime_messages_commit_results_and_forward_direct_text_through_a_real_window() {
-        use std::cell::RefCell;
+        use std::cell::{Cell, RefCell};
         use std::rc::Rc;
 
-        use windows_sys::Win32::UI::WindowsAndMessaging::{SendMessageW, WM_CHAR};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            DispatchMessageW, PeekMessageW, SendMessageW, MSG, PM_REMOVE, WM_CHAR, WM_PAINT,
+        };
 
         use crate::event::{ElementState, Event, Ime, MouseButton, WindowEvent};
         use crate::event_loop::EventLoop;
@@ -2730,6 +2737,9 @@ mod tests {
         let received_keyboard_texts = Rc::clone(&keyboard_texts);
         let mouse_buttons = Rc::new(RefCell::new(Vec::new()));
         let received_mouse_buttons = Rc::clone(&mouse_buttons);
+        let redraws = Rc::new(Cell::new(0usize));
+        let received_redraws = Rc::clone(&redraws);
+        let menu_modal_started = Cell::new(false);
         unsafe {
             userdata.event_loop_runner.set_event_handler(move |event| {
                 match event {
@@ -2746,6 +2756,16 @@ mod tests {
                         ..
                     } => {
                         received_mouse_buttons.borrow_mut().push(state);
+                        if state == ElementState::Pressed && !menu_modal_started.replace(true) {
+                            // The menu action can arrive just after the exit
+                            // notification, while the outer right-button
+                            // callback still owns the nested dispatch.
+                            SendMessageW(hwnd, WM_EXITMENULOOP, 0, 0);
+                            SendMessageW(hwnd, WM_PAINT, 0, 0);
+                        }
+                    }
+                    Event::WindowEvent { event: WindowEvent::RedrawRequested, .. } => {
+                        received_redraws.set(received_redraws.get() + 1);
                     }
                     _ => {}
                 }
@@ -2854,6 +2874,16 @@ mod tests {
         send(WM_EXITMENULOOP, 0);
         send(WM_RBUTTONUP, 0);
         assert_eq!(&*mouse_buttons.borrow(), &[ElementState::Pressed, ElementState::Released]);
+
+        // The paint requested inside the modal loop must be posted after that
+        // loop unwinds, not left as a redraw_requested flag forever.
+        unsafe {
+            let mut message = std::mem::zeroed::<MSG>();
+            while PeekMessageW(&mut message, hwnd, 0, 0, PM_REMOVE) != 0 {
+                DispatchMessageW(&message);
+            }
+        }
+        assert_eq!(redraws.get(), 1);
 
         // If Windows did deliver the real release, menu exit adds nothing.
         send(WM_RBUTTONDOWN, 0);

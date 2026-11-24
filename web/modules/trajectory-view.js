@@ -466,9 +466,16 @@ export function createTrajectoryView(host, options = {}) {
   const tokenbarsLabel = h("span", "tt-tokenbars-label", modelT("tokenUsage"));
   const tokenbarsTrack = h("div", "tt-tokenbars-track");
   const tokenbarsSummary = h("span", "tt-tokenbars-summary");
+  // 柱子固定最小宽度后，步骤多时整条直方图会超出可视宽度；滚动条独立成
+  // 一行，只在真的溢出时出现，避免把 40px 的柱区压扁。
+  const tokenbarsScroll = h("div", "tt-tokenbars-scroll");
+  const tokenbarsThumb = h("div", "tt-tokenbars-scroll-thumb");
+  tokenbarsScroll.appendChild(tokenbarsThumb);
+  tokenbarsScroll.hidden = true;
   tokenbarsEl.appendChild(tokenbarsLabel);
   tokenbarsEl.appendChild(tokenbarsTrack);
   tokenbarsEl.appendChild(tokenbarsSummary);
+  tokenbarsEl.appendChild(tokenbarsScroll);
 
   const tooltipEl = h("div", "tt-tooltip");
   tooltipEl.style.display = "none";
@@ -560,6 +567,70 @@ export function createTrajectoryView(host, options = {}) {
     if (value >= 1e3) return `${(value / 1e3).toFixed(1)}k`;
     return String(Math.round(value));
   };
+
+  /* ---------- 柱子区横向滚动 ---------- */
+
+  // 柱子节点与其数据键：键不变时只更新选中/检索态，不重建 DOM。
+  let tokenbarsBarKey = "";
+  let tokenbarNodes = [];
+
+  /** 按 scrollWidth/clientWidth 反推 thumb：柱子溢出时可拖动浏览整条直方图。 */
+  const syncTokenbarScroll = () => {
+    const maxScroll = tokenbarsTrack.scrollWidth - tokenbarsTrack.clientWidth;
+    const scrollable = maxScroll > 1;
+    tokenbarsScroll.hidden = !scrollable;
+    if (!scrollable) {
+      tokenbarsThumb.style.width = "100%";
+      tokenbarsThumb.style.left = "0%";
+      return;
+    }
+    const thumbWidth = Math.min(100, Math.max((tokenbarsTrack.clientWidth / tokenbarsTrack.scrollWidth) * 100, 8));
+    const maxLeft = 100 - thumbWidth;
+    tokenbarsThumb.style.width = `${thumbWidth}%`;
+    tokenbarsThumb.style.left = `${maxLeft * (tokenbarsTrack.scrollLeft / maxScroll)}%`;
+  };
+
+  let tokenbarScrollDrag = null;
+  const endTokenbarScrollDrag = () => {
+    tokenbarScrollDrag = null;
+  };
+  tokenbarsTrack.addEventListener("scroll", syncTokenbarScroll, { passive: true });
+  tokenbarsScroll.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    const maxScroll = tokenbarsTrack.scrollWidth - tokenbarsTrack.clientWidth;
+    if (maxScroll <= 1) return;
+    const rect = tokenbarsScroll.getBoundingClientRect();
+    const thumbRect = tokenbarsThumb.getBoundingClientRect();
+    const maxLeft = rect.width - thumbRect.width;
+    if (maxLeft <= 1) return;
+    if (event.clientX < thumbRect.left || event.clientX > thumbRect.right) {
+      // 点击轨道：把点击点作为新视口中心。
+      const center = (event.clientX - rect.left - thumbRect.width / 2) / maxLeft;
+      tokenbarsTrack.scrollLeft = Math.min(1, Math.max(0, center)) * maxScroll;
+    }
+    tokenbarScrollDrag = {
+      x: event.clientX,
+      start: tokenbarsTrack.scrollLeft,
+      perPixel: maxScroll / maxLeft,
+    };
+    tokenbarsScroll.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  tokenbarsScroll.addEventListener("pointermove", (event) => {
+    if (!tokenbarScrollDrag) return;
+    tokenbarsTrack.scrollLeft =
+      tokenbarScrollDrag.start + (event.clientX - tokenbarScrollDrag.x) * tokenbarScrollDrag.perPixel;
+  });
+  tokenbarsScroll.addEventListener("pointerup", endTokenbarScrollDrag);
+  tokenbarsScroll.addEventListener("pointercancel", endTokenbarScrollDrag);
+  // 竖向滚轮在柱子区转成横向滚动：步骤多时不会有人先想到 shift+滚轮。
+  tokenbarsTrack.addEventListener("wheel", (event) => {
+    if (tokenbarsTrack.scrollWidth <= tokenbarsTrack.clientWidth + 1) return;
+    if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+    tokenbarsTrack.scrollLeft += event.deltaY;
+    event.preventDefault();
+  }, { passive: false });
 
   /* ---------- 渲染 ---------- */
 
@@ -901,7 +972,13 @@ export function createTrajectoryView(host, options = {}) {
     const needle = st.searchQuery.trim().toLowerCase();
     const visible = usage.bars.length > 0;
     tokenbarsEl.style.display = visible ? "" : "none";
-    if (!visible) return;
+    if (!visible) {
+      tokenbarsTrack.textContent = "";
+      tokenbarsBarKey = "";
+      tokenbarNodes = [];
+      syncTokenbarScroll();
+      return;
+    }
     tokenbarsLabel.textContent = modelT(totalMode ? "consumptionTotal" : "tokenUsage");
     tokenbarsSummary.textContent =
       usage.reportedCount > 0
@@ -909,36 +986,60 @@ export function createTrajectoryView(host, options = {}) {
             value: `${formatCompactTokens(totalMode ? usage.totalGross : usage.totalSum)} tok`,
           })
         : "";
-    tokenbarsTrack.textContent = "";
-    for (const bar of usage.bars) {
-      const node = h("span", "tt-tokenbar");
-      if (!bar.reported) {
-        node.classList.add("tt-tokenbar-empty");
-        node.style.height = "2px";
-      } else {
-        const scaleMax = totalMode ? usage.maxTotal : usage.max;
-        const value = totalMode ? bar.total : bar.delta;
-        const ratio = scaleMax > 0 ? value / scaleMax : 0;
-        node.style.height = `${Math.max(4, Math.round(ratio * 100))}%`;
-      }
-      if (st.tokenMode === "total") {
-        const cacheHit = cacheHitPercent(bar);
-        if (cacheHit !== null) {
-          const cacheNode = h("span", "tt-tokenbar-cache");
-          cacheNode.style.height = `${cacheHit}%`;
-          node.appendChild(cacheNode);
+    // 台账滚动每一帧都会走渲染，柱子只在数据/坐标模式变化时重建；否则上千个
+    // span 每帧重建既慢，又会把横向滚动位置弹回开头。
+    const barKey = `${st.turnsKey}|${st.tokenMode}`;
+    if (barKey !== tokenbarsBarKey || tokenbarNodes.length !== usage.bars.length) {
+      tokenbarsBarKey = barKey;
+      const previousScrollLeft = tokenbarsTrack.scrollLeft;
+      const previousScrollWidth = tokenbarsTrack.scrollWidth;
+      const wasAtEnd = previousScrollWidth > 0
+        && previousScrollLeft + tokenbarsTrack.clientWidth >= previousScrollWidth - 2;
+      tokenbarsTrack.textContent = "";
+      tokenbarNodes = [];
+      for (const bar of usage.bars) {
+        const node = h("span", "tt-tokenbar");
+        if (!bar.reported) {
+          node.classList.add("tt-tokenbar-empty");
+          node.style.height = "2px";
+        } else {
+          const scaleMax = totalMode ? usage.maxTotal : usage.max;
+          const value = totalMode ? bar.total : bar.delta;
+          const ratio = scaleMax > 0 ? value / scaleMax : 0;
+          node.style.height = `${Math.max(4, Math.round(ratio * 100))}%`;
         }
+        if (totalMode) {
+          const cacheHit = cacheHitPercent(bar);
+          if (cacheHit !== null) {
+            const cacheNode = h("span", "tt-tokenbar-cache");
+            cacheNode.style.height = `${cacheHit}%`;
+            node.appendChild(cacheNode);
+          }
+        }
+        node.addEventListener("pointerenter", (event) => onBarEnter(bar, event));
+        node.addEventListener("pointerleave", onSpanLeave);
+        node.addEventListener("click", (event) => {
+          event.stopPropagation();
+          if (bar.assistantIndex !== null) selectIndex(bar.assistantIndex);
+        });
+        tokenbarNodes.push(node);
+        tokenbarsTrack.appendChild(node);
       }
-      if (needle && !matched.has(bar.assistantIndex)) node.classList.add("tt-tokenbar-dimmed");
-      if (st.selectedIndex !== null && st.selectedIndex === bar.assistantIndex) node.classList.add("tt-tokenbar-selected");
-      node.addEventListener("pointerenter", (event) => onBarEnter(bar, event));
-      node.addEventListener("pointerleave", onSpanLeave);
-      node.addEventListener("click", (event) => {
-        event.stopPropagation();
-        if (bar.assistantIndex !== null) selectIndex(bar.assistantIndex);
-      });
-      tokenbarsTrack.appendChild(node);
+      // 重建后浏览器会把 scrollLeft 归零；停在末尾看最新步骤的人不应被弹回。
+      if (previousScrollWidth > 0) {
+        tokenbarsTrack.scrollLeft = wasAtEnd
+          ? tokenbarsTrack.scrollWidth
+          : previousScrollLeft;
+      }
     }
+    for (let i = 0; i < tokenbarNodes.length; i += 1) {
+      const bar = usage.bars[i];
+      const node = tokenbarNodes[i];
+      if (!bar || !node) continue;
+      node.classList.toggle("tt-tokenbar-dimmed", Boolean(needle) && !matched.has(bar.assistantIndex));
+      node.classList.toggle("tt-tokenbar-selected", st.selectedIndex !== null && st.selectedIndex === bar.assistantIndex);
+    }
+    syncTokenbarScroll();
   };
 
   const onBarEnter = (bar, event) => {

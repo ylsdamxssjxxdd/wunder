@@ -631,7 +631,8 @@ export component WorkspaceFilesPanel inherits Rectangle {
             }
         }
     }
-    if panel-drop.has-drag : Rectangle {
+    Rectangle {
+        visible: panel-drop.has-drag;
         x: 6px;
         y: 34px;
         width: max(0px, parent.width - 12px);

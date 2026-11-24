@@ -198,7 +198,12 @@
 
     <div v-if="stepUsage.bars.length > 0" class="tt-tokenbars">
       <span class="tt-tokenbars-label">{{ t(tokenTotal ? 'messenger.trajectory.consumptionTotal' : 'messenger.trajectory.tokenUsage') }}</span>
-      <div class="tt-tokenbars-track">
+      <div
+        ref="tokenTrackEl"
+        class="tt-tokenbars-track"
+        @scroll.passive="syncTokenScroll"
+        @wheel="onTokenWheel"
+      >
         <span
           v-for="bar in stepUsage.bars"
           :key="bar.requestNumber"
@@ -221,6 +226,14 @@
           ? t('messenger.trajectory.tokenTotal', { value: `${formatCompactTokens(tokenTotal ? stepUsage.totalGross : stepUsage.totalSum)} tok` })
           : ''
       }}</span>
+      <div
+        v-show="tokenScroll.scrollable"
+        ref="tokenScrollEl"
+        class="tt-tokenbars-scroll"
+        @pointerdown="onTokenScrollPointerDown"
+      >
+        <span class="tt-tokenbars-scroll-thumb" :style="tokenThumbStyle" />
+      </div>
     </div>
 
     <div class="tt-body" :class="{ 'tt-has-details': selectedCell }">
@@ -1541,9 +1554,13 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointerup', onWindowPointerUp)
   window.removeEventListener('pointermove', onScrollbarPointerMove)
   window.removeEventListener('pointerup', endScrollbarDrag)
+  window.removeEventListener('pointermove', onTokenScrollPointerMove)
+  window.removeEventListener('pointerup', endTokenScrollDrag)
   window.removeEventListener('resize', updateSizes)
   trackResizeObserver?.disconnect()
   trackResizeObserver = null
+  tokenResizeObserver?.disconnect()
+  tokenResizeObserver = null
   if (tooltipTimer !== null) window.clearTimeout(tooltipTimer)
   if (pointerRafId !== null) window.cancelAnimationFrame(pointerRafId)
   pointerRafId = null
@@ -2540,6 +2557,91 @@ function tokenBarClasses(bar: StepUsageBar): Record<string, boolean> {
     'tt-tokenbar-empty': !bar.reported,
     'tt-tokenbar-selected': selectedIndex.value !== null && selectedIndex.value === bar.assistantIndex,
   }
+}
+
+/* 柱子有最小宽度（见 .tt-tokenbar），步骤多时直方图总宽超出可视宽度。云端版
+   全局隐藏了原生滚动条，这里用与时间轴同款的自定义滚动条：按
+   scrollWidth/clientWidth 反推 thumb，拖动/点击轨道直接改 scrollLeft。 */
+const tokenTrackEl = ref<HTMLElement | null>(null)
+const tokenScrollEl = ref<HTMLElement | null>(null)
+const tokenScroll = ref({ left: 0, width: 100, scrollable: false })
+const tokenThumbStyle = computed(() => ({
+  left: `${tokenScroll.value.left}%`,
+  width: `${tokenScroll.value.width}%`,
+}))
+
+function syncTokenScroll(): void {
+  const track = tokenTrackEl.value
+  const maxScroll = track ? track.scrollWidth - track.clientWidth : 0
+  if (!track || maxScroll <= 1) {
+    tokenScroll.value = { left: 0, width: 100, scrollable: false }
+    return
+  }
+  const width = Math.min(100, Math.max((track.clientWidth / track.scrollWidth) * 100, 8))
+  tokenScroll.value = {
+    left: (100 - width) * (track.scrollLeft / maxScroll),
+    width,
+    scrollable: true,
+  }
+}
+
+let tokenResizeObserver: ResizeObserver | null = null
+watch(tokenTrackEl, (el) => {
+  tokenResizeObserver?.disconnect()
+  tokenResizeObserver = null
+  if (!el) return
+  void nextTick(syncTokenScroll)
+  tokenResizeObserver = new ResizeObserver(() => syncTokenScroll())
+  tokenResizeObserver.observe(el)
+})
+
+// 追加更早轮次后柱子变多，scrollWidth 变化不会触发 ResizeObserver。
+watch(() => stepUsage.value.bars.length, () => { void nextTick(syncTokenScroll) })
+
+let tokenScrollDrag: { x: number; start: number; perPixel: number } | null = null
+
+function onTokenScrollPointerMove(event: PointerEvent): void {
+  const track = tokenTrackEl.value
+  if (!tokenScrollDrag || !track) return
+  track.scrollLeft = tokenScrollDrag.start + (event.clientX - tokenScrollDrag.x) * tokenScrollDrag.perPixel
+}
+
+function endTokenScrollDrag(): void {
+  tokenScrollDrag = null
+  window.removeEventListener('pointermove', onTokenScrollPointerMove)
+  window.removeEventListener('pointerup', endTokenScrollDrag)
+}
+
+function onTokenScrollPointerDown(event: PointerEvent): void {
+  const track = tokenTrackEl.value
+  const bar = tokenScrollEl.value
+  if (!track || !bar || event.button !== 0) return
+  const maxScroll = track.scrollWidth - track.clientWidth
+  if (maxScroll <= 1) return
+  const rect = bar.getBoundingClientRect()
+  const thumb = bar.querySelector('.tt-tokenbars-scroll-thumb')?.getBoundingClientRect()
+  const thumbWidth = thumb?.width ?? rect.width
+  const maxLeft = rect.width - thumbWidth
+  if (maxLeft <= 1) return
+  if (!thumb || event.clientX < thumb.left || event.clientX > thumb.right) {
+    // 点击轨道：把点击点作为新视口中心。
+    const center = (event.clientX - rect.left - thumbWidth / 2) / maxLeft
+    track.scrollLeft = Math.min(1, Math.max(0, center)) * maxScroll
+  }
+  tokenScrollDrag = { x: event.clientX, start: track.scrollLeft, perPixel: maxScroll / maxLeft }
+  window.addEventListener('pointermove', onTokenScrollPointerMove)
+  window.addEventListener('pointerup', endTokenScrollDrag)
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+// 竖向滚轮在柱子区转成横向滚动：步骤多时不会有人先想到 shift+滚轮。
+function onTokenWheel(event: WheelEvent): void {
+  const track = tokenTrackEl.value
+  if (!track || track.scrollWidth <= track.clientWidth + 1) return
+  if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return
+  track.scrollLeft += event.deltaY
+  event.preventDefault()
 }
 
 function onTokenBarEnter(bar: StepUsageBar, event: PointerEvent): void {

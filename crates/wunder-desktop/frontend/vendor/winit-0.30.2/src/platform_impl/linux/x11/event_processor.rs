@@ -632,14 +632,35 @@ impl EventProcessor {
 
             let source_window = xev.data.get_long(0) as xproto::Window;
 
-            // Equivalent to `(x << shift) | y`
-            // where `shift = mem::size_of::<c_short>() * 8`
-            // Note that coordinates are in "desktop space", not "window space"
-            // (in X11 parlance, they're root window coordinates)
-            // let packed_coordinates = xev.data.get_long(2);
-            // let shift = mem::size_of::<libc::c_short>() * 8;
-            // let x = packed_coordinates >> shift;
-            // let y = packed_coordinates & !(x << shift);
+            // XDND owns the pointer while a foreign drag is active, so normal
+            // XI2 motion events are not a reliable position source. Report the
+            // root coordinates carried by every XdndPosition as client-space
+            // CursorMoved events; Slint uses them to move its DropArea hover.
+            let packed_coordinates = xev.data.get_long(2) as u32;
+            let root_x = (packed_coordinates >> 16) as i16;
+            let root_y = packed_coordinates as i16;
+            let position = wt
+                .xconn
+                .xcb_connection()
+                .translate_coordinates(wt.root, window, root_x, root_y)
+                .ok()
+                .and_then(|cookie| cookie.reply().ok());
+            if let Some(position) = position {
+                let position = PhysicalPosition::new(
+                    f64::from(position.dst_x),
+                    f64::from(position.dst_y),
+                );
+                self.with_window(window, |window| {
+                    window.shared_state_lock().cursor_pos = Some((position.x, position.y));
+                });
+                callback(&self.target, Event::WindowEvent {
+                    window_id,
+                    event: WindowEvent::CursorMoved {
+                        device_id: unsafe { crate::event::DeviceId::dummy() },
+                        position,
+                    },
+                });
+            }
 
             // By our own state flow, `version` should never be `None` at this point.
             let version = self.dnd.version.unwrap_or(5);

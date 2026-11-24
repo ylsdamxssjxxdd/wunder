@@ -2411,7 +2411,8 @@ export component Composer inherits Rectangle {
             editor.set-selection-offsets(caret-offset, caret-offset);
             return DragAction.copy;
         }
-        if composer-drop.has-drag : Rectangle {
+        Rectangle {
+            visible: composer-drop.has-drag;
             x: editor.absolute-position.x - root.absolute-position.x;
             y: editor.absolute-position.y - root.absolute-position.y;
             width: editor.width;

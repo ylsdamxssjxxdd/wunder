@@ -1687,8 +1687,6 @@ impl WinitWindowAdapter {
                 let position = position.to_logical(runtime_window.scale_factor() as f64);
                 let cursor_pos = euclid::point2(position.x, position.y);
                 self.cursor_pos.set(cursor_pos);
-                // winit sends this event at a very high frequency, so coalesce the moves.
-                self.shared_backend_data.buffer_mouse_move(&self.self_weak, cursor_pos);
                 if let Some(mut event) = self.drag_event.borrow_mut().clone() {
                     event.position = corelib::api::LogicalPosition { x: cursor_pos.x, y: cursor_pos.y };
                     runtime_window.process_drag_event(corelib::input::BackendDragEvent::Move {
@@ -1698,6 +1696,11 @@ impl WinitWindowAdapter {
                             ..Default::default()
                         },
                     });
+                } else {
+                    // A foreign file drag must not also produce an ordinary Moved:
+                    // that event hits the editor under the DropArea and immediately
+                    // exits the hover established by DragMove above.
+                    self.shared_backend_data.buffer_mouse_move(&self.self_weak, cursor_pos);
                 }
             }
             WinitWindowEvent::CursorLeft { .. } => {
