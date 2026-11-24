@@ -40,6 +40,27 @@ export type WorkspaceDroppedTree = {
   depthSkipped: number;
 };
 
+export const collectWorkspaceClipboardFiles = (
+  dataTransfer: Pick<DataTransfer, 'files' | 'items'> | null | undefined
+): WorkspaceDroppedTree => {
+  const itemFiles = Array.from(dataTransfer?.items || [])
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file));
+  const files = itemFiles.length
+    ? itemFiles
+    : Array.from(dataTransfer?.files || []);
+  return {
+    files: files.map((file) => ({
+      file,
+      relativePath: file.webkitRelativePath || file.name || 'clipboard-upload'
+    })),
+    directories: [],
+    unreadable: 0,
+    depthSkipped: 0
+  };
+};
+
 const DEFAULT_MAX_DEPTH = 64;
 
 /**

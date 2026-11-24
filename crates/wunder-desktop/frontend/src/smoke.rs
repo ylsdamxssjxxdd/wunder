@@ -99,6 +99,8 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
         for path in paths.take(1) {
             app.set_draft(format!("@\"{}\" ", path.to_string_lossy()).into());
         }
+        crate::native_window::restore_and_focus(app.window());
+        app.window().request_redraw();
         app.get_draft().len() as i32
     });
     app.set_draft("".into());
@@ -106,7 +108,9 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
     let drop_y = editor_y + editor_height * 0.5;
     file_drag(app, drop_x, drop_y, false)?;
     snapshot(app, &directory.join("native-composer-dragover.png"))?;
+    external_drop_pause("before-drop");
     file_drag(app, drop_x, drop_y, true)?;
+    external_drop_pause("after-drop");
     require(
         app.get_draft().contains("@\"/sample/资料.txt\" "),
         "dropping a file did not insert its path into the composer",
@@ -953,6 +957,13 @@ fn file_drag_leave(app: &MainWindow) {
     use i_slint_core::input::BackendDragEvent;
     use i_slint_core::window::WindowInner;
     WindowInner::from_pub(app.window()).process_drag_event(BackendDragEvent::Leave);
+}
+
+fn external_drop_pause(point: &str) {
+    if std::env::var_os("WUNDER_DROP_PROBE_EXTERNAL").is_some() {
+        eprintln!("DROP_PROBE {point}");
+        std::thread::sleep(std::time::Duration::from_secs(3));
+    }
 }
 
 pub(crate) fn drag(

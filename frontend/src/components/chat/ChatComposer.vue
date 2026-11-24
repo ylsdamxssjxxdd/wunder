@@ -7,17 +7,16 @@
     @dragleave="handleDragLeave"
     @drop="handleDrop"
   >
-    <!-- 手机「+」面板的两个入口：上传文件走系统文件选择（可多选），拍照走相机。
-         输入必须常驻 DOM（`phoneLayout` 期间），iOS 才允许在点击手势里直接 .click()。 -->
     <input
-      v-if="phoneLayout"
-      ref="phoneFileInputRef"
+      ref="fileInputRef"
       class="composer-file-input"
       type="file"
       multiple
       tabindex="-1"
-      @change="handlePhoneFileInputChange"
+      data-testid="chat-composer-file-input"
+      @change="handleComposerFileInputChange"
     />
+    <!-- 手机上传文件与拍照共用工作目录落地链路；输入常驻 DOM，iOS 才能在选择器点击手势里直接打开。 -->
     <input
       v-if="phoneLayout"
       ref="phonePhotoInputRef"
@@ -26,7 +25,7 @@
       accept="image/*"
       capture="environment"
       tabindex="-1"
-      @change="handlePhoneFileInputChange"
+      @change="handleComposerFileInputChange"
     />
 
     <div v-if="showUploadArea" class="upload-preview" data-testid="chat-composer-attachments">
@@ -152,6 +151,7 @@
         @click="syncCaretPosition"
         @keyup="syncCaretPosition"
         @keydown="handleInputKeydown"
+        @paste="handleComposerPaste"
       />
 
       <!-- 录音中的计时文本随麦克风进入工具栏（对齐桌面 composer.slint:610-618）。 -->
@@ -164,7 +164,7 @@
 
       <div class="composer-action-row">
         <div class="composer-action-group">
-          <!-- 「+」只放预设问题（点一下即填入草稿）；常驻状态格只列后台任务与子智能体。 -->
+          <!-- 「+」放上传文件与预设问题（点一下即填入草稿）；常驻状态格只列后台任务与子智能体。 -->
           <div ref="plusMenuAnchorRef" class="composer-anchor">
             <button
               class="composer-plus-btn"
@@ -180,8 +180,7 @@
             </button>
 
             <div v-if="plusPanelVisible" ref="plusPanelRef" class="composer-panel composer-panel--plus" @click.stop>
-              <!-- 桌面只有一栏：点「+」直接铺出该智能体的预设问题，点一项就填入草稿；
-                   输入 `/` 时同一栏让位给命令建议。 -->
+              <!-- 桌面一栏：上传文件 + 预设问题；输入 `/` 时同一栏让位给命令建议。 -->
               <div v-if="commandSuggestionsVisible" class="composer-plus-suggestions" role="listbox">
                 <button
                   v-for="(item, index) in commandSuggestions"
@@ -208,7 +207,7 @@
                   <span>{{ t('chat.commandMenu.presetQuestions') }}</span>
                   <i class="fa-solid fa-chevron-right composer-plus-action-caret" aria-hidden="true"></i>
                 </button>
-                <button class="composer-plus-action" type="button" @click="pickPhoneFiles">
+                <button class="composer-plus-action" type="button" @click="pickWorkspaceFiles">
                   <i class="fa-solid fa-paperclip composer-plus-action-icon" aria-hidden="true"></i>
                   <span>{{ t('chat.composer.uploadFile') }}</span>
                 </button>
@@ -218,6 +217,16 @@
                 </button>
               </template>
               <template v-else>
+                <button
+                  v-if="!phoneLayout"
+                  class="composer-plus-action"
+                  type="button"
+                  data-testid="chat-composer-upload-files"
+                  @click="pickWorkspaceFiles"
+                >
+                  <i class="fa-solid fa-paperclip composer-plus-action-icon" aria-hidden="true"></i>
+                  <span>{{ t('chat.composer.uploadFile') }}</span>
+                </button>
                 <div v-if="phoneLayout" class="composer-plus-page-head">
                   <button
                     class="composer-plus-back-btn"
@@ -308,7 +317,7 @@ import ComposerStatusBar from '@/components/chat/ComposerStatusBar.vue';
 import ContextUsageIcon from '@/components/chat/ContextUsageIcon.vue';
 import ModelPickerPopover from '@/components/chat/ModelPickerPopover.vue';
 
-import { processChatMediaAttachment, convertChatAttachment } from '@/api/chat';
+import { processChatMediaAttachment } from '@/api/chat';
 import { createWunderWorkspaceDir, uploadWunderWorkspace } from '@/api/workspace';
 import {
   clearComposerDraftState,
@@ -328,6 +337,7 @@ import { useChatStore } from '@/stores/chat';
 import { chatDebugLog } from '@/utils/chatDebug';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import {
+  collectWorkspaceClipboardFiles,
   collectWorkspaceDropTree,
   resolveEmptyDropDirectories,
   type WorkspaceDroppedFile,
@@ -472,8 +482,8 @@ const dragCounter = ref(0);
 const modelMenuAnchorRef = ref<HTMLElement | null>(null);
 const plusMenuAnchorRef = ref<HTMLElement | null>(null);
 const plusPanelRef = ref<HTMLElement | null>(null);
-// 手机「+」的两个隐藏输入：文件（多选）与相机（单张照片）。
-const phoneFileInputRef = ref<HTMLInputElement | null>(null);
+// 文件选择器常驻 DOM；手机相机使用单独输入。
+const fileInputRef = ref<HTMLInputElement | null>(null);
 const phonePhotoInputRef = ref<HTMLInputElement | null>(null);
 const phonePlusPage = ref(0);
 const modelMenuVisible = ref(false);
@@ -499,21 +509,6 @@ let draftPersistTimer: ReturnType<typeof setTimeout> | null = null;
 const { t } = useI18n();
 const chatStore = useChatStore();
 const targetSessionId = computed(() => String(props.sessionId || chatStore.activeSessionId || '').trim());
-
-const IMAGE_MIME_TYPES = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/gif',
-  'image/bmp',
-  'image/webp',
-  'image/wmf',
-  'image/emf',
-  'image/x-wmf',
-  'image/x-emf',
-  'application/x-msmetafile',
-  'application/emf',
-  'application/x-emf'
-]);
 
 type AttachmentPayload = {
   type: string;
@@ -800,90 +795,6 @@ const buildAttachmentId = () => `${Date.now()}_${Math.random().toString(16).slic
 
 const resolveUploadError = (error, fallback) =>
   error?.response?.data?.detail || error?.message || fallback;
-
-const resolveFileExtension = (filename) => {
-  const parts = String(filename || '').trim().split('.');
-  if (parts.length < 2) return '';
-  return parts.pop().toLowerCase();
-};
-
-const normalizeImageMimeType = (value: unknown): string => {
-  const normalized = String(value || '')
-    .trim()
-    .toLowerCase()
-    .split(';')[0]
-    ?.trim();
-  if (normalized === 'image/jpg') return 'image/jpeg';
-  return normalized;
-};
-
-const inferImageMimeTypeFromExtension = (filename: unknown): string => {
-  const ext = resolveFileExtension(String(filename || ''));
-  switch (ext) {
-    case 'png':
-      return 'image/png';
-    case 'jpg':
-    case 'jpeg':
-      return 'image/jpeg';
-    case 'gif':
-      return 'image/gif';
-    case 'bmp':
-      return 'image/bmp';
-    case 'webp':
-      return 'image/webp';
-    case 'wmf':
-      return 'image/wmf';
-    case 'emf':
-      return 'image/emf';
-    default:
-      return '';
-  }
-};
-
-const isWindowsMetafile = (file: File): boolean => {
-  const ext = resolveFileExtension(file?.name);
-  return ext === 'wmf' || ext === 'emf';
-};
-
-const resolveSupportedImageMimeType = (file): string => {
-  const mimeType = normalizeImageMimeType(file?.type);
-  if (mimeType && IMAGE_MIME_TYPES.has(mimeType)) {
-    return mimeType;
-  }
-  const inferred = inferImageMimeTypeFromExtension(file?.name);
-  return IMAGE_MIME_TYPES.has(inferred) ? inferred : '';
-};
-
-const validateImageFile = async (file: File): Promise<void> => {
-  if (!file) {
-    throw new Error(t('chat.attachments.imageInvalid'));
-  }
-  if (isWindowsMetafile(file)) {
-    return;
-  }
-  if (typeof createImageBitmap === 'function') {
-    let bitmap: ImageBitmap | null = null;
-    try {
-      bitmap = await createImageBitmap(file);
-      return;
-    } catch {
-      // Fallback to object URL decode below when bitmap decoding is unavailable.
-    } finally {
-      bitmap?.close();
-    }
-  }
-  const objectUrl = URL.createObjectURL(file);
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const image = new Image();
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error(t('chat.attachments.imageInvalid')));
-      image.src = objectUrl;
-    });
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
-};
 
 const isAttachmentProcessing = (id: string): boolean => attachmentProcessingIds.value.includes(id);
 
@@ -1793,8 +1704,7 @@ const uploadDroppedFilesToWorkspace = async (
 };
 
 /**
- * Shared entry for "upload into the workspace" from drag/drop and from the
- * "+" menu. Busy accounting keeps the send button disabled until it settles.
+ * 文件选择、剪贴板粘贴与拖拽统一落到工作目录，再以附件路径随下一条消息发送。
  */
 const ingestComposerFiles = async (tree: WorkspaceDroppedTree) => {
   const files = (Array.isArray(tree?.files) ? tree.files : []).filter((item) => Boolean(item?.file));
@@ -1828,8 +1738,7 @@ const ingestComposerFiles = async (tree: WorkspaceDroppedTree) => {
   }
 };
 
-// 「上传到工作目录」的显式文件对话框随 `+` 菜单移除：入口回到左栏工作目录区
-// （WorkspaceFilesPanel 的上传按钮走同一条 /workspace 上传契约），输入卡只保留拖拽上传。
+// 文件选择、拖拽和粘贴都走工作目录上传；侧栏文件区继续使用同一 /workspace 契约。
 const handleDragEnter = (event) => {
   if (!hasFileDrag(event) && !hasWorkspaceDragPaths(event?.dataTransfer)) return;
   event.preventDefault();
@@ -1896,28 +1805,21 @@ const handleDrop = async (event) => {
   await ingestComposerFiles(droppedTree);
 };
 
+const handleComposerPaste = async (event: ClipboardEvent) => {
+  const pastedTree = collectWorkspaceClipboardFiles(event.clipboardData);
+  if (!pastedTree.files.length) return;
+  event.preventDefault();
+  if (composerBusy.value > 0) {
+    ElMessage.warning(chatBusyMessage.value);
+    return;
+  }
+  closeComposerPanels();
+  await ingestComposerFiles(pastedTree);
+};
+
 const requestMediaProcessing = async (formData: FormData): Promise<ProcessedMediaResponse> => {
   const response = await processChatMediaAttachment(formData);
   return (response?.data?.data || {}) as ProcessedMediaResponse;
-};
-
-const buildImageDraftAttachment = (
-  filename: string,
-  payload: ProcessedMediaResponse
-): ComposerDraftAttachment => {
-  const attachment = Array.isArray(payload.attachments)
-    ? payload.attachments
-        .map((item) => normalizeProcessedMediaAttachment(item, 'image'))
-        .find(Boolean) || null
-    : null;
-  if (!attachment) {
-    throw new Error(t('chat.attachments.emptyResult'));
-  }
-  attachment.id = buildAttachmentId();
-  attachment.type = 'image';
-  attachment.name = attachment.name || filename;
-  attachment.content = '';
-  return attachment;
 };
 
 const buildVideoDraftAttachment = (
@@ -1966,77 +1868,6 @@ const buildVideoDraftAttachment = (
     nextAttachment.warnings = payload.warnings;
   }
   return nextAttachment;
-};
-
-const pushAttachment = (attachment: ComposerDraftAttachment) => {
-  attachments.value.push(attachment);
-  syncVideoAttachmentDrafts();
-};
-
-const processImageFile = async (file: File): Promise<ComposerDraftAttachment> => {
-  const formData = new FormData();
-  formData.append('file', file);
-  const payload = await requestMediaProcessing(formData);
-  if (String(payload.kind || '').trim() === 'gif') {
-    return buildVideoDraftAttachment(file.name || 'gif', payload, undefined, 'gif');
-  }
-  return buildImageDraftAttachment(file.name || 'image', payload);
-};
-
-/**
- * §8.2 attachment ingestion: media files go through the existing media processor,
- * every other file goes through the existing converter, and both end up as
- * ordinary composer attachments (the payload contract for `send` is untouched).
- *
- * 入口状态：桌面 `+ 更多 / 回形针`随 0.5.0 桌面对齐移除，云端语义下桌面文件
- * 走左栏工作目录区（上传 + 引用到聊天）；手机 `+` 面板重新挂载本管线
- * （上传文件 / 拍照），与安卓版一致，文件作为输入卡附件随下一条消息发送。
- */
-const ingestAttachmentFiles = async (files: File[]) => {
-  const list = (Array.isArray(files) ? files : []).filter(Boolean);
-  if (!list.length) return;
-  attachmentBusy.value += 1;
-  try {
-    for (const file of list) {
-      const imageMime = resolveSupportedImageMimeType(file);
-      const mime = imageMime || normalizeImageMimeType(file.type);
-      try {
-        if (mime.startsWith('image/')) {
-          await validateImageFile(file);
-          pushAttachment(await processImageFile(file));
-          ElMessage.success(t('chat.attachments.imageAdded', { name: file.name }));
-          continue;
-        }
-        if (mime.startsWith('video/') || mime.startsWith('audio/')) {
-          pushAttachment(await processImageFile(file));
-          ElMessage.success(t('chat.attachments.imageAdded', { name: file.name }));
-          continue;
-        }
-        const response = await convertChatAttachment(file);
-        const payload = (response?.data?.data || {}) as Record<string, unknown>;
-        const content = String(payload.content || '');
-        if (!content.trim()) {
-          throw new Error(t('chat.attachments.emptyResult'));
-        }
-        pushAttachment({
-          id: buildAttachmentId(),
-          type: 'file',
-          name: String(payload.name || file.name || '').trim() || file.name,
-          content,
-          mime_type: file.type || undefined,
-          converter: String(payload.converter || '').trim() || undefined,
-          warnings: Array.isArray(payload.warnings)
-            ? payload.warnings.map((item) => String(item || ''))
-            : undefined
-        });
-        ElMessage.success(t('chat.attachments.fileParsed', { name: file.name }));
-      } catch (error) {
-        ElMessage.error(resolveUploadError(error, t('chat.attachments.processFailed')));
-      }
-    }
-  } finally {
-    attachmentBusy.value = Math.max(0, attachmentBusy.value - 1);
-  }
 };
 
 const applyVideoFrameRate = async (attachmentId: string) => {
@@ -2139,7 +1970,7 @@ const plusPanelVisible = computed(
   () => plusMenuVisible.value || commandSuggestionsVisible.value
 );
 
-// 加号只开合这一栏，内容永远是该智能体的预设问题。
+// 加号只开合这一栏；桌面显示上传文件和预设问题，手机首页还提供拍照。
 const togglePlusMenu = () => {
   const next = !plusPanelVisible.value;
   closeOtherPanels('plus');
@@ -2156,9 +1987,9 @@ const openPhonePresetPage = () => {
 };
 
 // 面板先收起再点隐藏输入：同一个点击手势里调用，iOS/Android 都会直接调起选择器。
-const pickPhoneFiles = () => {
+const pickWorkspaceFiles = () => {
   closeComposerPanels();
-  phoneFileInputRef.value?.click();
+  fileInputRef.value?.click();
 };
 
 const pickPhonePhoto = () => {
@@ -2166,7 +1997,7 @@ const pickPhonePhoto = () => {
   phonePhotoInputRef.value?.click();
 };
 
-const handlePhoneFileInputChange = async (event: Event) => {
+const handleComposerFileInputChange = async (event: Event) => {
   const input = event.target as HTMLInputElement | null;
   const files = Array.from(input?.files || []);
   // 立刻清空 value，同一文件连续选两次也会重新触发 change。
@@ -2176,7 +2007,12 @@ const handlePhoneFileInputChange = async (event: Event) => {
     ElMessage.warning(chatBusyMessage.value);
     return;
   }
-  await ingestAttachmentFiles(files);
+  await ingestComposerFiles({
+    files: files.map((file) => ({ file, relativePath: file.webkitRelativePath || file.name || 'upload' })),
+    directories: [],
+    unreadable: 0,
+    depthSkipped: 0
+  });
 };
 
 // 旋转/拉宽进入手机布局时，输入区模型浮层不能悬空留着（锚点会被移除）。

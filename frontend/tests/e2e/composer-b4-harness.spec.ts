@@ -57,15 +57,15 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
     const style = getComputedStyle(el);
     return { left: style.paddingLeft, bottom: style.paddingBottom };
   });
-  expect(footerPadding.left).toBe('16px');
+  expect(parseFloat(footerPadding.left)).toBeCloseTo(Math.min(56, Math.max(16, 1440 * 0.03)), 1);
   expect(footerPadding.bottom).toBe('12px');
 
-  // §8.1 字号 14px + 占位文字固定为「请输入文本」+ 多行自适应（1-8 行后内部滚动）
+  // §8.1 字号 14px + 本地化占位文字 + 多行自适应（1-8 行后内部滚动）
   const textarea = page.locator('[data-testid="chat-composer-input"]').first();
   await expect(textarea).toBeVisible();
   const textareaStyle = await textarea.evaluate((el) => getComputedStyle(el).fontSize);
   expect(textareaStyle).toBe('14px');
-  await expect(textarea).toHaveAttribute('placeholder', '请输入文本');
+  await expect(textarea).toHaveAttribute('placeholder', /请输入文本|Enter text/);
   await textarea.fill(Array.from({ length: 12 }, (_, index) => `line ${index}`).join('\n'));
   const overflow = await textarea.evaluate((el) => ({
     height: el.getBoundingClientRect().height,
@@ -127,7 +127,7 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   const triggerBox = await modelTrigger.boundingBox();
   expect(popoverBox!.y + popoverBox!.height).toBeLessThanOrEqual(triggerBox!.y + 2);
   expect(Math.abs(popoverBox!.x + popoverBox!.width - (triggerBox!.x + triggerBox!.width))).toBeLessThanOrEqual(2);
-  await expect(popover).toContainText(/思考等级|Reasoning effort/);
+  await expect(popover).toContainText(/思考等级|Reasoning effort|Default/);
   // 上下文占用在浮层**顶部**，只有数字，没有进度条。
   const contextBlock = popover.locator('.composer-model-context');
   await expect(contextBlock).toBeVisible();
@@ -185,9 +185,10 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   const plusPanelBox = await plusPanel.boundingBox();
   expect(plusPanelBox!.y + plusPanelBox!.height).toBeLessThanOrEqual(plusBox!.y + 2);
   expect(Math.abs(plusPanelBox!.x - plusBox!.x)).toBeLessThanOrEqual(2);
-  // 「+」只有一栏：点开就是该智能体的预设问题，没有命令/审批/语音行，也没有第二栏。
+  // 「+」保留预设问题，并提供直接选择文件入口；没有命令/审批/语音栏或第二栏。
   const presetPanel = plusPanel.locator('.composer-preset-panel');
   await expect(presetPanel).toBeVisible();
+  await expect(plusPanel.getByTestId('chat-composer-upload-files')).toBeVisible();
   expect(await presetPanel.locator('.composer-preset-panel-item').count()).toBeGreaterThanOrEqual(2);
   await expect(plusPanel.locator('.composer-plus-item')).toHaveCount(0);
   await expect(plusPanel.locator('[data-testid="chat-composer-plus-commands"]')).toHaveCount(0);

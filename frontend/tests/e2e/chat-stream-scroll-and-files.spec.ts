@@ -125,10 +125,18 @@ test('dropped files appear above the draft, can be removed, and serialize only o
     ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: { items: [] } }) })
     : route.continue());
   let uploadCount = 0;
+  const uploadPayloads: string[] = [];
   await page.route('**/wunder/workspace/upload*', async route => {
     uploadCount++;
+    const payload = route.request().postDataBuffer()?.toString('latin1') || '';
+    uploadPayloads.push(payload);
+    const files = payload.includes('selected-image.png')
+      ? ['selected-image.png', 'selected-report.pdf']
+      : payload.includes('pasted-image.png')
+        ? ['pasted-image.png', 'pasted-report.docx']
+        : ['fixtures/notes.txt', 'fixtures/data.csv'];
     await route.fulfill({ status: 200, contentType: 'application/json',
-      body: JSON.stringify({ files: ['fixtures/notes.txt', 'fixtures/data.csv'] }) });
+      body: JSON.stringify({ files }) });
   });
   await page.goto('/__e2e/composer-b4');
   const input = page.getByTestId('chat-composer-input');
@@ -178,9 +186,51 @@ test('dropped files appear above the draft, can be removed, and serialize only o
   });
   await input.dispatchEvent('drop', { dataTransfer: reference });
   await reference.dispose();
-  await expect(cards).toContainText('existing.txt');
-  await expect(input).toHaveValue('');
+  await expect(input).toHaveValue('fixtures/existing.txt');
+  await expect(cards).toHaveCount(0);
   expect(uploadCount).toBe(3);
   await send.click();
+  await expect(input).toHaveValue('');
   await expect(log).toContainText('fixtures/existing.txt');
+
+  // 桌面「+」选择图片和文档后同样先落工作目录，再在发送内容中提示路径。
+  await page.getByTestId('chat-composer-plus').click();
+  await page.getByTestId('chat-composer-upload-files').click();
+  await page.getByTestId('chat-composer-file-input').setInputFiles([
+    { name: 'selected-image.png', mimeType: 'image/png', buffer: Buffer.from('fixture image') },
+    { name: 'selected-report.pdf', mimeType: 'application/pdf', buffer: Buffer.from('fixture document') }
+  ]);
+  await expect(cards.locator('.upload-preview-item')).toHaveCount(2);
+  await expect(cards).toContainText('selected-image.png');
+  await expect(cards).toContainText('selected-report.pdf');
+  expect(uploadCount).toBe(4);
+  expect(uploadPayloads[3]).toContain('selected-image.png');
+  expect(uploadPayloads[3]).toContain('selected-report.pdf');
+  await send.click();
+  await expect(log).toContainText(/已附加 2 个文件到当前工作目录|Attached 2 file\(s\) to the current workspace/);
+  await expect(log).toContainText('selected-image.png');
+
+  // 剪贴板里的图片/文档不插入文件名文本，而是复用工作目录上传链路。
+  await input.evaluate((element) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['pasted image'], 'pasted-image.png', { type: 'image/png' }));
+    transfer.items.add(new File(['pasted document'], 'pasted-report.docx', {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    }));
+    element.dispatchEvent(new ClipboardEvent('paste', {
+      clipboardData: transfer,
+      bubbles: true,
+      cancelable: true
+    }));
+  });
+  await expect(cards.locator('.upload-preview-item')).toHaveCount(2);
+  await expect(cards).toContainText('pasted-image.png');
+  await expect(cards).toContainText('pasted-report.docx');
+  await expect(input).toHaveValue('');
+  expect(uploadCount).toBe(5);
+  expect(uploadPayloads[4]).toContain('pasted-image.png');
+  expect(uploadPayloads[4]).toContain('pasted-report.docx');
+  await send.click();
+  await expect(cards).toHaveCount(0);
+  await expect(log).toContainText('pasted-report.docx');
 });

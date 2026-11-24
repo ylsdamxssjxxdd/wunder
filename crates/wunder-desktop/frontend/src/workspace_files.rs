@@ -757,6 +757,10 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         for path in paths.take(MAX_DROP_FILES) {
             append_chat_reference(&app, &path.to_string_lossy());
         }
+        // External drag sources keep the OS keyboard focus unless the target
+        // explicitly takes it. Restore the window before Slint places the caret.
+        crate::native_window::restore_and_focus(app.window());
+        app.window().request_redraw();
         app.get_draft().len() as i32
     });
 

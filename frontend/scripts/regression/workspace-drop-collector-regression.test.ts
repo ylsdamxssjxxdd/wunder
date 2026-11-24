@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  collectWorkspaceClipboardFiles,
   collectWorkspaceDropTree,
   resolveEmptyDropDirectories,
   type WorkspaceDropEntry,
@@ -87,4 +88,25 @@ test('无法读取的条目会被计数而不是静默忽略', async () => {
   ]);
   assert.equal(tree.files.length, 0);
   assert.equal(tree.unreadable, 1);
+});
+
+test('剪贴板图片和文档从文件项提取且不重复', () => {
+  const image = mockFile('image.png');
+  const document = mockFile('notes.pdf');
+  const tree = collectWorkspaceClipboardFiles({
+    files: [image, document],
+    items: [
+      { kind: 'file', getAsFile: () => image },
+      { kind: 'string', getAsFile: () => null },
+      { kind: 'file', getAsFile: () => document }
+    ]
+  } as unknown as DataTransfer);
+  assert.deepEqual(tree.files.map((item) => item.relativePath), ['image.png', 'notes.pdf']);
+  assert.deepEqual(tree.directories, []);
+});
+
+test('剪贴板只有 files 时使用文件名并忽略空列表', () => {
+  const transfer = { files: [mockFile('report.docx')], items: [] } as unknown as DataTransfer;
+  assert.equal(collectWorkspaceClipboardFiles(transfer).files[0].relativePath, 'report.docx');
+  assert.equal(collectWorkspaceClipboardFiles(null).files.length, 0);
 });
