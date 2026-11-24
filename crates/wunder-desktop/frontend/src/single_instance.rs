@@ -1,6 +1,6 @@
 use sha2::{Digest, Sha256};
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[cfg(unix)]
 #[path = "single_instance/unix.rs"]
@@ -14,37 +14,41 @@ pub enum Launch {
     Activated,
 }
 
+/// 单实例按**本地数据目录**认领，而不是按可执行文件路径。
+///
+/// 安装版与开发版、或两个不同安装目录的桌面版，可能指向同一个 `~/.wunder`
+/// （同一套 SQLite、租约和线程历史）。按 exe 路径分会把它们当成互不相干的
+/// 两个实例同时启动：后启动的那个在崩溃恢复里会清掉前者的线程租约，并把
+/// 正在执行的轮次结算成「已停止」，用户看到的就是正常完成的回复被标成中断。
+///
+/// 可执行文件只是入口；共享同一份数据的桌面进程必须只有一个。
+/// 便携版各自带独立 home，因此仍然可以并行运行。
 pub fn claim() -> io::Result<Launch> {
-    platform::claim(&installation_key(&executable_path()?)?)
+    platform::claim(&instance_key()?)
 }
 
-fn executable_path() -> io::Result<PathBuf> {
-    #[cfg(target_os = "linux")]
-    if let Some(appimage) = std::env::var_os("APPIMAGE") {
-        return PathBuf::from(appimage).canonicalize();
-    }
-    std::env::current_exe()?.canonicalize()
+fn instance_key() -> io::Result<String> {
+    let home = wunder_server::local_bootstrap::resolve_home_from_env_or_user();
+    // 同一条路径可能有多种写法（软链接、大小写、末尾斜杠）；能规范化就
+    // 规范化，规范化失败的路径仍按原样参与哈希，宁可多认一个实例也不能
+    // 因为读不到目录而让保护失效。
+    let home = home.canonicalize().unwrap_or(home);
+    Ok(home_key(home.as_path()))
 }
 
-fn installation_key(executable: &Path) -> io::Result<String> {
+fn home_key(home: &Path) -> String {
     #[cfg(windows)]
     let identity = {
-        use std::os::windows::ffi::OsStrExt;
-        use windows_sys::Win32::UI::WindowsAndMessaging::CharLowerBuffW;
-        let mut wide: Vec<u16> = executable.as_os_str().encode_wide().collect();
-        if unsafe { CharLowerBuffW(wide.as_mut_ptr(), wide.len() as u32) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        wide.into_iter()
-            .flat_map(u16::to_le_bytes)
-            .collect::<Vec<_>>()
+        // Windows 路径大小写不敏感：同一个 home 不能因为盘符或目录名大小写
+        // 不同而被当成两个实例。
+        home.to_string_lossy().replace('\\', "/").to_lowercase().into_bytes()
     };
     #[cfg(unix)]
     let identity = {
         use std::os::unix::ffi::OsStrExt;
-        executable.as_os_str().as_bytes().to_vec()
+        home.as_os_str().as_bytes().to_vec()
     };
-    Ok(format!("{:x}", Sha256::digest(identity)))
+    format!("home:{:x}", Sha256::digest(&identity))
 }
 
 #[cfg(test)]
@@ -79,20 +83,15 @@ mod tests {
     }
 
     #[test]
-    fn installation_identity_is_stable_and_path_scoped() {
-        let first = installation_key(Path::new("install-a/desktop-ui.exe")).unwrap();
-        assert_eq!(
-            first,
-            installation_key(Path::new("install-a/desktop-ui.exe")).unwrap()
-        );
-        assert_ne!(
-            first,
-            installation_key(Path::new("install-b/desktop-ui.exe")).unwrap()
-        );
+    fn instance_key_is_stable_and_home_scoped() {
+        let first = home_key(Path::new("home-a/.wunder"));
+        assert_eq!(first, home_key(Path::new("home-a/.wunder")));
+        assert_ne!(first, home_key(Path::new("home-b/.wunder")));
+        assert!(first.starts_with("home:"));
         #[cfg(windows)]
         assert_eq!(
-            first,
-            installation_key(Path::new("INSTALL-A/DESKTOP-UI.EXE")).unwrap()
+            home_key(Path::new("C:\\Users\\Sample\\.wunder")),
+            home_key(Path::new("c:/users/sample/.wunder"))
         );
     }
 

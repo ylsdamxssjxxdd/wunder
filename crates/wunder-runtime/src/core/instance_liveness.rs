@@ -92,6 +92,45 @@ pub fn is_instance_alive(dir: &Path, instance_id: &str) -> Option<bool> {
     }
 }
 
+/// 判断本机是否还有另一个存活的本地实例。
+///
+/// 主要给启动清扫用：同一份本地数据可能被安装版与开发版同时打开（不同
+/// 可执行文件各自算一个实例）。启动清扫只应处理“上一个进程留下的残骸”；
+/// 只要还有另一个实例活着，就不该清它的租约、把它的运行轮次结算成中断，
+/// 也不该结算它仍在跑的后台任务。
+///
+/// 读不到实例目录时按“可能有”处理：宁可跳过这次清扫，也不做破坏性操作。
+pub fn any_other_instance_alive(dir: &Path, self_instance_id: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return true;
+    };
+    let self_file = sanitize_id(self_instance_id)
+        .ok()
+        .map(|id| lease_file_name(id));
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if Some(name.as_ref()) == self_file.as_deref() {
+            continue;
+        }
+        if !name.ends_with(".lock") {
+            continue;
+        }
+        let Ok(file) = OpenOptions::new().read(true).write(true).open(entry.path()) else {
+            continue;
+        };
+        match file.try_lock() {
+            Ok(()) => {
+                // 锁能拿到 = 文件主人已死；留给 is_instance_alive 清理。
+                let _ = file.unlock();
+            }
+            Err(TryLockError::WouldBlock) => return true,
+            Err(TryLockError::Error(_)) => {}
+        }
+    }
+    false
+}
+
 /// 回收“持有者已死”的本地实例留下的线程打开租约。
 ///
 /// 只认 `desktop` / `cli` 两种本地客户端，并且只在实例存活文件明确报告
@@ -190,6 +229,19 @@ mod tests {
     fn unknown_instance_is_not_guessed() {
         let dir = temp_dir("unknown");
         assert_eq!(is_instance_alive(&dir, "instance-c"), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn another_live_instance_is_detected() {
+        let dir = temp_dir("peers");
+        let self_guard = InstanceGuard::claim(&dir, "instance-self").unwrap();
+        assert!(!any_other_instance_alive(&dir, "instance-self"));
+        let peer = InstanceGuard::claim(&dir, "instance-peer").unwrap();
+        assert!(any_other_instance_alive(&dir, "instance-self"));
+        drop(peer);
+        assert!(!any_other_instance_alive(&dir, "instance-self"));
+        drop(self_guard);
         std::fs::remove_dir_all(&dir).ok();
     }
 

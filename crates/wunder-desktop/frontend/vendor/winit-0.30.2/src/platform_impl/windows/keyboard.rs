@@ -65,10 +65,15 @@ pub struct MessageAsKeyEvent {
 pub struct KeyEventBuilder {
     event_info: Mutex<Option<PartialKeyEventInfo>>,
     pending: PendingEventQueue<MessageAsKeyEvent>,
+    standalone_high_surrogate: Mutex<Option<u16>>,
 }
 impl Default for KeyEventBuilder {
     fn default() -> Self {
-        KeyEventBuilder { event_info: Mutex::new(None), pending: Default::default() }
+        KeyEventBuilder {
+            event_info: Mutex::new(None),
+            pending: Default::default(),
+            standalone_high_surrogate: Mutex::new(None),
+        }
     }
 }
 impl KeyEventBuilder {
@@ -104,6 +109,7 @@ impl KeyEventBuilder {
                     MatchResult::MessagesToDispatch(self.pending.complete_multi(key_events))
                 },
                 WM_KEYDOWN | WM_SYSKEYDOWN => {
+                    *self.standalone_high_surrogate.lock().unwrap() = None;
                     if msg_kind == WM_SYSKEYDOWN && wparam as VIRTUAL_KEY == VK_F4 {
                         // Don't dispatch Alt+F4 to the application.
                         // This is handled in `event_loop.rs`
@@ -168,9 +174,21 @@ impl KeyEventBuilder {
                 WM_CHAR | WM_SYSCHAR => {
                     let mut event_info = self.event_info.lock().unwrap();
                     if event_info.is_none() {
+                        if msg_kind == WM_CHAR {
+                            // Some IMEs and accessibility tools send text as
+                            // standalone WM_CHAR messages, without a keydown
+                            // for `PartialKeyEventInfo::from_message`.
+                            *result = ProcResult::Value(0);
+                            if let Some(event) = self.standalone_character(wparam) {
+                                let token = self.pending.add_pending();
+                                return MatchResult::MessagesToDispatch(
+                                    self.pending.complete_pending(token, event),
+                                );
+                            }
+                            return MatchResult::Nothing;
+                        }
                         trace!(
-                            "Received a CHAR message but no `event_info` was available. The \
-                             message is probably IME, returning."
+                            "Received a SYSCHAR message but no `event_info` was available, returning."
                         );
                         return MatchResult::Nothing;
                     }
@@ -454,6 +472,40 @@ impl KeyEventBuilder {
         let mut event = event_info.finalize();
         event.logical_key = logical_key;
         event.platform_specific.text_with_all_modifiers = text;
+        Some(MessageAsKeyEvent { event, is_synthetic: true })
+    }
+
+    fn standalone_character(&self, wparam: WPARAM) -> Option<MessageAsKeyEvent> {
+        let unit = wparam as u16;
+        let mut pending_high = self.standalone_high_surrogate.lock().unwrap();
+        let wide = if (0xd800..=0xdbff).contains(&unit) {
+            *pending_high = Some(unit);
+            return None;
+        } else if (0xdc00..=0xdfff).contains(&unit) {
+            vec![pending_high.take()?, unit]
+        } else {
+            *pending_high = None;
+            vec![unit]
+        };
+        drop(pending_high);
+
+        let text = SmolStr::new(String::from_utf16(&wide).ok()?);
+        if text.is_empty() {
+            return None;
+        }
+        let logical_key = Key::Character(text.clone());
+        let event = KeyEvent {
+            physical_key: PhysicalKey::Unidentified(NativeKeyCode::Unidentified),
+            logical_key: logical_key.clone(),
+            text: Some(text.clone()),
+            location: KeyLocation::Standard,
+            state: ElementState::Pressed,
+            repeat: false,
+            platform_specific: KeyEventExtra {
+                text_with_all_modifiers: Some(text),
+                key_without_modifiers: logical_key,
+            },
+        };
         Some(MessageAsKeyEvent { event, is_synthetic: true })
     }
 }

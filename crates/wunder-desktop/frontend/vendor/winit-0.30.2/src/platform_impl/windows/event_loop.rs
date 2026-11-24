@@ -47,7 +47,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WMSZ_BOTTOMRIGHT, WMSZ_LEFT, WMSZ_RIGHT, WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT,
     WM_CAPTURECHANGED, WM_CLOSE, WM_CREATE, WM_DESTROY, WM_DPICHANGED, WM_ENTERSIZEMOVE,
     WM_ERASEBKGND,
-    WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
+    WM_EXITMENULOOP, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
     WM_IME_SETCONTEXT, WM_IME_STARTCOMPOSITION, WM_INPUT, WM_INPUT_DEVICE_CHANGE, WM_KEYDOWN,
     WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
     WM_MENUCHAR, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCACTIVATE, WM_NCCALCSIZE,
@@ -194,6 +194,8 @@ pub(crate) struct WindowData {
     pub event_loop_runner: EventLoopRunnerShared<UserEventPlaceholder>,
     pub key_event_builder: KeyEventBuilder,
     pub(crate) ime_commit_deduplicator: RefCell<ImeCommitDeduplicator>,
+    pub(crate) right_button_pressed: Cell<bool>,
+    pub(crate) right_release_synthesized: Cell<bool>,
     pub _file_drop_handler: Option<FileDropHandler>,
     pub userdata_removed: Cell<bool>,
     pub recurse_depth: Cell<u32>,
@@ -1881,6 +1883,8 @@ unsafe fn public_window_callback_inner(
             use crate::event::MouseButton::Right;
             use crate::event::WindowEvent::MouseInput;
 
+            userdata.right_button_pressed.set(true);
+            userdata.right_release_synthesized.set(false);
             unsafe { capture_mouse(window, userdata.window_state_lock()) };
 
             update_modifiers(window, userdata);
@@ -1897,14 +1901,18 @@ unsafe fn public_window_callback_inner(
             use crate::event::MouseButton::Right;
             use crate::event::WindowEvent::MouseInput;
 
+            userdata.right_button_pressed.set(false);
+            let synthesized = userdata.right_release_synthesized.replace(false);
             unsafe { release_mouse(userdata.window_state_lock()) };
 
             update_modifiers(window, userdata);
 
-            userdata.send_event(Event::WindowEvent {
-                window_id: RootWindowId(WindowId(window)),
-                event: MouseInput { device_id: DEVICE_ID, state: Released, button: Right },
-            });
+            if !synthesized {
+                userdata.send_event(Event::WindowEvent {
+                    window_id: RootWindowId(WindowId(window)),
+                    event: MouseInput { device_id: DEVICE_ID, state: Released, button: Right },
+                });
+            }
             result = ProcResult::Value(0);
         },
 
@@ -1987,6 +1995,26 @@ unsafe fn public_window_callback_inner(
                     },
                 },
             });
+            result = ProcResult::Value(0);
+        },
+
+        WM_EXITMENULOOP => {
+            // TrackPopupMenu owns a modal input loop and commonly consumes the
+            // right-button release which opened a context menu. Complete that
+            // exact gesture before normal dispatch resumes. A real release,
+            // whether already received or still queued, is never duplicated.
+            if userdata.right_button_pressed.replace(false) {
+                use crate::event::ElementState::Released;
+                use crate::event::MouseButton::Right;
+                use crate::event::WindowEvent::MouseInput;
+
+                userdata.right_release_synthesized.set(true);
+                unsafe { release_mouse(userdata.window_state_lock()) };
+                userdata.send_event(Event::WindowEvent {
+                    window_id: RootWindowId(WindowId(window)),
+                    event: MouseInput { device_id: DEVICE_ID, state: Released, button: Right },
+                });
+            }
             result = ProcResult::Value(0);
         },
 
@@ -2668,20 +2696,19 @@ mod tests {
         use std::cell::RefCell;
         use std::rc::Rc;
 
-        use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_OEM_2;
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            DispatchMessageW, PeekMessageW, PostMessageW, SendMessageW, MSG, PM_REMOVE, WM_CHAR,
-        };
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SendMessageW, WM_CHAR};
 
-        use crate::event::{Event, Ime, WindowEvent};
+        use crate::event::{ElementState, Event, Ime, MouseButton, WindowEvent};
         use crate::event_loop::EventLoop;
         use crate::platform::windows::{EventLoopBuilderExtWindows, WindowAttributesExtWindows};
         use crate::platform_impl::platform::ime::test_context::{Strings, STRINGS};
         use crate::window::Window;
 
         use super::{WindowData, GCS_COMPSTR, GCS_RESULTSTR, GWL_USERDATA};
-        use super::{WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION};
-        use super::WM_KEYDOWN;
+        use super::{
+            WM_EXITMENULOOP, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION,
+            WM_RBUTTONDOWN, WM_RBUTTONUP,
+        };
 
         let event_loop = EventLoop::builder().with_any_thread(true).build().unwrap();
         #[allow(deprecated)]
@@ -2701,6 +2728,8 @@ mod tests {
         let received = Rc::clone(&commits);
         let keyboard_texts = Rc::new(RefCell::new(Vec::new()));
         let received_keyboard_texts = Rc::clone(&keyboard_texts);
+        let mouse_buttons = Rc::new(RefCell::new(Vec::new()));
+        let received_mouse_buttons = Rc::clone(&mouse_buttons);
         unsafe {
             userdata.event_loop_runner.set_event_handler(move |event| {
                 match event {
@@ -2711,6 +2740,12 @@ mod tests {
                         if let Some(text) = event.text {
                             received_keyboard_texts.borrow_mut().push(text.to_string());
                         }
+                    }
+                    Event::WindowEvent {
+                        event: WindowEvent::MouseInput { state, button: MouseButton::Right, .. },
+                        ..
+                    } => {
+                        received_mouse_buttons.borrow_mut().push(state);
                     }
                     _ => {}
                 }
@@ -2788,19 +2823,51 @@ mod tests {
         send(WM_IME_ENDCOMPOSITION, 0);
         assert!(commits.borrow().is_empty());
 
-        // Some Chinese IMEs send full-width punctuation directly as WM_CHAR
-        // while composition is active, with no GCS_RESULTSTR to commit.
+        // Some Chinese IMEs send full-width punctuation as standalone WM_CHAR
+        // messages while composition is active: no keydown and no GCS_RESULTSTR.
         keyboard_texts.borrow_mut().clear();
         send(WM_IME_STARTCOMPOSITION, 0);
-        assert_ne!(unsafe { PostMessageW(hwnd, WM_CHAR, '？' as usize, 0) }, 0);
-        unsafe {
-            SendMessageW(hwnd, WM_KEYDOWN, VK_OEM_2 as usize, 0);
-            let mut message = std::mem::zeroed::<MSG>();
-            assert_ne!(PeekMessageW(&mut message, hwnd, WM_CHAR, WM_CHAR, PM_REMOVE), 0);
-            DispatchMessageW(&message);
+        for punctuation in ['？', '！', '，', '。', '；', '：', '、', '（', '）', '【', '】']
+        {
+            unsafe {
+                SendMessageW(hwnd, WM_CHAR, punctuation as usize, 0);
+            }
         }
-        assert_eq!(keyboard_texts.borrow().last().map(String::as_str), Some("？"));
+        assert_eq!(
+            &*keyboard_texts.borrow(),
+            &["？", "！", "，", "。", "；", "：", "、", "（", "）", "【", "】"]
+        );
+
+        // Standalone text also has to preserve a UTF-16 surrogate pair.
+        for unit in '𠮷'.encode_utf16(&mut [0; 2]) {
+            unsafe {
+                SendMessageW(hwnd, WM_CHAR, *unit as usize, 0);
+            }
+        }
+        assert_eq!(keyboard_texts.borrow().last().map(String::as_str), Some("𠮷"));
         send(WM_IME_ENDCOMPOSITION, 0);
+
+        // TrackPopupMenu may consume the release which opened the menu. Menu
+        // exit completes that gesture exactly once; a second exit is inert.
+        send(WM_RBUTTONDOWN, 0);
+        send(WM_EXITMENULOOP, 0);
+        send(WM_EXITMENULOOP, 0);
+        send(WM_RBUTTONUP, 0);
+        assert_eq!(&*mouse_buttons.borrow(), &[ElementState::Pressed, ElementState::Released]);
+
+        // If Windows did deliver the real release, menu exit adds nothing.
+        send(WM_RBUTTONDOWN, 0);
+        send(WM_RBUTTONUP, 0);
+        send(WM_EXITMENULOOP, 0);
+        assert_eq!(
+            &*mouse_buttons.borrow(),
+            &[
+                ElementState::Pressed,
+                ElementState::Released,
+                ElementState::Pressed,
+                ElementState::Released,
+            ]
+        );
     }
 }
 

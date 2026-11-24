@@ -3203,7 +3203,7 @@ index 38cb5c54d..9d8ccb15c 100644
          unsafe { &mut *(this as *mut _) }
      }
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/event_loop.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/event_loop.rs
-index 4fc31553f..2a080a5e0 100644
+index 4fc31553f..78e3cceb8 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/event_loop.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/event_loop.rs
 @@ -2,7 +2,7 @@
@@ -3215,14 +3215,16 @@ index 4fc31553f..2a080a5e0 100644
  use std::collections::VecDeque;
  use std::ffi::c_void;
  use std::marker::PhantomData;
-@@ -46,6 +46,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
+@@ -46,7 +46,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
      SWP_NOSIZE, SWP_NOZORDER, WHEEL_DELTA, WINDOWPOS, WMSZ_BOTTOM, WMSZ_BOTTOMLEFT,
      WMSZ_BOTTOMRIGHT, WMSZ_LEFT, WMSZ_RIGHT, WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT,
      WM_CAPTURECHANGED, WM_CLOSE, WM_CREATE, WM_DESTROY, WM_DPICHANGED, WM_ENTERSIZEMOVE,
+-    WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
 +    WM_ERASEBKGND,
-     WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
++    WM_EXITMENULOOP, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
      WM_IME_SETCONTEXT, WM_IME_STARTCOMPOSITION, WM_INPUT, WM_INPUT_DEVICE_CHANGE, WM_KEYDOWN,
      WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+     WM_MENUCHAR, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCACTIVATE, WM_NCCALCSIZE,
 @@ -88,6 +89,85 @@ use runner::{EventLoopRunner, EventLoopRunnerShared};
  use super::window::set_skip_taskbar;
  use super::SelectedCursor;
@@ -3309,15 +3311,17 @@ index 4fc31553f..2a080a5e0 100644
  /// some backends like macos uses an uninhabited `Never` type,
  /// on windows, `UserEvent`s are also dispatched through the
  /// WNDPROC callback, and due to the re-entrant nature of the
-@@ -113,6 +193,7 @@ pub(crate) struct WindowData {
+@@ -113,6 +193,9 @@ pub(crate) struct WindowData {
      pub window_state: Arc<Mutex<WindowState>>,
      pub event_loop_runner: EventLoopRunnerShared<UserEventPlaceholder>,
      pub key_event_builder: KeyEventBuilder,
 +    pub(crate) ime_commit_deduplicator: RefCell<ImeCommitDeduplicator>,
++    pub(crate) right_button_pressed: Cell<bool>,
++    pub(crate) right_release_synthesized: Cell<bool>,
      pub _file_drop_handler: Option<FileDropHandler>,
      pub userdata_removed: Cell<bool>,
      pub recurse_depth: Cell<u32>,
-@@ -126,6 +207,41 @@ impl WindowData {
+@@ -126,6 +209,41 @@ impl WindowData {
      fn window_state_lock(&self) -> MutexGuard<'_, WindowState> {
          self.window_state.lock().unwrap()
      }
@@ -3359,7 +3363,7 @@ index 4fc31553f..2a080a5e0 100644
  }
  
  struct ThreadMsgTargetData {
-@@ -724,6 +840,40 @@ impl EventLoopThreadExecutor {
+@@ -724,6 +842,40 @@ impl EventLoopThreadExecutor {
              }
          }
      }
@@ -3400,7 +3404,7 @@ index 4fc31553f..2a080a5e0 100644
  }
  
  type ThreadExecFn = Box<Box<dyn FnMut()>>;
-@@ -890,8 +1040,15 @@ fn insert_event_target_window_data(
+@@ -890,8 +1042,15 @@ fn insert_event_target_window_data(
  
  /// Capture mouse input, allowing `window` to receive mouse events when the cursor is outside of
  /// the window.
@@ -3417,7 +3421,7 @@ index 4fc31553f..2a080a5e0 100644
      unsafe { SetCapture(window) };
  }
  
-@@ -1037,6 +1194,10 @@ unsafe fn public_window_callback_inner(
+@@ -1037,6 +1196,10 @@ unsafe fn public_window_callback_inner(
  ) -> LRESULT {
      let mut result = ProcResult::DefWindowProc(wparam);
  
@@ -3428,8 +3432,8 @@ index 4fc31553f..2a080a5e0 100644
      // Send new modifiers before sending key events.
      let mods_changed_callback = || match msg {
          WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP => {
-@@ -1052,9 +1213,22 @@ unsafe fn public_window_callback_inner(
-
+@@ -1052,9 +1215,22 @@ unsafe fn public_window_callback_inner(
+ 
      let keyboard_callback = || {
          use crate::event::WindowEvent::KeyboardInput;
 +        if matches!(msg, WM_KEYDOWN | WM_SYSKEYDOWN) {
@@ -3451,7 +3455,7 @@ index 4fc31553f..2a080a5e0 100644
              userdata.send_event(Event::WindowEvent {
                  window_id: RootWindowId(WindowId(window)),
                  event: KeyboardInput {
-@@ -1403,6 +1577,7 @@ unsafe fn public_window_callback_inner(
+@@ -1403,6 +1579,7 @@ unsafe fn public_window_callback_inner(
          WM_IME_STARTCOMPOSITION => {
              let ime_allowed = userdata.window_state_lock().ime_allowed;
              if ime_allowed {
@@ -3459,7 +3463,7 @@ index 4fc31553f..2a080a5e0 100644
                  userdata.window_state_lock().ime_state = ImeState::Enabled;
  
                  userdata.send_event(Event::WindowEvent {
-@@ -1436,15 +1611,16 @@ unsafe fn public_window_callback_inner(
+@@ -1436,15 +1613,16 @@ unsafe fn public_window_callback_inner(
                  if (lparam as u32 & GCS_RESULTSTR) != 0 {
                      if let Some(text) = unsafe { ime_context.get_composed_text() } {
                          userdata.window_state_lock().ime_state = ImeState::Enabled;
@@ -3480,7 +3484,7 @@ index 4fc31553f..2a080a5e0 100644
                      }
                  }
  
-@@ -1474,19 +1650,19 @@ unsafe fn public_window_callback_inner(
+@@ -1474,19 +1652,19 @@ unsafe fn public_window_callback_inner(
                  w.ime_allowed || w.ime_state != ImeState::Disabled
              };
              if ime_allowed_or_composing {
@@ -3507,7 +3511,7 @@ index 4fc31553f..2a080a5e0 100644
                      }
                  }
  
-@@ -1502,9 +1678,9 @@ unsafe fn public_window_callback_inner(
+@@ -1502,9 +1680,9 @@ unsafe fn public_window_callback_inner(
          },
  
          WM_IME_SETCONTEXT => {
@@ -3520,7 +3524,7 @@ index 4fc31553f..2a080a5e0 100644
          },
  
          // this is necessary for us to maintain minimize/restore state
-@@ -1673,7 +1849,7 @@ unsafe fn public_window_callback_inner(
+@@ -1673,7 +1851,7 @@ unsafe fn public_window_callback_inner(
              use crate::event::MouseButton::Left;
              use crate::event::WindowEvent::MouseInput;
  
@@ -3529,16 +3533,41 @@ index 4fc31553f..2a080a5e0 100644
  
              update_modifiers(window, userdata);
  
-@@ -1705,7 +1881,7 @@ unsafe fn public_window_callback_inner(
+@@ -1705,7 +1883,9 @@ unsafe fn public_window_callback_inner(
              use crate::event::MouseButton::Right;
              use crate::event::WindowEvent::MouseInput;
  
 -            unsafe { capture_mouse(window, &mut userdata.window_state_lock()) };
++            userdata.right_button_pressed.set(true);
++            userdata.right_release_synthesized.set(false);
 +            unsafe { capture_mouse(window, userdata.window_state_lock()) };
  
              update_modifiers(window, userdata);
  
-@@ -1737,7 +1913,7 @@ unsafe fn public_window_callback_inner(
+@@ -1721,14 +1901,18 @@ unsafe fn public_window_callback_inner(
+             use crate::event::MouseButton::Right;
+             use crate::event::WindowEvent::MouseInput;
+ 
++            userdata.right_button_pressed.set(false);
++            let synthesized = userdata.right_release_synthesized.replace(false);
+             unsafe { release_mouse(userdata.window_state_lock()) };
+ 
+             update_modifiers(window, userdata);
+ 
+-            userdata.send_event(Event::WindowEvent {
+-                window_id: RootWindowId(WindowId(window)),
+-                event: MouseInput { device_id: DEVICE_ID, state: Released, button: Right },
+-            });
++            if !synthesized {
++                userdata.send_event(Event::WindowEvent {
++                    window_id: RootWindowId(WindowId(window)),
++                    event: MouseInput { device_id: DEVICE_ID, state: Released, button: Right },
++                });
++            }
+             result = ProcResult::Value(0);
+         },
+ 
+@@ -1737,7 +1921,7 @@ unsafe fn public_window_callback_inner(
              use crate::event::MouseButton::Middle;
              use crate::event::WindowEvent::MouseInput;
  
@@ -3547,7 +3576,7 @@ index 4fc31553f..2a080a5e0 100644
  
              update_modifiers(window, userdata);
  
-@@ -1770,7 +1946,7 @@ unsafe fn public_window_callback_inner(
+@@ -1770,7 +1954,7 @@ unsafe fn public_window_callback_inner(
              use crate::event::WindowEvent::MouseInput;
              let xbutton = super::get_xbutton_wparam(wparam as u32);
  
@@ -3556,7 +3585,34 @@ index 4fc31553f..2a080a5e0 100644
  
              update_modifiers(window, userdata);
  
-@@ -2021,7 +2197,12 @@ unsafe fn public_window_callback_inner(
+@@ -1814,6 +1998,26 @@ unsafe fn public_window_callback_inner(
+             result = ProcResult::Value(0);
+         },
+ 
++        WM_EXITMENULOOP => {
++            // TrackPopupMenu owns a modal input loop and commonly consumes the
++            // right-button release which opened a context menu. Complete that
++            // exact gesture before normal dispatch resumes. A real release,
++            // whether already received or still queued, is never duplicated.
++            if userdata.right_button_pressed.replace(false) {
++                use crate::event::ElementState::Released;
++                use crate::event::MouseButton::Right;
++                use crate::event::WindowEvent::MouseInput;
++
++                userdata.right_release_synthesized.set(true);
++                unsafe { release_mouse(userdata.window_state_lock()) };
++                userdata.send_event(Event::WindowEvent {
++                    window_id: RootWindowId(WindowId(window)),
++                    event: MouseInput { device_id: DEVICE_ID, state: Released, button: Right },
++                });
++            }
++            result = ProcResult::Value(0);
++        },
++
+         WM_CAPTURECHANGED => {
+             // lparam here is a handle to the window which is gaining mouse capture.
+             // If it is the same as our window, then we're essentially retaining the capture. This
+@@ -2021,7 +2225,12 @@ unsafe fn public_window_callback_inner(
  
          WM_NCACTIVATE => {
              let is_active = wparam != false.into();
@@ -3570,7 +3626,7 @@ index 4fc31553f..2a080a5e0 100644
              if active_focus_changed {
                  if is_active {
                      unsafe { gain_active_focus(window, userdata) };
-@@ -2029,7 +2210,28 @@ unsafe fn public_window_callback_inner(
+@@ -2029,7 +2238,28 @@ unsafe fn public_window_callback_inner(
                      unsafe { lose_active_focus(window, userdata) };
                  }
              }
@@ -3600,7 +3656,7 @@ index 4fc31553f..2a080a5e0 100644
          },
  
          WM_SETFOCUS => {
-@@ -2083,6 +2285,38 @@ unsafe fn public_window_callback_inner(
+@@ -2083,6 +2313,38 @@ unsafe fn public_window_callback_inner(
              let window_state = userdata.window_state_lock();
              let window_flags = window_state.window_flags;
  
@@ -3639,7 +3695,7 @@ index 4fc31553f..2a080a5e0 100644
              if window_state.min_size.is_some() || window_state.max_size.is_some() {
                  if let Some(min_size) = window_state.min_size {
                      let min_size = min_size.to_physical(window_state.scale_factor);
-@@ -2362,6 +2596,214 @@ unsafe fn public_window_callback_inner(
+@@ -2362,6 +2624,253 @@ unsafe fn public_window_callback_inner(
      }
  }
  
@@ -3715,20 +3771,19 @@ index 4fc31553f..2a080a5e0 100644
 +        use std::cell::RefCell;
 +        use std::rc::Rc;
 +
-+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_OEM_2;
-+        use windows_sys::Win32::UI::WindowsAndMessaging::{
-+            DispatchMessageW, PeekMessageW, PostMessageW, SendMessageW, MSG, PM_REMOVE, WM_CHAR,
-+        };
++        use windows_sys::Win32::UI::WindowsAndMessaging::{SendMessageW, WM_CHAR};
 +
-+        use crate::event::{Event, Ime, WindowEvent};
++        use crate::event::{ElementState, Event, Ime, MouseButton, WindowEvent};
 +        use crate::event_loop::EventLoop;
 +        use crate::platform::windows::{EventLoopBuilderExtWindows, WindowAttributesExtWindows};
 +        use crate::platform_impl::platform::ime::test_context::{Strings, STRINGS};
 +        use crate::window::Window;
 +
 +        use super::{WindowData, GCS_COMPSTR, GCS_RESULTSTR, GWL_USERDATA};
-+        use super::{WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION};
-+        use super::WM_KEYDOWN;
++        use super::{
++            WM_EXITMENULOOP, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION,
++            WM_RBUTTONDOWN, WM_RBUTTONUP,
++        };
 +
 +        let event_loop = EventLoop::builder().with_any_thread(true).build().unwrap();
 +        #[allow(deprecated)]
@@ -3748,6 +3803,8 @@ index 4fc31553f..2a080a5e0 100644
 +        let received = Rc::clone(&commits);
 +        let keyboard_texts = Rc::new(RefCell::new(Vec::new()));
 +        let received_keyboard_texts = Rc::clone(&keyboard_texts);
++        let mouse_buttons = Rc::new(RefCell::new(Vec::new()));
++        let received_mouse_buttons = Rc::clone(&mouse_buttons);
 +        unsafe {
 +            userdata.event_loop_runner.set_event_handler(move |event| {
 +                match event {
@@ -3758,6 +3815,12 @@ index 4fc31553f..2a080a5e0 100644
 +                        if let Some(text) = event.text {
 +                            received_keyboard_texts.borrow_mut().push(text.to_string());
 +                        }
++                    }
++                    Event::WindowEvent {
++                        event: WindowEvent::MouseInput { state, button: MouseButton::Right, .. },
++                        ..
++                    } => {
++                        received_mouse_buttons.borrow_mut().push(state);
 +                    }
 +                    _ => {}
 +                }
@@ -3835,26 +3898,58 @@ index 4fc31553f..2a080a5e0 100644
 +        send(WM_IME_ENDCOMPOSITION, 0);
 +        assert!(commits.borrow().is_empty());
 +
-+        // Some Chinese IMEs send full-width punctuation directly as WM_CHAR
-+        // while composition is active, with no GCS_RESULTSTR to commit.
++        // Some Chinese IMEs send full-width punctuation as standalone WM_CHAR
++        // messages while composition is active: no keydown and no GCS_RESULTSTR.
 +        keyboard_texts.borrow_mut().clear();
 +        send(WM_IME_STARTCOMPOSITION, 0);
-+        assert_ne!(unsafe { PostMessageW(hwnd, WM_CHAR, '？' as usize, 0) }, 0);
-+        unsafe {
-+            SendMessageW(hwnd, WM_KEYDOWN, VK_OEM_2 as usize, 0);
-+            let mut message = std::mem::zeroed::<MSG>();
-+            assert_ne!(PeekMessageW(&mut message, hwnd, WM_CHAR, WM_CHAR, PM_REMOVE), 0);
-+            DispatchMessageW(&message);
++        for punctuation in ['？', '！', '，', '。', '；', '：', '、', '（', '）', '【', '】']
++        {
++            unsafe {
++                SendMessageW(hwnd, WM_CHAR, punctuation as usize, 0);
++            }
 +        }
-+        assert_eq!(keyboard_texts.borrow().last().map(String::as_str), Some("？"));
++        assert_eq!(
++            &*keyboard_texts.borrow(),
++            &["？", "！", "，", "。", "；", "：", "、", "（", "）", "【", "】"]
++        );
++
++        // Standalone text also has to preserve a UTF-16 surrogate pair.
++        for unit in '𠮷'.encode_utf16(&mut [0; 2]) {
++            unsafe {
++                SendMessageW(hwnd, WM_CHAR, *unit as usize, 0);
++            }
++        }
++        assert_eq!(keyboard_texts.borrow().last().map(String::as_str), Some("𠮷"));
 +        send(WM_IME_ENDCOMPOSITION, 0);
++
++        // TrackPopupMenu may consume the release which opened the menu. Menu
++        // exit completes that gesture exactly once; a second exit is inert.
++        send(WM_RBUTTONDOWN, 0);
++        send(WM_EXITMENULOOP, 0);
++        send(WM_EXITMENULOOP, 0);
++        send(WM_RBUTTONUP, 0);
++        assert_eq!(&*mouse_buttons.borrow(), &[ElementState::Pressed, ElementState::Released]);
++
++        // If Windows did deliver the real release, menu exit adds nothing.
++        send(WM_RBUTTONDOWN, 0);
++        send(WM_RBUTTONUP, 0);
++        send(WM_EXITMENULOOP, 0);
++        assert_eq!(
++            &*mouse_buttons.borrow(),
++            &[
++                ElementState::Pressed,
++                ElementState::Released,
++                ElementState::Pressed,
++                ElementState::Released,
++            ]
++        );
 +    }
 +}
 +
  unsafe extern "system" fn thread_event_target_callback(
      window: HWND,
      msg: u32,
-@@ -2441,7 +2883,7 @@ unsafe extern "system" fn thread_event_target_callback(
+@@ -2441,7 +2950,7 @@ unsafe extern "system" fn thread_event_target_callback(
      if userdata_removed {
          drop(userdata);
      } else {
@@ -3919,6 +4014,100 @@ index 676148735..37685a0ab 100644
 +        pub static STRINGS: RefCell<Option<Strings>> = const { RefCell::new(None) };
 +    }
 +}
+diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/keyboard.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/keyboard.rs
+index 43dea40db..aaeca84c8 100644
+--- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/keyboard.rs
++++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/keyboard.rs
+@@ -65,10 +65,15 @@ pub struct MessageAsKeyEvent {
+ pub struct KeyEventBuilder {
+     event_info: Mutex<Option<PartialKeyEventInfo>>,
+     pending: PendingEventQueue<MessageAsKeyEvent>,
++    standalone_high_surrogate: Mutex<Option<u16>>,
+ }
+ impl Default for KeyEventBuilder {
+     fn default() -> Self {
+-        KeyEventBuilder { event_info: Mutex::new(None), pending: Default::default() }
++        KeyEventBuilder {
++            event_info: Mutex::new(None),
++            pending: Default::default(),
++            standalone_high_surrogate: Mutex::new(None),
++        }
+     }
+ }
+ impl KeyEventBuilder {
+@@ -104,6 +109,7 @@ impl KeyEventBuilder {
+                     MatchResult::MessagesToDispatch(self.pending.complete_multi(key_events))
+                 },
+                 WM_KEYDOWN | WM_SYSKEYDOWN => {
++                    *self.standalone_high_surrogate.lock().unwrap() = None;
+                     if msg_kind == WM_SYSKEYDOWN && wparam as VIRTUAL_KEY == VK_F4 {
+                         // Don't dispatch Alt+F4 to the application.
+                         // This is handled in `event_loop.rs`
+@@ -168,9 +174,21 @@ impl KeyEventBuilder {
+                 WM_CHAR | WM_SYSCHAR => {
+                     let mut event_info = self.event_info.lock().unwrap();
+                     if event_info.is_none() {
++                        if msg_kind == WM_CHAR {
++                            // Some IMEs and accessibility tools send text as
++                            // standalone WM_CHAR messages, without a keydown
++                            // for `PartialKeyEventInfo::from_message`.
++                            *result = ProcResult::Value(0);
++                            if let Some(event) = self.standalone_character(wparam) {
++                                let token = self.pending.add_pending();
++                                return MatchResult::MessagesToDispatch(
++                                    self.pending.complete_pending(token, event),
++                                );
++                            }
++                            return MatchResult::Nothing;
++                        }
+                         trace!(
+-                            "Received a CHAR message but no `event_info` was available. The \
+-                             message is probably IME, returning."
++                            "Received a SYSCHAR message but no `event_info` was available, returning."
+                         );
+                         return MatchResult::Nothing;
+                     }
+@@ -456,6 +474,40 @@ impl KeyEventBuilder {
+         event.platform_specific.text_with_all_modifiers = text;
+         Some(MessageAsKeyEvent { event, is_synthetic: true })
+     }
++
++    fn standalone_character(&self, wparam: WPARAM) -> Option<MessageAsKeyEvent> {
++        let unit = wparam as u16;
++        let mut pending_high = self.standalone_high_surrogate.lock().unwrap();
++        let wide = if (0xd800..=0xdbff).contains(&unit) {
++            *pending_high = Some(unit);
++            return None;
++        } else if (0xdc00..=0xdfff).contains(&unit) {
++            vec![pending_high.take()?, unit]
++        } else {
++            *pending_high = None;
++            vec![unit]
++        };
++        drop(pending_high);
++
++        let text = SmolStr::new(String::from_utf16(&wide).ok()?);
++        if text.is_empty() {
++            return None;
++        }
++        let logical_key = Key::Character(text.clone());
++        let event = KeyEvent {
++            physical_key: PhysicalKey::Unidentified(NativeKeyCode::Unidentified),
++            logical_key: logical_key.clone(),
++            text: Some(text.clone()),
++            location: KeyLocation::Standard,
++            state: ElementState::Pressed,
++            repeat: false,
++            platform_specific: KeyEventExtra {
++                text_with_all_modifiers: Some(text),
++                key_without_modifiers: logical_key,
++            },
++        };
++        Some(MessageAsKeyEvent { event, is_synthetic: true })
++    }
+ }
+ 
+ enum PartialText {
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/mod.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/mod.rs
 index 15051f0ca..bba76108b 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/mod.rs
@@ -3981,7 +4170,7 @@ index 87bcbd425..f55eef020 100644
      unsafe extern "system" fn(pointId: u32, penInfo: *mut POINTER_PEN_INFO) -> BOOL;
  
 diff --git a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/window.rs b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/window.rs
-index 23fec32b3..7bd7e25f5 100644
+index 23fec32b3..7b57bd430 100644
 --- a/temp_dir/winit-pristine-0.30.2/winit-0.30.2/src/platform_impl/windows/window.rs
 +++ b/crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/window.rs
 @@ -917,7 +917,11 @@ impl Window {
@@ -4014,15 +4203,17 @@ index 23fec32b3..7bd7e25f5 100644
              ImeContext::set_ime_allowed(window, allowed);
          })
      }
-@@ -1206,6 +1216,7 @@ impl<'a> InitData<'a> {
+@@ -1206,6 +1216,9 @@ impl<'a> InitData<'a> {
              window_state: win.window_state.clone(),
              event_loop_runner: self.event_loop.runner_shared.clone(),
              key_event_builder: KeyEventBuilder::default(),
 +            ime_commit_deduplicator: std::cell::RefCell::default(),
++            right_button_pressed: Cell::new(false),
++            right_release_synthesized: Cell::new(false),
              _file_drop_handler: file_drop_handler,
              userdata_removed: Cell::new(false),
              recurse_depth: Cell::new(0),
-@@ -1327,6 +1338,14 @@ unsafe fn init(
+@@ -1327,6 +1340,14 @@ unsafe fn init(
      window_flags
          .set(WindowFlags::NO_BACK_BUFFER, attributes.platform_specific.no_redirection_bitmap);
      window_flags.set(WindowFlags::MARKER_ACTIVATE, attributes.active);

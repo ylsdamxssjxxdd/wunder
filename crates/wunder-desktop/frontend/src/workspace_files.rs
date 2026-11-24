@@ -1996,34 +1996,10 @@ fn release_pointer(app: &MainWindow) {
         });
 }
 
-/// Hand the input path a release and queue a frame once the native modal loop
-/// that owns the current message is gone.
-///
-/// Both gestures the shell takes over — the OLE drag loop and the Win32
-/// `TrackPopupMenu` of a native context menu — swallow the button release that
-/// ends them, and the modal dialog's own touch target disappears while the
-/// gesture that dismissed it is still being dispatched. Slint is then left
-/// holding a press that never ends: the next right-click is read as the tail of
-/// the previous gesture (no menu, no dialog, a window that looks frozen) and the
-/// frame queued for the prompt that did open is never presented until a resize
-/// invalidates the software surface. Deferring the settle to the next loop turn
-/// keeps it out of the dispatching callback, after the native loop returned.
-fn settle_after_modal(app: &MainWindow) {
-    let weak = app.as_weak();
-    slint::Timer::single_shot(std::time::Duration::from_millis(0), move || {
-        if let Some(app) = weak.upgrade() {
-            release_pointer(&app);
-            app.window().request_redraw();
-        }
-    });
-}
-
-/// Dismiss the shared prompt and settle the input path behind it, so the next
-/// right-click starts a fresh gesture instead of resuming the one that closed
-/// the dialog.
+/// Dismiss the shared prompt. Native context-menu releases are settled by
+/// Winit's WM_EXITMENULOOP handler, before the menu action reaches this flow.
 fn close_prompt(app: &MainWindow) {
     app.set_ws_prompt_open(false);
-    settle_after_modal(app);
 }
 
 /// Drop-in uploads: read each staged file as text (binary and oversized

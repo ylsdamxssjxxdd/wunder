@@ -781,7 +781,17 @@ impl NativeDesktop {
         // 与受理表里；启动时收敛一次，避免线程目录和已停止的线程永久
         // 显示“运行中”。A background tick must never settle turns owned by
         // the live UI process.
-        if !args.background_runtime {
+        //
+        // 安装版与开发版可能指向同一个 ~/.wunder：它们各自持有实例存活文件。
+        // 只要还有另一个桌面实例活着，这些“残留”其实是它的在途工作——清租约
+        // 会把别人的轮次结算成中断（显示「已停止」），结算任务行也会抢走它
+        // 的后台任务。清扫只对“没有其它活实例”的启动生效。
+        let another_desktop_alive =
+            instance_liveness::any_other_instance_alive(&instance_dir, &instance_id);
+        if another_desktop_alive {
+            tracing::info!("skip startup recovery: another desktop instance is alive");
+        }
+        if !args.background_runtime && !another_desktop_alive {
             // 这三步都要摸数据库，是最容易在老机器上把「正在加载运行时…」拖长
             // 的部分，各自记一个阶段耗时，卡在哪一步可以直接从启动日志读出。
             //

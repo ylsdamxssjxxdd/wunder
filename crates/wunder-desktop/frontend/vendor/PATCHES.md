@@ -341,15 +341,22 @@ deltas).
   is not reentrant, so the UI thread self-deadlocked with zero CPU and no
   panic (nothing for the crash hook to log). Still unfixed upstream in
   0.30.13.
-- `winit` 0.30.2 no longer drops every non-ASCII keyboard text event while an
-  IMM32 composition is active. Some legacy Chinese IMEs submit full-width
-  punctuation directly through `WM_CHAR`, without a corresponding
-  `GCS_RESULTSTR`; the old blanket guard swallowed those characters. Commit
-  deduplication now suppresses only text matching an actual IME result, and a
-  new keydown expires an unmatched echo so repeated identical punctuation is
-  not mistaken for a delayed duplicate. Regression cases cover direct Chinese
-  text and punctuation during composition, exact echo removal, and repeated
-  punctuation after a new keydown.
+- `winit` 0.30.2 completes a right-button gesture consumed by Win32's modal
+  context-menu loop. `WM_EXITMENULOOP` releases mouse capture and emits the
+  missing release only when one is outstanding; a real release before or after
+  that notification is deduplicated. This clears Slint's grabbed/pressed state
+  for every native context menu, including workspace rename and chat-reference
+  actions, instead of relying on a per-dialog synthetic left release.
+- `winit` 0.30.2 no longer drops non-ASCII keyboard text while an IMM32
+  composition is active. Some legacy Chinese IMEs submit full-width punctuation
+  through standalone `WM_CHAR` messages, with neither a keydown nor a
+  corresponding `GCS_RESULTSTR`; the keyboard builder now turns those messages
+  into ordinary text events and combines UTF-16 surrogate pairs. Commit
+  deduplication suppresses only text matching an actual IME result, and a new
+  keydown expires an unmatched echo so repeated identical punctuation is not
+  mistaken for a delayed duplicate. Real-window regressions cover standalone
+  Chinese punctuation, surrogate pairs, exact echo removal, repeated input, and
+  native-menu release ordering.
 - `winit` 0.30.2 `set_ime_cursor_area` / `set_ime_allowed` now run through a
   new `EventLoopThreadExecutor::defer_to_thread`, which always posts the
   closure to the thread message target (`EXEC_MSG_ID`) instead of running it

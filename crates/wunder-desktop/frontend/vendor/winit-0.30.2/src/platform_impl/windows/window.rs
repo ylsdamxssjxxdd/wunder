@@ -1217,6 +1217,8 @@ impl<'a> InitData<'a> {
             event_loop_runner: self.event_loop.runner_shared.clone(),
             key_event_builder: KeyEventBuilder::default(),
             ime_commit_deduplicator: std::cell::RefCell::default(),
+            right_button_pressed: Cell::new(false),
+            right_release_synthesized: Cell::new(false),
             _file_drop_handler: file_drop_handler,
             userdata_removed: Cell::new(false),
             recurse_depth: Cell::new(0),
