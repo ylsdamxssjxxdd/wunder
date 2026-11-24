@@ -902,6 +902,10 @@ impl Orchestrator {
                 if compaction_result.model_context_replaced {
                     persisted_context_tokens = 0;
                     confirmed_context_occupancy_tokens = None;
+                    // 压缩把旧工具结果换成了摘要，读文件回执指向的正文已不在
+                    // 这次请求里，必须整条线程作废，否则会提示“内容未变”而模型
+                    // 找不到那段文字。
+                    crate::services::tools::read_receipts::invalidate_session(&session_id);
                     self.workspace
                         .save_session_context_tokens_async(&user_id, &session_id, 0)
                         .await;
@@ -1167,6 +1171,11 @@ impl Orchestrator {
                             let overflow_recovery_compaction_id =
                                 compaction_result.compaction_id.clone();
                             messages = compaction_result.messages;
+                            if compaction_result.model_context_replaced {
+                                crate::services::tools::read_receipts::invalidate_session(
+                                    &session_id,
+                                );
+                            }
                             let _ = self
                                 .workspace
                                 .delete_session_context_overflow_async(&user_id, &session_id)
@@ -1955,6 +1964,19 @@ impl Orchestrator {
                             observation_payload = result.to_compact_payload_with_token_budget(
                                 &name, Some(observation_budget),
                             );
+                        }
+                        // 读文件回执只在正文完整进入上下文时才成立：被 token 预算
+                        // 截断、或被转存成 tool-result 句柄之后只剩引用，再说“内容
+                        // 未变”就会让模型去找一段已经不存在的正文。
+                        if crate::services::tools::resolve_tool_name(&name) == "读取文件"
+                            && (super::tool_result_payload::observation_has_omissions(
+                                &observation_payload,
+                                0,
+                            ) || result.meta.as_ref().is_some_and(|meta| {
+                                meta.get("saved_result").is_some()
+                            }))
+                        {
+                            crate::services::tools::read_receipts::invalidate_session(&session_id);
                         }
                         let observation = serde_json::to_string(&observation_payload)
                             .unwrap_or_else(|_| "{}".to_string());

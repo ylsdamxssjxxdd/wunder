@@ -3516,6 +3516,8 @@ fn compact_read_file_observation_data(map: &Map<String, Value>) -> Option<Value>
         "has_more",
         "next_line",
         "repeated_paging",
+        "reused_files",
+        "reused_body_bytes",
     ] {
         if let Some(value) = map.get(key).filter(|value| !value.is_null()) {
             compacted.insert(key.to_string(), value.clone());
@@ -3562,6 +3564,9 @@ fn compact_read_file_observation_data(map: &Map<String, Value>) -> Option<Value>
                 "total_lines",
                 "request_satisfied",
                 "complete",
+                "unchanged",
+                "reused_from",
+                "reused_body_bytes",
             ] {
                 if let Some(value) = file_obj.get(key).filter(|value| !value.is_null()) {
                     item.insert(key.to_string(), value.clone());

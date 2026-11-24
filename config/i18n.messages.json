@@ -1239,6 +1239,10 @@
     "en-US": "No readable files",
     "zh-CN": "无可读取文件"
   },
+  "tool.read.unchanged_notice": {
+    "en-US": "[unchanged] {range} is byte-identical to your read in user round {turn}, model round {round}; that text is still in this conversation, so the body is not repeated. Pass fresh=true if you really need the bytes again.",
+    "zh-CN": "[内容未变] {range} 与你第 {turn} 轮用户轮次、第 {round} 次模型轮次读到的内容逐字节相同，正文仍在上下文里，本次不再重复返回；确实需要重取请传 fresh=true。"
+  },
   "tool.read.patch_usage_hint": {
     "en-US": "Slice and indentation content is raw file text; its first line number is files[].content_start_line (also top-level content_start_line for a single-file read). Only the \">>> path\" header used by multi-file reads and outline source line numbers are display metadata; do not copy them into apply_patch.",
     "zh-CN": "slice 与 indentation 返回文件原始行，正文第一行的真实行号见 files[].content_start_line（单文件读取另有顶层 content_start_line）。仅多文件读取的 \">>> 路径\" 分隔头和大纲源行号属于展示元数据，生成 apply_patch 时不要复制。"
@@ -3442,6 +3446,10 @@
   "tool.spec.read.args.path": {
     "en-US": "Path to a local plain-text file (code, config, logs, markdown); use read_image for images. Slice and indentation return raw file lines. Only \">>> path\" separators and outline source line numbers are display metadata, not file content.",
     "zh-CN": "本地纯文本文件路径（代码、配置、日志、Markdown），图片请用 read_image。slice 与 indentation 返回文件裸行；仅 \">>> 路径\" 分隔头和大纲源行号属于展示元数据，不是文件内容。"
+  },
+  "tool.spec.read.args.fresh": {
+    "en-US": "Optional, default false. Set true to ignore an earlier identical read and force the full body again; only needed when you doubt the text in context (for example after compaction).",
+    "zh-CN": "可选，默认 false。设为 true 时忽略上次相同读取、强制重新返回正文；仅在怀疑上下文里的旧正文时（例如压缩清退后）才需要。"
   },
   "tool.spec.read.args.start_line": {
     "en-US": "Start line (inclusive, 1-based). Omit to read from line 1.",

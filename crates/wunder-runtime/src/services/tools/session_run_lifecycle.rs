@@ -777,6 +777,7 @@ pub(crate) fn cleanup_session(
     if let Some(monitor) = monitor {
         let _ = monitor.forget_session(session_id);
     }
+    super::read_receipts::forget_session(session_id);
 }
 
 pub(crate) async fn load_session_messages(

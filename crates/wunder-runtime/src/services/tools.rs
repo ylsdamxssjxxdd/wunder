@@ -46,6 +46,7 @@ pub(crate) mod pipeline;
 mod prompt_surface;
 mod read_file_guard;
 mod read_image_tool;
+pub(crate) mod read_receipts;
 mod read_indentation;
 pub(crate) mod read_outline;
 pub(crate) mod registry;

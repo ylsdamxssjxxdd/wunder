@@ -637,8 +637,10 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             name: "读取文件".to_string(),
             title: None,
             description: format!(
-                "{} {}",
+                "{} {} {} {}",
                 t("tool.spec.read.description"),
+                "Read on demand: if you already know the spot, read only that start_line/end_line window; if you do not, locate it first with search_content or pattern and then read one narrow window instead of pulling in a large file end to end.",
+                "Repeating an identical read in the same thread returns unchanged=true with a one-line notice instead of the body, because those exact bytes are already in the conversation; pass fresh=true to force a full re-read.",
                 "To inspect a complete saved tool result, pass its original result_handle as path (tool-result: prefix, current task thread only). Files use 1-based start_line/end_line; saved results use 0-based UTF-8 byte offset and limit; do not combine them. Saved results support literal query search. Continue with the returned next_offset."
             ),
             input_schema: super::schema::object(vec![
@@ -694,6 +696,10 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .desc("For tool-result: handles only: non-empty literal search text (not a regex), at most 512 UTF-8 bytes. Search from offset and return bounded matching excerpts.")
                     .min_len(1)
                     .max_len(512)
+                    .optional(),
+                super::schema::boolean("fresh")
+                    .desc(t("tool.spec.read.args.fresh"))
+                    .default_value(json!(false))
                     .optional(),
             ]),
         },

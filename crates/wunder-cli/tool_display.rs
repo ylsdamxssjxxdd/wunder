@@ -739,7 +739,17 @@ fn format_read_file_summary(file: &Value, is_zh: bool) -> Option<String> {
     Some(if total_lines > 0 {
         let shown = if complete { total_lines } else { read_lines };
         let noun = if is_zh { "行" } else { "lines" };
-        format!("{path} · {shown}/{total_lines} {noun}")
+        // 重复读取同一段内容时引擎只回一句“内容未变”，正文没有再来一遍；
+        // 卡片要说清这件事，否则用户会以为这次读没拿到内容。
+        if file.get("unchanged").and_then(Value::as_bool) == Some(true) {
+            if is_zh {
+                format!("{path} · {shown}/{total_lines} {noun} · 内容未变")
+            } else {
+                format!("{path} · {shown}/{total_lines} {noun} · unchanged")
+            }
+        } else {
+            format!("{path} · {shown}/{total_lines} {noun}")
+        }
     } else {
         path.to_string()
     })

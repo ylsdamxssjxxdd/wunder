@@ -9,7 +9,7 @@ use super::{
     collect_read_roots,
     command_options::parse_dry_run,
     execute_in_sandbox, read_file_guard, read_image_tool, read_indentation, read_outline,
-    recover_tool_args_value, resolve_tool_path, roots_allow_any_path,
+    read_receipts, recover_tool_args_value, resolve_tool_path, roots_allow_any_path,
     tool_error::{build_failed_tool_result, history_placeholder_failure, ToolErrorMeta},
     touch_lsp_file, ToolContext, DEFAULT_LIST_DEPTH, DEFAULT_LIST_PAGE_LIMIT,
     DEFAULT_READ_OUTPUT_BUDGET_BYTES, DEFAULT_START_LINE_WINDOW, MAX_LIST_ITEMS, MAX_RANGE_SPAN,
@@ -422,6 +422,45 @@ impl ReadBudget {
             "max_files": self.max_files,
         })
     }
+}
+
+/// 一次读取调用的回执范围。空 session（基准脚本、裸函数测试）时不启用：
+/// 回执只对「同一线程、同一上下文」有意义。
+pub(crate) struct ReadReceiptScope {
+    session_id: String,
+    clock: Option<read_receipts::ReadClock>,
+    fresh: bool,
+}
+
+impl ReadReceiptScope {
+    pub(crate) fn new(
+        session_id: &str,
+        clock: Option<read_receipts::ReadClock>,
+        fresh: bool,
+    ) -> Self {
+        Self {
+            session_id: session_id.to_string(),
+            clock,
+            fresh,
+        }
+    }
+
+    fn enabled(&self) -> bool {
+        !self.session_id.is_empty() && self.clock.is_some()
+    }
+
+    /// `fresh=true` 是显式的重取要求：正文照常返回，但仍刷新回执。
+    fn reuses_body(&self) -> bool {
+        self.enabled() && !self.fresh
+    }
+}
+
+/// 待落库的回执。正文可能被多文件共享的输出预算再次截断，所以只在确认
+/// 整段结果完整发出后才登记。
+struct PendingReceipt {
+    path_key: String,
+    digest: [u8; 16],
+    body_bytes: usize,
 }
 
 impl ReadSpecParseError {
@@ -1343,6 +1382,9 @@ fn compact_read_file_summary_for_model(summary: &Value) -> Value {
         "truncated_by_size": summary.get("truncated_by_size").cloned().unwrap_or(Value::Null),
         "next_outline": summary.get("next_outline").cloned().unwrap_or(Value::Null),
         "suggested_ranges": summary.get("suggested_ranges").cloned().unwrap_or(Value::Null),
+        "unchanged": summary.get("unchanged").cloned().unwrap_or(Value::Null),
+        "reused_from": summary.get("reused_from").cloned().unwrap_or(Value::Null),
+        "reused_body_bytes": summary.get("reused_body_bytes").cloned().unwrap_or(Value::Null),
         "error": summary.get("error").cloned().unwrap_or(Value::Null),
     })
 }
@@ -1723,6 +1765,13 @@ pub(crate) async fn read_files(context: &ToolContext<'_>, args: &Value) -> Resul
     }
     let dry_run = parse_dry_run(&args);
     let read_budget = parse_read_budget(&args);
+    // 同线程同内容的重复读取默认只回一句提示；`fresh=true` 强制重取正文。
+    let fresh = args.get("fresh").and_then(Value::as_bool).unwrap_or(false);
+    let receipt_scope = ReadReceiptScope::new(
+        context.session_id,
+        read_receipts::ReadClock::from_rounds(context.user_round, context.model_round),
+        fresh,
+    );
     let mut specs = match parse_read_file_specs(&args) {
         Ok(specs) => specs,
         Err(err) => {
@@ -1764,6 +1813,7 @@ pub(crate) async fn read_files(context: &ToolContext<'_>, args: &Value) -> Resul
             requested_files,
             budget_file_limit_hit,
             repeated_paging,
+            receipt_scope,
         )
     })
     .await;
@@ -1790,6 +1840,88 @@ fn render_read_output(raw_path: &str, body: &str, include_header: bool) -> Strin
     }
 }
 
+/// 同线程里同内容的重复读取：正文换成一句提示，并给出上次读到它的位置。
+/// 判定依据是**这次要发出的字节**的摘要，因此范围写法不同但结果相同也算命中，
+/// 文件改动、预算变化、编码变化则自然失配。
+fn reuse_unchanged_read_body(
+    receipts: &ReadReceiptScope,
+    path_key: &str,
+    raw_path: &str,
+    body: String,
+    summary: &mut Value,
+    include_header: bool,
+    pending: &mut Vec<PendingReceipt>,
+) -> (String, Option<usize>) {
+    if !receipts.reuses_body() {
+        return (body, None);
+    }
+    let Some(clock) = receipts.clock else {
+        return (body, None);
+    };
+    let digest = read_receipts::body_digest(&body);
+    let Some(hit) = read_receipts::lookup(&receipts.session_id, path_key, &digest, clock) else {
+        pending.push(PendingReceipt {
+            path_key: path_key.to_string(),
+            digest,
+            body_bytes: body.len(),
+        });
+        return (body, None);
+    };
+    let params = HashMap::from([
+        ("range".to_string(), read_range_label(summary)),
+        ("turn".to_string(), hit.user_round.to_string()),
+        ("round".to_string(), hit.model_round.to_string()),
+    ]);
+    let notice = i18n::prompt_t_with_params("tool.read.unchanged_notice", &params);
+    if let Some(map) = summary.as_object_mut() {
+        map.insert("unchanged".to_string(), Value::Bool(true));
+        map.insert(
+            "reused_from".to_string(),
+            json!({
+                "user_round": hit.user_round,
+                "model_round": hit.model_round,
+            }),
+        );
+        map.insert("reused_body_bytes".to_string(), Value::from(hit.body_bytes as u64));
+    }
+    (
+        render_read_output(raw_path, &notice, include_header),
+        Some(hit.body_bytes),
+    )
+}
+
+/// 提示里只报“哪一段”，不报行号格式细节：模型凭它回看上文即可。
+fn read_range_label(summary: &Value) -> String {
+    match summary.get("mode").and_then(Value::as_str) {
+        Some("outline") => return "outline".to_string(),
+        Some("indentation") => return "indentation block".to_string(),
+        _ => {}
+    }
+    let ranges = summary
+        .get("effective_ranges")
+        .and_then(Value::as_array)
+        .map(|ranges| {
+            ranges
+                .iter()
+                .filter_map(|range| {
+                    let pair = range.as_array()?;
+                    Some(format!(
+                        "{}-{}",
+                        pair.first()?.as_u64()?,
+                        pair.get(1)?.as_u64()?
+                    ))
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    if ranges.is_empty() {
+        "the requested text".to_string()
+    } else {
+        format!("lines {ranges}")
+    }
+}
+
 pub(crate) fn read_files_inner(
     workspace: &WorkspaceManager,
     user_id: &str,
@@ -1800,12 +1932,16 @@ pub(crate) fn read_files_inner(
     requested_files: usize,
     budget_file_limit_hit: bool,
     repeated_paging: bool,
+    receipts: ReadReceiptScope,
 ) -> Result<Value> {
     let started_at = Instant::now();
     let mut outputs = Vec::new();
     let mut summaries = Vec::new();
     let mut failures = Vec::new();
     let mut successful_reads = 0usize;
+    let mut reused_files = 0usize;
+    let mut reused_body_bytes = 0usize;
+    let mut pending_receipts: Vec<PendingReceipt> = Vec::new();
     let mut timeout_hit = false;
     let mut output_budget_hit = false;
     let mut output_budget_omitted_bytes = 0usize;
@@ -1856,10 +1992,11 @@ pub(crate) fn read_files_inner(
             summaries.push(summary);
             continue;
         };
+        let path_key = target.to_string_lossy().to_string();
         if let Value::Object(ref mut map) = summary {
             map.insert(
                 "resolved_path".to_string(),
-                Value::String(target.to_string_lossy().to_string()),
+                Value::String(path_key.clone()),
             );
         }
         if !target.exists() {
@@ -1910,16 +2047,30 @@ pub(crate) fn read_files_inner(
             let large =
                 file_tool_large::read_large_slice(&target, raw_path, &spec, include_file_headers)?;
             successful_reads += 1;
+            let mut summary = large.summary;
+            let (rendered, reused_bytes) = reuse_unchanged_read_body(
+                &receipts,
+                &path_key,
+                raw_path,
+                large.rendered,
+                &mut summary,
+                include_file_headers,
+                &mut pending_receipts,
+            );
+            if let Some(reused_bytes) = reused_bytes {
+                reused_files += 1;
+                reused_body_bytes = reused_body_bytes.saturating_add(reused_bytes);
+            }
             if let Some(remaining) = remaining_output_budget.as_mut() {
-                *remaining = remaining.saturating_sub(large.rendered.len());
+                *remaining = remaining.saturating_sub(rendered.len());
             }
             if large.omitted_bytes > 0 {
                 output_budget_hit = true;
                 output_budget_omitted_bytes =
                     output_budget_omitted_bytes.saturating_add(large.omitted_bytes);
             }
-            outputs.push(large.rendered);
-            summaries.push(large.summary);
+            outputs.push(rendered);
+            summaries.push(summary);
             continue;
         }
         let source_truncated_by_size = size > MAX_READ_BYTES as u64;
@@ -2193,6 +2344,19 @@ pub(crate) fn read_files_inner(
                 render_read_output(raw_path, &parts.join("\n"), include_file_headers)
             }
         };
+        let (rendered_output, reused_bytes) = reuse_unchanged_read_body(
+            &receipts,
+            &path_key,
+            raw_path,
+            rendered_output,
+            &mut summary,
+            include_file_headers,
+            &mut pending_receipts,
+        );
+        if let Some(reused_bytes) = reused_bytes {
+            reused_files += 1;
+            reused_body_bytes = reused_body_bytes.saturating_add(reused_bytes);
+        }
         if let Some(remaining) = remaining_output_budget.as_mut() {
             *remaining = remaining.saturating_sub(rendered_output.len());
         }
@@ -2212,13 +2376,30 @@ pub(crate) fn read_files_inner(
         outputs.join("\n\n")
     };
     let bytes_before_budget = result.len().saturating_add(output_budget_omitted_bytes);
+    let mut final_omitted_bytes = 0usize;
     if let Some(output_budget_bytes) = budget.output_budget_bytes {
         let (truncated, omitted) = truncate_utf8_output(result.as_str(), output_budget_bytes);
+        final_omitted_bytes = omitted;
         if omitted > 0 {
             output_budget_hit = true;
             output_budget_omitted_bytes = output_budget_omitted_bytes.saturating_add(omitted);
         }
         result = truncated;
+    }
+    // 只有整段结果原样发出时才登记回执：被最终预算截断、或有时限提前结束时，
+    // 模型看到的正文与摘要已不一致，下一轮不能再声称“内容相同”。
+    if final_omitted_bytes == 0 && !timeout_hit {
+        if let Some(clock) = receipts.clock {
+            for receipt in pending_receipts {
+                read_receipts::record(
+                    &receipts.session_id,
+                    &receipt.path_key,
+                    receipt.digest,
+                    receipt.body_bytes,
+                    clock,
+                );
+            }
+        }
     }
     // Exactly one reason explains why the payload is not the whole file.
     // Exposing `output_budget_hit` next to a per-file `truncated_by_size: false`
@@ -2289,6 +2470,15 @@ pub(crate) fn read_files_inner(
     if repeated_paging {
         data["repeated_paging"] = Value::Bool(true);
     }
+    if reused_files > 0 {
+        data["reused_files"] = Value::from(reused_files as u64);
+        data["reused_body_bytes"] = Value::from(reused_body_bytes as u64);
+        // 整次读取都是重复内容时，没有正文需要按行计数或写补丁：这条提示只会
+        // 让模型以为手里还有一份新的原始行。
+        if reused_files == processed_files {
+            data["patch_usage_hint"] = Value::Null;
+        }
+    }
     if let Some(hint) = &continuation_hint {
         data["continuation_required"] = Value::Bool(true);
         data["continuation_hint"] = Value::String(hint.clone());
@@ -2316,6 +2506,10 @@ pub(crate) fn read_files_inner(
         if dry_run { "dry_run" } else { "completed" },
         if dry_run {
             format!("Validated {processed_files} file read targets without reading content.")
+        } else if reused_files > 0 {
+            format!(
+                "Read {read_lines} of {total_lines} lines from {processed_files} files; {reused_files} identical re-read(s) were not repeated ({reused_body_bytes} bytes reused from earlier context)."
+            )
         } else {
             format!("Read {read_lines} of {total_lines} lines from {processed_files} files.")
         },
@@ -3228,6 +3422,149 @@ mod read_behavior_tests {
         .is_err());
         assert!(parse_read_file_specs(&json!({"path": "sample.txt", "pattern": "("})).is_err());
     }
+
+    fn record_pending(receipts: &ReadReceiptScope, pending: Vec<PendingReceipt>) {
+        for receipt in pending {
+            read_receipts::record(
+                &receipts.session_id,
+                &receipt.path_key,
+                receipt.digest,
+                receipt.body_bytes,
+                receipts.clock.expect("test scope carries a clock"),
+            );
+        }
+    }
+
+    /// 同线程里第二次读到逐字节相同的内容：正文换成提示，计数仍取自本次调用。
+    #[test]
+    fn identical_repeat_reads_return_a_notice_instead_of_the_body() {
+        let scope = ReadReceiptScope::new(
+            "fixture-receipt-repeat",
+            read_receipts::ReadClock::from_rounds(Some(2), Some(4)),
+            false,
+        );
+        let mut summary = json!({"mode": "slice", "effective_ranges": [[10, 12]]});
+        let mut pending = Vec::new();
+        let (first, hit) = reuse_unchanged_read_body(
+            &scope,
+            "/w/sample.txt",
+            "sample.txt",
+            "alpha\nbeta\ngamma".to_string(),
+            &mut summary,
+            false,
+            &mut pending,
+        );
+        assert_eq!(first, "alpha\nbeta\ngamma");
+        assert!(hit.is_none());
+        assert!(summary.get("unchanged").is_none());
+        assert_eq!(pending.len(), 1);
+        record_pending(&scope, pending);
+
+        let mut summary = json!({"mode": "slice", "effective_ranges": [[10, 12]]});
+        let mut pending = Vec::new();
+        let (second, hit) = reuse_unchanged_read_body(
+            &scope,
+            "/w/sample.txt",
+            "sample.txt",
+            "alpha\nbeta\ngamma".to_string(),
+            &mut summary,
+            false,
+            &mut pending,
+        );
+        assert_ne!(second, "alpha\nbeta\ngamma");
+        assert!(second.contains("lines 10-12"));
+        assert_eq!(hit, Some("alpha\nbeta\ngamma".len()));
+        assert!(pending.is_empty());
+        assert_eq!(summary["unchanged"], json!(true));
+        assert_eq!(summary["reused_from"]["user_round"], json!(2));
+        assert_eq!(summary["reused_from"]["model_round"], json!(4));
+    }
+
+    /// 文件改过了、或模型显式要求重取时，正文照常返回；上下文压缩后回执作废。
+    #[test]
+    fn changed_content_and_fresh_reads_still_return_the_body() {
+        let scope = ReadReceiptScope::new(
+            "fixture-receipt-changed",
+            read_receipts::ReadClock::from_rounds(Some(1), Some(1)),
+            false,
+        );
+        let mut pending = Vec::new();
+        let mut summary = json!({"mode": "slice", "effective_ranges": [[1, 2]]});
+        let body = "alpha\nbeta".to_string();
+        reuse_unchanged_read_body(
+            &scope,
+            "/w/changed.txt",
+            "changed.txt",
+            body.clone(),
+            &mut summary,
+            false,
+            &mut pending,
+        );
+        record_pending(&scope, pending);
+
+        let mut pending = Vec::new();
+        let mut summary = json!({"mode": "slice", "effective_ranges": [[1, 2]]});
+        let (changed, hit) = reuse_unchanged_read_body(
+            &scope,
+            "/w/changed.txt",
+            "changed.txt",
+            "alpha\nBETA".to_string(),
+            &mut summary,
+            false,
+            &mut pending,
+        );
+        assert_eq!(changed, "alpha\nBETA");
+        assert!(hit.is_none());
+
+        // fresh=true：正文照常返回，即使内容一字未改。
+        let fresh = ReadReceiptScope::new(
+            "fixture-receipt-changed",
+            read_receipts::ReadClock::from_rounds(Some(1), Some(2)),
+            true,
+        );
+        let mut summary = json!({"mode": "slice", "effective_ranges": [[1, 2]]});
+        let mut pending = Vec::new();
+        let (forced, hit) = reuse_unchanged_read_body(
+            &fresh,
+            "/w/changed.txt",
+            "changed.txt",
+            body.clone(),
+            &mut summary,
+            false,
+            &mut pending,
+        );
+        assert_eq!(forced, body);
+        assert!(hit.is_none());
+
+        // 压缩后：回执全部作废，下一次照常返回正文。
+        read_receipts::invalidate_session("fixture-receipt-changed");
+        let mut summary = json!({"mode": "slice", "effective_ranges": [[1, 2]]});
+        let mut pending = Vec::new();
+        let (after_compaction, hit) = reuse_unchanged_read_body(
+            &scope,
+            "/w/changed.txt",
+            "changed.txt",
+            body.clone(),
+            &mut summary,
+            false,
+            &mut pending,
+        );
+        assert_eq!(after_compaction, body);
+        assert!(hit.is_none());
+        assert!(summary.get("unchanged").is_none());
+    }
+
+    #[test]
+    fn outline_and_indentation_receipts_label_the_read_shape() {
+        let summary = json!({"mode": "outline"});
+        assert_eq!(read_range_label(&summary), "outline");
+        let summary = json!({"mode": "indentation"});
+        assert_eq!(read_range_label(&summary), "indentation block");
+        let mut summary = json!({"mode": "slice", "effective_ranges": [[1, 2], [9, 12]]});
+        assert_eq!(read_range_label(&summary), "lines 1-2, 9-12");
+        summary["effective_ranges"] = json!([]);
+        assert_eq!(read_range_label(&summary), "the requested text");
+    }
 }
 
 #[cfg(test)]
@@ -3421,5 +3758,125 @@ mod write_result_tests {
             PreviousContent::Text(_)
         ));
         let _ = std::fs::remove_file(file);
+    }
+}
+
+/// 端到端：同线程重复读同一窗口时，第二次只回提示；改文件、fresh、压缩后
+/// 恢复返回正文。需要真实工作区与存储来走完整的 `read_files` 入口。
+#[cfg(all(test, feature = "sqlite-storage"))]
+mod read_receipt_scope_tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::lsp::LspManager;
+    use crate::skills::SkillRegistry;
+    use crate::storage::{SqliteStorage, StorageBackend};
+    use std::sync::Arc;
+
+    fn context_fixture<'a>(
+        storage: Arc<dyn StorageBackend>,
+        workspace: Arc<WorkspaceManager>,
+        config: &'a Config,
+        skills: &'a SkillRegistry,
+        http: &'a reqwest::Client,
+    ) -> ToolContext<'a> {
+        let lsp_manager = LspManager::new(workspace.clone());
+        ToolContext {
+            user_id: "fixture-user",
+            session_id: "fixture-read-receipts",
+            workspace_id: "fixture-user",
+            agent_id: None,
+            user_round: Some(1),
+            model_round: Some(2),
+            is_admin: true,
+            storage,
+            orchestrator: None,
+            monitor: None,
+            workspace,
+            lsp_manager,
+            config,
+            skills,
+            gateway: None,
+            user_world: None,
+            cron_wake_signal: None,
+            user_tool_manager: None,
+            user_tool_bindings: None,
+            user_tool_store: None,
+            request_config_overrides: None,
+            allow_roots: None,
+            read_roots: None,
+            command_sessions: None,
+            event_emitter: None,
+            http,
+        }
+    }
+
+    #[tokio::test]
+    async fn repeated_read_of_the_same_window_skips_the_second_body() {
+        let root = tempfile::tempdir().unwrap();
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            root.path()
+                .join("state.sqlite3")
+                .to_string_lossy()
+                .into_owned(),
+        ));
+        storage.ensure_initialized().unwrap();
+        let workspace = Arc::new(WorkspaceManager::new(
+            root.path().join("workspace").to_string_lossy().as_ref(),
+            storage.clone(),
+            0,
+            &HashMap::new(),
+        ));
+        let target = workspace
+            .resolve_path("fixture-user", "notes.txt")
+            .expect("workspace path");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "alpha\nbeta\ngamma\n").unwrap();
+
+        let mut config = Config::default();
+        // 本地运行时直连文件系统，测试不走沙箱容器。
+        config.server.mode = "cli".into();
+        let skills = SkillRegistry::default();
+        let http = reqwest::Client::new();
+        let context = context_fixture(
+            storage,
+            workspace.clone(),
+            &config,
+            &skills,
+            &http,
+        );
+        let args = json!({"path": "notes.txt", "start_line": 2, "end_line": 3});
+
+        let first = read_files(&context, &args).await.unwrap();
+        assert_eq!(first["ok"], json!(true), "{first}");
+        assert_eq!(first["data"]["content"], json!("beta\ngamma"));
+        assert!(first["data"].get("reused_files").is_none());
+
+        let second = read_files(&context, &args).await.unwrap();
+        assert_eq!(second["data"]["reused_files"], json!(1));
+        assert_eq!(second["data"]["files"][0]["unchanged"], json!(true));
+        assert_eq!(
+            second["data"]["files"][0]["reused_from"]["model_round"],
+            json!(2)
+        );
+        let notice = second["data"]["content"].as_str().expect("notice");
+        assert!(notice.contains("lines 2-3"), "{notice}");
+        assert!(!notice.contains("gamma"), "{notice}");
+
+        let forced = read_files(
+            &context,
+            &json!({"path": "notes.txt", "start_line": 2, "end_line": 3, "fresh": true}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(forced["data"]["content"], json!("beta\ngamma"));
+
+        std::fs::write(&target, "alpha\nBETA\ngamma\n").unwrap();
+        let changed = read_files(&context, &args).await.unwrap();
+        assert_eq!(changed["data"]["content"], json!("BETA\ngamma"));
+
+        read_receipts::invalidate_session("fixture-read-receipts");
+        let after_compaction = read_files(&context, &args).await.unwrap();
+        assert_eq!(after_compaction["data"]["content"], json!("BETA\ngamma"));
+        assert!(after_compaction["data"].get("reused_files").is_none());
     }
 }
