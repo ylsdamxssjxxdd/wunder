@@ -1240,8 +1240,24 @@
     "zh-CN": "无可读取文件"
   },
   "tool.read.unchanged_notice": {
-    "en-US": "[unchanged] {range} is byte-identical to your read in user round {turn}, model round {round}; that text is still in this conversation, so the body is not repeated. Pass fresh=true if you really need the bytes again.",
-    "zh-CN": "[内容未变] {range} 与你第 {turn} 轮用户轮次、第 {round} 次模型轮次读到的内容逐字节相同，正文仍在上下文里，本次不再重复返回；确实需要重取请传 fresh=true。"
+    "en-US": "[unchanged] {range}: byte-identical to your read in user round {turn}, model round {round}; that text is still in this conversation, so the body is not repeated. Pass fresh=true if you really need the bytes again.",
+    "zh-CN": "[内容未变] {range}：与你第 {turn} 轮用户轮次、第 {round} 次模型轮次读到的内容逐字节相同，正文仍在上下文里，本次不再重复返回；确实需要重取请传 fresh=true。"
+  },
+  "tool.read.range_label_lines": {
+    "en-US": "lines {ranges}",
+    "zh-CN": "第 {ranges} 行"
+  },
+  "tool.read.range_label_outline": {
+    "en-US": "the outline",
+    "zh-CN": "大纲"
+  },
+  "tool.read.range_label_indentation": {
+    "en-US": "the indentation block",
+    "zh-CN": "缩进块"
+  },
+  "tool.read.range_label_any": {
+    "en-US": "the requested text",
+    "zh-CN": "本次请求的内容"
   },
   "tool.read.patch_usage_hint": {
     "en-US": "Slice and indentation content is raw file text; its first line number is files[].content_start_line (also top-level content_start_line for a single-file read). Only the \">>> path\" header used by multi-file reads and outline source line numbers are display metadata; do not copy them into apply_patch.",
@@ -1304,8 +1320,8 @@
     "zh-CN": "请使用升序的包含式行号窗口；长文件先用 mode=outline 或 pattern 定位相关部分，再读取更窄范围。"
   },
   "tool.read.continuation_hint": {
-    "en-US": "This read was cut short for exactly one reason, reported in truncation_reason. The result's files[].next_outline lists the not-yet-read headings/declarations and suggested_ranges gives ready-to-read narrow windows; if the whole read was folded, api_index gives the function/section entry points. Alternatively use mode=outline, pattern, or a narrower start_line/end_line window. A default window that stops at its line limit is not an error; has_more and next_line describe what is left.",
-    "zh-CN": "本次读取因单一原因被截断，原因见 truncation_reason。结果里的 files[].next_outline 直接列出还没读到的章节/声明，suggested_ranges 给出可直接读取的窄窗口；整份读取被折叠时 api_index 给出函数/章节入口。也可用 mode=outline、pattern 或更窄的 start_line/end_line。默认行窗口到界属于正常返回，不构成错误；剩余内容见 has_more 与 next_line。"
+    "en-US": "This read was cut short for exactly one reason, reported in truncation_reason. The result's files[].next_outline lists the not-yet-read headings/declarations and suggested_ranges gives ready-to-read narrow windows; if the whole read was folded, api_index gives the function/section entry points. Alternatively use mode=outline, pattern, or a narrower start_line/end_line window. A default window that stops at its line limit is not an error; has_more and next_line describe what is left (both are empty at end of file or for pattern reads).",
+    "zh-CN": "本次读取因单一原因被截断，原因见 truncation_reason。结果里的 files[].next_outline 直接列出还没读到的章节/声明，suggested_ranges 给出可直接读取的窄窗口；整份读取被折叠时 api_index 给出函数/章节入口。也可用 mode=outline、pattern 或更窄的 start_line/end_line。默认行窗口到界属于正常返回，不构成错误；剩余内容见 has_more 与 next_line（读到文件末尾或按 pattern 读取时 has_more=false、next_line 为空）。"
   },
   "tool.read.continuation_hint_repeated": {
     "en-US": "Repeated fixed-step paging on the same file was detected and produced no new evidence. Stop advancing by a constant step. Use mode=outline to see the structure or pattern to locate keywords, then read one narrow window (for example hit_line-20 to hit_line+40). If that adds nothing, report the gap.",

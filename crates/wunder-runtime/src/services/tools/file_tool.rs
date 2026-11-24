@@ -1206,16 +1206,43 @@ fn summary_stopped_at_default_window(summary: &Value) -> bool {
         && summary_has_more_lines(summary)
 }
 
+/// 「后面还有没读到的内容」按**读到的位置**判断，不按行数比大小。
+///
+/// 原来用 `read_lines < total_lines`：从文件中间读到末尾（读第 2-3 行、共 3 行）
+/// 会报 `has_more: true`、`next_line: 4`，模型于是再读一次空范围；大纲/缩进模式
+/// 的 `read_lines` 是条目数/块行数，拿它跟源文件行数比更是错位。
 fn summary_has_more_lines(summary: &Value) -> bool {
-    let read_lines = summary
-        .get("read_lines")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
+    if summary.get("mode").and_then(Value::as_str) != Some("slice") {
+        return false;
+    }
+    // pattern 读取给的是命中窗口：剩余由 matches_truncated 表达，这里再给
+    // next_line 只会把模型引去顺序翻页。
+    if summary.get("pattern").is_some() {
+        return false;
+    }
+    // 只加载了安全前缀：磁盘上确实还有没读到的内容。
+    if summary.get("truncated_by_size").and_then(Value::as_bool) == Some(true) {
+        return true;
+    }
     let total_lines = summary
         .get("total_lines")
         .and_then(Value::as_u64)
         .unwrap_or(0);
-    read_lines > 0 && total_lines > read_lines
+    if total_lines == 0 {
+        return false;
+    }
+    let read_end = summary
+        .get("effective_ranges")
+        .and_then(Value::as_array)
+        .map(|ranges| {
+            ranges
+                .iter()
+                .filter_map(|range| range.as_array()?.get(1)?.as_u64())
+                .max()
+                .unwrap_or(0)
+        })
+        .unwrap_or(0);
+    read_end > 0 && read_end < total_lines
 }
 
 /// 截断后的续读导航：只列“还没读到的章节/声明”，并给出三个可直接读取的
@@ -1296,6 +1323,11 @@ fn attach_next_outline(
 
 fn read_next_line(summaries: &[Value]) -> Option<u64> {
     let summary = summaries.last()?;
+    // 已经读到文件末尾（或读取模式没有“下一行”这回事）就不再给续读起点，
+    // 免得模型照着 next_line 去读一段不存在的范围。
+    if !summary_has_more_lines(summary) {
+        return None;
+    }
     if let Some(end) = summary
         .get("effective_ranges")
         .and_then(Value::as_array)
@@ -1852,14 +1884,21 @@ fn reuse_unchanged_read_body(
     include_header: bool,
     pending: &mut Vec<PendingReceipt>,
 ) -> (String, Option<usize>) {
-    if !receipts.reuses_body() {
+    if !receipts.enabled() {
         return (body, None);
     }
     let Some(clock) = receipts.clock else {
         return (body, None);
     };
     let digest = read_receipts::body_digest(&body);
-    let Some(hit) = read_receipts::lookup(&receipts.session_id, path_key, &digest, clock) else {
+    // `fresh=true` 不做命中判定，但这次正文确实又进了上下文：照常登记回执，
+    // 否则紧接着的下一次读取会去引用更早的那一轮。
+    let hit = if receipts.reuses_body() {
+        read_receipts::lookup(&receipts.session_id, path_key, &digest, clock)
+    } else {
+        None
+    };
+    let Some(hit) = hit else {
         pending.push(PendingReceipt {
             path_key: path_key.to_string(),
             digest,
@@ -1893,8 +1932,10 @@ fn reuse_unchanged_read_body(
 /// 提示里只报“哪一段”，不报行号格式细节：模型凭它回看上文即可。
 fn read_range_label(summary: &Value) -> String {
     match summary.get("mode").and_then(Value::as_str) {
-        Some("outline") => return "outline".to_string(),
-        Some("indentation") => return "indentation block".to_string(),
+        Some("outline") => return i18n::prompt_t("tool.read.range_label_outline"),
+        Some("indentation") => {
+            return i18n::prompt_t("tool.read.range_label_indentation");
+        }
         _ => {}
     }
     let ranges = summary
@@ -1916,9 +1957,10 @@ fn read_range_label(summary: &Value) -> String {
         })
         .unwrap_or_default();
     if ranges.is_empty() {
-        "the requested text".to_string()
+        i18n::prompt_t("tool.read.range_label_any")
     } else {
-        format!("lines {ranges}")
+        let params = HashMap::from([("ranges".to_string(), ranges)]);
+        i18n::prompt_t_with_params("tool.read.range_label_lines", &params)
     }
 }
 
@@ -3302,43 +3344,108 @@ mod truncation_contract_tests {
 
     #[test]
     fn only_one_truncation_reason_is_reported() {
-        let summaries = vec![json!({
+        let default_window = json!({
+            "mode": "slice",
             "used_default_range": true,
+            "effective_ranges": [[1, 488]],
             "read_lines": 488,
             "total_lines": 676,
             "truncated_by_size": false
-        })];
+        });
         assert_eq!(
-            classify_read_truncation(false, false, true, &summaries),
+            classify_read_truncation(
+                false,
+                false,
+                true,
+                std::slice::from_ref(&default_window)
+            ),
             Some("output_budget")
         );
-        assert_eq!(
-            classify_read_truncation(false, false, false, &summaries),
-            Some("line_window")
-        );
-        assert_eq!(classify_read_truncation(false, false, false, &[]), None);
         assert_eq!(
             classify_read_truncation(
                 false,
                 false,
                 false,
-                &[json!({
-                    "used_default_range": true,
-                    "read_lines": 676,
-                    "total_lines": 676,
-                    "truncated_by_size": false
-                })]
+                std::slice::from_ref(&default_window)
             ),
+            Some("line_window")
+        );
+        assert_eq!(classify_read_truncation(false, false, false, &[]), None);
+        let whole_file = json!({
+            "mode": "slice",
+            "used_default_range": true,
+            "effective_ranges": [[1, 676]],
+            "read_lines": 676,
+            "total_lines": 676,
+            "truncated_by_size": false
+        });
+        assert_eq!(
+            classify_read_truncation(false, false, false, std::slice::from_ref(&whole_file)),
             None
         );
-        assert!(summary_has_more_lines(&summaries[0]));
-        assert_eq!(
-            read_next_line(&[json!({
-                "effective_ranges": [[1, 488]],
-                "read_lines": 488
-            })]),
-            Some(489)
-        );
+        assert!(summary_has_more_lines(&default_window));
+        assert_eq!(read_next_line(&[default_window.clone()]), Some(489));
+        assert!(!summary_has_more_lines(&whole_file));
+        assert_eq!(read_next_line(&[whole_file]), None);
+    }
+
+    /// pattern 读取的剩余由 matches_truncated 表达，不再给“下一行”。
+    #[test]
+    fn pattern_reads_do_not_offer_a_next_line() {
+        let pattern = json!({
+            "mode": "slice",
+            "pattern": "needle",
+            "effective_ranges": [[10, 14]],
+            "match_count": 1,
+            "read_lines": 5,
+            "total_lines": 40
+        });
+        assert!(!summary_has_more_lines(&pattern));
+        assert_eq!(read_next_line(&[pattern]), None);
+    }
+
+    /// 从文件中间读到末尾不该再报“还有剩余”：读第 2-3 行、共 3 行时，
+    /// 按 read_lines < total_lines 会给出 has_more + next_line=4，模型会去读
+    /// 一段不存在的范围。
+    #[test]
+    fn reading_a_tail_to_eof_reports_no_more_content() {
+        let tail = json!({
+            "mode": "slice",
+            "effective_ranges": [[2, 3]],
+            "read_lines": 2,
+            "total_lines": 3
+        });
+        assert!(!summary_has_more_lines(&tail));
+        assert_eq!(read_next_line(&[tail]), None);
+        let middle = json!({
+            "mode": "slice",
+            "effective_ranges": [[2, 3]],
+            "read_lines": 2,
+            "total_lines": 40
+        });
+        assert!(summary_has_more_lines(&middle));
+        assert_eq!(read_next_line(&[middle]), Some(4));
+    }
+
+    /// 大纲/缩进模式的行数不是源文件行号，不能拿来算“还剩多少行”。
+    #[test]
+    fn outline_and_indentation_reads_never_claim_a_next_line() {
+        let outline = json!({
+            "mode": "outline",
+            "read_lines": 12,
+            "total_lines": 676,
+            "outline_truncated": false
+        });
+        assert!(!summary_has_more_lines(&outline));
+        assert_eq!(read_next_line(&[outline]), None);
+        let indentation = json!({
+            "mode": "indentation",
+            "effective_ranges": [[100, 139]],
+            "read_lines": 40,
+            "total_lines": 676
+        });
+        assert!(!summary_has_more_lines(&indentation));
+        assert_eq!(read_next_line(&[indentation]), None);
     }
 
     #[test]
@@ -3472,7 +3579,7 @@ mod read_behavior_tests {
             &mut pending,
         );
         assert_ne!(second, "alpha\nbeta\ngamma");
-        assert!(second.contains("lines 10-12"));
+        assert!(second.contains("10-12"), "{second}");
         assert_eq!(hit, Some("alpha\nbeta\ngamma".len()));
         assert!(pending.is_empty());
         assert_eq!(summary["unchanged"], json!(true));
@@ -3536,6 +3643,30 @@ mod read_behavior_tests {
         assert_eq!(forced, body);
         assert!(hit.is_none());
 
+        // fresh 也登记回执：下一次普通读取引用的是这次（第 2 次模型轮次），
+        // 而不是更早的那一轮。
+        record_pending(&fresh, pending);
+        let later = ReadReceiptScope::new(
+            "fixture-receipt-changed",
+            read_receipts::ReadClock::from_rounds(Some(1), Some(3)),
+            false,
+        );
+        let mut summary = json!({"mode": "slice", "effective_ranges": [[1, 2]]});
+        let mut pending = Vec::new();
+        let (again, hit) = reuse_unchanged_read_body(
+            &later,
+            "/w/changed.txt",
+            "changed.txt",
+            body.clone(),
+            &mut summary,
+            false,
+            &mut pending,
+        );
+        assert!(hit.is_some());
+        assert_ne!(again, body);
+        assert_eq!(summary["reused_from"]["model_round"], json!(2));
+        assert!(pending.is_empty());
+
         // 压缩后：回执全部作废，下一次照常返回正文。
         read_receipts::invalidate_session("fixture-receipt-changed");
         let mut summary = json!({"mode": "slice", "effective_ranges": [[1, 2]]});
@@ -3554,16 +3685,22 @@ mod read_behavior_tests {
         assert!(summary.get("unchanged").is_none());
     }
 
+    /// 提示里的范围标签跟随提示语言；这里只断言结构（三种形态互不相同、
+    /// 行窗口带出真实区间），不绑定某一种语言的文案。
     #[test]
     fn outline_and_indentation_receipts_label_the_read_shape() {
-        let summary = json!({"mode": "outline"});
-        assert_eq!(read_range_label(&summary), "outline");
-        let summary = json!({"mode": "indentation"});
-        assert_eq!(read_range_label(&summary), "indentation block");
-        let mut summary = json!({"mode": "slice", "effective_ranges": [[1, 2], [9, 12]]});
-        assert_eq!(read_range_label(&summary), "lines 1-2, 9-12");
-        summary["effective_ranges"] = json!([]);
-        assert_eq!(read_range_label(&summary), "the requested text");
+        let outline = read_range_label(&json!({"mode": "outline"}));
+        let indentation = read_range_label(&json!({"mode": "indentation"}));
+        let any = read_range_label(&json!({"mode": "slice", "effective_ranges": []}));
+        let slice =
+            read_range_label(&json!({"mode": "slice", "effective_ranges": [[1, 2], [9, 12]]}));
+        for label in [&outline, &indentation, &any, &slice] {
+            assert!(!label.trim().is_empty(), "{label}");
+        }
+        assert!(slice.contains("1-2, 9-12"), "{slice}");
+        assert_ne!(slice, outline);
+        assert_ne!(outline, indentation);
+        assert_ne!(any, slice);
     }
 }
 
@@ -3850,6 +3987,9 @@ mod read_receipt_scope_tests {
         assert_eq!(first["ok"], json!(true), "{first}");
         assert_eq!(first["data"]["content"], json!("beta\ngamma"));
         assert!(first["data"].get("reused_files").is_none());
+        // 第 2-3 行已经读到文件末尾：不能再报“还有剩余”并把模型送去读第 4 行。
+        assert_eq!(first["data"]["has_more"], json!(false), "{first}");
+        assert!(first["data"]["next_line"].is_null(), "{first}");
 
         let second = read_files(&context, &args).await.unwrap();
         assert_eq!(second["data"]["reused_files"], json!(1));

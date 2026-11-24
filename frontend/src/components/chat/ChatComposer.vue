@@ -16,7 +16,7 @@
       data-testid="chat-composer-file-input"
       @change="handleComposerFileInputChange"
     />
-    <!-- 手机上传文件与拍照共用工作目录落地链路；输入常驻 DOM，iOS 才能在选择器点击手势里直接打开。 -->
+    <!-- 文件选择器只给手机「+」面板用（桌面走拖入/粘贴）；手机拍照另用一个输入。 -->
     <input
       v-if="phoneLayout"
       ref="phonePhotoInputRef"
@@ -72,7 +72,7 @@
               ></i>
             </div>
             <div class="upload-preview-copy">
-              <span class="upload-preview-name" :title="attachment.name">{{ attachment.name }}</span>
+              <span class="upload-preview-name" :title="attachment.name">{{ compactComposerAttachmentName(attachment.name) }}</span>
               <span v-if="resolveAttachmentMeta(attachment)" class="upload-preview-meta">
                 {{ resolveAttachmentMeta(attachment) }}
               </span>
@@ -181,7 +181,7 @@
 
       <div class="composer-action-row">
         <div class="composer-action-group">
-          <!-- 「+」放上传文件与预设问题（点一下即填入草稿）；常驻状态格只列后台任务与子智能体。 -->
+          <!-- 「+」放预设问题（点一下即填入草稿）；常驻状态格只列后台任务与子智能体。 -->
           <div ref="plusMenuAnchorRef" class="composer-anchor">
             <button
               class="composer-plus-btn"
@@ -197,7 +197,8 @@
             </button>
 
             <div v-if="plusPanelVisible" ref="plusPanelRef" class="composer-panel composer-panel--plus" @click.stop>
-              <!-- 桌面一栏：上传文件 + 预设问题；输入 `/` 时同一栏让位给命令建议。 -->
+              <!-- 桌面一栏只有预设问题；输入 `/` 时同一栏让位给命令建议。
+                   文件仍可直接拖入或粘贴到输入区落地工作目录。 -->
               <div v-if="commandSuggestionsVisible" class="composer-plus-suggestions" role="listbox">
                 <button
                   v-for="(item, index) in commandSuggestions"
@@ -234,16 +235,6 @@
                 </button>
               </template>
               <template v-else>
-                <button
-                  v-if="!phoneLayout"
-                  class="composer-plus-action"
-                  type="button"
-                  data-testid="chat-composer-upload-files"
-                  @click="pickWorkspaceFiles"
-                >
-                  <i class="fa-solid fa-paperclip composer-plus-action-icon" aria-hidden="true"></i>
-                  <span>{{ t('chat.composer.uploadFile') }}</span>
-                </button>
                 <div v-if="phoneLayout" class="composer-plus-page-head">
                   <button
                     class="composer-plus-back-btn"
@@ -365,6 +356,7 @@ import { normalizeWorkspacePath } from '@/utils/workspaceTreeCache';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { clearWorkspaceDragPaths, hasWorkspaceDragPaths, readWorkspaceDragPaths } from '@/components/chat/workspaceDrag';
 import {
+  compactComposerAttachmentName,
   createComposerImagePreview,
   normalizeClipboardDroppedFile,
   resolveComposerAttachmentIcon,
@@ -505,7 +497,7 @@ const dragCounter = ref(0);
 const modelMenuAnchorRef = ref<HTMLElement | null>(null);
 const plusMenuAnchorRef = ref<HTMLElement | null>(null);
 const plusPanelRef = ref<HTMLElement | null>(null);
-// 文件选择器常驻 DOM；手机相机使用单独输入。
+// 手机「+」的文件选择器常驻 DOM；手机相机使用单独输入。
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const phonePhotoInputRef = ref<HTMLInputElement | null>(null);
 const phonePlusPage = ref(0);
@@ -844,8 +836,23 @@ const resolveAttachmentIconClass = (attachment: ComposerDraftAttachment): string
   return 'fa-file-lines';
 };
 
+const COMPOSER_ATTACHMENT_ROOT = 'temp/chat_attachments';
+
+/**
+ * 输入区附件落在 `temp/chat_attachments/<批次>/` 下，批次前缀对用户没有信息量：
+ * 单文件不再重复显示路径，拖入目录时只留目录层级。
+ */
+const resolveWorkspaceAttachmentMeta = (path: string): string => {
+  const normalized = normalizeWorkspacePath(path);
+  const prefix = `${COMPOSER_ATTACHMENT_ROOT}/`;
+  if (!normalized.startsWith(prefix)) return normalized;
+  // 第一段是本次上传的批次目录，最后一段是文件名，中间才是用户拖进来的目录层级。
+  const segments = normalized.slice(prefix.length).split('/').filter(Boolean);
+  return segments.slice(1, -1).join('/');
+};
+
 const resolveAttachmentMeta = (attachment: ComposerDraftAttachment): string => {
-  if (attachment.workspace_path) return attachment.workspace_path;
+  if (attachment.workspace_path) return resolveWorkspaceAttachmentMeta(attachment.workspace_path);
   if (isAttachmentProcessing(attachment.id)) {
     return attachment.type === 'gif'
       ? t('chat.attachments.gif.processingSingle')
@@ -1625,7 +1632,6 @@ const appendWorkspacePathsToComposer = (paths: string[]) => {
 
 const UPLOAD_REQUEST_MAX_FILES = 100;
 const UPLOAD_REQUEST_MAX_BYTES = 200 * 1024 * 1024;
-const COMPOSER_ATTACHMENT_ROOT = 'temp/chat_attachments';
 
 const buildComposerAttachmentPath = (): string => {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -1858,7 +1864,7 @@ const handleDrop = async (event) => {
 
 const handleComposerPaste = async (event: ClipboardEvent) => {
   const pastedTree = collectWorkspaceClipboardFiles(event.clipboardData);
-  pastedTree.files = pastedTree.files.map(normalizeClipboardDroppedFile);
+  pastedTree.files = pastedTree.files.map((item, index) => normalizeClipboardDroppedFile(item, index));
   if (!pastedTree.files.length) return;
   event.preventDefault();
   if (composerBusy.value > 0) {
@@ -2033,7 +2039,7 @@ const plusPanelVisible = computed(
   () => plusMenuVisible.value || commandSuggestionsVisible.value
 );
 
-// 加号只开合这一栏；桌面显示上传文件和预设问题，手机首页还提供拍照。
+// 加号只开合这一栏；桌面只有预设问题，手机首页还提供拍照与文件选择。
 const togglePlusMenu = () => {
   const next = !plusPanelVisible.value;
   closeOtherPanels('plus');

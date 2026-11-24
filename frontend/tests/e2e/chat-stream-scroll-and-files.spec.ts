@@ -174,6 +174,19 @@ test('dropped files appear above the draft, can be removed, and serialize only o
       }));
     }, files);
   };
+  const dropFiles = async (specs: Array<{ name: string; mimeType: string; content: string }>) => {
+    const transfer = await page.evaluateHandle((items) => {
+      const dataTransfer = new DataTransfer();
+      for (const item of items) {
+        const bytes = Uint8Array.from(atob(item.content), (char) => char.charCodeAt(0));
+        dataTransfer.items.add(new File([bytes], item.name, { type: item.mimeType }));
+      }
+      return dataTransfer;
+    }, specs);
+    await input.dispatchEvent('dragenter', { dataTransfer: transfer });
+    await input.dispatchEvent('drop', { dataTransfer: transfer });
+    await transfer.dispose();
+  };
   await input.fill('Fixture draft');
   await drop();
   const cards = page.getByTestId('chat-composer-attachments');
@@ -218,12 +231,10 @@ test('dropped files appear above the draft, can be removed, and serialize only o
   await expect(input).toHaveValue('');
   await expect(log).toContainText('fixtures/existing.txt');
 
-  // 桌面「+」选择图片和文档后同样先落工作目录，再在发送内容中提示路径。
-  await page.getByTestId('chat-composer-plus').click();
-  await page.getByTestId('chat-composer-upload-files').click();
-  await page.getByTestId('chat-composer-file-input').setInputFiles([
-    { name: 'selected-image.png', mimeType: 'image/png', buffer: readFileSync('tests/e2e/fixtures/preview-wide.png') },
-    { name: 'selected-report.pdf', mimeType: 'application/pdf', buffer: Buffer.from('fixture document') }
+  // 桌面拖入图片和文档后同样先落工作目录，再在发送内容中提示路径。
+  await dropFiles([
+    { name: 'selected-image.png', mimeType: 'image/png', content: readFileSync('tests/e2e/fixtures/preview-wide.png').toString('base64') },
+    { name: 'selected-report.pdf', mimeType: 'application/pdf', content: Buffer.from('fixture document').toString('base64') }
   ]);
   await expect(cards.locator('.upload-preview-item')).toHaveCount(2);
   await expect(cards).toContainText('selected-image.png');
@@ -255,7 +266,7 @@ test('dropped files appear above the draft, can be removed, and serialize only o
   expect(uploadPayloads[4]).toMatch(/pasted-.*\.png/);
   expect(uploadPayloads[4]).toContain('pasted-report.docx');
 
-  // 再次粘贴同名图片会进入新批次，不会覆盖上一张。
+  // 再次粘贴同名图片会进入新批次：短名可以重名，落盘路径不同，不会覆盖上一张。
   await paste([
     { name: 'image.png', mimeType: 'image/png', content: readFileSync('tests/e2e/fixtures/preview-wide.png').toString('base64'), encoding: 'base64' }
   ]);
@@ -263,9 +274,9 @@ test('dropped files appear above the draft, can be removed, and serialize only o
   expect(uploadCount).toBe(6);
   expect(uploadPaths[5]).toMatch(/^temp\/chat_attachments\//);
   expect(uploadPaths[5]).not.toBe(uploadPaths[4]);
-  const firstPastedName = uploadPayloads[4].match(/name="relative_paths"\r\n\r\n([^\r\n]+)/)?.[1];
+  // 粘贴的通用名图片统一换成短名，两条贴图都叫 pasted-image-1.png。
   const secondPastedName = uploadPayloads[5].match(/name="relative_paths"\r\n\r\n([^\r\n]+)/)?.[1];
-  expect(secondPastedName).not.toBe(firstPastedName);
+  expect(secondPastedName).toBe('pasted-image-1.png');
   await send.click();
   await expect(cards).toHaveCount(0);
   await expect(log).toContainText('pasted-report.docx');

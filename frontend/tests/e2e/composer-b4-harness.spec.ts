@@ -185,10 +185,10 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   const plusPanelBox = await plusPanel.boundingBox();
   expect(plusPanelBox!.y + plusPanelBox!.height).toBeLessThanOrEqual(plusBox!.y + 2);
   expect(Math.abs(plusPanelBox!.x - plusBox!.x)).toBeLessThanOrEqual(2);
-  // 「+」保留预设问题，并提供直接选择文件入口；没有命令/审批/语音栏或第二栏。
+  // 「+」只剩预设问题：文件走拖入/粘贴，不再占面板入口；也没有命令/审批/语音栏。
   const presetPanel = plusPanel.locator('.composer-preset-panel');
   await expect(presetPanel).toBeVisible();
-  await expect(plusPanel.getByTestId('chat-composer-upload-files')).toBeVisible();
+  await expect(plusPanel.getByTestId('chat-composer-upload-files')).toHaveCount(0);
   expect(await presetPanel.locator('.composer-preset-panel-item').count()).toBeGreaterThanOrEqual(2);
   await expect(plusPanel.locator('.composer-plus-item')).toHaveCount(0);
   await expect(plusPanel.locator('[data-testid="chat-composer-plus-commands"]')).toHaveCount(0);
