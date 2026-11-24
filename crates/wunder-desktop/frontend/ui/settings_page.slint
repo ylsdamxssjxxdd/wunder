@@ -27,8 +27,8 @@ component SettingsNavItem inherits Rectangle {
     background: root.selected ? Theme.accent : (touch.has-hover ? Theme.accent-soft : transparent);
     Rectangle {
         x: 10px; y: (parent.height - 36px) / 2; width: 36px; height: 36px; border-radius: 18px;
-        background: root.selected ? #ffffff3d : Theme.selected;
-        Image { x: 9px; y: 9px; width: 18px; height: 18px; source: root.icon; colorize: root.selected ? white : Theme.text-secondary; }
+        background: root.selected ? #ffffff3d : Theme.accent-soft;
+        Image { x: 9px; y: 9px; width: 18px; height: 18px; source: root.icon; colorize: root.selected ? white : Theme.accent-ink; }
     }
     Text {
         x: 56px; y: 0px; width: parent.width - 66px; height: parent.height;
@@ -447,7 +447,7 @@ component FormCombo inherits VerticalLayout {
 component SettingRow inherits Rectangle {
     in property <string> label;
     in property <string> note: "";
-    // Optional muted glyph ahead of the labels (web settings row icon).
+    // Optional brand-tinted glyph ahead of the labels (web settings row icon).
     in property <image> row-icon;
     in property <bool> last: false;
     height: row.preferred-height + (root.last ? 0px : 1px);
@@ -455,7 +455,7 @@ component SettingRow inherits Rectangle {
         padding-top: 12px; padding-bottom: 12px; spacing: 12px;
         if root.row-icon.width > 0 : VerticalLayout {
             alignment: center;
-            Image { width: 16px; height: 16px; source: root.row-icon; colorize: Theme.muted; }
+            Image { width: 16px; height: 16px; source: root.row-icon; colorize: Theme.accent-ink; }
         }
         VerticalLayout {
             horizontal-stretch: 1; spacing: 3px;

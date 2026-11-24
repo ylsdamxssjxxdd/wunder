@@ -43,7 +43,7 @@ export component ChatGreeting inherits Rectangle {
         spacing: 8px;
         greeting-text := Text {
             text: root.text == "" ? I18n.chat_greeting : root.text;
-            color: Theme.text; font-size: Theme.font-lg;
+            color: Theme.text; font-size: Theme.font-xl;
             wrap: word-wrap; horizontal-stretch: 1;
         }
         Rectangle {
@@ -1244,13 +1244,13 @@ export component TimelineView inherits Rectangle {
         rows-column := VerticalLayout {
             width: root.column-width;
             x: (rows-scroll.visible-width - root.column-width) / 2;
-            // The web scrolls its transcript inside `.messenger-chat-body`,
-            // which owns `padding: 18px 20px 22px`; rows only add their own 6px.
+            // The transcript keeps a quiet 24px top inset; rows add their own
+            // horizontal padding and vertical rhythm.
             // Without that inset the first block (the greeting on a fresh
             // thread) was pinned to the pane's top edge. Keep the top inset
             // here so a greeting and the loading line all start from the same
             // optical line as the cloud client.
-            padding-top: 18px;
+            padding-top: 24px;
             // A fresh thread is nothing but its greeting, so it sits where the
             // transcript starts — no vertical centring, which bought half a
             // pane of blank space above the first line.

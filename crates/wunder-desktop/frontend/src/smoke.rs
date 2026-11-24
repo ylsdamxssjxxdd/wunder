@@ -8,7 +8,7 @@ pub fn run(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std::erro
     let result = Rc::new(RefCell::new(None));
     let output = result.clone();
     let weak = app.as_weak();
-    app.show()?;
+    crate::show_main_window(app)?;
     // 反馈通道：写进 `status` 的结果必须在事件循环的下一拍变成 toast。变更回调
     // 是排队执行的，所以写入与断言分在两个 timer 里，不能同步断言。
     let status_weak = app.as_weak();
@@ -448,7 +448,7 @@ pub fn run_timeline_probe(
 ) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&directory)?;
     crate::demo::install(app);
-    app.show()?;
+    crate::show_main_window(app)?;
     // A readable artifact for the worst-case row shapes. The 50-turn column
     // cannot be photographed usefully: the timeline follows the newest output,
     // and the end of a folded column is empty space by construction.
@@ -522,7 +522,7 @@ pub fn run_scroll_probe(
             }
         }
     }
-    app.show()?;
+    crate::show_main_window(app)?;
     let mut timeline = crate::timeline::Timeline::new();
     timeline.set_history(crate::demo::near_limit_rows(50, 24, false));
     app.set_follow_output(false);
@@ -623,7 +623,7 @@ pub fn run_scroll_restore_probe(
             }
         }
     }
-    app.show()?;
+    crate::show_main_window(app)?;
     // Two long threads, so every tail is far below any offset the probe holds.
     let mut first = crate::timeline::Timeline::new();
     first.set_history(crate::demo::near_limit_rows(20, 8, false));
@@ -821,7 +821,7 @@ pub fn run_list_probe(
         });
     }
     app.set_sidebar_rows(ModelRc::new(VecModel::from(rows)));
-    app.show()?;
+    crate::show_main_window(app)?;
 
     let external = std::env::var("WUNDER_LIST_PROBE_EXTERNAL")
         .ok()

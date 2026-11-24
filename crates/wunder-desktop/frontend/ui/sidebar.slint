@@ -108,7 +108,7 @@ component ThreadRow inherits ContextMenuArea {
         Text {
             vertical-alignment: center;
             text: data.title;
-            color: data.active ? Theme.text : Theme.text-secondary;
+            color: data.active ? Theme.accent-deep : Theme.text-secondary;
             font-size: Theme.font-md;
             overflow: elide;
             horizontal-stretch: 1;
@@ -172,7 +172,7 @@ component ThreadRow inherits ContextMenuArea {
         border-radius: SidebarMetrics.row-fill-radius;
         // 抽屉里常驻动作不铺底色，图标直接坐在行上，和安卓版一样；鼠标悬停
         // 时仍给一层浅底，明确这一组按钮可以点。
-        background: !root.hover ? transparent : data.active ? Theme.selected : Theme.accent-soft;
+        background: root.hover ? Theme.accent-soft : transparent;
         Rectangle {
             x: 8px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: SidebarMetrics.row-radius;
             background: rename-touch.has-hover ? Theme.selected : transparent;
@@ -255,7 +255,7 @@ component GroupHeaderRow inherits DragRow {
     row-kind: data.kind;
     workspace-id: data.kind == 2 ? "cloud" : data.workspace-id;
     selected: data.selected;
-    selected-color: Theme.selected;
+    selected-color: Theme.accent-soft;
     // 工作区标题的底色弧角与线程标题同值（DragRow 默认是更大的 radius-lg），
     // 两个标题叠在一起时才是一条对齐的树。
     border-radius: SidebarMetrics.row-fill-radius;
@@ -295,7 +295,7 @@ component GroupHeaderRow inherits DragRow {
         }
         Text {
             height: parent.height; text: data.name;
-            color: Theme.text; font-size: Theme.font-md;
+            color: data.selected ? Theme.accent-deep : Theme.text; font-size: Theme.font-md;
             vertical-alignment: center; overflow: elide;
             horizontal-stretch: 1;
         }
@@ -318,7 +318,7 @@ component GroupHeaderRow inherits DragRow {
         height: parent.height;
         // 同 ThreadRow：右半边必须跟着行角收住，悬停时才不冒出直角。
         border-radius: SidebarMetrics.row-fill-radius;
-        background: root.hover ? (data.selected ? Theme.selected : Theme.accent-soft) : transparent;
+        background: root.hover ? Theme.accent-soft : transparent;
         Rectangle {
             x: 56px; y: (parent.height - 20px) / 2; width: 20px; height: 20px;
             Image {
@@ -646,7 +646,7 @@ export component Sidebar inherits Rectangle {
                         // Selection mode freezes reordering, as on the web.
                         enabled: !root.busy && !root.selection-mode;
                         selected: row.active;
-                        selected-color: Theme.selected;
+                        selected-color: Theme.accent-soft;
                         label: row.title;
                         // 悬停提示带最后完成时间：标题可能被省略号截断，日期是
                         // 找回一条久远线程的第二个线索。
@@ -684,7 +684,7 @@ export component Sidebar inherits Rectangle {
                         width: parent.width - SidebarMetrics.gutter * 2;
                         height: parent.height;
                         border-radius: SidebarMetrics.row-fill-radius;
-                        background: row.active ? Theme.selected : cloud-thread-touch.has-hover ? Theme.hover : transparent;
+                        background: row.active || cloud-thread-touch.has-hover ? Theme.accent-soft : transparent;
                         cloud-thread-touch := TouchArea {
                             mouse-cursor: pointer;
                             accessible-role: button; accessible-label: row.title;
@@ -1040,6 +1040,15 @@ export component Sidebar inherits Rectangle {
                 }
             }
         }
+    }
+
+    Rectangle {
+        x: parent.width - 1px;
+        y: 0px;
+        width: 1px;
+        height: parent.height;
+        z: 4;
+        background: Theme.border;
     }
 
     // Device menu overlay: the outside touch closes it; the two rows switch

@@ -151,7 +151,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 语言投影探针（`WUNDER_LANG_PROBE=<dir> --demo`）：强制一次英文/中文投影并
     // 截图退出，用于人工复核两套文案，不进入发布路径。
     if ui_language::probe::run(&app) {
-        app.show()?;
+        show_main_window(&app)?;
         app.run()?;
         return Ok(());
     }
@@ -257,7 +257,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // shows, so the probe starts the same session production starts.
         native_runtime::install(&app);
         tray::install(&app);
-        app.show()?;
+        show_main_window(&app)?;
         startup_log("window_show_return", startup_boot);
         apply_initial_window_geometry(&app);
         return screenshot::run_hide_probe(&app);
@@ -310,7 +310,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             native_smoke::check_runtime(&runtime)?;
         }
         native_runtime::install_ready_without_pets(&app, runtime.clone());
-        app.show()?;
+        show_main_window(&app)?;
         startup_log("window_show_return", startup_boot);
         return if setup {
             model_setup_smoke::run(&app, directory)
@@ -348,7 +348,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 因此放在窗口显示之前即可，首帧显示占位符、约一秒后落成真实读数。
     host_hud::install(&app);
     install_startup_stage_notes(&app);
-    app.show()?;
+    show_main_window(&app)?;
     startup_log("window_show_return", startup_boot);
     apply_initial_window_geometry(&app);
     if let Some(instance) = instance.as_mut() {
@@ -396,6 +396,13 @@ fn install_composer_popover_dismissal(app: &MainWindow) {
         // would silently replace this one).
         if let Some(app) = weak.upgrade() {
             crate::window_placement::observe(&app, event);
+        }
+        if matches!(
+            event,
+            winit::event::WindowEvent::Resized(_)
+                | winit::event::WindowEvent::ScaleFactorChanged { .. }
+        ) {
+            native_window::sync_main_window_shape(window);
         }
         // The touch-keyboard gate reads this before Slint dispatches the
         // press that may move focus into a text field.
@@ -536,6 +543,13 @@ fn install_composer_popover_dismissal(app: &MainWindow) {
         }
         EventResult::Propagate
     });
+}
+
+/// Show the workbench and settle its native silhouette before the first frame.
+pub(crate) fn show_main_window(app: &MainWindow) -> Result<(), slint::PlatformError> {
+    app.show()?;
+    native_window::sync_main_window_shape(app.window());
+    Ok(())
 }
 
 /// Custom-chrome gestures for the frameless workbench window. The close

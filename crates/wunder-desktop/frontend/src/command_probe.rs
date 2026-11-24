@@ -55,7 +55,7 @@ pub fn run(app: &crate::MainWindow, directory: PathBuf) -> Result<(), Box<dyn st
             }
         }
     }
-    app.show()?;
+    crate::show_main_window(app)?;
 
     let lines = std::env::var("WUNDER_COMMAND_PROBE_LINES")
         .ok()

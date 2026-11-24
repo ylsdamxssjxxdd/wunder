@@ -276,6 +276,7 @@ pub fn apply_rounded_region(window: &slint::Window, radius: f32) {
     };
     let diameter = (radius.max(0.0) * 2.0).round() as i32;
     if diameter <= 0 {
+        unsafe { SetWindowRgn(hwnd, 0, 1) };
         return;
     }
     unsafe {
@@ -301,8 +302,141 @@ pub fn apply_rounded_region(window: &slint::Window, radius: f32) {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn apply_rounded_region(_window: &slint::Window, _radius: f32) {}
+
+/// Match the window manager's outline to the anti-aliased Slint surface. The
+/// native region removes the rectangular manager frame; the transparent frame
+/// buffer supplies the smooth pixels inside it.
+#[cfg(target_os = "linux")]
+pub fn apply_rounded_region(window: &slint::Window, radius: f32) {
+    use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use slint::winit_030::WinitWindowAccessor;
+    use x11_dl::{xfixes, xlib};
+
+    let xwindow = window
+        .with_winit_window(|native| {
+            let handle = native.window_handle().ok()?;
+            let RawWindowHandle::Xlib(handle) = handle.as_raw() else {
+                return None;
+            };
+            Some((handle.window, native.inner_size()))
+        })
+        .flatten();
+    let Some((xwindow, size)) = xwindow else {
+        return;
+    };
+    if size.width == 0 || size.height == 0 {
+        return;
+    }
+    let mut rectangles = rounded_rectangle_strips(size.width, size.height, radius);
+    let Ok(lib) = xlib::Xlib::open() else {
+        return;
+    };
+    let Ok(fixes) = xfixes::Xlib::open() else {
+        return;
+    };
+    unsafe {
+        let display = (lib.XOpenDisplay)(std::ptr::null());
+        if display.is_null() {
+            return;
+        }
+        let region = (fixes.XFixesCreateRegion)(
+            display,
+            rectangles.as_mut_ptr(),
+            rectangles.len() as std::os::raw::c_int,
+        );
+        if region != 0 {
+            (fixes.XFixesSetWindowShapeRegion)(display, xwindow, 0, 0, 0, region);
+            (fixes.XFixesDestroyRegion)(display, region);
+            (lib.XFlush)(display);
+        }
+        (lib.XCloseDisplay)(display);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn rounded_rectangle_strips(width: u32, height: u32, radius: f32) -> Vec<x11_dl::xlib::XRectangle> {
+    use x11_dl::xlib::XRectangle;
+
+    let full = || {
+        vec![XRectangle {
+            x: 0,
+            y: 0,
+            width: width.min(u16::MAX as u32) as u16,
+            height: height.min(u16::MAX as u32) as u16,
+        }]
+    };
+    let radius = radius
+        .max(0.0)
+        .min(width as f32 / 2.0)
+        .min(height as f32 / 2.0)
+        .round() as i32;
+    if radius <= 0 {
+        return full();
+    }
+    let width = width as i32;
+    let height = height as i32;
+    let strip = |inset: i32, y: i32, strip_height: i32| XRectangle {
+        x: inset.clamp(0, i16::MAX as i32) as i16,
+        y: y.clamp(0, i16::MAX as i32) as i16,
+        width: (width - inset * 2).clamp(0, u16::MAX as i32) as u16,
+        height: strip_height.clamp(0, u16::MAX as i32) as u16,
+    };
+    let corner_inset = |distance: f32| {
+        radius as f32
+            - (radius as f32 * radius as f32 - distance * distance)
+                .max(0.0)
+                .sqrt()
+    };
+    let mut rectangles = Vec::with_capacity((radius * 2 + 1) as usize);
+    for y in 0..radius {
+        let distance = radius as f32 - y as f32 - 0.5;
+        let inset = corner_inset(distance).round() as i32;
+        rectangles.push(strip(inset, y, 1));
+    }
+    rectangles.push(strip(0, radius, height - radius * 2));
+    for y in height - radius..height {
+        let distance = y as f32 + 0.5 - (height - radius) as f32;
+        let inset = corner_inset(distance).round() as i32;
+        rectangles.push(strip(inset, y, 1));
+    }
+    rectangles
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod rounded_region_tests {
+    #[test]
+    fn rounded_strips_match_all_four_corners() {
+        let strips = super::rounded_rectangle_strips(100, 80, 12.0);
+        assert!(strips.len() > 3);
+        assert!(strips.first().unwrap().x > 0);
+        assert_eq!(strips.last().unwrap().x, strips.first().unwrap().x);
+        assert!(strips.iter().any(|strip| {
+            strip.x == 0 && strip.y == 12 && strip.width == 100 && strip.height == 56
+        }));
+    }
+
+    #[test]
+    fn zero_radius_restores_the_full_rectangle() {
+        let strips = super::rounded_rectangle_strips(100, 80, 0.0);
+        assert_eq!(strips.len(), 1);
+        assert_eq!((strips[0].width, strips[0].height), (100, 80));
+    }
+}
+
+/// Keep the workbench silhouette in sync with its physical size and zoom
+/// state. Maximized windows meet the screen edges and stay square.
+pub fn sync_main_window_shape(window: &slint::Window) {
+    use slint::winit_030::WinitWindowAccessor;
+
+    let Some((scale, maximized)) =
+        window.with_winit_window(|native| (native.scale_factor() as f32, native.is_maximized()))
+    else {
+        return;
+    };
+    apply_rounded_region(window, if maximized { 0.0 } else { 12.0 * scale });
+}
 
 #[cfg(windows)]
 fn native_hwnd(window: &slint::Window) -> Option<HWND> {

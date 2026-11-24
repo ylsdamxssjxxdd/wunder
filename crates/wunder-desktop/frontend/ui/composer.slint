@@ -1813,10 +1813,10 @@ export component Composer inherits Rectangle {
     background: transparent;
     if !root.touch-layout : Rectangle {
         x: 0px;
-        y: 8px + (root.queue-open ? root.queue-height + 6px : 0px)
+        y: 10px + (root.queue-open ? root.queue-height + 6px : 0px)
             + (root.attachments.length > 0 ? root.attachment-strip-height + 6px : 0px);
         width: parent.width;
-        height: max(0px, root.height - self.y - 10px);
+        height: max(0px, root.height - self.y - 14px);
         border-radius: 16px;
         background: composer-drop.has-drag ? Theme.accent-soft : Theme.surface;
         border-width: 1px;
@@ -1830,7 +1830,7 @@ export component Composer inherits Rectangle {
     VerticalLayout {
         // The side inset lives on the input band (main.slint), so the goal
         // banner and the inquiry card share this card's edges.
-        padding-top: 8px; padding-bottom: 10px; spacing: 6px;
+        padding-top: 10px; padding-bottom: 14px; spacing: 6px;
         if root.queue-open : QueueStrip {
             turns: root.queue-turns;
             overflow: root.queue-overflow;
@@ -1950,7 +1950,7 @@ export component Composer inherits Rectangle {
                 selection-foreground-color: root.mobile ? #ffffff : Theme.text;
                 cursor-width: root.mobile ? 2px : 1px;
                 font-size: root.mobile ? Theme.font-xl : 14px;
-                font-family: root.mobile ? "" : "SimSun";
+                font-family: root.mobile ? "" : Theme.font-ui;
                 wrap: word-wrap;
                 paste-image() => { return root.paste-image(); }
                 edited => {
@@ -2139,14 +2139,14 @@ export component Composer inherits Rectangle {
                     border-radius: root.mobile ? Theme.radius-md : Theme.radius-sm;
                     background: root.stop-action
                         ? (root.stopping ? Theme.border-strong : Theme.accent-ink)
-                        : (root.send-enabled ? (mobile-send-touch.has-hover ? Theme.accent-deep : Theme.accent) : Theme.border-strong);
+                        : (root.send-enabled ? (mobile-send-touch.has-hover ? Theme.accent-deep : Theme.accent) : Theme.selected);
                     Image {
                         x: root.stop-action ? (root.mobile ? 12px : 8px) : (root.mobile ? 10px : 6px);
                         y: root.stop-action ? (root.mobile ? 12px : 8px) : (root.mobile ? 10px : 6px);
                         width: root.stop-action ? 12px : 16px;
                         height: root.stop-action ? 12px : 16px;
                         source: root.stop-action ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/arrow-up.svg");
-                        colorize: #ffffff;
+                        colorize: root.stop-action || root.send-enabled ? #ffffff : Theme.muted;
                         image-fit: contain;
                     }
                     accessible-role: button;
@@ -2180,14 +2180,14 @@ export component Composer inherits Rectangle {
                     width: 28px;
                     height: 28px;
                     border-radius: Theme.radius-sm;
-                    background: Theme.border-strong;
+                    background: Theme.selected;
                     Image {
                         x: 6px;
                         y: 6px;
                         width: 16px;
                         height: 16px;
                         source: @image-url("../assets/icons/arrow-up.svg");
-                        colorize: #ffffff;
+                        colorize: Theme.muted;
                         image-fit: contain;
                     }
                 }
@@ -2345,7 +2345,7 @@ export component Composer inherits Rectangle {
                     border-radius: root.mobile ? Theme.radius-md : Theme.radius-sm;
                     background: root.stop-action
                         ? (root.stopping ? Theme.border-strong : Theme.accent-ink)
-                        : (root.send-enabled ? (send-touch.has-hover ? Theme.accent-deep : Theme.accent) : Theme.border-strong);
+                        : (root.send-enabled ? (send-touch.has-hover ? Theme.accent-deep : Theme.accent) : Theme.selected);
                     Image {
                         // The FA stop glyph is a full-bleed square; a 12px
                         // contain box yields a 10.5px mark, matching the web
@@ -2356,7 +2356,7 @@ export component Composer inherits Rectangle {
                         width: root.stop-action ? 12px : 16px;
                         height: root.stop-action ? 12px : 16px;
                         source: root.stop-action ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/arrow-up.svg");
-                        colorize: #ffffff;
+                        colorize: root.stop-action || root.send-enabled ? #ffffff : Theme.muted;
                         image-fit: contain;
                     }
                     accessible-role: button;

@@ -1,7 +1,7 @@
 // Single source for the desktop visual language: palette, brushes, status
 // colors, scrims, type scale, radii, spacing and shell layout metrics.
-// The neutral base is the 云端版 web shell and is not a theme option; the
-// `palette` global only selects the accent family. Slint pages and Rust
+// The neutral base is the desktop white workbench and is not a theme option;
+// the `palette` global only selects the accent family. Slint pages and Rust
 // controllers must reference these tokens instead of repeating literals;
 // theme.slint re-exports this global together with the shared data structs.
 //
@@ -17,27 +17,26 @@ export global Theme {
     // Chat content font scale: persisted font size (12..=20) divided by 14.
     in-out property <float> font-scale: 1.0;
 
-    // Neutrals: the 云端版 web shell, mirroring the `--mz-*` tokens of
-    // `messenger-shell.css` one for one. They deliberately do not follow the
-    // accent palette — a warm base tone is a theme bug, not a theme choice.
-    out property <color> text: #1F2329;
-    out property <color> text-secondary: #3D3D3D;
-    out property <color> muted: #8A8F99;
-    out property <color> panel: #FBFAF8;
-    out property <color> surface: #ffffff;
-    out property <color> border: #E8E6E3;
-    out property <color> border-strong: #D8D5D0;
+    // Neutrals: a pure-white workbench with cool-grey rules and state fills.
+    // Large surfaces stay white; grey is reserved for hover, selection and
+    // secondary content, so the shell does not read as one grey application.
+    out property <color> text: #202124;
+    out property <color> text-secondary: #4B5563;
+    out property <color> muted: #8A919B;
+    out property <color> panel: #FFFFFF;
+    out property <color> surface: #FFFFFF;
+    out property <color> border: #E5E7EB;
+    out property <color> border-strong: #D7DBE0;
     // The frameless window's own outline. It has to delineate the app against
     // the desktop without a DWM shadow (Win7 has none for a borderless HWND),
-    // but a full-contrast rule reads as a black hairline around the warm UI.
-    // This is the warm neutral midway between `border-strong` and the old 3:1
-    // tone: ~2.1:1 on the white surface — visible against light and dark
-    // desktops, quiet against the panel tones inside the window.
-    out property <color> window-frame: #B9B2A7;
+    // but a full-contrast rule reads as a black hairline around the white UI.
+    // This mid neutral stays visible against light and dark desktops without
+    // competing with the quieter separators inside the window.
+    out property <color> window-frame: #B9BDC4;
     // Row states for lists, trees and the sidebar.
-    out property <color> hover: #F6F5F3;
-    out property <color> selected: #F1EFEC;
-    out property <color> sidebar: #F6F5F3;
+    out property <color> hover: #F5F6F7;
+    out property <color> selected: #EFF1F3;
+    out property <color> sidebar: #FFFFFF;
     // Form controls. An editable field paints on the white surface with the
     // stronger outline, so it never reads as inert; only a real read-only or
     // disabled field drops to the row tone, and that grey is now a signal.
@@ -69,13 +68,13 @@ export global Theme {
     out property <color> mine: palette == "hula-green" ? #dbf2eb : palette == "forest" ? #dfeae4 : palette == "honey" ? #f4e8cf : palette == "minimal" ? #eceff3 : palette == "tech-blue" ? #d7eeff : #FDF0DE;
     // Timeline surfaces: the user bubble, the 1px connector that runs through
     // an expanded tool group, and the monospace diff card cells.
-    out property <color> timeline-bubble: #F3F2F0;
-    out property <color> timeline-line: #E2DFDA;
+    out property <color> timeline-bubble: #F5F6F7;
+    out property <color> timeline-line: #E2E5E9;
     // The one-line outcome of a thinking or tool entry: a step softer than the
     // label, so a row reads as name first, result second.
     out property <color> timeline-entry-soft: #9BA0A8;
     out property <length> workflow-height: 420px;
-    out property <color> diff-header: #F5F4F2;
+    out property <color> diff-header: #F5F6F7;
     out property <color> diff-add-bg: #EAF7F0;
     out property <color> diff-add-text: #14532D;
     out property <color> diff-del-bg: #FDECEC;
@@ -123,22 +122,21 @@ export global Theme {
     out property <length> radius-sm: 8px;
     out property <length> radius-md: 10px;
     out property <length> radius-lg: 12px;
-    out property <length> radius-xl: 14px;
+    out property <length> radius-xl: 16px;
 
     // ---- Markdown document surface ----
     // A transcript reads as a document, so its block chrome (code fences,
     // quote rails, table rules) gets tokens of its own instead of reusing the
     // form-control palette. Values mirror the 云端版 web renderer.
-    out property <color> code-bg: #F7F6F3;
-    out property <color> code-border: #EAE7E2;
-    out property <color> code-header: #F1EFEB;
-    out property <color> quote-bg: #F7F5F2;
-    out property <color> quote-bar: #E0D8CC;
-    out property <color> table-head: #FAF8F5;
-    out property <color> table-zebra: #FCFBF9;
-    out property <color> rule: #E6E2DC;
-    // Body copy is warm, so links take a blue: it is the only hue that stays
-    // unmistakably "clickable" next to the accent.
+    out property <color> code-bg: #F7F8F9;
+    out property <color> code-border: #E7E9EC;
+    out property <color> code-header: #F1F3F5;
+    out property <color> quote-bg: #F7F8F9;
+    out property <color> quote-bar: #DDE1E6;
+    out property <color> table-head: #F8F9FA;
+    out property <color> table-zebra: #FBFBFC;
+    out property <color> rule: #E4E7EB;
+    // Links take a blue that stays unmistakably "clickable" next to the accent.
     out property <color> link: #1F6FEB;
     // Document type scale. Deliberately larger than the UI scale: prose at the
     // 13px form size reads as a caption, not an answer.

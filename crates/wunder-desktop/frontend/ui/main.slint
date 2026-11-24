@@ -249,7 +249,7 @@ export component MainWindow inherits Window {
     min-width: Theme.min-window-width; min-height: Theme.min-window-height;
     default-font-family: "MiSans"; default-font-size: Theme.font-md;
     icon: @image-url("../assets/app-icon.png");
-    background: Theme.panel;
+    background: transparent;
     in-out property <int> selected-agent: -1;
     in-out property <int> selected-model: -1;
     in-out property <string> active-session-id;
@@ -1334,6 +1334,13 @@ export component MainWindow inherits Window {
     // 空白处按下即收回工作目录的焦点行：点过文件夹后再点别处，拖入的文件不该
     // 还落到那个文件夹里。行和面板自己的指针目标都在它之上，只有真正的空白
     // 落点会走到这里；判定落点本身也只看指针所在行，不依赖这里。
+    window-surface := Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.panel;
+        border-radius: root.maximized ? 0px : Theme.radius-lg;
+        clip: true;
+
     blank-dismiss := TouchArea {
         width: 100%;
         height: 100%;
@@ -1483,15 +1490,15 @@ export component MainWindow inherits Window {
                         // the timeline rows, and queue position is folded into the
                         // timeline too, so the old banners are gone.
                         // The input band follows the transcript's full available width.
-                        // Its 14px side inset also aligns the status dock, goal banner
+                        // Its 20px side inset also aligns the status dock, goal banner
                         // and inquiry card with the composer card.
                         Rectangle {
                             height: input-band.preferred-height;
                             input-band := VerticalLayout {
                                 width: parent.width;
                                 x: (parent.width - self.width) / 2;
-                                padding-left: root.narrow ? 10px : 14px;
-                                padding-right: root.narrow ? 10px : 14px;
+                                padding-left: root.narrow ? 10px : 20px;
+                                padding-right: root.narrow ? 10px : 20px;
                                 spacing: 0px;
                                 // 首次配置引导：本地聊天还没有任何真实模型。云端线程
                                 // 走自己的模型目录，不显示。用 visible 而不是 if，
@@ -2011,7 +2018,7 @@ export component MainWindow inherits Window {
         pin-toggled => { root.window-pin-requested(!root.pinned); }
         close-requested => { root.window-close-requested(); }
     }
-    WindowFrame { }
+    WindowFrame { maximized: root.maximized; }
 
     // Settings live in an internal overlay window instead of replacing the
     // chat area: the shield closes it on click-away, the card swallows stray
@@ -2657,5 +2664,6 @@ export component MainWindow inherits Window {
         has-selection <=> TextMenuState.has-selection;
         copy-selection => { root.copy-selection(); }
         select-all => { root.select-all-text(); }
+    }
     }
 }
