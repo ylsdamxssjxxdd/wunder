@@ -567,6 +567,31 @@ impl LiveWork {
     }
 }
 
+/// 线程是否停在问询面板上等用户回答。执行头是权威的实时投影，但重启后可能
+/// 只是 `idle`/`not_loaded` 这类 transport 占位词；那时回退到最新持久轮次的
+/// 状态。审批等待不算在内：挂起的审批仍由执行器持有这一轮。
+fn thread_waits_for_input(tail: &wunder_server::storage::ThreadTurnTail) -> bool {
+    let head = tail
+        .runtime_head
+        .as_ref()
+        .map(|head| head.runtime_status.trim().to_ascii_lowercase())
+        .filter(|status| {
+            !status.is_empty()
+                && !matches!(
+                    status.as_str(),
+                    "idle" | "ready" | "not_loaded" | "paused" | "none"
+                )
+        });
+    let status = head
+        .as_deref()
+        .unwrap_or_else(|| tail.turn_status.trim())
+        .to_ascii_lowercase();
+    matches!(
+        status.as_str(),
+        "waiting_input" | "waiting_user_input" | "needs_input"
+    )
+}
+
 #[derive(Default)]
 struct LeaseHeartbeatState {
     active: HashMap<String, ActiveThreadLease>,
@@ -1553,7 +1578,12 @@ impl NativeDesktop {
                 let goal = goals
                     .iter()
                     .find(|goal| goal.session_id == record.session_id);
-                let mut session = self.session_with_stats(record, &workspaces, &live);
+                let mut session = self.session_with_stats(
+                    record,
+                    &workspaces,
+                    &live,
+                    turn_tails.as_ref(),
+                );
                 // Durable and authoritative: the thread log records admitted
                 // user turns. A row with no tail has never run a turn and is the
                 // reusable draft. Timestamps are deliberately NOT consulted —
@@ -1607,7 +1637,7 @@ impl NativeDesktop {
         Ok((
             records
                 .into_iter()
-                .map(|record| self.session_with_stats(record, &workspaces, &live))
+                .map(|record| self.session_with_stats(record, &workspaces, &live, None))
                 .collect(),
             total,
         ))
@@ -1695,6 +1725,9 @@ impl NativeDesktop {
         record: wunder_server::storage::ChatSessionRecord,
         workspaces: &std::collections::HashMap<String, wunder_server::storage::WorkspaceRecord>,
         live: &LiveWork,
+        turn_tails: Option<
+            &std::collections::HashMap<String, wunder_server::storage::ThreadTurnTail>,
+        >,
     ) -> NativeSession {
         let session_id = record.session_id.clone();
         // Draft heuristic: `create_session` stamps `created_at` and
@@ -1707,24 +1740,38 @@ impl NativeDesktop {
             .state
             .monitor
             .get_session_stats(&record.session_id);
+        // 问询面板把轮次停在用户身上：执行器已经结束（finish_active_turn 落成
+        // WaitingUserInput），租约释放后 live 探针就看不到它了，但 durable 轮次
+        // 仍是 waiting_input、面板也还在。它属于用户欠答的闸门，不是上个进程
+        // 留下的「在途」残留；若按残留降级成 idle，切走再回目录就会把「等待回答」
+        // 变成空闲/停止。执行头（transport 占位词除外）一旦换成 running/queued，
+        // 新一轮已经接管，这里自然不再算等待。
+        let parked_on_input = turn_tails
+            .and_then(|tails| tails.get(&record.session_id))
+            .is_some_and(thread_waits_for_input);
         // 缓存里声称在途、但已经没有执行器/存活锁/在途任务时，这一行属于上个
         // 进程的残留。按空闲呈现而不是「已中断」：没有哪一轮是刚刚结束的，
         // 落成终态会在这行上闪一个「刚停止」的记号，等于用另一种假状态替换
         // 原来的假状态。中断本身已经记在线程轮次里，打开线程就能看到。
-        let (mut runtime_status, mut runtime_ended_at) = match overview.as_ref() {
-            Some(stats)
-                if wunder_server::monitor::status_is_live_text(&stats.status)
-                    && !live.contains(&record.session_id) =>
-            {
-                ("idle".to_string(), 0.0)
+        let (mut runtime_status, mut runtime_ended_at) = if parked_on_input {
+            ("waiting_input".to_string(), 0.0)
+        } else {
+            match overview.as_ref() {
+                Some(stats)
+                    if wunder_server::monitor::status_is_live_text(&stats.status)
+                        && !live.contains(&record.session_id) =>
+                {
+                    ("idle".to_string(), 0.0)
+                }
+                Some(stats) => (stats.status.clone(), stats.ended_at.unwrap_or(0.0)),
+                None => ("idle".to_string(), 0.0),
             }
-            Some(stats) => (stats.status.clone(), stats.ended_at.unwrap_or(0.0)),
-            None => ("idle".to_string(), 0.0),
         };
         // 轮次已结束但后台命令/子智能体还在跑：线程没有闲着，继续显示运行中。
         // 后台工作全部结束后，下一次目录读取会自然回到原来的终态。
         if live.has_background(&record.session_id)
             && !wunder_server::monitor::status_is_live_text(&runtime_status)
+            && !parked_on_input
         {
             runtime_status = "后台运行中".to_string();
             runtime_ended_at = 0.0;
@@ -1895,7 +1942,7 @@ impl NativeDesktop {
         let workspaces = self.workspace_lookup();
         let live = self.live_work();
         Ok((
-            self.session_with_stats(record, &workspaces, &live),
+            self.session_with_stats(record, &workspaces, &live, None),
             turns
                 .into_iter()
                 .flat_map(|turn| [turn.user, turn.assistant])
@@ -1912,7 +1959,7 @@ impl NativeDesktop {
         self.ensure_thread_open(session_id)?;
         let workspaces = self.workspace_lookup();
         let live = self.live_work();
-        Ok(self.session_with_stats(record, &workspaces, &live))
+        Ok(self.session_with_stats(record, &workspaces, &live, None))
     }
 
     pub fn get_session_turns(
@@ -1930,7 +1977,7 @@ impl NativeDesktop {
         let turns = self.load_chat_turns(cleaned)?;
         let workspaces = self.workspace_lookup();
         let live = self.live_work();
-        Ok((self.session_with_stats(record, &workspaces, &live), turns))
+        Ok((self.session_with_stats(record, &workspaces, &live, None), turns))
     }
 
     /// Bounded, detail-free history for thread selection. Full rounds and
@@ -1957,7 +2004,7 @@ impl NativeDesktop {
             .ok_or_else(|| anyhow!("chat session not found"))?;
         let workspaces = self.workspace_lookup();
         let live = self.live_work();
-        let session = self.session_with_stats(record, &workspaces, &live);
+        let session = self.session_with_stats(record, &workspaces, &live, None);
         let (turns, history_before, history_has_more, change_cursor) =
             chat_turns::load_turn_header_snapshot(self.state(), self.user_id(), session_id, None)?;
         let snapshot = NativeChatSnapshot {
@@ -2056,7 +2103,7 @@ impl NativeDesktop {
         self.desktop.state.user_store.upsert_chat_session(&record)?;
         let workspaces = self.workspace_lookup();
         let live = self.live_work();
-        Ok(self.session_with_stats(record, &workspaces, &live))
+        Ok(self.session_with_stats(record, &workspaces, &live, None))
     }
 
     pub fn fork_session(&self, session_id: &str, user_round: i64) -> Result<NativeSession> {
@@ -2120,7 +2167,7 @@ impl NativeDesktop {
         workspace.save_session_context_tokens(self.user_id(), &id, tokens);
         let workspaces = self.workspace_lookup();
         let live = self.live_work();
-        Ok(self.session_with_stats(record, &workspaces, &live))
+        Ok(self.session_with_stats(record, &workspaces, &live, None))
     }
 
     pub fn rename_session(&self, session_id: &str, title: &str) -> Result<()> {
@@ -2475,6 +2522,49 @@ mod thread_switch_tests {
         SERIAL
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[test]
+    fn a_parked_question_turn_is_not_a_dead_process_residue() {
+        use wunder_server::stable_core::thread_view::ThreadExecutionHead;
+        let tail = |runtime_status: Option<&str>, turn_status: &str| {
+            wunder_server::storage::ThreadTurnTail {
+                session_id: "fixture-session".into(),
+                user_round: 1,
+                turn_status: turn_status.into(),
+                runtime_head: runtime_status.map(|status| ThreadExecutionHead {
+                    runtime_status: status.into(),
+                    status_turn_id: "fixture-turn".into(),
+                    active_turn_id: String::new(),
+                    epoch: 1,
+                    view_seq: 1,
+                }),
+                last_activity: String::new(),
+                change_seq: 1,
+            }
+        };
+        // The question panel is the durable gate; a transport placeholder in
+        // the execution head must not hide it.
+        assert!(thread_waits_for_input(&tail(
+            Some("waiting_input"),
+            "waiting_input"
+        )));
+        assert!(thread_waits_for_input(&tail(Some("idle"), "waiting_input")));
+        assert!(thread_waits_for_input(&tail(None, "waiting_input")));
+        // A newer turn taking the thread over ends the pause.
+        assert!(!thread_waits_for_input(&tail(
+            Some("running"),
+            "waiting_input"
+        )));
+        assert!(!thread_waits_for_input(&tail(
+            Some("completed"),
+            "waiting_input"
+        )));
+        // An approval is still held by the executor and stays a pending row.
+        assert!(!thread_waits_for_input(&tail(
+            Some("waiting_approval"),
+            "waiting_approval"
+        )));
     }
 
     /// Config, settings and the database all live under `WUNDER_HOME`; point it

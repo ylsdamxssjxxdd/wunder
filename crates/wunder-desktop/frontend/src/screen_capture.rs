@@ -137,6 +137,197 @@ pub(crate) fn primary_monitor() -> Option<MonitorRect> {
     state.0.or(state.1)
 }
 
+/// One top-level window rectangle, in absolute desktop pixels (the same space
+/// as [`ScreenCapture::origin_x`]). Candidates come back in stacking order —
+/// topmost first — so a hit test can stop at the first rectangle that contains
+/// the pointer: that is the window the user actually sees there.
+///
+/// Only what Win32 reports is used, never a painted-screen scan: the selector
+/// needs the rectangles just for snapping and highlighting, while the pixels
+/// of the region still come from the frozen frame the user confirms.
+#[cfg(windows)]
+pub fn detect_regions(monitor: MonitorRect) -> Vec<MonitorRect> {
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+    use windows_sys::Win32::Graphics::Dwm::{
+        DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetClassNameW, GetWindowRect, GetWindowThreadProcessId, IsIconic,
+        IsWindowVisible,
+    };
+
+    struct Scan {
+        monitor: MonitorRect,
+        own_pid: u32,
+        regions: Vec<MonitorRect>,
+    }
+
+    unsafe extern "system" fn visit(hwnd: HWND, data: LPARAM) -> BOOL {
+        let scan = &mut *(data as *mut Scan);
+        if IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 {
+            return 1;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid == 0 || pid == scan.own_pid {
+            // Our own surfaces are never a capture target, and the selector
+            // itself must not offer itself as a snap region.
+            return 1;
+        }
+        let mut class = [0u16; 64];
+        let class_len = GetClassNameW(hwnd, class.as_mut_ptr(), class.len() as i32);
+        let class = String::from_utf16_lossy(&class[..class_len.max(0) as usize]);
+        if matches!(class.as_str(), "Progman" | "WorkerW") {
+            // Desktop background windows cover the whole monitor; offering
+            // them would turn every click on empty desktop into a full-screen
+            // selection, which is the one case free dragging already serves.
+            return 1;
+        }
+        let mut cloaked = 0u32;
+        if DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED as u32,
+            &mut cloaked as *mut u32 as *mut std::ffi::c_void,
+            std::mem::size_of::<u32>() as u32,
+        ) == 0
+            && cloaked != 0
+        {
+            // UWP leftovers and windows on another virtual desktop are
+            // "visible" to Win32 but contribute no pixels to this screen.
+            return 1;
+        }
+        let mut rect: RECT = std::mem::zeroed();
+        let mut resolved = DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS as u32,
+            &mut rect as *mut RECT as *mut std::ffi::c_void,
+            std::mem::size_of::<RECT>() as u32,
+        ) == 0;
+        if !resolved {
+            // Without composition (Win7 basic theme) the classic rectangle,
+            // invisible resize border included, is the only answer.
+            resolved = GetWindowRect(hwnd, &mut rect) != 0;
+        }
+        if !resolved {
+            return 1;
+        }
+        let candidate = MonitorRect {
+            left: rect.left,
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+        };
+        if let Some(clipped) = candidate.intersection(&scan.monitor) {
+            // Slivers are tooltips and 1px caret windows: they are never what
+            // the user means, and snapping to them is pure frustration.
+            if clipped.width() >= 8 && clipped.height() >= 8 && scan.regions.len() < 64 {
+                scan.regions.push(clipped);
+            }
+        }
+        1
+    }
+
+    let mut scan = Scan {
+        monitor,
+        own_pid: std::process::id(),
+        regions: Vec::new(),
+    };
+    unsafe { EnumWindows(Some(visit), &mut scan as *mut Scan as LPARAM) };
+    scan.regions
+}
+
+/// X11 counterpart: enumerate the root window's children and read each frame's
+/// geometry. Wayland forbids this kind of screen introspection, so a session
+/// without a usable X display simply gets an empty list — the selector still
+/// supports free dragging and handle adjustment.
+#[cfg(target_os = "linux")]
+pub fn detect_regions(monitor: MonitorRect) -> Vec<MonitorRect> {
+    use std::ffi::c_void;
+    use std::os::raw::{c_int, c_uint, c_ulong};
+    use x11_dl::xlib;
+
+    let Ok(xlib) = xlib::Xlib::open() else {
+        return Vec::new();
+    };
+    unsafe {
+        let display = (xlib.XOpenDisplay)(std::ptr::null());
+        if display.is_null() {
+            return Vec::new();
+        }
+        let screen = (xlib.XDefaultScreen)(display);
+        let root = (xlib.XRootWindow)(display, screen);
+        let mut root_return: c_ulong = 0;
+        let mut parent_return: c_ulong = 0;
+        let mut children: *mut c_ulong = std::ptr::null_mut();
+        let mut count: c_uint = 0;
+        let mut regions = Vec::new();
+        if (xlib.XQueryTree)(
+            display,
+            root,
+            &mut root_return,
+            &mut parent_return,
+            &mut children,
+            &mut count,
+        ) != 0
+            && !children.is_null()
+        {
+            let stack = std::slice::from_raw_parts(children, count as usize);
+            // `XQueryTree` lists children bottom-to-top. Walk it backwards so
+            // the first hit is the window the user actually sees.
+            for &window in stack.iter().rev() {
+                let mut attrs: xlib::XWindowAttributes = std::mem::zeroed();
+                if (xlib.XGetWindowAttributes)(display, window, &mut attrs) == 0 {
+                    continue;
+                }
+                if attrs.map_state != xlib::IsViewable
+                    || attrs.class != xlib::InputOutput
+                    || attrs.width < 8
+                    || attrs.height < 8
+                {
+                    continue;
+                }
+                let mut x: c_int = 0;
+                let mut y: c_int = 0;
+                let mut child: c_ulong = 0;
+                if (xlib.XTranslateCoordinates)(
+                    display,
+                    window,
+                    root,
+                    0,
+                    0,
+                    &mut x,
+                    &mut y,
+                    &mut child,
+                ) == 0
+                {
+                    continue;
+                }
+                let candidate = MonitorRect {
+                    left: x,
+                    top: y,
+                    right: x + attrs.width,
+                    bottom: y + attrs.height,
+                };
+                if let Some(clipped) = candidate.intersection(&monitor) {
+                    if clipped.width() >= 8 && clipped.height() >= 8 && regions.len() < 64 {
+                        regions.push(clipped);
+                    }
+                }
+            }
+        }
+        if !children.is_null() {
+            (xlib.XFree)(children as *mut c_void);
+        }
+        (xlib.XCloseDisplay)(display);
+        regions
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn detect_regions(_monitor: MonitorRect) -> Vec<MonitorRect> {
+    Vec::new()
+}
+
 #[cfg(windows)]
 unsafe fn capture_from_dc(dc: isize, monitor: MonitorRect) -> Result<ScreenCapture, String> {
     let mut bgra = read_region(dc, monitor, monitor.width() as u32, monitor.height() as u32)?;

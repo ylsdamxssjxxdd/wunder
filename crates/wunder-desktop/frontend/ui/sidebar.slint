@@ -173,10 +173,13 @@ component ThreadRow inherits ContextMenuArea {
         // 抽屉里常驻动作不铺底色，图标直接坐在行上，和安卓版一样；鼠标悬停
         // 时仍给一层浅底，明确这一组按钮可以点。
         background: root.hover ? Theme.accent-soft : transparent;
+        // 三个按钮的悬停底板与字形都留在主色家族里：底板之上就是 accent-soft
+        // 的行高亮，灰块会读成另一套配色；悬停的字形抬到 accent-ink，动作才
+        // 像亮了，而不是像被按灰。
         Rectangle {
             x: 8px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: SidebarMetrics.row-radius;
-            background: rename-touch.has-hover ? Theme.selected : transparent;
-            Image { x: (parent.width - SidebarMetrics.icon-glyph) / 2; y: (parent.height - SidebarMetrics.icon-glyph) / 2; width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph; source: @image-url("../assets/icons/fa-pen-to-square.svg"); colorize: Theme.muted; }
+            background: rename-touch.has-hover ? Theme.action-hover : transparent;
+            Image { x: (parent.width - SidebarMetrics.icon-glyph) / 2; y: (parent.height - SidebarMetrics.icon-glyph) / 2; width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph; source: @image-url("../assets/icons/fa-pen-to-square.svg"); colorize: rename-touch.has-hover ? Theme.accent-ink : Theme.muted; }
             rename-touch := TouchArea {
                 mouse-cursor: pointer;
                 accessible-role: button; accessible-label: I18n.common_rename;
@@ -192,13 +195,13 @@ component ThreadRow inherits ContextMenuArea {
         }
         Rectangle {
             x: 32px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: SidebarMetrics.row-radius;
-            background: trajectory-touch.has-hover ? Theme.selected : transparent;
+            background: trajectory-touch.has-hover ? Theme.action-hover : transparent;
             Image {
                 x: (parent.width - SidebarMetrics.icon-glyph) / 2;
                 y: (parent.height - SidebarMetrics.icon-glyph) / 2;
                 width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
                 source: @image-url("../assets/icons/fa-route.svg");
-                colorize: Theme.muted;
+                colorize: trajectory-touch.has-hover ? Theme.accent-ink : Theme.muted;
             }
             trajectory-touch := TouchArea {
                 mouse-cursor: pointer;
@@ -215,13 +218,15 @@ component ThreadRow inherits ContextMenuArea {
         }
         Rectangle {
             x: 56px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: SidebarMetrics.row-radius;
-            background: archive-touch.has-hover && data.archivable ? Theme.selected : transparent;
+            background: archive-touch.has-hover && data.archivable ? Theme.action-hover : transparent;
             Image {
                 x: (parent.width - SidebarMetrics.icon-glyph) / 2;
                 y: (parent.height - SidebarMetrics.icon-glyph) / 2;
                 width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
                 source: @image-url("../assets/icons/box-archive.svg");
-                colorize: data.archivable ? Theme.muted : Theme.border-strong;
+                colorize: data.archivable
+                    ? (archive-touch.has-hover ? Theme.accent-ink : Theme.muted)
+                    : Theme.border-strong;
             }
             archive-touch := TouchArea {
                 mouse-cursor: data.archivable ? pointer : default;
@@ -320,7 +325,9 @@ component GroupHeaderRow inherits DragRow {
         border-radius: SidebarMetrics.row-fill-radius;
         background: root.hover ? Theme.accent-soft : transparent;
         Rectangle {
-            x: 56px; y: (parent.height - 20px) / 2; width: 20px; height: 20px;
+            x: 56px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: SidebarMetrics.row-radius;
+            // 「+」也铺同一块悬停底板，标题行三个动作才是一套按钮。
+            background: ws-thread-touch.has-hover ? Theme.action-hover : transparent;
             Image {
                 x: (parent.width - SidebarMetrics.icon-glyph) / 2;
                 y: (parent.height - SidebarMetrics.icon-glyph) / 2;
@@ -337,10 +344,10 @@ component GroupHeaderRow inherits DragRow {
         }
         if root.hover : Rectangle {
             x: 32px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: SidebarMetrics.row-radius;
-            background: ws-edit-touch.has-hover ? Theme.selected : transparent;
+            background: ws-edit-touch.has-hover ? Theme.action-hover : transparent;
             // fa-pen-to-square, the glyph the web uses for rename/edit; the
             // bare pen read as a different action next to it.
-            Image { x: (parent.width - SidebarMetrics.icon-glyph) / 2; y: (parent.height - SidebarMetrics.icon-glyph) / 2; width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph; source: @image-url("../assets/icons/fa-pen-to-square.svg"); colorize: Theme.muted; }
+            Image { x: (parent.width - SidebarMetrics.icon-glyph) / 2; y: (parent.height - SidebarMetrics.icon-glyph) / 2; width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph; source: @image-url("../assets/icons/fa-pen-to-square.svg"); colorize: ws-edit-touch.has-hover ? Theme.accent-ink : Theme.muted; }
             ws-edit-touch := TouchArea {
                 mouse-cursor: pointer;
                 accessible-role: button; accessible-label: I18n.ws_menu_edit;
@@ -350,7 +357,7 @@ component GroupHeaderRow inherits DragRow {
         }
         if root.hover : Rectangle {
             x: 8px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: SidebarMetrics.row-radius;
-            background: ws-delete-touch.has-hover ? Theme.selected : transparent;
+            background: ws-delete-touch.has-hover ? Theme.action-hover : transparent;
             Image { x: (parent.width - SidebarMetrics.icon-glyph) / 2; y: (parent.height - SidebarMetrics.icon-glyph) / 2; width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph; source: @image-url("../assets/icons/trash.svg"); colorize: ws-delete-touch.has-hover ? Theme.danger : Theme.muted; }
             ws-delete-touch := TouchArea {
                 mouse-cursor: pointer;

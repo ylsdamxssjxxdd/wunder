@@ -252,7 +252,7 @@ wunder 是一个**泛用型人工智能操作系统**（wunder = 模型 + 拘束
 - 说明：直接调用编排器的管理员运维/评测/内部任务仍可跳过会话锁、额度余额或并发上限；用户侧聊天入口不因管理员身份绕过 `server.max_active_sessions`。
 - 说明：`最终回复`（final_response）工具已移除。当 `tool_names` 显式包含 `a2ui` 时，系统改为输出 A2UI 消息；SSE 将追加 `a2ui` 事件，非流式响应会携带 `uid`/`a2ui` 字段。
 - 流式异常事件：`error` 事件现在会统一附带 `error_meta`（`category/severity/retryable/retry_after_ms/source_stage/recovery_action`），便于前端与调用方区分“可重试失败”和“需人工修正失败”。
-- 流式终结事件：新增 `turn_terminal`，作为每轮执行的唯一终结语义，`status` 取值包括 `completed/failed/cancelled/rejected`；`final.stop_reason` 历史上可能为 `yield`（2026-11-13 起不再产生，`会话让出` 工具已移除）；调用方不应再仅靠 `final/error` 自行猜测一轮是否已结束。
+- 流式终结事件：新增 `turn_terminal`，作为每轮执行的唯一终结语义，`status` 取值包括 `completed/waiting_input/failed/cancelled/rejected`；`waiting_input` 表示这一轮停在问询面板等用户回答（与持久轮次状态一致），调用方不得把它折叠成“已完成”，面板解答后由新一轮接管；`final.stop_reason` 历史上可能为 `yield`（2026-11-13 起不再产生，`会话让出` 工具已移除）；调用方不应再仅靠 `final/error` 自行猜测一轮是否已结束。
 - 审批闭环事件：新增 `approval_resolved`，表示待审批请求已进入终态；`approval_result` 保持兼容，但新接入方应优先消费 `approval_resolved`。
 - 工具工作流关联语义：`tool_call/tool_output_delta/tool_result/approval_request/approval_result` 现在会尽量附带稳定的 `tool_call_id`；当上游没有原生 call id 时，服务端会补发合成 id，便于前端将命令输出、审批等待与最终结果持续合并到同一张工作流卡片。
 - `execute_command` 实时协议已落地：每条命令拥有独立 `command_session_id/command_index`；生命周期事件与每条命令结果用于拆分子命令工作流条目，在线运行时通过 `command_session_delta` 向客户端推送 stdout/stderr/pty 增量，用于在聊天工具循环内展示小型终端输出区。

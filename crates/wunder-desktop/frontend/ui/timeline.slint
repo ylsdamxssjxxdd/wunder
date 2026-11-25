@@ -66,7 +66,8 @@ export component ChatGreeting inherits Rectangle {
         spacing: 8px;
         greeting-text := Text {
             text: root.text == "" ? I18n.chat_greeting : root.text;
-            color: Theme.text; font-size: Theme.font-xl;
+            // 问候语与正文同号：它只是空线程的第一行提示，不是标题。
+            color: Theme.text; font-size: Theme.font-lg;
             wrap: word-wrap; horizontal-stretch: 1;
         }
         Rectangle {

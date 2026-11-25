@@ -161,6 +161,11 @@ export component MenuItemBase {
                     color: root.alternate-foreground;
                     vertical-alignment: center;
                     horizontal-alignment: TextHorizontalAlignment.right;
+                    // Follow the item's own metrics: a style that shrinks the
+                    // label must shrink the accelerator text with it, otherwise
+                    // the two ends of the row disagree.
+                    font-size: root.font-size;
+                    font-weight: root.font-weight;
                 }
 
                 if entry.has-sub-menu : Image {

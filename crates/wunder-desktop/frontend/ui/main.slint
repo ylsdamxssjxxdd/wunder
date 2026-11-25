@@ -59,7 +59,7 @@ export { TrayNotice } from "tray-notice.slint";
 export { CompletionNotice } from "completion-notice.slint";
 export { PetOverlay } from "pet-overlay.slint";
 export { HelpWindow } from "help_window.slint";
-export { ScreenshotOverlay } from "screenshot_overlay.slint";
+export { ScreenshotOverlay, CaptureRegion } from "screenshot_overlay.slint";
 
 export component MainWindow inherits Window {
     // Production starts from a real empty projection. Preview fixtures are
@@ -1341,7 +1341,10 @@ export component MainWindow inherits Window {
         width: 100%;
         height: 100%;
         background: Theme.panel;
-        border-radius: root.maximized ? 0px : Theme.radius-lg;
+        // 圆角轮廓只由原生窗口 region 提供（native_window.rs 按 Theme.radius-lg
+        // 设置）。这里不能再画圆角：软件渲染走 GDI，没有逐像素 alpha，圆角外缘的
+        // 半覆盖像素会被当成不透明颜色交给桌面，region 的硬边又会再削一次，四角
+        // 于是时有时无。整块不透明铺满、交给 region 裁形，框线和圆角才对得齐。
         clip: true;
 
     blank-dismiss := TouchArea {
@@ -2675,12 +2678,10 @@ export component MainWindow inherits Window {
         select-all => { root.select-all-text(); }
     }
     }
-    // Sits outside the clipped surface on purpose: the frame's outer pixel has
-    // to fall outside the window's rounded clip and native region, so the
-    // region itself becomes the hairline's outer edge instead of shaving it.
+    // 框线画在窗口内、与 region 的轮廓重合：region 就是外边缘，不需要再外扩。
     WindowFrame {
-        width: root.width + 2px;
-        height: root.height + 2px;
+        width: root.width;
+        height: root.height;
         maximized: root.maximized;
     }
 }

@@ -145,7 +145,7 @@ impl NativeDesktop {
         let workspaces = self.workspace_lookup();
         let items = rows
             .into_iter()
-            .map(|row| self.session_with_stats(row, &workspaces, &self.live_work()))
+            .map(|row| self.session_with_stats(row, &workspaces, &self.live_work(), None))
             .collect();
         Ok(super::ArchivedThreadPage {
             items,

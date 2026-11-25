@@ -212,7 +212,7 @@ export component WindowChrome inherits Rectangle {
 }
 
 // A borderless window has no non-client frame. Reproduce the visible part
-// inside the client area: one hairline on all four sides. The tone is the
+// inside the client area: one solid band on all four sides. The tone is the
 // dedicated `window-frame` token rather than the in-page `border-strong` — the
 // page rule read as "no edge at all" on a light desktop — but it stays a
 // mid neutral instead of a full-contrast rule, which turned the edge into a
@@ -220,20 +220,31 @@ export component WindowChrome inherits Rectangle {
 // resize hit-test region (the window's resize-border-width) stays untouched.
 export component WindowFrame inherits Rectangle {
     in property <bool> maximized: false;
-    // The frame is one pixel larger than the window on every side and twice as
-    // thick, so only its inner pixel is on screen. Drawing the hairline on the
-    // silhouette itself does not work: the hard-edged native window region
-    // (native_window.rs) shaves the antialiased outer half of a stroke that
-    // follows the rounded boundary, and the four corners then read as breaks
-    // between the straight edges. A stroke that reaches past the silhouette is
-    // covered solidly on every pixel the region keeps, corners included; the
-    // radius is one larger so the inner edge stays on the silhouette.
-    x: -1px;
-    y: -1px;
+    // The stroke starts exactly on the window silhouette, which is the native
+    // region in native_window.rs, and lies wholly inside it. Two rules come
+    // from that hard-edged GDI region:
+    //  - A stroke straddling the silhouette loses its antialiased outer half
+    //    to the region, and a stroke drawn outside it loses everything. This
+    //    one is flush, so every pixel the region keeps carries solid colour.
+    //  - The visible band must be at least two device pixels. A 1px hairline
+    //    on that boundary is pure antialiasing fringe: its coverage sits
+    //    around half, and blending against the window's transparent clear
+    //    colour washed the four corners out to almost nothing while the
+    //    straight sides, always fully covered, stayed solid. Two pixels leave
+    //    one fully covered row plus the boundary row, so the arc matches the
+    //    sides at every DPI step.
+    // `window-surface` therefore paints an opaque square fill: with no rounded
+    // transparent corners under this stroke, GDI never has to composite an
+    // antialiased edge, and the region alone owns the silhouette.
+    x: 0px;
+    y: 0px;
+    // A maximized window meets the screen edges; a 2px outline there would
+    // draw a frame around the whole display.
+    visible: !root.maximized;
     z: 1001;
     background: transparent;
     border-color: Theme.window-frame;
     border-width: 2px;
-    border-radius: root.maximized ? 0px : Theme.radius-lg + 1px;
+    border-radius: root.maximized ? 0px : Theme.radius-lg;
     accessible-role: none;
 }

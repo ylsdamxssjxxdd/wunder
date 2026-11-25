@@ -37,6 +37,13 @@ so the 1.11 quadratic-scan workaround is gone.
 - `widgets/fluent/scrollview.slint` keeps the 1.19 `ScrollViewInterface` but
   drops the two arrow buttons and uses the 2 px offset / whole-track opacity
   treatment.
+- `widgets/fluent/menu.slint` and `widgets/common/menu-base.slint` size the
+  popup menu like the workbench's own card (`ui/text_menu.slint`) instead of a
+  full-size Fluent surface: 148 px minimum width, 28 px rows, 7 px separators,
+  13 px label on a white `#FFFFFF` card with a `#D7DBE0` hairline, 10 px radius
+  and a 12 px/3 px shadow (colours mirror `ui/design_tokens.slint`). The
+  shortcut text now follows the item's `font-size`/`font-weight` so shrinking
+  the label does not leave a full-size accelerator at the right edge.
 - `builtin_elements.rs` declares the fork-only API the UI already uses:
   `line-height-factor` on `StyledText`, and the
   `context-menu(x, y, selected)` callback. Stock 1.19 only ships the former on
@@ -68,6 +75,12 @@ so the 1.11 quadratic-scan workaround is gone.
   heights, including insert/remove shifts and the content-height estimate for
   unmeasured rows below the window.
 - `DirtyRegion::MAX_COUNT` stays raised to 16.
+- `Window::set_native_popup_menus_enabled()` exposes the `WindowInner` switch
+  that `show_native_popup_menu()` already reads, so a window can keep context
+  menus on Slint's in-window popup. The workbench turns native menus off at
+  startup: `TrackPopupMenu` is a modal loop on the UI thread, and while it runs
+  no frame is produced and no timer fires, so a streaming transcript freezes
+  behind the menu until it is dismissed.
 
 ### `i-slint-renderer-software` 1.19.1
 

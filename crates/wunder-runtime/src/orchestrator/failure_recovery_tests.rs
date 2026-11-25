@@ -187,6 +187,18 @@ fn failed_question_panel_call_is_returned_to_the_model_before_waiting() {
                 assert_eq!(result.stop_reason.as_deref(), Some("question_panel"));
                 assert_eq!(fixture.requests.lock().len(), 2);
                 fixture.assert_settled("waiting_input");
+                // The live terminal frame must agree with the durable turn: a
+                // client folding it must not paint 已完成 while the panel is
+                // still waiting for the user.
+                let terminal = fixture
+                    .state
+                    .monitor
+                    .get_recent_events("fixture-thread", 64)
+                    .into_iter()
+                    .find(|event| event["type"] == "turn_terminal")
+                    .expect("the turn terminal must be recorded");
+                assert_eq!(terminal["data"]["status"], "waiting_input");
+                assert_eq!(terminal["data"]["waiting_for_user_input"], true);
             }
         })
     });

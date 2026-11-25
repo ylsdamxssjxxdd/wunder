@@ -5,7 +5,9 @@
 //! result both in the composer as a native chat attachment and on the system
 //! clipboard, so it can be pasted into any other program.
 
-use crate::{clipboard_image, image_attachment, screen_capture, MainWindow, ScreenshotOverlay};
+use crate::{
+    clipboard_image, image_attachment, screen_capture, CaptureRegion, MainWindow, ScreenshotOverlay,
+};
 use slint::ComponentHandle;
 use std::{
     cell::RefCell,
@@ -676,6 +678,11 @@ thread_local! {
     /// converted to this frame's physical pixels, so no scale factor has to be
     /// remembered (and none can go stale between showing and confirming).
     static PENDING: RefCell<Option<screen_capture::ScreenCapture>> = const { RefCell::new(None) };
+    /// Candidate window rectangles of the current capture, in frame-local
+    /// physical pixels. The selector asks for a hit index on every pointer
+    /// move; keeping the list here lets the reused selector window always test
+    /// against the latest capture without rebuilding its callbacks.
+    static HIT_REGIONS: RefCell<Vec<screen_capture::MonitorRect>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Install the workbench screenshot shortcuts: F1 hides the window first, F2
@@ -716,7 +723,20 @@ pub fn capture(app: slint::Weak<MainWindow>, hide_window: bool) {
         if hidden {
             settle_hidden_window(proof.as_ref());
         }
-        let result = screen_capture::capture_screen();
+        let result = screen_capture::capture_screen().map(|frame| {
+            // The candidate windows come from the desktop the frame froze, so
+            // click-to-select and the pixels the user confirms describe the
+            // same moment. `detect_regions` clips to the captured monitor, and
+            // the selector receives frame-local coordinates.
+            let monitor = screen_capture::MonitorRect {
+                left: frame.origin_x,
+                top: frame.origin_y,
+                right: frame.origin_x + frame.width as i32,
+                bottom: frame.origin_y + frame.height as i32,
+            };
+            let regions = screen_capture::detect_regions(monitor);
+            (frame, regions)
+        });
         let _ = slint::invoke_from_event_loop(move || {
             if hidden {
                 if let Some(state) = proof.as_ref() {
@@ -727,7 +747,7 @@ pub fn capture(app: slint::Weak<MainWindow>, hide_window: bool) {
             }
             CAPTURE_IN_FLIGHT.store(false, Ordering::Release);
             match result {
-                Ok(frame) => show_selector(app, frame),
+                Ok((frame, regions)) => show_selector(app, frame, regions),
                 Err(error) => report(&app, format!("截图失败：{error}")),
             }
         });
@@ -780,9 +800,32 @@ pub fn capture_fullscreen(app: slint::Weak<MainWindow>, hide_window: bool) {
     });
 }
 
-fn show_selector(app: slint::Weak<MainWindow>, frame: screen_capture::ScreenCapture) {
+fn show_selector(
+    app: slint::Weak<MainWindow>,
+    frame: screen_capture::ScreenCapture,
+    regions: Vec<screen_capture::MonitorRect>,
+) {
     let (width, height) = (frame.width, frame.height);
     let (origin_x, origin_y) = (frame.origin_x, frame.origin_y);
+    let frame_regions: Vec<screen_capture::MonitorRect> = regions
+        .into_iter()
+        .map(|region| screen_capture::MonitorRect {
+            left: region.left - origin_x,
+            top: region.top - origin_y,
+            right: region.right - origin_x,
+            bottom: region.bottom - origin_y,
+        })
+        .collect();
+    let model_regions: Vec<CaptureRegion> = frame_regions
+        .iter()
+        .map(|region| CaptureRegion {
+            x: region.left,
+            y: region.top,
+            w: region.width(),
+            h: region.height(),
+        })
+        .collect();
+    HIT_REGIONS.with(|slot| *slot.borrow_mut() = frame_regions);
     let result = OVERLAY.with(|slot| -> Result<(), String> {
         let mut slot = slot.borrow_mut();
         if slot.is_none() {
@@ -793,6 +836,10 @@ fn show_selector(app: slint::Weak<MainWindow>, frame: screen_capture::ScreenCapt
                 finish_selection(confirmed_app.clone(), x, y, width, height);
             });
             overlay.on_canceled(hide_selector);
+            // Hit testing stays in Rust: the selector only knows its own
+            // logical layout, while the candidates are physical-frame
+            // rectangles.
+            overlay.on_region_at(|x, y| HIT_REGIONS.with(|slot| hit_region(&slot.borrow(), x, y)));
             *slot = Some(overlay);
         }
         let overlay = slot.as_ref().expect("screenshot overlay was initialized");
@@ -804,10 +851,10 @@ fn show_selector(app: slint::Weak<MainWindow>, frame: screen_capture::ScreenCapt
         // selection into a fraction of itself.
         overlay.set_frame_width(width as i32);
         overlay.set_frame_height(height as i32);
-        overlay.set_sel_x(0.0);
-        overlay.set_sel_y(0.0);
-        overlay.set_sel_w(0.0);
-        overlay.set_sel_h(0.0);
+        overlay.set_regions(slint::ModelRc::new(slint::VecModel::from(model_regions)));
+        // The selector window is reused across captures; drop the drag state
+        // and the hover highlight a previous session may have left behind.
+        overlay.invoke_arm();
         // A borderless top-level window whose size is merely requested can be
         // constrained to the work area. That makes a 1600 px capture render
         // into a 1516 px selector: the preview is scaled and the real taskbar
@@ -923,6 +970,19 @@ fn hide_selector() {
     PENDING.with(|pending| {
         pending.borrow_mut().take();
     });
+    HIT_REGIONS.with(|slot| slot.borrow_mut().clear());
+}
+
+/// Index of the topmost candidate window containing a frozen-frame pixel, or
+/// `-1` when the pointer is over nothing. The detector returns the rectangles
+/// in stacking order, so the first containment is the window the user sees.
+fn hit_region(regions: &[screen_capture::MonitorRect], x: i32, y: i32) -> i32 {
+    regions
+        .iter()
+        .position(|region| {
+            x >= region.left && x < region.right && y >= region.top && y < region.bottom
+        })
+        .map_or(-1, |index| index as i32)
 }
 
 fn crop(
@@ -1065,5 +1125,33 @@ mod tests {
         let (width, height, rgba) = crop(&sample_frame(), -3, -2, 99, 99);
         assert_eq!((width, height), (4, 3));
         assert_eq!(rgba.len(), 4 * 3 * 4);
+    }
+
+    #[test]
+    fn click_selection_prefers_the_topmost_window() {
+        let regions = vec![
+            // Front window: the smaller one on top of the desktop-sized one.
+            screen_capture::MonitorRect {
+                left: 100,
+                top: 100,
+                right: 300,
+                bottom: 300,
+            },
+            screen_capture::MonitorRect {
+                left: 0,
+                top: 0,
+                right: 400,
+                bottom: 400,
+            },
+        ];
+        assert_eq!(hit_region(&regions, 200, 200), 0);
+        // Outside the front window falls through to the one behind it.
+        assert_eq!(hit_region(&regions, 20, 20), 1);
+        // Rectangle edges are exclusive on the right/bottom side, so adjacent
+        // windows never both claim the same pixel.
+        assert_eq!(hit_region(&regions, 399, 399), 1);
+        assert_eq!(hit_region(&regions, 400, 400), -1);
+        assert_eq!(hit_region(&regions, -1, 10), -1);
+        assert_eq!(hit_region(&[], 10, 10), -1);
     }
 }

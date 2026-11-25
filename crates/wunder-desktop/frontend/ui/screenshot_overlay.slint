@@ -9,6 +9,21 @@ import { Theme } from "theme.slint";
 // read from the platform: that value can still describe the previous monitor
 // (or 1.0 on a scaled display) at the moment the selector appears, and every
 // selection made against it then lands at a fraction of its intended size.
+//
+// Interaction model, matching what drawing tools do:
+//   * No selection: dragging draws a new region, a plain click selects the
+//     window rectangle under the pointer (the candidates are detected by Rust),
+//     and the detected window under the pointer is outlined while hovering.
+//   * With a selection: dragging inside moves it, dragging one of the eight
+//     handles resizes it, a click outside starts a new region.
+//
+// Slint has no bitwise operators, so the drag state and the grabbed edge are
+// small integers instead of a mask:
+//   mode: 0 idle · 1 creating · 2 moving · 3 resizing
+//   edge: 0 outside · 1 left · 2 right · 3 top · 4 bottom
+//         5 top-left · 6 top-right · 7 bottom-left · 8 bottom-right
+//         9 inside → move
+export struct CaptureRegion { x: int, y: int, w: int, h: int }
 
 component OverlayButton inherits Rectangle {
     in property <string> label;
@@ -25,11 +40,26 @@ component OverlayButton inherits Rectangle {
     button := TouchArea { mouse-cursor: pointer; clicked => { root.triggered(); } }
 }
 
+// One of the eight resize grips. Purely visual: the single full-window
+// TouchArea owns every pointer event and decides from the position which grip
+// is being dragged, so handles never fight over hit testing.
+component SelectionHandle inherits Rectangle {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    background: Theme.accent-ink;
+    border-width: 1px;
+    border-color: #ffffff;
+}
+
 export component ScreenshotOverlay inherits Window {
     in property <image> screen-image;
     // Physical size of the frozen frame the selector is drawn over.
     in property <int> frame-width: 0;
     in property <int> frame-height: 0;
+    // Detected top-level window rectangles, in frozen-frame pixels and in
+    // stacking order (topmost first). Empty on platforms without detection.
+    in property <[CaptureRegion]> regions: [];
     in-out property <float> sel-x: 0;
     in-out property <float> sel-y: 0;
     in-out property <float> sel-w: 0;
@@ -40,69 +70,345 @@ export component ScreenshotOverlay inherits Window {
     /// reader framed.
     callback confirmed(int, int, int, int);
     callback canceled();
+    /// Index of the region under a frozen-frame pixel, or -1 when the pointer
+    /// is over nothing. Implemented in Rust against the detected rectangles.
+    callback region-at(int, int) -> int;
 
     no-frame: true;
     always-on-top: true;
     background: transparent;
     forward-focus: keys;
-    property <bool> dragging: false;
-    property <float> anchor-x: 0;
-    property <float> anchor-y: 0;
-    property <bool> has-selection: root.sel-w >= 4 && root.sel-h >= 4;
+
+    private property <int> mode: 0;
+    private property <int> edge: 0;
+    private property <float> press-x: 0;
+    private property <float> press-y: 0;
+    // Selection geometry when the current drag started, so every move is an
+    // absolute offset from it instead of accumulating rounding drift.
+    private property <float> base-x: 0;
+    private property <float> base-y: 0;
+    private property <float> base-w: 0;
+    private property <float> base-h: 0;
+    private property <float> anchor-x: 0;
+    private property <float> anchor-y: 0;
+    // A press becomes a click only when the pointer never left a few pixels.
+    private property <bool> moved-away: false;
+    private property <int> hover-index: -1;
+    // Edge under the pointer while idle; kept in a property so the cursor
+    // binding does not have to recompute the hit test.
+    private property <int> cursor-edge: 0;
+    // Distance from an edge (and outside it) that still grabs that edge.
+    private property <float> handle-band: 7;
+    private property <bool> has-selection: root.sel-w >= 4 && root.sel-h >= 4;
     // Logical size of the preview surface, floored at one pixel so the mapping
     // below can never divide by zero on a window that has not been laid out.
     private property <float> view-width: max(1px, root.width) / 1px;
     private property <float> view-height: max(1px, root.height) / 1px;
+    // Selection size in real screen pixels, which is what the user cares about
+    // when framing a screenshot.
+    private property <int> dim-w: round(root.sel-w * root.frame-width / root.view-width);
+    private property <int> dim-h: round(root.sel-h * root.frame-height / root.view-height);
 
     function to-frame-x(value: float) -> int { return round(value * root.frame-width / root.view-width); }
     function to-frame-y(value: float) -> int { return round(value * root.frame-height / root.view-height); }
+    function to-view-x(value: int) -> float { return value * root.view-width / max(1, root.frame-width); }
+    function to-view-y(value: int) -> float { return value * root.view-height / max(1, root.frame-height); }
+
     function reset-selection() { root.sel-x = 0; root.sel-y = 0; root.sel-w = 0; root.sel-h = 0; }
+
+    /// Drop every piece of state a previous capture left behind. Rust calls
+    /// this whenever the reused selector window is armed with a new frame.
+    public function arm() {
+        root.mode = 0;
+        root.edge = 0;
+        root.cursor-edge = 0;
+        root.hover-index = -1;
+        root.moved-away = false;
+        root.anchor-x = 0;
+        root.anchor-y = 0;
+        root.press-x = 0;
+        root.press-y = 0;
+        root.base-x = 0;
+        root.base-y = 0;
+        root.base-w = 0;
+        root.base-h = 0;
+        root.reset-selection();
+    }
+
+    /// Edge under the pointer. `9` means the pointer is inside the selection
+    /// (move), `0` means outside it (start a new region).
+    function hit-at(x: float, y: float) -> int {
+        if !root.has-selection { return 0; }
+        let l = root.sel-x;
+        let r = root.sel-x + root.sel-w;
+        let t = root.sel-y;
+        let b = root.sel-y + root.sel-h;
+        let band = root.handle-band;
+        if x < l - band || x > r + band || y < t - band || y > b + band { return 0; }
+        // A side narrower than two bands cannot say which of its edges was
+        // meant; treat it as body so the selection can still be moved.
+        let wide = root.sel-w > band * 2;
+        let tall = root.sel-h > band * 2;
+        let near-l = wide && abs(x - l) <= band;
+        let near-r = wide && abs(x - r) <= band;
+        let near-t = tall && abs(y - t) <= band;
+        let near-b = tall && abs(y - b) <= band;
+        if near-l && near-t { return 5; }
+        if near-r && near-t { return 6; }
+        if near-l && near-b { return 7; }
+        if near-r && near-b { return 8; }
+        if near-l { return 1; }
+        if near-r { return 2; }
+        if near-t { return 3; }
+        if near-b { return 4; }
+        if x > l && x < r && y > t && y < b { return 9; }
+        return 0;
+    }
+
+    function begin-drag(x: float, y: float) {
+        root.press-x = x;
+        root.press-y = y;
+        root.base-x = root.sel-x;
+        root.base-y = root.sel-y;
+        root.base-w = root.sel-w;
+        root.base-h = root.sel-h;
+        root.anchor-x = x;
+        root.anchor-y = y;
+        root.moved-away = false;
+        let hit = root.hit-at(x, y);
+        root.edge = hit;
+        if hit == 9 {
+            root.mode = 2;
+        } else if hit != 0 {
+            root.mode = 3;
+        } else {
+            // Free region from scratch, or from a click that will become a
+            // window selection on release.
+            root.mode = 1;
+            root.reset-selection();
+            root.sel-x = x;
+            root.sel-y = y;
+        }
+    }
+
+    function drag-to(x: float, y: float) {
+        if root.mode == 1 {
+            root.sel-x = min(root.anchor-x, x);
+            root.sel-y = min(root.anchor-y, y);
+            root.sel-w = abs(root.anchor-x - x);
+            root.sel-h = abs(root.anchor-y - y);
+            if root.sel-w > 2 || root.sel-h > 2 { root.moved-away = true; }
+        } else if root.mode == 2 {
+            root.sel-x = (root.base-x + x - root.press-x).clamp(0, root.view-width - root.base-w);
+            root.sel-y = (root.base-y + y - root.press-y).clamp(0, root.view-height - root.base-h);
+        } else if root.mode == 3 {
+            root.resize-to(x, y);
+        }
+    }
+
+    function resize-to(x: float, y: float) {
+        let l0 = root.base-x;
+        let r0 = root.base-x + root.base-w;
+        let t0 = root.base-y;
+        let b0 = root.base-y + root.base-h;
+        let dx = x - root.press-x;
+        let dy = y - root.press-y;
+        let minimum = 4;
+        // Slint locals are immutable, so each edge is chosen in one expression:
+        // the pulled edge follows the pointer (clamped), the opposite one stays
+        // where the drag started.
+        let l = (root.edge == 1 || root.edge == 5 || root.edge == 7) ? (l0 + dx).clamp(0, r0 - minimum) : l0;
+        let r = (root.edge == 2 || root.edge == 6 || root.edge == 8) ? (r0 + dx).clamp(l0 + minimum, root.view-width) : r0;
+        let t = (root.edge == 3 || root.edge == 5 || root.edge == 6) ? (t0 + dy).clamp(0, b0 - minimum) : t0;
+        let b = (root.edge == 4 || root.edge == 7 || root.edge == 8) ? (b0 + dy).clamp(t0 + minimum, root.view-height) : b0;
+        root.sel-x = l;
+        root.sel-y = t;
+        root.sel-w = r - l;
+        root.sel-h = b - t;
+    }
+
+    function end-drag(x: float, y: float) {
+        if root.mode == 1 {
+            if !root.moved-away {
+                // A press without movement is the auto-detect click: pick the
+                // window under the pointer, or clear the selection on empty
+                // desktop so the next drag starts clean.
+                let index = root.region-at(root.to-frame-x(x), root.to-frame-y(y));
+                if index >= 0 && index < root.regions.length {
+                    root.sel-x = root.to-view-x(root.regions[index].x);
+                    root.sel-y = root.to-view-y(root.regions[index].y);
+                    root.sel-w = root.to-view-x(root.regions[index].w);
+                    root.sel-h = root.to-view-y(root.regions[index].h);
+                    root.hover-index = -1;
+                } else {
+                    root.reset-selection();
+                    root.hover-index = index;
+                }
+            } else if root.sel-w < 4 || root.sel-h < 4 {
+                root.reset-selection();
+            }
+        }
+        root.mode = 0;
+        root.edge = 0;
+        root.cursor-edge = root.hit-at(x, y);
+    }
+
+    function nudge(dx: int, dy: int, big: bool) {
+        if root.has-selection && root.mode == 0 {
+            // One physical screen pixel, so the nudge is invisible at 100%
+            // and still exact on scaled displays.
+            let step-x = (big ? 10 : 1) * root.view-width / max(1, root.frame-width);
+            let step-y = (big ? 10 : 1) * root.view-height / max(1, root.frame-height);
+            root.sel-x = (root.sel-x + dx * step-x).clamp(0, root.view-width - root.sel-w);
+            root.sel-y = (root.sel-y + dy * step-y).clamp(0, root.view-height - root.sel-h);
+        }
+    }
+
+    function cursor-kind() -> MouseCursor {
+        if root.mode == 2 { return MouseCursor.move; }
+        if root.mode == 1 { return MouseCursor.crosshair; }
+        let grip = root.mode == 3 ? root.edge : root.cursor-edge;
+        if grip == 1 { return MouseCursor.w-resize; }
+        if grip == 2 { return MouseCursor.e-resize; }
+        if grip == 3 { return MouseCursor.n-resize; }
+        if grip == 4 { return MouseCursor.s-resize; }
+        if grip == 5 { return MouseCursor.nw-resize; }
+        if grip == 6 { return MouseCursor.ne-resize; }
+        if grip == 7 { return MouseCursor.sw-resize; }
+        if grip == 8 { return MouseCursor.se-resize; }
+        if grip == 9 { return MouseCursor.move; }
+        return MouseCursor.crosshair;
+    }
+
+    function hover-x() -> float {
+        if root.hover-index >= 0 && root.hover-index < root.regions.length {
+            return root.to-view-x(root.regions[root.hover-index].x);
+        }
+        return 0;
+    }
+    function hover-y() -> float {
+        if root.hover-index >= 0 && root.hover-index < root.regions.length {
+            return root.to-view-y(root.regions[root.hover-index].y);
+        }
+        return 0;
+    }
+    function hover-w() -> float {
+        if root.hover-index >= 0 && root.hover-index < root.regions.length {
+            return root.to-view-x(root.regions[root.hover-index].w);
+        }
+        return 0;
+    }
+    function hover-h() -> float {
+        if root.hover-index >= 0 && root.hover-index < root.regions.length {
+            return root.to-view-y(root.regions[root.hover-index].h);
+        }
+        return 0;
+    }
+
     function finish() {
         if root.has-selection {
-            root.confirmed(root.to-frame-x(root.sel-x), root.to-frame-y(root.sel-y),
-                root.to-frame-x(root.sel-w), root.to-frame-y(root.sel-h));
+            let left = root.to-frame-x(root.sel-x);
+            let top = root.to-frame-y(root.sel-y);
+            let right = root.to-frame-x(root.sel-x + root.sel-w);
+            let bottom = root.to-frame-y(root.sel-y + root.sel-h);
+            root.confirmed(left, top, right - left, bottom - top);
         }
     }
     function select-all() { root.sel-x = 0; root.sel-y = 0; root.sel-w = root.view-width; root.sel-h = root.view-height; root.finish(); }
 
     Image { width: parent.width; height: parent.height; source: root.screen-image; image-fit: fill; }
     Rectangle { background: #00000092; }
+    // The window a click would select. A thin outline is enough: filling it
+    // would hide the very pixels the user is judging.
+    if !root.has-selection && root.mode == 0 && root.hover-index >= 0 : Rectangle {
+        x: root.hover-x() * 1px; y: root.hover-y() * 1px;
+        width: max(1px, root.hover-w() * 1px); height: max(1px, root.hover-h() * 1px);
+        background: #ffffff10;
+        border-width: 2px;
+        border-color: Theme.accent-ink;
+    }
     // Restore original pixels inside the selection for a faithful preview.
     if root.has-selection : Rectangle {
         x: root.sel-x * 1px; y: root.sel-y * 1px; width: root.sel-w * 1px; height: root.sel-h * 1px; clip: true;
         Image { x: -(root.sel-x * 1px); y: -(root.sel-y * 1px); width: root.width; height: root.height; source: root.screen-image; image-fit: fill; }
         Rectangle { background: transparent; border-width: 2px; border-color: Theme.accent-ink; }
     }
+    // Eight grips: four corners plus the middle of each edge once the side is
+    // wide enough to place them without overlap.
+    if root.has-selection && root.mode != 1 : Rectangle {
+        SelectionHandle { x: root.sel-x * 1px - 4px; y: root.sel-y * 1px - 4px; }
+        SelectionHandle { x: (root.sel-x + root.sel-w) * 1px - 4px; y: root.sel-y * 1px - 4px; }
+        SelectionHandle { x: root.sel-x * 1px - 4px; y: (root.sel-y + root.sel-h) * 1px - 4px; }
+        SelectionHandle { x: (root.sel-x + root.sel-w) * 1px - 4px; y: (root.sel-y + root.sel-h) * 1px - 4px; }
+        if root.sel-w > 24 : SelectionHandle { x: (root.sel-x + root.sel-w / 2) * 1px - 4px; y: root.sel-y * 1px - 4px; }
+        if root.sel-w > 24 : SelectionHandle { x: (root.sel-x + root.sel-w / 2) * 1px - 4px; y: (root.sel-y + root.sel-h) * 1px - 4px; }
+        if root.sel-h > 24 : SelectionHandle { x: root.sel-x * 1px - 4px; y: (root.sel-y + root.sel-h / 2) * 1px - 4px; }
+        if root.sel-h > 24 : SelectionHandle { x: (root.sel-x + root.sel-w) * 1px - 4px; y: (root.sel-y + root.sel-h / 2) * 1px - 4px; }
+    }
+    // Live size readout in real screen pixels.
+    if root.has-selection && root.mode != 1 : Rectangle {
+        x: (root.sel-x * 1px + 12px).clamp(4px, root.width - 96px);
+        y: (root.sel-y * 1px + 12px).clamp(4px, root.height - 26px);
+        width: 92px; height: 22px; border-radius: 4px; background: #000000cc;
+        Text {
+            text: "\{root.dim-w} × \{root.dim-h}";
+            color: #ffffff; font-size: 11px; horizontal-alignment: center; vertical-alignment: center;
+        }
+    }
     touch := TouchArea {
-        mouse-cursor: crosshair;
+        mouse-cursor: root.cursor-kind();
         pointer-event(event) => {
             if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
-                root.anchor-x = (self.mouse-x / 1px).clamp(0, root.view-width);
-                root.anchor-y = (self.mouse-y / 1px).clamp(0, root.view-height);
-                root.reset-selection(); root.dragging = true;
+                root.begin-drag(self.mouse-x / 1px, self.mouse-y / 1px);
             } else if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
-                root.dragging = false;
+                root.end-drag(self.mouse-x / 1px, self.mouse-y / 1px);
             } else if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
                 root.canceled();
+            } else if event.kind == PointerEventKind.move {
+                let x = self.mouse-x / 1px;
+                let y = self.mouse-y / 1px;
+                if root.mode == 0 {
+                    if root.has-selection {
+                        root.hover-index = -1;
+                        root.cursor-edge = root.hit-at(x, y);
+                    } else {
+                        root.cursor-edge = 0;
+                        root.hover-index = root.region-at(root.to-frame-x(x), root.to-frame-y(y));
+                    }
+                } else {
+                    root.drag-to(x, y);
+                }
+            } else if event.kind == PointerEventKind.cancel {
+                // A lost grab must not leave the selector stuck mid-drag.
+                root.mode = 0;
+                root.edge = 0;
             }
         }
-        moved => {
-            if root.dragging {
-                let x = (self.mouse-x / 1px).clamp(0, root.view-width);
-                let y = (self.mouse-y / 1px).clamp(0, root.view-height);
-                root.sel-x = min(root.anchor-x, x); root.sel-y = min(root.anchor-y, y);
-                root.sel-w = abs(root.anchor-x - x); root.sel-h = abs(root.anchor-y - y);
+        double-clicked => {
+            if root.has-selection && root.mode == 0 { root.finish(); }
+        }
+        // Slint reports no "pointer left the window" pointer event, so drop the
+        // window highlight when hover ends instead of leaving it outlined on a
+        // screen the pointer has already left (a second monitor, for example).
+        changed has-hover => {
+            if !self.has-hover && root.mode == 0 {
+                root.hover-index = -1;
+                root.cursor-edge = 0;
             }
         }
     }
-    if !root.has-selection && !root.dragging : Rectangle {
-        x: (parent.width - 392px) / 2; y: 24px; width: 392px; height: 32px; border-radius: 6px; background: #000000b8;
-        Text { text: I18n.so_hint; color: #ffffff; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+    if root.mode == 0 : Rectangle {
+        x: (parent.width - min(640px, parent.width - 32px)) / 2; y: 24px;
+        width: min(640px, parent.width - 32px); height: 32px; border-radius: 6px; background: #000000b8;
+        Text { text: root.has-selection ? I18n.so_adjust_hint : I18n.so_hint; color: #ffffff; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
     }
-    if root.has-selection && !root.dragging : Rectangle {
+    if root.has-selection && root.mode == 0 : Rectangle {
         x: ((root.sel-x + root.sel-w) * 1px - 198px).clamp(4px, root.width - 202px);
         y: ((root.sel-y + root.sel-h) * 1px + 8px).clamp(4px, root.height - 38px);
         width: 198px; height: 34px; border-radius: 7px; background: #282828ee;
+        // Sits between the buttons so a press on the panel background does not
+        // reach the selector's full-window TouchArea and move the selection.
+        TouchArea { mouse-cursor: MouseCursor.default; }
         HorizontalLayout { padding-left: 4px; padding-right: 4px; padding-top: 3px; padding-bottom: 3px; spacing: 5px;
             OverlayButton { label: I18n.so_fullscreen; triggered => { root.select-all(); } }
             OverlayButton { label: I18n.common_done; primary: true; triggered => { root.finish(); } }
@@ -112,7 +418,11 @@ export component ScreenshotOverlay inherits Window {
     keys := FocusScope {
         key-pressed(event) => {
             if event.text == Key.Escape { root.canceled(); accept }
-            else if event.text == Key.Return && root.has-selection { root.finish(); accept }
+            else if event.text == Key.Return && root.has-selection && root.mode == 0 { root.finish(); accept }
+            else if root.has-selection && root.mode == 0 && event.text == Key.LeftArrow { root.nudge(-1, 0, event.modifiers.shift); accept }
+            else if root.has-selection && root.mode == 0 && event.text == Key.RightArrow { root.nudge(1, 0, event.modifiers.shift); accept }
+            else if root.has-selection && root.mode == 0 && event.text == Key.UpArrow { root.nudge(0, -1, event.modifiers.shift); accept }
+            else if root.has-selection && root.mode == 0 && event.text == Key.DownArrow { root.nudge(0, 1, event.modifiers.shift); accept }
             else { reject }
         }
     }

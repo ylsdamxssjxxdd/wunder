@@ -425,9 +425,11 @@ mod rounded_region_tests {
     }
 }
 
-/// Keep the workbench silhouette in sync with its physical size and zoom
-/// state. Maximized windows meet the screen edges and stay square.
-pub fn sync_main_window_shape(window: &slint::Window) {
+/// Keep the workbench silhouette in sync with its physical size, zoom state and
+/// the radius the UI paints. `radius_lg` is `Theme.radius-lg` in logical pixels
+/// — the same token `window_chrome.slint` draws the frame with — so the native
+/// region and the painted edge cannot drift apart if the token changes.
+pub fn sync_main_window_shape(window: &slint::Window, radius_lg: f32) {
     use slint::winit_030::WinitWindowAccessor;
 
     let Some((scale, maximized)) =
@@ -435,9 +437,7 @@ pub fn sync_main_window_shape(window: &slint::Window) {
     else {
         return;
     };
-    // 12.0 mirrors Theme.radius-lg: the rounded window-surface and the region
-    // edge the frame's hairline is drawn across.
-    apply_rounded_region(window, if maximized { 0.0 } else { 12.0 * scale });
+    apply_rounded_region(window, if maximized { 0.0 } else { radius_lg.max(0.0) * scale });
 }
 
 #[cfg(windows)]

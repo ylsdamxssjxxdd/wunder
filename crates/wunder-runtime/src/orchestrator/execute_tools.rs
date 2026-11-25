@@ -205,12 +205,15 @@ impl Orchestrator {
         // 收尾前最后一道取消闸：停止已受理的执行不得再按完成结清（llm.rs:330-343）。
         // 该错误由 execute.rs 的外层 match 路由进 finish_request_error 的取消结清。
         self.ensure_not_cancelled(session_id)?;
+        // 问询面板把这一轮停在用户身上：落库状态是 waiting_input，终结帧也必须
+        // 用同一个状态。否则实时流说 completed、持久轮次说 waiting_input，前台
+        // 会先画「已完成」，直到重新打开线程读到 durable 状态才改回「等待回答」。
+        let status = if waiting_question_panel {
+            "waiting_input"
+        } else {
+            "completed"
+        };
         if let Some(thread_turn_id) = last_round_info.thread_turn_id {
-            let status = if waiting_question_panel {
-                "waiting_input"
-            } else {
-                "completed"
-            };
             let payload = json!({
                 "session_id": session_id,
                 "turn_id": thread_turn_id.to_string(),
@@ -244,7 +247,7 @@ impl Orchestrator {
             emitter,
             last_round_info,
             TurnTerminalEvent {
-                status: "completed",
+                status,
                 stop_reason: Some(stop_reason),
                 round_usage: has_round_usage.then_some(round_usage),
                 error: None,

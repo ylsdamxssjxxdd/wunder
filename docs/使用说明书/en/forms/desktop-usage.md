@@ -34,6 +34,8 @@ The screenshot shortcuts only apply while the workbench window has focus, so `F1
 
 The confirmed region drops into the composer as an attachment and is copied to the system clipboard as well. The tray menu and the composer's `+` → Screenshot entry are the same as `F1`.
 
+The selection stays editable after you release the mouse: drag inside it to move, drag any of the eight corner/edge handles to resize, nudge with the arrow keys (1 screen pixel, 10 with `Shift`), then press `Enter` to confirm or `Esc`/right-click to cancel. Before you draw anything, hovering outlines the window under the pointer and a click selects that window without lining the edges up by hand.
+
 ## Desktop-only capabilities
 
 | Capability | What it is |

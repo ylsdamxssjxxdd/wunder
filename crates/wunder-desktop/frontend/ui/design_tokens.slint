@@ -64,6 +64,11 @@ export global Theme {
     out property <color> accent-deep: palette == "hula-green" ? #0e8d72 : palette == "forest" ? #24614a : palette == "honey" ? #9c6f1f : palette == "minimal" ? #9ba6ba : palette == "tech-blue" ? #0ea5e9 : #E07A12;
     out property <color> accent-secondary: palette == "hula-green" ? #5dcbb0 : palette == "forest" ? #7fb39a : palette == "honey" ? #e0bd77 : palette == "minimal" ? #b5bfce : palette == "tech-blue" ? #7c9cff : #FFC98A;
     out property <color> accent-soft: palette == "hula-green" ? #e7f7f2 : palette == "forest" ? #e9f2ee : palette == "honey" ? #f8f0dd : palette == "minimal" ? #f3f4f6 : palette == "tech-blue" ? #e7f7ff : #FDF0DE;
+    // 行内图标按钮（重命名／轨迹／归档…）的悬停底板。这些按钮压在行高亮
+    // （accent-soft）上，铺中性灰会读成另一套配色、像被禁用；淡主色与行底
+    // 同族，白底抽屉里同样立得住。alpha 0.18 对齐云端版的 --ui-accent-soft-2，
+    // 叠加在 accent-soft 与白色侧栏上都只是一层浅染。
+    out property <color> action-hover: accent.transparentize(0.82);
     out property <color> bubble: #ffffff;
     out property <color> mine: palette == "hula-green" ? #dbf2eb : palette == "forest" ? #dfeae4 : palette == "honey" ? #f4e8cf : palette == "minimal" ? #eceff3 : palette == "tech-blue" ? #d7eeff : #FDF0DE;
     // Timeline surfaces: the user bubble, the 1px connector that runs through

@@ -2370,6 +2370,17 @@ fn local_status_overrides(state: &State) -> Vec<(String, String)> {
     for background in &state.background {
         upsert(&background.output.session, background.output.state());
     }
+    // A pending 问询面板 is a durable user gate, not a local run: the turn is
+    // already settled as waiting_input, and no executor has to exist for the
+    // user to answer. Pin the row so a catalogue read cannot demote it to
+    // idle/completed while the user is looking at another thread. A turn this
+    // window is actually driving (above) keeps its own status.
+    for (session, panel) in &state.inquiries {
+        if panel.questions.is_empty() || statuses.iter().any(|(id, _)| id == session) {
+            continue;
+        }
+        statuses.push((session.clone(), "等待用户输入".to_string()));
+    }
     statuses
 }
 
@@ -5462,8 +5473,18 @@ fn drive_turn(
                             .unwrap_or_default()
                             .to_string();
                         let key = panel.consumption_key(&session);
+                        let mut parked = false;
                         if !inquiry_was_consumed(&state, &key) {
                             state.inquiries.insert(session.clone(), panel);
+                            parked = true;
+                        }
+                        if parked {
+                            // The panel is the turn's state from this frame on:
+                            // the engine ends the turn as waiting_input right
+                            // after publishing it. Say so now so a background
+                            // thread never paints 任务完成 between these frames.
+                            active.set_state("等待用户输入", Phase::Inquiry);
+                            dirty = true;
                         }
                         app.set_title_inquiry_count(state.inquiries.len() as i32);
                         if app.get_active_session_id() == session.as_str() {
@@ -6668,6 +6689,29 @@ mod turn_tests {
             "an explicit empty plan is a real publish and replaces the cache"
         );
         assert!(plans["a"].1.is_empty());
+    }
+
+    #[test]
+    fn a_question_panel_terminal_parks_the_row_on_the_user() {
+        let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
+        let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
+        let mut live = timeline.borrow_mut();
+        live.begin_turn("fixture-root", "Fixture input");
+        apply_event(
+            &mut output,
+            &mut live,
+            &serde_json::json!({
+                "event":"turn_terminal",
+                "data":{"status":"waiting_input","waiting_for_user_input":true}
+            }),
+        )
+        .unwrap();
+        assert_eq!(output.state(), "等待用户输入");
+        assert_eq!(output.phase, Phase::Inquiry);
+        assert!(
+            output.phase.live(),
+            "a parked question panel still owes the user an answer"
+        );
     }
 
     #[test]

@@ -142,6 +142,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = MainWindow::new()?;
     startup_log("main_window_new", startup_boot);
+    // 右键菜单画在窗口内，不用原生 Win32 菜单。TrackPopupMenu 会在 UI 线程跑
+    // 嵌套模态循环：菜单开着期间不出帧、不跑定时器，流式输出的回复会整段冻住。
+    // 弹层留在同一事件循环里，菜单开着页面照常刷新；样式由 fluent 菜单的本地
+    // 覆盖压到与应用卡片一致（148px、28px 行高、13px 字）。
+    app.window().set_native_popup_menus_enabled(false);
     // 界面语言：窗口把 `runtime-language` 派生成 `ui-zh` 后回传，这里落到
     // `I18n.zh`。先装回调，任何设置投影（启动加载 / 设置页保存）都会即时生效。
     ui_language::install(&app);
@@ -402,23 +407,34 @@ fn install_composer_popover_dismissal(app: &MainWindow) {
         if let Some(app) = weak.upgrade() {
             crate::window_placement::observe(&app, event);
         }
-        if matches!(
-            event,
-            winit::event::WindowEvent::Resized(_)
-                | winit::event::WindowEvent::ScaleFactorChanged { .. }
-        ) {
-            native_window::sync_main_window_shape(window);
-            if matches!(event, winit::event::WindowEvent::ScaleFactorChanged { .. }) {
-                // The backend records the new ratio while it dispatches this
-                // event, so read it on the next turn rather than the stale
-                // value the filter would still see here.
-                let weak = weak.clone();
-                slint::Timer::single_shot(std::time::Duration::ZERO, move || {
-                    if let Some(app) = weak.upgrade() {
-                        sync_device_scale(&app);
-                    }
-                });
+        // The native region follows the client size immediately; the device
+        // ratio is still stale while this event is dispatched, so a region
+        // built here after a DPI change would keep the old physical radius and
+        // shave the corners of a frame painted at the new one.
+        if matches!(event, winit::event::WindowEvent::Resized(_)) {
+            if let Some(app) = weak.upgrade() {
+                // The region radius comes from the same token the frame paints
+                // with; a second constant here would let the two drift apart.
+                native_window::sync_main_window_shape(
+                    window,
+                    app.global::<Theme>().get_radius_lg(),
+                );
             }
+        }
+        if matches!(event, winit::event::WindowEvent::ScaleFactorChanged { .. }) {
+            // The backend records the new ratio while it dispatches this
+            // event, so read it on the next turn rather than the stale value
+            // the filter would still see here.
+            let weak = weak.clone();
+            slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+                if let Some(app) = weak.upgrade() {
+                    sync_device_scale(&app);
+                    native_window::sync_main_window_shape(
+                        app.window(),
+                        app.global::<Theme>().get_radius_lg(),
+                    );
+                }
+            });
         }
         // The touch-keyboard gate reads this before Slint dispatches the
         // press that may move focus into a text field.
@@ -584,7 +600,10 @@ fn sync_device_scale(app: &MainWindow) {
 /// Show the workbench and settle its native silhouette before the first frame.
 pub(crate) fn show_main_window(app: &MainWindow) -> Result<(), slint::PlatformError> {
     app.show()?;
-    native_window::sync_main_window_shape(app.window());
+    native_window::sync_main_window_shape(
+        app.window(),
+        app.global::<Theme>().get_radius_lg(),
+    );
     // The window only knows its monitor's ratio once it exists on screen.
     sync_device_scale(app);
     Ok(())
@@ -1387,4 +1406,71 @@ fn install_slint_platform() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|error| format!("初始化 Slint Win7 软件渲染平台失败：{error:?}"))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod window_frame_tests {
+    use super::{MainWindow, Theme};
+    use slint::ComponentHandle;
+
+    fn assert_frame(pixel: slint::Rgba8Pixel, expected: slint::Color) {
+        let nearby = |a: u8, b: u8| (i32::from(a) - i32::from(b)).abs() <= 6;
+        assert!(
+            pixel.a == 255
+                && nearby(pixel.r, expected.red())
+                && nearby(pixel.g, expected.green())
+                && nearby(pixel.b, expected.blue()),
+            "expected the window-frame colour {expected:?} on a covered pixel, got {pixel:?}"
+        );
+    }
+
+    /// 回归：窗框必须是实心带，不能只剩抗锯齿边缘。旧版 1px 可见带在圆角
+    /// 45° 方向上没有一颗像素被满覆盖，测试会在这里拿到背景色；见
+    /// docs/经验教训.md「硬裁窗口的框线：可见带要整像素」。
+    ///
+    /// `take_snapshot` 不经过原生 region，所以这里验证的是绘制侧：四边各两
+    /// 像素、四角弧线上也有同样宽度的实心像素。region 裁形由
+    /// `sync_main_window_shape` 保证使用同一个 Theme.radius-lg。
+    #[test]
+    fn frame_band_covers_edges_and_corner_arcs() {
+        let _ui = crate::test_support::lock();
+        crate::register_bundled_font().expect("register bundled font");
+        let app = MainWindow::new().expect("create main window");
+        app.window()
+            .set_size(slint::PhysicalSize::new(480, 320));
+        let pixels = app.window().take_snapshot().expect("snapshot");
+        let width = pixels.width() as usize;
+        let height = pixels.height() as usize;
+        assert!(
+            width > 200 && height > 200,
+            "snapshot has no usable size: {width}x{height}"
+        );
+        let expected = app.global::<Theme>().get_window_frame();
+        let at = |x: usize, y: usize| pixels.as_slice()[y * width + x];
+
+        // Two device pixels on every straight side.
+        for (x, y) in [
+            (width / 2, 0),
+            (width / 2, 1),
+            (width / 2, height - 1),
+            (width / 2, height - 2),
+            (0, height / 2),
+            (1, height / 2),
+            (width - 1, height / 2),
+            (width - 2, height / 2),
+        ] {
+            assert_frame(at(x, y), expected);
+        }
+        // The 45° point of the 12px corner, two pixels inside the band.
+        for (x, y) in [
+            (4, 4),
+            (width - 5, 4),
+            (4, height - 5),
+            (width - 5, height - 5),
+        ] {
+            assert_frame(at(x, y), expected);
+        }
+    }
+}
+
+
 
