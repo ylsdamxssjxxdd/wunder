@@ -268,9 +268,6 @@ pub struct StyledTextItem {
     anchor_position_byte_offset: Property<i32>,
     cursor_position_byte_offset: Property<i32>,
     pub cached_rendering_data: CachedRenderingData,
-    /// The unit of the mouse selection under way, if any.
-    #[cfg_attr(not(feature = "shared-parley"), allow(dead_code))]
-    mouse_selection: Cell<MouseSelection>,
     /// Set while a press in this text is selecting: the drag keeps extending the selection.
     pressed: Cell<bool>,
     /// What a selection covers of this text, as last drawn, with the colour behind it.
@@ -279,54 +276,6 @@ pub struct StyledTextItem {
     long_press_timer: Timer,
     #[cfg(target_os = "android")]
     long_press_origin: Cell<Option<LogicalPoint>>,
-}
-
-/// What a mouse selection in a `StyledText` grows by: a press selects by character, a double
-/// click by word and a triple click by paragraph.
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[cfg_attr(not(feature = "shared-parley"), allow(dead_code))]
-enum SelectionUnit {
-    Character = 1,
-    Word,
-    Paragraph,
-}
-
-impl SelectionUnit {
-    /// `click_count` counts the clicks before this one at the same spot.
-    #[cfg(feature = "shared-parley")]
-    fn for_click_count(click_count: u8) -> Self {
-        match click_count % 3 {
-            0 => Self::Character,
-            1 => Self::Word,
-            _ => Self::Paragraph,
-        }
-    }
-}
-
-/// An `Option<SelectionUnit>` as a field of the item: cbindgen can't lay an `Option` of an
-/// enum out for the C++ struct, so it is the unit's discriminant, 0 for `None`.
-#[repr(transparent)]
-#[derive(Clone, Copy, Default)]
-struct MouseSelection(u8);
-
-#[cfg(feature = "shared-parley")]
-impl MouseSelection {
-    fn get(self) -> Option<SelectionUnit> {
-        match self.0 {
-            1 => Some(SelectionUnit::Character),
-            2 => Some(SelectionUnit::Word),
-            3 => Some(SelectionUnit::Paragraph),
-            _ => None,
-        }
-    }
-}
-
-#[cfg(feature = "shared-parley")]
-impl From<Option<SelectionUnit>> for MouseSelection {
-    fn from(unit: Option<SelectionUnit>) -> Self {
-        Self(unit.map_or(0, |unit| unit as u8))
-    }
 }
 
 impl Item for StyledTextItem {
@@ -823,100 +772,6 @@ impl StyledTextItem {
     pub fn clear_selection(self: Pin<&Self>) {
         self.anchor_position_byte_offset.set(self.cursor_position_byte_offset());
     }
-
-    /// Pressing and dragging selects; a double click selects a word, a triple click a paragraph.
-    /// `None` for the events the selection doesn't handle, a click without a drag among them:
-    /// `input_event` then follows a link under it, as without `selectable`.
-    #[cfg(feature = "shared-parley")]
-    fn selection_mouse_event(
-        self: Pin<&Self>,
-        event: &MouseEvent,
-        find_link: &dyn Fn(&LogicalPoint) -> Option<std::string::String>,
-        offset_at: &dyn Fn(&LogicalPoint) -> Option<usize>,
-        cursor: &mut super::MouseCursorInner,
-        window_adapter: &Rc<dyn WindowAdapter>,
-        self_rc: &ItemRc,
-    ) -> Option<InputEventResult> {
-        let set = |anchor: usize, focus: usize| {
-            self.anchor_position_byte_offset.set(anchor as i32);
-            self.cursor_position_byte_offset.set(focus as i32);
-        };
-        match event {
-            MouseEvent::Pressed {
-                position, button: PointerEventButton::Left, click_count, ..
-            } => {
-                let offset = offset_at(position)?;
-                let styled = self.text();
-                let offset = crate::styled_text::clamp_byte_offset(&styled, offset as i32);
-                let unit = SelectionUnit::for_click_count(*click_count);
-                self.mouse_selection.set(Some(unit).into());
-                *cursor = selectable_text_cursor(find_link(position).is_some());
-                // As in a `TextInput`, the press takes the focus, which clears the selection
-                // of the item that had it. A no-op when this item has it already.
-                WindowInner::from_pub(window_adapter.window()).set_focus_item(
-                    self_rc,
-                    true,
-                    FocusReason::PointerClick,
-                );
-                let anchor = if window_adapter.window().0.context().modifiers().get().shift() {
-                    crate::styled_text::clamp_byte_offset(
-                        &styled,
-                        self.anchor_position_byte_offset(),
-                    )
-                } else {
-                    offset
-                };
-                let (anchor, focus) = selection_by_unit(&styled, anchor, offset, unit);
-                set(anchor, focus);
-                Some(InputEventResult::GrabMouse)
-            }
-            MouseEvent::Moved { position, .. } => {
-                let Some(unit) = self.mouse_selection.get().get() else {
-                    *cursor = selectable_text_cursor(find_link(position).is_some());
-                    return Some(InputEventResult::EventAccepted);
-                };
-                *cursor = selectable_text_cursor(false);
-                if let Some(offset) = offset_at(position) {
-                    let styled = self.text();
-                    let offset = crate::styled_text::clamp_byte_offset(&styled, offset as i32);
-                    let anchor = crate::styled_text::clamp_byte_offset(
-                        &styled,
-                        self.anchor_position_byte_offset(),
-                    );
-                    let (anchor, focus) = selection_by_unit(&styled, anchor, offset, unit);
-                    set(anchor, focus);
-                }
-                Some(InputEventResult::GrabMouse)
-            }
-            MouseEvent::Released { position, button: PointerEventButton::Left, .. } => {
-                *cursor = selectable_text_cursor(find_link(position).is_some());
-                // A press released with nothing selected is a click, left to the link handling
-                // in `input_event`. (A Shift-click extends the selection without moving.)
-                let clicked = self.mouse_selection.take().get() == Some(SelectionUnit::Character)
-                    && !self.has_selection();
-                if clicked {
-                    return None;
-                }
-                self.copy_clipboard(window_adapter, Clipboard::SelectionClipboard);
-                Some(InputEventResult::EventAccepted)
-            }
-            MouseEvent::Exit => {
-                self.mouse_selection.take();
-                Some(InputEventResult::EventIgnored)
-            }
-            _ => None,
-        }
-    }
-}
-
-/// The pointer over a link, an I-beam over the rest of selectable text.
-#[cfg(feature = "shared-parley")]
-fn selectable_text_cursor(over_link: bool) -> super::MouseCursorInner {
-    super::MouseCursorInner::BuiltIn(if over_link {
-        super::BuiltInMouseCursor::Pointer
-    } else {
-        super::BuiltInMouseCursor::Text
-    })
 }
 
 /// `anchor` and `cursor` clamped into `text`, the smaller first.
@@ -935,36 +790,6 @@ fn ordered_raw_offsets(
     let anchor = crate::styled_text::clamp_byte_offset(styled, anchor);
     let cursor = crate::styled_text::clamp_byte_offset(styled, cursor);
     (anchor.min(cursor), anchor.max(cursor))
-}
-
-/// `anchor..focus` (either way round), widened to whole words or paragraphs as `unit` says.
-/// A word or a paragraph lies within one paragraph of `styled`, so the text isn't joined.
-#[cfg(feature = "shared-parley")]
-fn selection_by_unit(
-    styled: &crate::styled_text::StyledText,
-    anchor: usize,
-    focus: usize,
-    unit: SelectionUnit,
-) -> (usize, usize) {
-    let unit_at = |offset: usize| -> core::ops::Range<usize> {
-        let Some((paragraph, range)) = crate::styled_text::paragraph_at(styled, offset) else {
-            return offset..offset;
-        };
-        match unit {
-            SelectionUnit::Character => offset..offset,
-            SelectionUnit::Word => {
-                let word = word_at(&paragraph.text, offset - range.start);
-                range.start + word.start..range.start + word.end
-            }
-            SelectionUnit::Paragraph => range,
-        }
-    };
-    let (anchor_unit, focus_unit) = (unit_at(anchor), unit_at(focus));
-    if anchor <= focus {
-        (anchor_unit.start, focus_unit.end)
-    } else {
-        (anchor_unit.end, focus_unit.start)
-    }
 }
 
 /// The implementation of the `Text` element
@@ -1803,24 +1628,8 @@ impl Item for TextInput {
                 if !self.read_only() {
                     // commit the preedit text on android
                     #[cfg(target_os = "android")]
-                    {
-                        let preedit_text = self.preedit_text();
-                        if !preedit_text.is_empty() {
-                            let mut text = String::from(self.text());
-                            let cursor_position = self.cursor_position(&text);
-                            text.insert_str(cursor_position, &preedit_text);
-                            self.set_text_internal(text.into());
-                            let new_pos = (cursor_position + preedit_text.len()) as i32;
-                            self.anchor_position_byte_offset.set(new_pos);
-                            self.set_cursor_position(
-                                new_pos,
-                                false,
-                                TextChangeNotify::TriggerCallbacks,
-                                window_adapter,
-                                self_rc,
-                            );
-                            Self::FIELD_OFFSETS.edited().apply_pin(self).call(&());
-                        }
+                    if self.as_ref().commit_preedit(window_adapter, self_rc) {
+                        Self::FIELD_OFFSETS.edited().apply_pin(self).call(&());
                     }
                     self.preedit_text.set(Default::default());
                 }
@@ -1836,7 +1645,16 @@ impl Item for TextInput {
         size: LogicalSize,
     ) -> RenderingResult {
         crate::properties::evaluate_no_tracking(|| {
-            if self.has_focus() && self.text() != *backend.window().last_ime_text.borrow() {
+            // 组词期间不要把 `text` 回推给平台。Android 后端拿到 `text` 后会
+            // 用它重写输入连接里的 Editable，而 `text` 不含正处于组词状态的
+            // 拼音/英文；每次回推都会把 Editable 里的组合区整个抹掉，组合永远
+            // 攒不起来。组词期间唯一的真相在输入法那边，提交时它会把最终文本
+            // 连同选区一起交回来，那次更新才需要同步。
+            let composing = cfg!(target_os = "android") && !self.preedit_text().is_empty();
+            if self.has_focus()
+                && !composing
+                && self.text() != *backend.window().last_ime_text.borrow()
+            {
                 let window_adapter = &backend.window().window_adapter();
                 if let Some(w) = window_adapter.internal(crate::InternalToken) {
                     w.input_method_request(InputMethodRequest::Update(
@@ -2329,6 +2147,11 @@ impl TextInput {
         if self.read_only() || !self.has_focus() {
             return;
         }
+        // 组词期间不回推 `text`（原因见 `render`）。
+        #[cfg(target_os = "android")]
+        if !self.preedit_text().is_empty() {
+            return;
+        }
         if let Some(w) = window_adapter.internal(crate::InternalToken) {
             w.input_method_request(InputMethodRequest::Update(
                 self.ime_properties(window_adapter, self_rc),
@@ -2562,8 +2385,13 @@ impl TextInput {
             window_adapter,
             self_rc,
         );
-        // Keep the cursor visible while it moves, as for the arrow keys.
-        self.show_cursor(window_adapter);
+        // Keep the cursor visible while it moves, as for the arrow keys. An
+        // unfocused field has no caret to show: arming the blink timer there
+        // would paint a blinking caret with no keyboard behind it (and repaint
+        // the item every blink cycle).
+        if self.has_focus() {
+            self.show_cursor(window_adapter);
+        }
     }
 
     pub fn select_all(self: Pin<&Self>, window_adapter: &Rc<dyn WindowAdapter>, self_rc: &ItemRc) {
@@ -2585,6 +2413,45 @@ impl TextInput {
 
     pub fn clear_selection(self: Pin<&Self>) {
         self.as_ref().anchor_position_byte_offset.set(self.as_ref().cursor_position_byte_offset());
+    }
+
+    /// Commit the input method's composition (preedit) into `text`, placing the
+    /// caret after the composed run. Returns `true` when there was a composition
+    /// to commit.
+    ///
+    /// The Android host writes `text` back into the input connection's editable
+    /// whenever the IME is told about an update. Apps that replace the draft
+    /// programmatically (voice transcription, history recall) must first collect
+    /// the composition here, otherwise the pending pinyin/word would be merged
+    /// into the new text when the focus is dropped.
+    pub fn commit_preedit(
+        self: Pin<&Self>,
+        window_adapter: &Rc<dyn WindowAdapter>,
+        self_rc: &ItemRc,
+    ) -> bool {
+        let preedit_text = self.preedit_text();
+        if preedit_text.is_empty() {
+            return false;
+        }
+        let mut text = String::from(self.text());
+        let cursor_position = self.cursor_position(&text);
+        text.insert_str(cursor_position, &preedit_text);
+        // 先清空组词区再发布文本：后续同步应描述一个普通光标，而不是刚刚
+        // 折叠掉的那个范围。
+        self.preedit_text.set(Default::default());
+        self.preedit_selection.set(Default::default());
+        self.set_text_internal(text.into());
+        let new_pos = (cursor_position + preedit_text.len()) as i32;
+        self.anchor_position_byte_offset.set(new_pos);
+        self.set_cursor_position(
+            new_pos,
+            false,
+            TextChangeNotify::TriggerCallbacks,
+            window_adapter,
+            self_rc,
+        );
+        Self::FIELD_OFFSETS.edited().apply_pin(self).call(&());
+        true
     }
 
     pub fn select_word(self: Pin<&Self>, window_adapter: &Rc<dyn WindowAdapter>, self_rc: &ItemRc) {
@@ -3072,6 +2939,18 @@ fn paragraph_selection(text: &str, anchor: usize, cursor: usize) -> (usize, usiz
     } else {
         (next_paragraph_boundary(text, anchor), prev_paragraph_boundary(text, cursor))
     }
+}
+
+/// Commit the composition (preedit) of the currently focused [`TextInput`] into
+/// its `text`, if there is one. Used by the Android shell before it replaces the
+/// draft with a transcription, so the pending composition cannot be folded into
+/// (or wipe) the new text when the input method session ends.
+pub fn commit_focused_preedit(window: &crate::api::Window) -> bool {
+    let window_inner = WindowInner::from_pub(window);
+    let Some(item) = window_inner.focus_item.borrow().upgrade() else { return false };
+    let Some(input) = item.downcast::<TextInput>() else { return false };
+    let window_adapter = window_inner.window_adapter();
+    input.as_pin_ref().commit_preedit(&window_adapter, &item)
 }
 
 pub fn text_item_font_metrics(

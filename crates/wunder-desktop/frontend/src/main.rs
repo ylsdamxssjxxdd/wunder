@@ -70,6 +70,7 @@ mod touch_keyboard;
 mod tray;
 mod turn_stats;
 mod ui_language;
+mod uia_probe;
 mod update_ui;
 mod window_placement;
 mod workspace_files;
@@ -1134,11 +1135,11 @@ pub(crate) fn register_bundled_font() -> Result<(), Box<dyn std::error::Error>> 
     let mut symbol_chain: Vec<_> = symbol_families.iter().map(|(family, _)| *family).collect();
     symbol_chain.extend(emoji_families.iter().map(|(family, _)| *family));
     collection.set_fallbacks(
-        fontique::FallbackKey::new(fontique::Script::from_str_unchecked("Zyyy"), None),
+        fontique::FallbackKey::new(fontique::Script::from_bytes(*b"Zyyy"), None),
         symbol_chain.iter().copied(),
     );
     collection.append_fallbacks(
-        fontique::FallbackKey::new(fontique::Script::from_str_unchecked("Hani"), None),
+        fontique::FallbackKey::new(fontique::Script::from_bytes(*b"Hani"), None),
         families.iter().copied(),
     );
     Ok(())

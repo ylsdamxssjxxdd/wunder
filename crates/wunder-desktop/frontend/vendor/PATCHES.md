@@ -59,7 +59,17 @@ so the 1.11 quadratic-scan workaround is gone.
 - `items/text.rs` grafts `line-height-factor` and `context_menu` onto
   `StyledTextItem`, reports press/drag/release to the selection layer, paints
   the caret cursor, and reads `text_selection::covered()` in `render()` so a
-  selection change invalidates the item.
+  selection change invalidates the item. The stock 1.19 item-local selection
+  remnants (`SelectionUnit`/`MouseSelection`, `selection_mouse_event`,
+  `selectable_text_cursor`, `selection_by_unit` and the `mouse_selection`
+  field) are dropped: the window-level layer owns click counting and unit
+  expansion, so nothing called them.
+- `items/text.rs` also restores the 1.18 Android IME guards lost in the rebase:
+  no `InputMethodRequest::Update` while an IME composition is open (both the
+  per-frame `render()` push and `update_ime()`), and
+  `items::commit_focused_preedit()` so the Android shell can collect a pending
+  composition before it replaces the draft programmatically (voice
+  transcription).
 - `textlayout/sharedparley.rs` passes the item's live selection into
   `draw_text` and paints the selection background with 1.19's
   `selection_geometry`; `shaping.rs` uses 1.19's `raw_text_ranges` instead of
@@ -102,7 +112,9 @@ Stock 1.19 plus the workbench modules and Win32 redraw fixes:
   the software renderer has no `set_rendering_notifier`, so startup services
   wait on this notification plus 10 ms.
 - `software_diagnostics.rs` records frame timings and windowing events behind
-  `RCHO_SLINT_DIAGNOSTICS`; `renderer/sw.rs` calls
+  `RCHO_SLINT_DIAGNOSTICS`; `renderer/sw.rs` calls `frame_start()` before the
+  prepare phase and `record()` on every present attempt with the measured
+  prepare/render/present times, damage pixels, popup flag and failure flag, then
   `first_frame::notify_presented()` after a successful `present_with_damage`.
 - External Explorer file drags are translated from winit's `HoveredFile` /
   `DroppedFile` / `HoveredFileCancelled` events into

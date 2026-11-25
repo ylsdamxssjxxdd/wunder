@@ -80,6 +80,14 @@ windows-sys = { version = "0.52", features = [
   "Win32_UI_Controls_Dialogs",
   "Win32_UI_Shell",
 ] }
+# 截图选区的控件级吸附：windows-sys 只有 UIAutomationCore 的 C API，没有
+# IUIAutomation 客户端接口，这一小块（含 COM）才用 windows crate；版本与
+# 共享绑定对齐 0.52，Win7 / 32 位可用，失败时整段探测直接降级为窗口树。
+windows = { version = "0.52", features = [
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_UI_Accessibility",
+] }
 # Folder picker: SHBrowseForFolderW lives behind the Win32_UI_Shell feature,
 # unavailable in the pinned 0.52 binding set above; the dialog path uses its
 # own binding copy instead of widening the shared feature list.

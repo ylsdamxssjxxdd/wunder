@@ -50,6 +50,10 @@ export component HelpInput inherits Rectangle {
             paste() => { editor.paste(); }
             select-all() => { editor.select-all(); }
             editor := TextInput {
+                // HelpInput already exposes this text as a text-input; keep the
+                // inner editor out of the accessibility tree so the same value
+                // is not announced twice.
+                accessible-role: none;
                 private property <length> computed-x: 6px;
                 x: min(6px, max(parent.width - self.width - 6px - self.text-cursor-width, self.computed-x));
                 width: max(parent.width - 12px - self.text-cursor-width, self.preferred-width);

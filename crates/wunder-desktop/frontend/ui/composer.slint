@@ -1552,14 +1552,15 @@ export component Composer inherits Rectangle {
     in property <bool> busy: false;
     // Phone shells (安卓版) route the plus button straight to their file picker:
     // the desktop cascade is too small for touch, and a phone messenger's plus
-    // is understood as "attach". The card itself stays an editor on phones —
-    // a tap focuses it and raises the keyboard in place; the card grows with
-    // the draft and scrolls inside once it reaches the host's height cap.
+    // is understood as "attach". The card is the same one-line input box as the
+    // desktop's narrow window — plus, editor and send all live inside it; a tap
+    // anywhere focuses the editor and raises the keyboard in place, and the card
+    // grows with the draft and scrolls inside once it reaches the host's cap.
     in property <bool> mobile: false;
-    // 桌面版极窄窗（< Theme.mobile-chrome-width）：沿用手机的「加号、编辑器、
-    // 发送键并排一行」几何（编辑器是卡，两侧按钮各自成方块），但保留鼠标语义
-    // ——加号仍打开桌面级联菜单，空草稿时发送键保持灰色而不是语音键，模型
-    // 选择则交给窗口顶部的模型条。
+    // 桌面版极窄窗（< Theme.mobile-chrome-width）：沿用手机的一行输入卡
+    // （加号、编辑器、发送键同在一张卡里），但保留鼠标语义——加号仍打开桌面
+    // 级联菜单，空草稿时发送键保持灰色而不是语音键，模型选择则交给窗口顶部
+    // 的模型条。
     in property <bool> compact: false;
     callback mobile-plus-toggled();
     // A live 问询面板 that already carries an answer unlocks the send button and
@@ -1692,6 +1693,8 @@ export component Composer inherits Rectangle {
     // the strip above the input shows it. What still blocks is a slash command
     // in flight or a thread that is still loading.
     private property <bool> send-blocked: root.busy;
+    // 发送键的纸飞机：宽窗、窄窗与手机共用同一枚素材，避免两端各自挑图。
+    private property <image> send-icon: @image-url("../assets/icons/send-hugeicons.svg");
     // Exact card height: 6+6 padding, a 20px header, 28px rows, 2px between
     // every item and the optional overflow line. It has to match
     // `QueueStrip`'s content height exactly — the editor card below is placed
@@ -1721,8 +1724,9 @@ export component Composer inherits Rectangle {
         max(root.editor-min-height, editor.text-preferred-height + root.editor-inset)
     );
     private property <length> editor-growth: root.editor-box-height - root.editor-min-height;
-    // 手机卡片的高度就是「上下内边距 + 一行编辑器/按钮里更高的一侧」，
-    // 不留固定基准里的余量：卡片多高，编辑器就多高，行数一变立刻贴合。
+    // 触摸端（手机与极窄窗）卡片的高度就是「上下内边距 + 一行编辑器/按钮里
+    // 更高的一侧」，不留固定基准里的余量：卡片多高，编辑器就多高，行数一变
+    // 立刻贴合。
     private property <length> mobile-card-height:
         18px + max(root.action-row-height, root.editor-box-height);
     // 附件条带固定一行：缩略图 + 10px 横向滚动条。高度不随附件数量
@@ -1794,6 +1798,17 @@ export component Composer inherits Rectangle {
     public function focus-editor() {
         editor.focus-input();
     }
+    // 宿主（安卓版语音转写）一次性换掉整段草稿：先收回输入焦点、结束输入法
+    // 会话，再写文本，最后把光标放到末尾。焦点还在时直接换 text，输入法会
+    // 把新文本当成自己的组合区/编辑状态，整段显示成「选中」，点按也消不掉；
+    // 光标必须显式落到末尾，外部赋值只会把旧偏移夹进新文本。
+    public function replace-draft(value: string) {
+        editor.clear-focus();
+        root.draft = value;
+        // set-selection-offsets 会把越界偏移夹到文本长度，这里给一个足够大的
+        // 值即可落到末尾，不需要在 Slint 侧计算 UTF-8 字节长度。
+        editor.set-selection-offsets(1000000, 1000000);
+    }
     function submit() {
         root.send();
         root.focus-editor();
@@ -1826,10 +1841,10 @@ export component Composer inherits Rectangle {
             clicked => { root.focus-editor(); }
         }
     }
-    // 极窄窗的一行输入卡：卡片铺在整行（加号／编辑器／发送）下面，三个控件
-    // 落在同一张卡里；手机仍由编辑器自己画卡。位置直接跟行盒，队列条和附件
-    // 带把行推下去时卡片一起走。
-    if root.compact : Rectangle {
+    // 一行输入卡：极窄窗与手机共用，加号／编辑器／发送三个控件落在同一张卡里。
+    // 位置直接跟行盒，队列条和附件带把行推下去时卡片一起走；卡片空白处也算
+    // 输入区，点一下就把焦点交给编辑器。
+    if root.touch-layout : Rectangle {
         x: touch-row.absolute-position.x - root.absolute-position.x;
         y: touch-row.absolute-position.y - root.absolute-position.y;
         width: touch-row.width;
@@ -1885,9 +1900,9 @@ export component Composer inherits Rectangle {
             vertical-stretch: 1;
             min-height: max(root.action-row-height, root.editor-box-height);
             spacing: root.touch-layout ? 8px : 0px;
-            // 窄窗三个控件要落在同一张卡里，左右各让 6px 免得加号/发送贴边。
-            padding-left: root.compact ? 6px : 0px;
-            padding-right: root.compact ? 6px : 0px;
+            // 卡片里的三个控件左右各让 6px，加号/发送不贴着卡边。
+            padding-left: root.touch-layout ? 6px : 0px;
+            padding-right: root.touch-layout ? 6px : 0px;
             // 桌面端必须 stretch：居中对齐会让编辑器卡片退化为内容高度，
             // 而卡片高度又绑定父级，最终塌成 0px，整张输入卡不再绘制。
             cross-axis-alignment: root.touch-layout ? CrossAxisAlignment.center : CrossAxisAlignment.stretch;
@@ -1952,17 +1967,16 @@ export component Composer inherits Rectangle {
                 horizontal-stretch: 1;
                 vertical-stretch: 1;
                 // 布局里的子元素高度由布局按 min/preferred 分配，根上的 `height`
-                // 绑定在布局中不起作用：手机卡片要长高，必须把下限写在这里。
+                // 绑定在布局中不起作用：触摸端的卡片要长高，必须把下限写在这里。
                 min-height: root.touch-layout ? root.editor-box-height : 0px;
                 background: transparent;
                 border-width: 0px;
                 editor := TextEditBase {
                 x: 0px; y: 0px; width: parent.width; height: parent.height;
                 border-radius: 16px;
-                // 窄窗的卡片由整行那张卡承担，编辑器本身透明；手机仍自己画卡。
-                background: root.mobile ? (composer-drop.has-drag ? Theme.accent-soft : Theme.surface) : transparent;
-                border-width: root.mobile ? 1px : 0px;
-                border-color: composer-drop.has-drag || self.has-focus ? Theme.accent-ink : Theme.border;
+                // 卡片由整行那张输入卡承担（宽窗是下面的大卡），编辑器本身透明。
+                background: transparent;
+                border-width: 0px;
                 scroll-view-padding: root.mobile ? 11px : root.compact ? 8px : 14px;
                 accessible-role: text-input;
                 accessible-value <=> self.text;
@@ -2175,7 +2189,7 @@ export component Composer inherits Rectangle {
                         y: (parent.height - self.height) / 2;
                         width: root.stop-action ? 12px : 18px;
                         height: root.stop-action ? 12px : 18px;
-                        source: root.stop-action ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/send-hugeicons.svg");
+                        source: root.stop-action ? @image-url("../assets/icons/stop.svg") : root.send-icon;
                         colorize: root.stop-action || root.send-enabled ? #ffffff : Theme.muted;
                         image-fit: contain;
                     }
@@ -2216,7 +2230,7 @@ export component Composer inherits Rectangle {
                         y: (parent.height - self.height) / 2;
                         width: 18px;
                         height: 18px;
-                        source: @image-url("../assets/icons/send-hugeicons.svg");
+                        source: root.send-icon;
                         colorize: Theme.muted;
                         image-fit: contain;
                     }
@@ -2386,7 +2400,7 @@ export component Composer inherits Rectangle {
                         y: (parent.height - self.height) / 2;
                         width: root.stop-action ? 12px : 18px;
                         height: root.stop-action ? 12px : 18px;
-                        source: root.stop-action ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/send-hugeicons.svg");
+                        source: root.stop-action ? @image-url("../assets/icons/stop.svg") : root.send-icon;
                         colorize: root.stop-action || root.send-enabled ? #ffffff : Theme.muted;
                         image-fit: contain;
                     }

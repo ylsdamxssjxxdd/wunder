@@ -239,7 +239,11 @@ where
     }
 
     let split_at = capture.split_at.min(capture.bytes.len());
+    // Only the non-Windows branch below moves the edges; on Windows they stay
+    // at the split, so the `mut` is conditional to keep both targets lint-free.
+    #[cfg_attr(windows, allow(unused_mut))]
     let mut head_end = split_at;
+    #[cfg_attr(windows, allow(unused_mut))]
     let mut tail_start = split_at;
     #[cfg(not(windows))]
     {

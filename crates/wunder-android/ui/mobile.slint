@@ -406,6 +406,16 @@ export component MobileWindow inherits Window {
 
     // ---- composer ----------------------------------------------------
     in-out property <string> draft: "";
+    // 语音转写落地由宿主驱动：宿主先提交输入法的组合区，再把最终草稿写到
+    // voice-draft-final，最后抬 voice-draft-rev。真正换文本在输入区组件里做，
+    // 因为必须先收回焦点结束输入法会话，再写草稿、把光标放到末尾。
+    in property <string> voice-draft-final: "";
+    in-out property <int> voice-draft-rev: 0;
+    changed voice-draft-rev => {
+        if (root.voice-draft-rev > 0) {
+            composer.replace-draft(root.voice-draft-final);
+        }
+    }
     // 加号面板：触摸端没有桌面那套悬停级联，点加号在键盘上方弹一张小面板，
     // 三个入口——预设问题 / 上传文件 / 拍照。第二页是预设问题列表。
     in-out property <bool> plus-sheet-open: false;

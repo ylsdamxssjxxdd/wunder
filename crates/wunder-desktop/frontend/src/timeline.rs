@@ -1250,6 +1250,8 @@ impl Timeline {
 
     /// Begin the next assistant body block; the runtime registers exactly one
     /// text item per model round, so a block starts where the last one ended.
+    /// Test-only; the production send path always names its item.
+    #[cfg(test)]
     pub fn start_body(&mut self, round: i64) -> usize {
         self.start_body_item("", round)
     }

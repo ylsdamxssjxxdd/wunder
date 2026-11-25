@@ -2721,10 +2721,24 @@ fn start_tick(
             .lock()
             .ok()
             .and_then(|mut state| state.pending_draft.take());
-        if let Some(text) = pending_draft {
+        if let Some(draft) = pending_draft {
+            // 组词区先落进草稿：整段替换草稿时，输入法若还挂着组合区，会在
+            // 焦点收回时被并进新文本。
+            i_slint_core::items::commit_focused_preedit(ui.window());
             let current = ui.get_draft().to_string();
             let separator = if current.trim().is_empty() { "" } else { "\n" };
-            ui.set_draft(format!("{current}{separator}{}", text.trim()).into());
+            let next = format!("{current}{separator}{}", draft.text.trim());
+            if draft.from_voice {
+                // 语音写入交给输入区完成：它会先收回焦点（结束输入法会话），
+                // 再换文本并把光标放到末尾。宿主直接 set_draft 时，焦点还在
+                // 的输入法会把整段新文本当成组合区显示成「全选」，点按也无
+                // 法复位。
+                ui.set_voice_draft_final(next.into());
+                let rev = ui.get_voice_draft_rev().wrapping_add(1);
+                ui.set_voice_draft_rev(rev);
+            } else {
+                ui.set_draft(next.into());
+            }
         }
         // 待发消息只在当前这一轮结束后出发：正常收尾由直播流自己做，这里
         // 低频兜底一次，覆盖停止、发送失败与后台目标结束这些没有直播流收尾
@@ -3249,7 +3263,7 @@ fn start_tick(
             let (current, position) = plan_current(&plan.steps);
             ui.set_activity_running(plan.running);
             // 与桌面版一致：清单全部完成时胶囊换成对勾并停住，而不是继续转。
-            ui.set_activity_plan_complete(total > 0 && done == total);
+            ui.set_activity_plan_complete(engine::plan_all_complete(&plan.steps));
             ui.set_activity_steps_done(done);
             ui.set_activity_steps_total(total);
             ui.set_activity_plan_explanation(plan.explanation.as_str().into());

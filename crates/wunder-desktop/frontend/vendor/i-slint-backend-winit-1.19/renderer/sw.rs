@@ -116,6 +116,9 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
         };
 
         let winit_window = surface.window().clone();
+        // Opt-in frame timing for `--scroll-probe`: `None` (one atomic load) unless
+        // RCHO_SLINT_DIAGNOSTICS is set.
+        let diagnostic_start = crate::software_diagnostics::frame_start();
 
         surface
             .resize(width, height)
@@ -132,6 +135,8 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
             _ => RepaintBufferType::NewBuffer,
         });
 
+        let prepare_ms = diagnostic_start.map(|t| t.elapsed().as_secs_f64() * 1000.0);
+        let render_start = diagnostic_start.map(|_| std::time::Instant::now());
         let region = if std::env::var_os("SLINT_LINE_BY_LINE").is_none() {
             let buffer: &mut [SoftBufferPixel] =
                 bytemuck::cast_slice_mut(target_buffer.deref_mut());
@@ -166,6 +171,7 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
             })
         };
 
+        let render_ms = render_start.map(|t| t.elapsed().as_secs_f64() * 1000.0);
         let damage = region
             .iter()
             .filter_map(|(pos, size)| {
@@ -178,10 +184,33 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
             })
             .collect::<Vec<_>>();
         if !damage.is_empty() {
+            let present_start = diagnostic_start.map(|_| std::time::Instant::now());
             winit_window.pre_present_notify();
-            target_buffer
+            let present_result = target_buffer
                 .present_with_damage(&damage)
-                .map_err(|e| format!("Error presenting softbuffer buffer: {e}"))?;
+                .map_err(|e| format!("Error presenting softbuffer buffer: {e}"));
+            if let Some(present_start) = present_start {
+                let damage_pixels = damage
+                    .iter()
+                    .map(|rect| u64::from(rect.width.get()) * u64::from(rect.height.get()))
+                    .sum();
+                crate::software_diagnostics::record(crate::software_diagnostics::FrameSample {
+                    at_ms: 0.0,
+                    window_id: winit_window.id().into(),
+                    width: width.get(),
+                    height: height.get(),
+                    scale: window.scale_factor(),
+                    prepare_ms: prepare_ms.unwrap_or_default(),
+                    render_ms: render_ms.unwrap_or_default(),
+                    present_ms: present_start.elapsed().as_secs_f64() * 1000.0,
+                    damage_pixels,
+                    popup: !i_slint_core::window::WindowInner::from_pub(window)
+                        .active_popups()
+                        .is_empty(),
+                    failed: present_result.is_err(),
+                });
+            }
+            present_result?;
             crate::first_frame::notify_presented();
         }
         Ok(DrawOutcome::Success)

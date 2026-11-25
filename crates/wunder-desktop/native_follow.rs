@@ -250,6 +250,11 @@ impl Projection {
                     events.push(json!({"event":"subagent_run","data":card}));
                 } else if kind == "queue" && p["status"] == "queued" {
                     events.push(json!({"event":"queue_update","data":payload}));
+                } else if kind == "plan" && payload.get("plan").is_some() {
+                    // 计划工具每次发布都是一条独立的落库条目。实时流会直接
+                    // 转发 plan_update；后台回合、重开线程和目标续跑只有这条
+                    // 跟随通道，不在这里补发，计划胶囊就会停在旧清单上一直转。
+                    events.push(json!({"event":"plan_update","data":payload.clone()}));
                 }
             }
             _ => {}
@@ -718,6 +723,35 @@ mod tests {
         assert_eq!(projection.execution, "fixture-child");
         assert_eq!(events[0]["event"], "native_execution_started");
         assert_eq!(events[0]["data"]["user_round"], 57);
+    }
+
+    #[test]
+    fn a_durable_plan_item_republishes_the_checklist() {
+        let mut projection = Projection {
+            root: "fixture-root".into(),
+            execution: "fixture-root".into(),
+            ..Default::default()
+        };
+        let events = projection
+            .apply(&json!({
+                "cursor": 1,
+                "change_type": "item_upsert",
+                "turn_id": "fixture-root",
+                "payload": {
+                    "item_id": "fixture-plan",
+                    "revision": 1,
+                    "kind": "plan",
+                    "status": "completed",
+                    "payload": {
+                        "explanation": "进度",
+                        "plan": [{"step": "甲", "status": "completed"}]
+                    }
+                }
+            }))
+            .unwrap();
+        assert_eq!(events.len(), 1, "a plan item must reach the composer");
+        assert_eq!(events[0]["event"], "plan_update");
+        assert_eq!(events[0]["data"]["plan"][0]["status"], "completed");
     }
 
     #[test]

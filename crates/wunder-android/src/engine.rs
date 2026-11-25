@@ -956,6 +956,15 @@ pub struct PlanView {
     pub running: bool,
 }
 
+/// 待落进输入区的程序化草稿。语音转写要整段替换草稿，必须先结束输入法
+/// 会话（见 `Composer.replace-draft`）；其余来源（分享、撤回待发、发送
+/// 失败）沿用直接赋值，不打断正在使用的键盘。
+#[derive(Clone, Default)]
+pub struct PendingDraft {
+    pub text: String,
+    pub from_voice: bool,
+}
+
 /// Everything the UI tick reads. Revisions keep the tick cheap: scalar state
 /// and the two row segments are copied only when the engine actually changed
 /// them, so a streaming token never rebuilds the whole transcript model.
@@ -1058,9 +1067,11 @@ pub struct Shared {
     pub voice_route: i32,
     /// 录音开始的时刻，UI 用它在录音条上走计时。
     pub voice_started: Option<Instant>,
-    /// Text produced off the UI thread (voice transcription) and appended to
-    /// the draft by the UI tick, so a late result never overwrites typing.
-    pub pending_draft: Option<String>,
+    /// 待写回输入区的文本（语音转写、分享、撤回待发、发送失败），由 UI tick
+    /// 追加进当前草稿，晚到的结果不会覆盖正在输入的内容。`from_voice` 只
+    /// 标记语音来源：它要先结束输入法会话再整段换草稿（见
+    /// `Composer.replace-draft`）；其余来源沿用直接赋值，不打断键盘。
+    pub pending_draft: Option<PendingDraft>,
     /// 已上传进当前工作区、还没随消息发出的文件。它们显示成输入框上的
     /// 附件卡，并在下一条消息里拼成给模型看的文件提示块：模型据此知道
     /// 用户刚放进来什么文件，而不是只能靠猜。
@@ -1700,7 +1711,10 @@ fn run(
                 };
                 if let Some(draft) = draft {
                     if let Ok(mut state) = shared.lock() {
-                        state.pending_draft = Some(draft);
+                        state.pending_draft = Some(PendingDraft {
+                            text: draft,
+                            from_voice: false,
+                        });
                         state.touch();
                     }
                 }
@@ -3901,18 +3915,46 @@ fn update_goal(shared: &Arc<Mutex<Shared>>, goal: &NativeGoal) {
     state.touch();
 }
 
+/// 计划步骤状态的唯一口径。运行时工具会归一一次，但落库的旧计划、外部写入
+/// 的计划和模拟数据都可能带着 `done` / `已完成` 之类的别名；只认字面
+/// `completed` 会让「全部完成」永远算不出来，胶囊就一直转。
+fn plan_status(raw: &str) -> String {
+    let normalized = raw.trim().to_lowercase().replace(['-', ' '], "_");
+    match normalized.as_str() {
+        "completed" | "complete" | "done" | "finished" | "已完成" | "完成" | "已结束" => {
+            "completed".to_string()
+        }
+        "in_progress" | "inprogress" | "doing" | "active" | "进行中" | "正在做" => {
+            "in_progress".to_string()
+        }
+        _ => "pending".to_string(),
+    }
+}
+
+/// 计划是否全部走完。没有计划不算完成：胶囊此时本来就不显示。
+pub(crate) fn plan_all_complete(steps: &[PlanStepView]) -> bool {
+    !steps.is_empty() && steps.iter().all(|step| step.status == "completed")
+}
+
 /// 取最近一轮带计划的回合（桌面语义一致），供锁外计算、锁内写入。
 fn plan_from_turns(turns: &[NativeChatTurn]) -> (String, Vec<PlanStepView>) {
-    let Some(plan) = turns.iter().rev().find_map(|turn| turn.plan.as_ref()) else {
-        return (String::new(), Vec::new());
-    };
+    turns
+        .iter()
+        .rev()
+        .find_map(|turn| turn.plan.as_ref())
+        .map(plan_of_view)
+        .unwrap_or_default()
+}
+
+/// 把一份落库计划投影成安卓的计划行，状态统一归一。
+fn plan_of_view(plan: &wunder_desktop::NativePlanView) -> (String, Vec<PlanStepView>) {
     let steps = plan
         .steps
         .iter()
         .take(32)
         .map(|step| PlanStepView {
             step: step.step.clone(),
-            status: step.status.clone(),
+            status: plan_status(&step.status),
         })
         .collect();
     (plan.explanation.clone(), steps)
@@ -3944,9 +3986,47 @@ fn settle_plan_spinner(state: &mut Shared) {
     state.plan_rev = state.plan_rev.wrapping_add(1);
 }
 
+/// 回合正常结束后收尾计划面板：
+///
+/// 1. 转轮一定停住，即使中途没有收到「计划全完成」的发布；
+/// 2. 模型偶尔会忘记在最后一次 `update_plan` 里把**最后一步**标成
+///    `completed`（工具契约要求它标，但模型不总遵守）。回合成功结束、
+///    清单里只剩最后一步是 `in_progress`、其余全完成时，这一步实际上已经
+///    做完了，只是面板没收到收尾发布。不修的话胶囊会一直停在“进行中”：
+///    转轮虽停，却永远等不到「已完成」。
+///
+/// 只要还有 `pending`（后面还有活）或回合被停止/失败，就不猜，保持原样。
+fn finish_plan_after_turn(state: &mut Shared, turn_ok: bool) {
+    let mut changed = false;
+    if turn_ok {
+        let last = state.plan.steps.len().checked_sub(1);
+        let trailing = last.filter(|index| {
+            state.plan.steps[*index].status == "in_progress"
+                && state
+                    .plan
+                    .steps
+                    .iter()
+                    .take(*index)
+                    .all(|step| step.status == "completed")
+        });
+        if let Some(index) = trailing {
+            state.plan.steps[index].status = "completed".into();
+            changed = true;
+        }
+    }
+    if state.plan.running {
+        state.plan.running = false;
+        changed = true;
+    }
+    if changed {
+        state.plan_rev = state.plan_rev.wrapping_add(1);
+        state.touch();
+    }
+}
+
 /// 流内的计划事件：工具每次发布整份清单，整体替换；最多保留 32 步。
 /// 只写当前线程：用户切走后旧线程的迟到帧不能改写屏幕上的计划。
-fn apply_plan_event(shared: &Arc<Mutex<Shared>>, session: &str, value: &serde_json::Value) {
+fn apply_plan_event(shared: &Arc<Mutex<Shared>>, session: &str, value: &serde_json::Value) -> bool {
     let envelope = value.get("data").unwrap_or(value);
     let data = envelope.get("data").unwrap_or(envelope);
     let explanation = data
@@ -3964,31 +4044,33 @@ fn apply_plan_event(shared: &Arc<Mutex<Shared>>, session: &str, value: &serde_js
                 .filter_map(|entry| {
                     Some(PlanStepView {
                         step: entry.get("step")?.as_str()?.to_string(),
-                        status: entry
-                            .get("status")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("pending")
-                            .to_string(),
+                        status: plan_status(
+                            entry
+                                .get("status")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("pending"),
+                        ),
                     })
                 })
                 .collect()
         })
+        // 计划工具每次发布整份清单；没有 plan 数组的帧（回执、被压缩的
+        // 传输帧）不能当成「计划被清空」，否则会把屏幕上的清单擦掉。
         .unwrap_or_default();
+    if steps.is_empty() {
+        return false;
+    }
     let Ok(mut state) = shared.lock() else {
-        return;
+        return false;
     };
     if state.session_id != session {
-        return;
+        return false;
     }
-    state.plan = PlanView {
-        explanation,
-        steps,
-        // A late plan frame arriving after the turn settled must not restart
-        // the capsule spinner; the plan itself stays published.
-        running: state.generating,
-    };
-    state.plan_rev = state.plan_rev.wrapping_add(1);
-    state.touch();
+    // A late plan frame arriving after the turn settled must not restart
+    // the capsule spinner; the plan itself stays published.
+    let running = state.generating;
+    set_plan(&mut state, explanation, steps, running);
+    true
 }
 
 /// 重投影模型浮层的活动区块：本线程仍在执行的命令 + 已加载回合里的子智能体。
@@ -7378,7 +7460,7 @@ fn finish_system_voice(shared: &Arc<Mutex<Shared>>, text: String) {
         if text.trim().is_empty() {
             state.notify("语音识别没有返回文字");
         } else {
-            state.pending_draft = Some(text);
+            state.pending_draft = Some(PendingDraft { text, from_voice: true });
             state.notify("语音已转写到输入区，可编辑后发送");
         }
         state.touch();
@@ -7422,7 +7504,7 @@ fn finish_voice(desktop: &Arc<NativeDesktop>, shared: &Arc<Mutex<Shared>>, path:
             state.voice_rev = state.voice_rev.wrapping_add(1);
             match result {
                 Ok(text) if !text.trim().is_empty() => {
-                    state.pending_draft = Some(text);
+                    state.pending_draft = Some(PendingDraft { text, from_voice: true });
                     state.notify("语音已转写到输入区，可编辑后发送");
                 }
                 Ok(_) => state.notify("语音识别没有返回文字"),
@@ -8477,7 +8559,7 @@ fn withdraw_waiting(shared: &Arc<Mutex<Shared>>, queue_id: &str, refill: bool) {
     }
     let mut state = shared.lock().unwrap();
     if state.session_id == turn.session {
-        state.pending_draft = Some(turn.text);
+        state.pending_draft = Some(PendingDraft { text: turn.text, from_voice: false });
         state.touch();
     }
 }
@@ -8616,6 +8698,12 @@ fn start_stream_with_id(
         let stream_id = state.live_stream_id;
         state.live_root = live.root_id.clone();
         state.live_rows = initial_rows;
+        // 新回合从旧清单接着显示：线程已经在跑，转轮先转起来（清单若已全部
+        // 完成，胶囊按 plan-complete 显示对勾，不会跟着新回合重新转）。
+        if !state.plan.steps.is_empty() && !state.plan.running {
+            state.plan.running = true;
+            state.plan_rev = state.plan_rev.wrapping_add(1);
+        }
         // One clock for the stream and the UI tick: the first visible frame
         // already carries the start time, and the 1 Hz stopwatch keeps the
         // elapsed column moving while a tool runs without events.
@@ -8637,7 +8725,7 @@ fn start_stream_with_id(
                     state.turn_started = None;
                     state.generating = false;
                     settle_plan_spinner(&mut state);
-                    state.pending_draft = Some(text);
+                    state.pending_draft = Some(PendingDraft { text, from_voice: false });
                     state.live_rev = state.live_rev.wrapping_add(1);
                     state.stream_revision = state.stream_revision.wrapping_add(1);
                     state.notify(format!("发送失败：{error}"));
@@ -8655,6 +8743,9 @@ fn start_stream_with_id(
             let mut stream = stream;
             let mut last_publish = Instant::now() - LIVE_PUBLISH_FRAME;
             let mut pending = false;
+            // 这一轮是否真的发布过计划：没发过计划的回合结束时不替上一份
+            // 清单猜完成。
+            let mut plan_seen = false;
             loop {
                 match stream.blocking_recv() {
                     Some(NativeChatEvent::Event(value)) => {
@@ -8699,7 +8790,7 @@ fn start_stream_with_id(
                                 .and_then(Value::as_str)
                                 .is_some_and(|kind| kind == "plan_update")
                         {
-                            apply_plan_event(&shared, &session, &value);
+                            plan_seen |= apply_plan_event(&shared, &session, &value);
                         }
                         pending = true;
                         // A new tool step, a new phase or a turn identity is
@@ -8818,9 +8909,13 @@ fn start_stream_with_id(
                     )
                 })
                 .unwrap_or_default();
+            // 收尾时回读的详细回合比实时帧更完整；只有读成功才敢用它覆盖屏幕
+            // 上的计划，否则一次失败的读取会把最后几步退回去。
+            let mut detailed_loaded = false;
             if let Ok(turns) = desktop.load_chat_turns(&session) {
                 if let Ok(mut state) = shared.lock() {
                     if state.session_id == session {
+                        detailed_loaded = true;
                         merge_turns(&mut state.durable_turns, turns);
                         let rows =
                             project_turns_preserving(&state.durable_turns, &state.durable_rows);
@@ -8861,10 +8956,34 @@ fn start_stream_with_id(
                     state.turn_started = None;
                     state.live_rev = state.live_rev.wrapping_add(1);
                     if visible {
+                        // 停止/失败/等待问询的回合不算“做完”，不能替模型猜完成。
+                        let turn_ok = live.failure.is_none()
+                            && !state.stopping
+                            && state.inquiry.is_none()
+                            && state.chat_approval.is_none();
+                        // 这一轮没有发布过计划时，屏幕上的清单属于上一轮：
+                        // 可以继续显示，但不能把它当成这一轮的进度收口。
+                        let last_plan = state
+                            .durable_turns
+                            .last()
+                            .filter(|turn| live.root_id != "live" && turn.root_id == live.root_id)
+                            .and_then(|turn| turn.plan.as_ref())
+                            .map(plan_of_view);
+                        let plan_published = plan_seen || last_plan.is_some();
                         state.generating = false;
                         state.stopping = false;
-                        // 线程停下后计划胶囊不再转；步骤保持原样，和桌面版一致。
-                        settle_plan_spinner(&mut state);
+                        // 落库回合是收尾时的权威计划：实时帧可能被后面的传输帧
+                        // 挤掉，或晚于收尾到达，屏幕上就会停在旧的进度。只看
+                        // 最后一轮的计划，避免在提交滞后时退回更早的清单。
+                        if detailed_loaded {
+                            if let Some((explanation, steps)) = last_plan {
+                                if !steps.is_empty() {
+                                    set_plan(&mut state, explanation, steps, false);
+                                }
+                            }
+                        }
+                        // 线程停下后计划胶囊不再转；全部完成的清单在这里打钩。
+                        finish_plan_after_turn(&mut state, turn_ok && plan_published);
                     }
                     state.stream_revision = state.stream_revision.wrapping_add(1);
                     state.touch();
@@ -9914,6 +10033,133 @@ mod tests {
     }
 
     #[test]
+    fn plan_status_matches_the_tool_aliases() {
+        for raw in ["completed", "done", "complete", "已完成", " finished "] {
+            assert_eq!(plan_status(raw), "completed", "{raw}");
+        }
+        for raw in ["in_progress", "in-progress", "doing", "进行中"] {
+            assert_eq!(plan_status(raw), "in_progress", "{raw}");
+        }
+        for raw in ["pending", "todo", "未开始", "", "unknown"] {
+            assert_eq!(plan_status(raw), "pending", "{raw}");
+        }
+    }
+
+    #[test]
+    fn a_plan_event_without_a_checklist_keeps_the_published_plan() {
+        let mut state = Shared::default();
+        state.session_id = "s".into();
+        state.plan = PlanView {
+            explanation: "计划".into(),
+            steps: vec![PlanStepView {
+                step: "第一步".into(),
+                status: "completed".into(),
+            }],
+            running: true,
+        };
+        let shared = Arc::new(Mutex::new(state));
+        // 工具回执（completed/total）也会带 plan_update 语义的字段，但它没有
+        // plan 清单；拿它当计划会把屏幕上的清单擦掉。
+        assert!(!apply_plan_event(
+            &shared,
+            "s",
+            &json!({"event":"plan_update","data":{"status":"ok","completed":1,"total":1}}),
+        ));
+        let state = shared.lock().unwrap();
+        assert_eq!(state.plan.steps.len(), 1);
+        assert_eq!(state.plan.steps[0].status, "completed");
+        assert!(state.plan.running);
+    }
+
+    #[test]
+    fn a_plan_event_normalizes_aliases_and_reports_publication() {
+        let mut state = Shared::default();
+        state.session_id = "s".into();
+        state.generating = true;
+        let shared = Arc::new(Mutex::new(state));
+        assert!(apply_plan_event(
+            &shared,
+            "s",
+            &json!({"event":"plan_update","data":{"explanation":"进度","plan":[
+                {"step":"甲","status":"done"},
+                {"step":"乙","status":"已完成"}
+            ]}}),
+        ));
+        let state = shared.lock().unwrap();
+        assert_eq!(state.plan.steps.len(), 2);
+        assert!(plan_all_complete(&state.plan.steps));
+        assert!(state.plan.running, "生成中的回合转轮继续转");
+    }
+
+    #[test]
+    fn a_successful_turn_closes_the_trailing_running_step() {
+        let mut state = Shared::default();
+        state.plan = PlanView {
+            explanation: "计划".into(),
+            steps: vec![
+                PlanStepView {
+                    step: "第一步".into(),
+                    status: "completed".into(),
+                },
+                PlanStepView {
+                    step: "第二步".into(),
+                    status: "in_progress".into(),
+                },
+            ],
+            running: true,
+        };
+        let rev = state.plan_rev;
+        finish_plan_after_turn(&mut state, true);
+        assert!(plan_all_complete(&state.plan.steps), "最后一步应打钩");
+        assert!(!state.plan.running);
+        assert_eq!(state.plan_rev, rev + 1);
+
+        // 后面还有 pending：回合结束也不替模型猜完成。
+        let mut state = Shared::default();
+        state.plan = PlanView {
+            explanation: "计划".into(),
+            steps: vec![
+                PlanStepView {
+                    step: "第一步".into(),
+                    status: "completed".into(),
+                },
+                PlanStepView {
+                    step: "第二步".into(),
+                    status: "in_progress".into(),
+                },
+                PlanStepView {
+                    step: "第三步".into(),
+                    status: "pending".into(),
+                },
+            ],
+            running: true,
+        };
+        finish_plan_after_turn(&mut state, true);
+        assert!(!plan_all_complete(&state.plan.steps));
+        assert!(!state.plan.running, "转轮仍要停");
+
+        // 用户停止/失败的回合不做完成收口。
+        let mut state = Shared::default();
+        state.plan = PlanView {
+            explanation: "计划".into(),
+            steps: vec![
+                PlanStepView {
+                    step: "第一步".into(),
+                    status: "completed".into(),
+                },
+                PlanStepView {
+                    step: "第二步".into(),
+                    status: "in_progress".into(),
+                },
+            ],
+            running: true,
+        };
+        finish_plan_after_turn(&mut state, false);
+        assert_eq!(state.plan.steps[1].status, "in_progress");
+        assert!(!state.plan.running);
+    }
+
+    #[test]
     fn withdrawing_a_waiting_message_puts_it_back_into_the_draft() {
         let mut state = Shared::default();
         state.session_id = "s".into();
@@ -9936,7 +10182,10 @@ mod tests {
         let state = shared.lock().unwrap();
         assert_eq!(state.waiting_turns.len(), 1);
         assert_eq!(state.waiting_turns[0].queue_id, "waiting-2");
-        assert_eq!(state.pending_draft.as_deref(), Some("第二条"));
+        assert_eq!(
+            state.pending_draft.as_ref().map(|draft| draft.text.as_str()),
+            Some("第二条")
+        );
         assert_eq!(state.waiting_rev, 1);
     }
 

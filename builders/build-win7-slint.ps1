@@ -103,29 +103,54 @@ $env:RANLIB_i686_win7_windows_gnu = Join-Path $MingwBin 'i686-w64-mingw32-gcc-ra
 # PowerShell 5.1's ConvertFrom-Json spins for minutes and then throws on the
 # size limit, and the assembly-loading alternatives are equally slow here.
 $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE ".cargo" }
-$sourceRoots = @()
 $sourceConfig = Join-Path $cargoHome "config.toml"
-if (Test-Path -LiteralPath $sourceConfig) {
-  # build-win7-offline.ps1 points crates-io at a vendored directory; use it
-  # first so the import library always matches the sources being compiled.
-  $vendorLine = Select-String -LiteralPath $sourceConfig -Pattern '^\s*directory\s*=\s*"([^"]+)"' |
-    Select-Object -First 1
-  if ($vendorLine) { $sourceRoots += $vendorLine.Matches[0].Groups[1].Value }
-}
-if ($sourceRoots.Count -eq 0) {
-  $registryRoot = Join-Path $cargoHome "registry\src"
-  if (Test-Path -LiteralPath $registryRoot) {
-    $sourceRoots += @(Get-ChildItem -LiteralPath $registryRoot -Directory |
-      ForEach-Object { $_.FullName })
+function Get-CargoSourceRoots {
+  $roots = @()
+  if (Test-Path -LiteralPath $sourceConfig) {
+    # build-win7-offline.ps1 points crates-io at a vendored directory; use it
+    # first so the import library always matches the sources being compiled.
+    $vendorLine = Select-String -LiteralPath $sourceConfig -Pattern '^\s*directory\s*=\s*"([^"]+)"' |
+      Select-Object -First 1
+    if ($vendorLine) { $roots += $vendorLine.Matches[0].Groups[1].Value }
   }
+  if ($roots.Count -eq 0) {
+    $registryRoot = Join-Path $cargoHome "registry\src"
+    if (Test-Path -LiteralPath $registryRoot) {
+      $roots += @(Get-ChildItem -LiteralPath $registryRoot -Directory |
+        ForEach-Object { $_.FullName })
+    }
+  }
+  return @($roots | Select-Object -Unique)
 }
+$sourceRoots = @(Get-CargoSourceRoots)
 $windowsImportDirs = @()
-foreach ($sourceRoot in ($sourceRoots | Select-Object -Unique)) {
-  $windowsImportDirs += @(
-    Get-ChildItem -LiteralPath $sourceRoot -Directory -Filter "windows_i686_gnu-*" -ErrorAction SilentlyContinue |
-      ForEach-Object { Join-Path $_.FullName "lib" } |
-      Where-Object { Test-Path -LiteralPath $_ }
-  )
+function Get-WindowsImportDirs {
+  param([string[]]$Roots)
+  $dirs = @()
+  foreach ($sourceRoot in ($Roots | Select-Object -Unique)) {
+    $dirs += @(
+      Get-ChildItem -LiteralPath $sourceRoot -Directory -Filter "windows_i686_gnu-*" -ErrorAction SilentlyContinue |
+        ForEach-Object { Join-Path $_.FullName "lib" } |
+        Where-Object { Test-Path -LiteralPath $_ }
+    )
+  }
+  return @($dirs | Select-Object -Unique)
+}
+$windowsImportDirs = @(Get-WindowsImportDirs -Roots $sourceRoots)
+if ($windowsImportDirs.Count -eq 0) {
+  # GitHub's fresh runner has no Cargo registry cache. Cargo would download
+  # this target-only crate during the build, but the -Lnative flag below is
+  # needed before linking starts, so fetch the locked graph first.
+  Write-Host "windows_i686_gnu is not cached; fetching locked Cargo sources..."
+  $fetchArgs = @("fetch", "--locked", "--target", $target, "--manifest-path", $manifest)
+  if ($CargoExe) {
+    & $cargoCommand @fetchArgs
+  } else {
+    & $cargoCommand "+$Toolchain" @fetchArgs
+  }
+  if ($LASTEXITCODE -ne 0) { throw "Cargo dependency fetch failed: $LASTEXITCODE" }
+  $sourceRoots = @(Get-CargoSourceRoots)
+  $windowsImportDirs = @(Get-WindowsImportDirs -Roots $sourceRoots)
 }
 $windowsImportDirs = @($windowsImportDirs | Select-Object -Unique)
 if ($windowsImportDirs.Count -eq 0) {

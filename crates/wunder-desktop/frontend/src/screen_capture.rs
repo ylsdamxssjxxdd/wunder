@@ -137,103 +137,191 @@ pub(crate) fn primary_monitor() -> Option<MonitorRect> {
     state.0.or(state.1)
 }
 
-/// One top-level window rectangle, in absolute desktop pixels (the same space
-/// as [`ScreenCapture::origin_x`]). Candidates come back in stacking order —
-/// topmost first — so a hit test can stop at the first rectangle that contains
-/// the pointer: that is the window the user actually sees there.
+/// One snap candidate: a window rectangle plus the rectangles of windows
+/// nested inside it, in absolute desktop pixels (the same space as
+/// [`ScreenCapture::origin_x`]). Roots come back in stacking order (topmost
+/// first) and children keep their sibling order, so a hit test can take the
+/// first root that contains the pointer and then descend into the deepest
+/// child that still contains it: the window chrome stays the window, while a
+/// panel, dialog body or edit control inside it is offered on its own.
 ///
 /// Only what Win32 reports is used, never a painted-screen scan: the selector
 /// needs the rectangles just for snapping and highlighting, while the pixels
 /// of the region still come from the frozen frame the user confirms.
+#[derive(Clone, Debug)]
+pub struct RegionNode {
+    pub rect: MonitorRect,
+    pub children: Vec<RegionNode>,
+    /// Native handle behind this rectangle, used to scope the element probe to
+    /// the window under the pointer. `0` when the platform has no handle.
+    pub hwnd: isize,
+}
+
+/// Without composition (Win7 basic theme) the classic rectangle, invisible
+/// resize border included, is the only answer.
 #[cfg(windows)]
-pub fn detect_regions(monitor: MonitorRect) -> Vec<MonitorRect> {
-    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
-    use windows_sys::Win32::Graphics::Dwm::{
-        DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
-    };
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetClassNameW, GetWindowRect, GetWindowThreadProcessId, IsIconic,
-        IsWindowVisible,
-    };
-
-    struct Scan {
-        monitor: MonitorRect,
-        own_pid: u32,
-        regions: Vec<MonitorRect>,
+unsafe fn framed_rect(hwnd: isize) -> Option<MonitorRect> {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    let mut rect: RECT = std::mem::zeroed();
+    let mut resolved = DwmGetWindowAttribute(
+        hwnd,
+        DWMWA_EXTENDED_FRAME_BOUNDS as u32,
+        &mut rect as *mut RECT as *mut std::ffi::c_void,
+        std::mem::size_of::<RECT>() as u32,
+    ) == 0;
+    if !resolved {
+        resolved = GetWindowRect(hwnd, &mut rect) != 0;
     }
+    resolved.then_some(MonitorRect {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+    })
+}
 
-    unsafe extern "system" fn visit(hwnd: HWND, data: LPARAM) -> BOOL {
-        let scan = &mut *(data as *mut Scan);
-        if IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 {
-            return 1;
-        }
-        let mut pid = 0u32;
-        GetWindowThreadProcessId(hwnd, &mut pid);
-        if pid == 0 || pid == scan.own_pid {
-            // Our own surfaces are never a capture target, and the selector
-            // itself must not offer itself as a snap region.
-            return 1;
-        }
-        let mut class = [0u16; 64];
-        let class_len = GetClassNameW(hwnd, class.as_mut_ptr(), class.len() as i32);
-        let class = String::from_utf16_lossy(&class[..class_len.max(0) as usize]);
-        if matches!(class.as_str(), "Progman" | "WorkerW") {
-            // Desktop background windows cover the whole monitor; offering
-            // them would turn every click on empty desktop into a full-screen
-            // selection, which is the one case free dragging already serves.
-            return 1;
-        }
-        let mut cloaked = 0u32;
-        if DwmGetWindowAttribute(
-            hwnd,
-            DWMWA_CLOAKED as u32,
-            &mut cloaked as *mut u32 as *mut std::ffi::c_void,
-            std::mem::size_of::<u32>() as u32,
-        ) == 0
-            && cloaked != 0
+/// Windows the user can never point at through their pixels: click-through
+/// overlays (hit testing skips them) and layered windows whose constant alpha
+/// is zero (HUDs, recorders). Keeping them would mask every window below.
+#[cfg(windows)]
+unsafe fn unpickable(hwnd: isize) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetLayeredWindowAttributes, GetWindowLongW, GWL_EXSTYLE, LWA_ALPHA, WS_EX_LAYERED,
+        WS_EX_TRANSPARENT,
+    };
+    let style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+    if style & WS_EX_TRANSPARENT != 0 {
+        return true;
+    }
+    if style & WS_EX_LAYERED != 0 {
+        let (mut key, mut alpha, mut flags) = (0u32, 0u8, 0u32);
+        if GetLayeredWindowAttributes(hwnd, &mut key, &mut alpha, &mut flags) != 0
+            && flags & LWA_ALPHA != 0
+            && alpha == 0
         {
-            // UWP leftovers and windows on another virtual desktop are
-            // "visible" to Win32 but contribute no pixels to this screen.
-            return 1;
+            return true;
         }
-        let mut rect: RECT = std::mem::zeroed();
-        let mut resolved = DwmGetWindowAttribute(
-            hwnd,
-            DWMWA_EXTENDED_FRAME_BOUNDS as u32,
-            &mut rect as *mut RECT as *mut std::ffi::c_void,
-            std::mem::size_of::<RECT>() as u32,
-        ) == 0;
-        if !resolved {
-            // Without composition (Win7 basic theme) the classic rectangle,
-            // invisible resize border included, is the only answer.
-            resolved = GetWindowRect(hwnd, &mut rect) != 0;
-        }
-        if !resolved {
-            return 1;
-        }
-        let candidate = MonitorRect {
-            left: rect.left,
-            top: rect.top,
-            right: rect.right,
-            bottom: rect.bottom,
-        };
-        if let Some(clipped) = candidate.intersection(&scan.monitor) {
-            // Slivers are tooltips and 1px caret windows: they are never what
-            // the user means, and snapping to them is pure frustration.
-            if clipped.width() >= 8 && clipped.height() >= 8 && scan.regions.len() < 64 {
-                scan.regions.push(clipped);
+    }
+    false
+}
+
+/// Rectangle of a child window clipped to the monitor. Children have no DWM
+/// frame attribute, and 6 px slivers (toolbars, caret windows) are dropped.
+#[cfg(windows)]
+unsafe fn child_rect(hwnd: isize, monitor: MonitorRect) -> Option<MonitorRect> {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    let mut rect: RECT = std::mem::zeroed();
+    if GetWindowRect(hwnd, &mut rect) == 0 {
+        return None;
+    }
+    MonitorRect {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+    }
+    .intersection(&monitor)
+    .filter(|rect| rect.width() >= 6 && rect.height() >= 6)
+}
+
+/// Walk direct children in z-order (front first) and recurse. Depth and count
+/// are bounded so a pathological window tree cannot turn every pointer move
+/// into a long walk.
+#[cfg(windows)]
+unsafe fn collect_children(
+    parent: isize,
+    monitor: MonitorRect,
+    depth: u32,
+    budget: &mut usize,
+) -> Vec<RegionNode> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindow, IsWindowVisible, GW_CHILD, GW_HWNDNEXT,
+    };
+    const MAX_DEPTH: u32 = 5;
+    const MAX_SIBLINGS: usize = 64;
+    let mut nodes = Vec::new();
+    if depth > MAX_DEPTH {
+        return nodes;
+    }
+    let mut child = GetWindow(parent, GW_CHILD);
+    let mut visited = 0;
+    while child != 0 && visited < MAX_SIBLINGS && *budget > 0 {
+        visited += 1;
+        let next = GetWindow(child, GW_HWNDNEXT);
+        if IsWindowVisible(child) != 0 && !unpickable(child) {
+            if let Some(rect) = child_rect(child, monitor) {
+                *budget -= 1;
+                let children = collect_children(child, monitor, depth + 1, budget);
+                nodes.push(RegionNode { rect, children, hwnd: child });
             }
         }
-        1
+        child = next;
     }
+    nodes
+}
 
-    let mut scan = Scan {
-        monitor,
-        own_pid: std::process::id(),
-        regions: Vec::new(),
+/// Top-level windows in z-order, each with its nested window tree. `GetTopWindow`
+/// plus `GW_HWNDNEXT` is the documented front-to-back chain, so the hit test
+/// never depends on `EnumWindows` ordering.
+#[cfg(windows)]
+pub fn detect_regions(monitor: MonitorRect) -> Vec<RegionNode> {
+    use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetClassNameW, GetTopWindow, GetWindow, GetWindowThreadProcessId, IsIconic,
+        IsWindowVisible, GW_HWNDNEXT,
     };
-    unsafe { EnumWindows(Some(visit), &mut scan as *mut Scan as LPARAM) };
-    scan.regions
+    const MAX_ROOTS: usize = 64;
+    const MAX_NODES: usize = 320;
+
+    let mut roots = Vec::new();
+    let mut budget = MAX_NODES;
+    unsafe {
+        let mut hwnd = GetTopWindow(0);
+        let mut visited = 0;
+        while hwnd != 0 && visited < 8192 && roots.len() < MAX_ROOTS && budget > 0 {
+            visited += 1;
+            let next = GetWindow(hwnd, GW_HWNDNEXT);
+            if IsWindowVisible(hwnd) != 0 && IsIconic(hwnd) == 0 && !unpickable(hwnd) {
+                let mut pid = 0u32;
+                GetWindowThreadProcessId(hwnd, &mut pid);
+                let mut class = [0u16; 64];
+                let class_len = GetClassNameW(hwnd, class.as_mut_ptr(), class.len() as i32);
+                let class = String::from_utf16_lossy(&class[..class_len.max(0) as usize]);
+                let mut cloaked = 0u32;
+                let is_cloaked = DwmGetWindowAttribute(
+                    hwnd,
+                    DWMWA_CLOAKED as u32,
+                    &mut cloaked as *mut u32 as *mut std::ffi::c_void,
+                    std::mem::size_of::<u32>() as u32,
+                ) == 0
+                    && cloaked != 0;
+                // Our own surfaces are never a capture target, and the selector
+                // itself must not offer itself as a snap region. Desktop
+                // background windows cover the whole monitor; offering them
+                // would turn every click on empty desktop into a full-screen
+                // selection, which is the one case free dragging already serves.
+                if pid != 0
+                    && pid != std::process::id()
+                    && !is_cloaked
+                    && !matches!(class.as_str(), "Progman" | "WorkerW")
+                {
+                    let rect = framed_rect(hwnd)
+                        .and_then(|rect| rect.intersection(&monitor))
+                        .filter(|rect| rect.width() >= 8 && rect.height() >= 8);
+                    if let Some(rect) = rect {
+                        budget -= 1;
+                        let children = collect_children(hwnd, monitor, 1, &mut budget);
+                        roots.push(RegionNode { rect, children, hwnd });
+                    }
+                }
+            }
+            hwnd = next;
+        }
+    }
+    roots
 }
 
 /// X11 counterpart: enumerate the root window's children and read each frame's
@@ -241,7 +329,7 @@ pub fn detect_regions(monitor: MonitorRect) -> Vec<MonitorRect> {
 /// without a usable X display simply gets an empty list — the selector still
 /// supports free dragging and handle adjustment.
 #[cfg(target_os = "linux")]
-pub fn detect_regions(monitor: MonitorRect) -> Vec<MonitorRect> {
+pub fn detect_regions(monitor: MonitorRect) -> Vec<RegionNode> {
     use std::ffi::c_void;
     use std::os::raw::{c_int, c_uint, c_ulong};
     use x11_dl::xlib;
@@ -310,7 +398,11 @@ pub fn detect_regions(monitor: MonitorRect) -> Vec<MonitorRect> {
                 };
                 if let Some(clipped) = candidate.intersection(&monitor) {
                     if clipped.width() >= 8 && clipped.height() >= 8 && regions.len() < 64 {
-                        regions.push(clipped);
+                        regions.push(RegionNode {
+                            rect: clipped,
+                            children: Vec::new(),
+                            hwnd: window as isize,
+                        });
                     }
                 }
             }
@@ -324,7 +416,7 @@ pub fn detect_regions(monitor: MonitorRect) -> Vec<MonitorRect> {
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]
-pub fn detect_regions(_monitor: MonitorRect) -> Vec<MonitorRect> {
+pub fn detect_regions(_monitor: MonitorRect) -> Vec<RegionNode> {
     Vec::new()
 }
 
@@ -401,9 +493,119 @@ pub(crate) fn preview_size(rect: MonitorRect) -> (u32, u32) {
     (width, height)
 }
 
+/// Grid resolution of the coarse color signature used to tell "the hidden
+/// window is still painted into the frame" from "the desktop behind it is
+/// showing". 12 x 12 cells is enough structure while averaging away the
+/// sampling differences between a screen read-back and a captured frame.
+#[cfg(windows)]
+pub(crate) const SIGNATURE_GRID: u32 = 12;
+
+/// `grid` x `grid` cells of mean RGB over a `w` x `h` pixel block, with
+/// `pixel(x, y)` reading region-local coordinates. Cells are area averages, so
+/// two signatures of the same pixels agree even when the sources were read at
+/// different resolutions, which a per-pixel diff could never promise.
+#[cfg(windows)]
+fn grid_means(
+    w: usize,
+    h: usize,
+    grid: u32,
+    pixel: impl Fn(usize, usize) -> (u32, u32, u32),
+) -> Vec<u8> {
+    let grid = grid.max(1) as usize;
+    let mut out = Vec::with_capacity(grid * grid * 3);
+    for gy in 0..grid {
+        let mut y0 = gy * h / grid;
+        let mut y1 = ((gy + 1) * h) / grid;
+        if y1 <= y0 {
+            y1 = (y0 + 1).min(h);
+        }
+        if y0 >= h {
+            y0 = h.saturating_sub(1);
+            y1 = h;
+        }
+        for gx in 0..grid {
+            let mut x0 = gx * w / grid;
+            let mut x1 = ((gx + 1) * w) / grid;
+            if x1 <= x0 {
+                x1 = (x0 + 1).min(w);
+            }
+            if x0 >= w {
+                x0 = w.saturating_sub(1);
+                x1 = w;
+            }
+            let (mut red, mut green, mut blue, mut count) = (0u64, 0u64, 0u64, 0u64);
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let (r, g, b) = pixel(x, y);
+                    red += r as u64;
+                    green += g as u64;
+                    blue += b as u64;
+                    count += 1;
+                }
+            }
+            if count == 0 {
+                out.extend_from_slice(&[0, 0, 0]);
+            } else {
+                out.push((red / count) as u8);
+                out.push((green / count) as u8);
+                out.push((blue / count) as u8);
+            }
+        }
+    }
+    out
+}
+
+/// Signature of a region inside a freshly captured RGBA frame.
+#[cfg(windows)]
+pub fn frame_region_signature(
+    frame: &ScreenCapture,
+    region: MonitorRect,
+    grid: u32,
+) -> Option<Vec<u8>> {
+    let frame_rect = MonitorRect {
+        left: frame.origin_x,
+        top: frame.origin_y,
+        right: frame.origin_x + frame.width as i32,
+        bottom: frame.origin_y + frame.height as i32,
+    };
+    let clipped = region.intersection(&frame_rect)?;
+    let x0 = (clipped.left - frame.origin_x) as usize;
+    let y0 = (clipped.top - frame.origin_y) as usize;
+    let w = clipped.width() as usize;
+    let h = clipped.height() as usize;
+    let stride = frame.width as usize * 4;
+    Some(grid_means(w, h, grid, |x, y| {
+        let index = (y0 + y) * stride + (x0 + x) * 4;
+        (
+            frame.rgba[index] as u32,
+            frame.rgba[index + 1] as u32,
+            frame.rgba[index + 2] as u32,
+        )
+    }))
+}
+
+/// The same signature taken from a [`sample_region_preview`] read-back, which
+/// is BGRA. Returns an empty signature for a malformed buffer so the caller
+/// treats it as "not the window" and simply captures.
+#[cfg(windows)]
+pub fn preview_signature(preview: &[u8], width: u32, height: u32, grid: u32) -> Vec<u8> {
+    let (w, h) = (width as usize, height as usize);
+    if w == 0 || h == 0 || preview.len() < w * h * 4 {
+        return Vec::new();
+    }
+    grid_means(w, h, grid, |x, y| {
+        let index = (y * w + x) * 4;
+        (
+            preview[index + 2] as u32,
+            preview[index + 1] as u32,
+            preview[index] as u32,
+        )
+    })
+}
+
 /// Copy `rect` out of `dc` into a `width` x `height` top-down BGRA buffer.
-/// `scaled` picks `StretchBlt` — a coarse, cheap read for the hide verification
-/// loop — while the exact-size path stays `BitBlt` for delivered captures.
+/// `scaled` picks `StretchBlt` — a coarse, cheap read for the hide reference —
+/// while the exact-size path stays `BitBlt` for delivered captures.
 #[cfg(windows)]
 unsafe fn blit_region(
     dc: isize,

@@ -392,6 +392,9 @@ export component ThreadTrajectoryDialog inherits Rectangle {
         if root.search-hint != "" : TrajText {
             height: 20px;
             x: 12px;
+            // The layout stretches this child, so name its width too: the 12px
+            // inset would otherwise push the right edge past the pane.
+            width: parent.width - 24px;
             text: root.search-hint;
             color: TrajTokens.text-2;
             font-size: 10px;

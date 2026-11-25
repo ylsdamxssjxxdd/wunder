@@ -34,7 +34,7 @@ The screenshot shortcuts only apply while the workbench window has focus, so `F1
 
 The confirmed region drops into the composer as an attachment and is copied to the system clipboard as well. The tray menu and the composer's `+` → Screenshot entry are the same as `F1`.
 
-The selection stays editable after you release the mouse: drag inside it to move, drag any of the eight corner/edge handles to resize, nudge with the arrow keys (1 screen pixel, 10 with `Shift`), then press `Enter` to confirm or `Esc`/right-click to cancel. Before you draw anything, hovering outlines the window under the pointer and a click selects that window without lining the edges up by hand.
+The selection stays editable after you release the mouse: drag inside it to move, drag any of the eight corner/edge handles to resize, nudge with the arrow keys (1 screen pixel, 10 with `Shift`), then press `Enter` to confirm or `Esc`/right-click to cancel. Moving the pointer no longer outlines windows continuously; press `Space` when you want a smart selection. It snaps to the window under the pointer, then UI Automation refines the rectangle to a button, tab, list row or similar control in the background. Detection runs only on the key press, so opening the selector itself no longer enumerates windows or probes controls; pressing `Space` again re-detects at the new pointer position, and a failed refinement keeps the window rectangle. `F1` no longer waits a fixed settle: it hides the window, captures immediately and re-checks the frame, so the selector opens as quickly as with `F2`.
 
 ## Desktop-only capabilities
 
@@ -53,4 +53,5 @@ The selection stays editable after you release the mouse: drag inside it to move
 - **No TTS playback**: voice input works and TTS models can be configured, but nothing plays; use [Cloud](/docs/en/forms/cloud-ui/) for spoken output.
 - **No UI entry for resetting the working state**: call `POST /wunder/auth/me/reset_work_state`; it stops running sessions, clears queued tasks and locks, and keeps skills, knowledge base, long-term memory, configuration and history.
 - **A compatibility bridge port** (18123 by default) serves legacy clients only.
+- **Smart selection is on demand**: window/control detection runs only when `Space` is pressed. The first press builds the window tree lazily, then UI Automation refines it. Self-drawn apps or apps with accessibility disabled may only resolve to the window; a cross-process timeout or failed refinement keeps the window rectangle and never blocks dragging or confirming.
 - **Electron / Tauri shells are no longer maintained**; that does not affect the engine or the native desktop app.
