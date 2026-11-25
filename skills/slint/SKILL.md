@@ -1,6 +1,6 @@
 ---
 name: slint
-description: Use when writing, editing, debugging, or reviewing `.slint` UI code, or wiring it to Rust/C++/JS/Python — the Slint language, layout, compile-time gotchas, interop, and the MCP server for runtime checks.
+description: Use when writing, editing, debugging, or reviewing `.slint` UI code, or wiring it to Rust/C++/JS/Python — the Slint language, layout, project files/editions, compile-time gotchas, interop, and the MCP server for runtime checks.
 ---
 
 # Slint Development Skill
@@ -10,13 +10,16 @@ a declarative GUI toolkit for desktop, embedded, mobile, and web.
 
 ## Workflow
 
-1. Find the project's Slint version first (`Cargo.toml`/`Cargo.lock`,
-   `package.json`, `pyproject.toml`, or the CMake `find_package`/`FetchContent`
-   line). This skill targets Slint **≥ 1.17** and its prose assumes the latest
-   release; anything that needs a specific version is flagged inline as
-   `(1.17+)`, `(1.18+)`, … When the project pins an *older* version, or for
-   exact element/property/widget signatures, trust that version's docs over
-   this file rather than guessing.
+1. Find the project's Slint version **and edition** first: `Cargo.toml`/
+   `Cargo.lock`, `package.json`, `pyproject.toml`, the CMake
+   `find_package`/`FetchContent` line, and `slint-project.json` /
+   `CompilerConfiguration::with_edition()` / `#[edition = "…"]`.
+   This skill targets Slint **1.19** (1.19.1 behavior); older features are
+   marked `(1.17+)`, `(1.18+)`. Prose assumes 1.19 unless a project has not
+   opted into its edition — see
+   [editions-and-project-file.md](reference/editions-and-project-file.md).
+   When the project pins an older version, or for exact element/property/
+   widget signatures, trust that version's docs over this file.
 2. After editing, check the compiler diagnostics.
    An IDE with the Slint extension, Claude Code with `slint-lsp`, and Codex with `slint-viewer` report them after each edit.
    Codex runs this plugin's hooks only once the user trusts them in `/hooks`.
@@ -70,6 +73,7 @@ Skim the matching file *before* building in that area, not only when stuck.
 | File | Read when… |
 |---|---|
 | [setup.md](setup.md) | Starting a project / wiring the build (Rust/C++/Node/Python). |
+| [editions-and-project-file.md](reference/editions-and-project-file.md) | Adding/reading `slint-project.json`, choosing an edition, or upgrading into 1.19 behavior. |
 | [language-and-layout.md](reference/language-and-layout.md) | Writing components; an element won't size/fill as expected. |
 | [gotchas.md](reference/gotchas.md) | A file won't compile, or colors/units/math/enums behave oddly. |
 | [events-and-overlays.md](reference/events-and-overlays.md) | Clicks/keys/modifiers, or popovers/menus/context menus. |
@@ -104,6 +108,26 @@ component Counter inherits Rectangle {     // root element decides fill behavior
 Property directions: `in` / `out` / `in-out` / `private`. Two-way bind: `a <=> b`.
 Control flow: `if cond : E {}`, `for it[i] in model : E {}`. Shared state & host
 interop: `export global Foo { ... }`. One-time code: `init => { ... }`.
+
+## 1.19 essentials
+
+- **Project file / edition.** `slint-project.json` records `edition`, `main`,
+  include/library paths, and `experimental-features`. Edition `1.18` keeps old
+  language behavior; `1.19` opts into the behavior changes. No edition means
+  no 1.19 behavior changes, even on a 1.19 compiler. See
+  [editions-and-project-file.md](reference/editions-and-project-file.md).
+- **`if`/`for` sizing.** Under edition 1.19 those elements count toward the
+  parent's size. Fixed-size parents may need explicit `width`/`height`.
+- **`ContextMenuArea` is not a layout container.** It is a non-visual
+  `Empty` in 1.19; put the `Menu` inside and keep `ScrollView`/`TextInput` as
+  siblings, never as children whose `parent.width` they need.
+- **Experimental features are names, not `1`.** Use `closures`, `interfaces`,
+  etc. in `experimental-features` or `SLINT_ENABLE_EXPERIMENTAL_FEATURES`.
+- **New behavior worth using:** `ensure-visible()` on any element,
+  `Flickable.scroll-to()` / `ListView.ensure-row-visible()`, `backdrop-blur`
+  (Skia/FemtoVG only), animated GIF/PNG/WebP `Image`, `selectable` on
+  `StyledText`, `@deprecated("…")`, and `Path.stroke-dash-array` /
+  `stroke-dash-offset`.
 
 ## Documentation
 

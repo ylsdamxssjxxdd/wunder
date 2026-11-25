@@ -1,0 +1,19 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+component Foo inherits Rectangle {
+    drop-shadow-color: red;
+//                     >  <warning{Set a 'background' or border to cast a drop shadow; children don't contribute to it}
+}
+
+export component SuperSimple inherits Window {
+    drop-shadow-color: #00000080;
+//                     >        <warning{The drop-shadow-color property cannot be used on the root element, the shadow will not be visible}
+
+    Text {
+        drop-shadow-color: black;
+//                         >    <error{The drop-shadow-color property is only supported on Rectangle elements right now}
+    }
+
+    Foo {}
+}

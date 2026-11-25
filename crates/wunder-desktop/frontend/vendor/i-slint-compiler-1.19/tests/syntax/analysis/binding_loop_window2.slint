@@ -1,0 +1,13 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+// Issue #3898
+export component LspCrash inherits Window {
+
+    HorizontalLayout {
+//  >               <note{setting an 'x' or a 'y' here takes 'HorizontalLayout' out of its parent's size, one way out of the binding loop reported for 'padding-left' at line 9}
+        padding-left: parent.width * 0.015;
+//                    >                   <warning{The binding for the property 'padding-left' is part of a binding loop (HorizontalLayout.padding-left -> HorizontalLayout -> root -> HorizontalLayout.padding-left)↵Compute 'padding-left' without depending on a size or a position the layout produces, or set an 'x' or a 'y' on 'HorizontalLayout', so its parent stops sizing itself from it↵This was allowed in previous version of Slint, but is deprecated and may cause panic at runtime}
+        Rectangle {}
+    }
+}

@@ -461,7 +461,9 @@ fn bubble_font(dpi: f64) -> HFONT {
             let face = bubble_face();
             unsafe {
                 *slot = Some(CreateFontW(
-                    -((BUBBLE_FONT_LOGICAL as f64 * dpi).round() as i32),
+                    // Rasterized at the supersampled size; `layout_bubble`
+                    // filters it back down to `BUBBLE_FONT_LOGICAL * dpi`.
+                    -((BUBBLE_FONT_LOGICAL as f64 * dpi * BUBBLE_SUPERSAMPLE as f64).round() as i32),
                     0,
                     0,
                     0,
@@ -469,11 +471,11 @@ fn bubble_font(dpi: f64) -> HFONT {
                     0,
                     0,
                     0,
-                    GB2312_CHARSET,
+                    DEFAULT_CHARSET,
                     OUT_DEFAULT_PRECIS,
                     CLIP_DEFAULT_PRECIS,
                     ANTIALIASED_QUALITY,
-                    FIXED_PITCH | FF_DONTCARE,
+                    DEFAULT_PITCH | FF_DONTCARE,
                     face.as_ptr(),
                 ));
             }
@@ -483,14 +485,25 @@ fn bubble_font(dpi: f64) -> HFONT {
 }
 
 const FW_NORMAL: i32 = 400;
-const GB2312_CHARSET: u32 = 128;
+/// Only `DEFAULT_CHARSET` (1) is safe here. `GB2312_CHARSET` is 134, not 128 —
+/// 128 is `SHIFTJIS_CHARSET`, and asking for it (with `FIXED_PITCH` on top)
+/// made GDI map the request onto the Japanese MS Gothic instead of the
+/// registered MiSans. The bubble then drew much wider, heavier glyphs than the
+/// rest of the UI.
+const DEFAULT_CHARSET: u32 = 1;
 const OUT_DEFAULT_PRECIS: u32 = 0;
 const CLIP_DEFAULT_PRECIS: u32 = 0;
 /// Grayscale antialiasing: the bubble mask reads a single channel as coverage,
 /// which subpixel rendering would make colour dependent.
 const ANTIALIASED_QUALITY: u32 = 4;
-const FIXED_PITCH: u32 = 1;
+const DEFAULT_PITCH: u32 = 0;
 const FF_DONTCARE: u32 = 0;
+/// `DrawTextW` always hints TrueType outlines onto the pixel grid. At 12 logical
+/// px that rounds every CJK stem up to a whole pixel, so even a Regular face
+/// reads bold next to the unhinted MiSans Slint draws for the app itself.
+/// Rasterizing this many times larger and box filtering back down restores the
+/// designed stroke weight (measured within a few percent of unhinted output).
+const BUBBLE_SUPERSAMPLE: i32 = 3;
 
 fn dib_info(width: i32, height: i32) -> BITMAPINFO {
     BITMAPINFO {
@@ -537,14 +550,19 @@ unsafe fn text_metrics(dc: isize, utf: &[u16], rect: &mut RECT, flags: u32) -> i
 }
 
 /// Measure and rasterize the bubble text as a white-on-black coverage mask.
+///
+/// Everything is measured and drawn at `BUBBLE_SUPERSAMPLE` times the final
+/// size, then box filtered down: see the note on that constant for why hinting
+/// has to be averaged away.
 unsafe fn layout_bubble(wanted: &(String, BubbleTone), dpi: f64) -> Option<BubbleLayout> {
     let text = wanted.0.trim();
     if text.is_empty() {
         return None;
     }
+    let scale = BUBBLE_SUPERSAMPLE;
     let padding = (BUBBLE_PADDING_LOGICAL as f64 * dpi).round() as i32;
-    let max_width = (BUBBLE_MAX_WIDTH_LOGICAL as f64 * dpi) as i32;
-    let max_height = (BUBBLE_MAX_HEIGHT_LOGICAL as f64 * dpi) as i32;
+    let max_text_width = (BUBBLE_MAX_WIDTH_LOGICAL as f64 * dpi).round() as i32;
+    let max_text_height = (BUBBLE_MAX_HEIGHT_LOGICAL as f64 * dpi).round() as i32;
     let screen = GetDC(0);
     if screen == 0 {
         return None;
@@ -568,8 +586,8 @@ unsafe fn layout_bubble(wanted: &(String, BubbleTone), dpi: f64) -> Option<Bubbl
     let mut measure = RECT {
         left: 0,
         top: 0,
-        right: max_width,
-        bottom: max_height,
+        right: max_text_width * scale,
+        bottom: max_text_height * scale,
     };
     text_metrics(
         dc,
@@ -577,32 +595,49 @@ unsafe fn layout_bubble(wanted: &(String, BubbleTone), dpi: f64) -> Option<Bubbl
         &mut measure,
         DT_CALCRECT | DT_WORDBREAK | DT_END_ELLIPSIS,
     );
-    let text_width = (measure.right - measure.left).clamp(1, max_width);
-    let text_height = (measure.bottom - measure.top).clamp(1, max_height);
-    let width = text_width + padding * 2;
-    let height = text_height + padding * 2;
+    // Supersampled extents, rounded up so the filtered result never clips the
+    // right-most or bottom-most pixel of a glyph.
+    let text_width = ((measure.right - measure.left).max(1) + scale - 1) / scale;
+    let text_height = ((measure.bottom - measure.top).max(1) + scale - 1) / scale;
+    let width = text_width.min(max_text_width) + padding * 2;
+    let height = text_height.min(max_text_height) + padding * 2;
+    let wide_width = width * scale;
+    let wide_height = height * scale;
 
-    let layout = match dib_section(dc, width, height) {
+    let layout = match dib_section(dc, wide_width, wide_height) {
         Some((bitmap, bits)) => {
             SelectObject(dc, bitmap);
-            let pixels = std::slice::from_raw_parts_mut(bits, (width * height * 4) as usize);
+            let pixels =
+                std::slice::from_raw_parts_mut(bits, (wide_width * wide_height * 4) as usize);
             pixels.fill(0);
             let mut target = RECT {
-                left: padding,
-                top: padding,
+                left: padding * scale,
+                top: padding * scale,
                 // Wrap with exactly the width the measurement used so the line
                 // breaks match, and let the padding absorb the glyph overhang
                 // the tight rectangle leaves out; clipping to the surface edge
                 // instead cuts the last glyph of a line in half.
-                right: padding + max_width,
-                bottom: padding + max_height,
+                right: padding * scale + max_text_width * scale,
+                bottom: padding * scale + max_text_height * scale,
             };
             text_metrics(dc, &utf, &mut target, DT_WORDBREAK | DT_END_ELLIPSIS);
             // Glyph pixels come back white, so one channel is the coverage mask.
-            let mask = pixels
-                .chunks_exact(4)
-                .map(|pixel| pixel[0])
-                .collect::<Vec<u8>>();
+            // Box filter the `scale x scale` block behind each final pixel: the
+            // average is the unhinted coverage hinting rounded away.
+            let samples = (scale * scale) as u32;
+            let mut mask = Vec::with_capacity((width * height) as usize);
+            for y in 0..height {
+                for x in 0..width {
+                    let mut sum = 0u32;
+                    for sy in 0..scale {
+                        let row = ((y * scale + sy) * wide_width) as usize * 4;
+                        for sx in 0..scale {
+                            sum += pixels[row + (x * scale + sx) as usize * 4] as u32;
+                        }
+                    }
+                    mask.push((sum / samples) as u8);
+                }
+            }
             SelectObject(dc, previous);
             DeleteObject(bitmap);
             Some(BubbleLayout {

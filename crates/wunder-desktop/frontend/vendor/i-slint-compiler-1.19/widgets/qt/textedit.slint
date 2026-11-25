@@ -1,0 +1,51 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+import { TextEditBase } from "../common/textedit-base.slint";
+import { StyleMetrics  } from "std-widgets-impl.slint";
+
+import { TextEditInterface } from "../common/std-widget-interfaces.slint";
+
+export component TextEdit {
+    implement TextEditInterface <=> base;
+
+    @deprecated("Please use 'content-width' instead") in-out property <length> viewport-width <=> content-width;
+    @deprecated("Please use 'content-height' instead") in-out property <length> viewport-height <=> content-height;
+    @deprecated("Please use 'content-x' instead") in-out property <length> viewport-x <=> content-x;
+    @deprecated("Please use 'content-y' instead") in-out property <length> viewport-y <=> content-y;
+
+    accessible-role: AccessibleRole.text-input;
+    accessible-enabled: root.enabled;
+    accessible-value <=> text;
+    accessible-placeholder-text: placeholder-text;
+    accessible-read-only: root.read-only;
+    accessible-action-set-value(v) => { text = v; edited(v); }
+    accessible-action-set-selection-offsets(anchor, focus) => { base.set-selection-offsets(anchor, focus); }
+
+    forward-focus: base;
+    horizontal-stretch: 1;
+    vertical-stretch: 1;
+
+    states [
+        disabled when !root.enabled: {
+            root.opacity: 0.5;
+        }
+        focused when base.has-focus: {
+            base.border-width: 2px;
+            base.border-color: NativePalette.accent-background;
+        }
+    ]
+
+    base := TextEditBase {
+        width: 100%;
+        height: 100%;
+        border-radius: 2px;
+        border-width: 1px;
+        border-color: NativePalette.border;
+        scroll-view-padding: 4px;
+        foreground: NativePalette.foreground;
+        placeholder-color: self.enabled ? StyleMetrics.placeholder-color : StyleMetrics.placeholder-color-disabled;
+        selection-background-color: NativePalette.selection-background;
+        selection-foreground-color: NativePalette.selection-foreground;
+    }
+}

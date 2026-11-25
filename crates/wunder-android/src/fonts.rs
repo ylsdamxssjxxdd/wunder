@@ -11,7 +11,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use slint::fontique_011::fontique;
+use slint::fontique_012::fontique;
 
 /// 系统自带的 CJK 无衬线字体，按常见程度排序。
 const SYSTEM_CJK_FACES: &[&str] = &[
@@ -68,7 +68,7 @@ pub fn install() {
     if INSTALLED.with(|installed| installed.replace(true)) {
         return;
     }
-    let mut collection = slint::fontique_011::shared_collection();
+    let mut collection = slint::fontique_012::shared_collection();
     let dir = system_font_dir();
 
     // 先按系统自己的字族链注册（`/system/etc/fonts.xml`）。原生应用和微信
@@ -606,3 +606,4 @@ mod tests {
         assert_eq!(families[0].lang, "zh-Hans");
     }
 }
+

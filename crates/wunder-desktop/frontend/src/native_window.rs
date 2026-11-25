@@ -435,6 +435,8 @@ pub fn sync_main_window_shape(window: &slint::Window) {
     else {
         return;
     };
+    // 12.0 mirrors Theme.radius-lg: the rounded window-surface and the region
+    // edge the frame's hairline is drawn across.
     apply_rounded_region(window, if maximized { 0.0 } else { 12.0 * scale });
 }
 

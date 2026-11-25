@@ -101,6 +101,7 @@ fn main() -> Result<()> {
 }
 
 fn run_cli() -> Result<()> {
+    terminal_geometry::configure_desktop_launch_window();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(CLI_WORKER_THREADS)
         .thread_stack_size(CLI_WORKER_STACK_BYTES)

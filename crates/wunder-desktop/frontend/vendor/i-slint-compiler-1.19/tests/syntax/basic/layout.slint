@@ -1,0 +1,21 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+export component X inherits Rectangle {
+
+    lay := GridLayout {
+        property<string> foo: "hello";
+        Row {
+            Text { text: lay.foo; }
+            Text {}
+        }
+        Row {Text {}}
+        Text{
+            Row {}
+//          >  <error{Row can only be within a GridLayout element}
+        }
+    }
+
+
+
+}

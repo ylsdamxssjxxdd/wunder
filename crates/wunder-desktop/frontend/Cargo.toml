@@ -2,7 +2,7 @@
 name = "wunder-frontend-slint"
 version = "1.1.0"
 edition = "2021"
-rust-version = "1.92"
+rust-version = "1.95"
 publish = false
 
 # Release executable name. The package keeps the wunder-frontend-slint name;
@@ -17,22 +17,22 @@ anyhow = "1"
 # 否则运行时会退化为 “mcp feature is disabled; rebuild with --features mcp”。
 wunder-desktop = { path = "..", default-features = false, features = ["sqlite-storage", "desktop-control", "web-fetch", "mcp"] }
 wunder-runtime = { path = "../../wunder-runtime", default-features = false, features = ["sqlite-storage"] }
-slint = { version = "=1.18.0", default-features = false, features = [
+slint = { version = "=1.19.1", default-features = false, features = [
   "backend-winit",
   "compat-1-2",
   "raw-window-handle-06",
   "renderer-software",
   "std",
-  "unstable-fontique-011",
+  "unstable-fontique-012",
   "system-tray",
   # Winit 0.30 窗口访问器：托盘驻留提示的定位与 Linux 首窗最大化回退。
   "unstable-winit-030",
 ] }
-i-slint-backend-winit = { version = "=1.18.0", default-features = false, features = ["raw-window-handle-06", "renderer-software"] }
-i-slint-renderer-software = { version = "=1.18.0", default-features = false, features = ["std", "systemfonts"] }
+i-slint-backend-winit = { version = "=1.19.1", default-features = false, features = ["raw-window-handle-06", "renderer-software"] }
+i-slint-renderer-software = { version = "=1.19.1", default-features = false, features = ["std", "systemfonts"] }
 # The transcript's cross-block text selection lives in the fork's
 # `text_selection` module; the menu needs its copy/select-all entry points.
-i-slint-core = { version = "=1.18.0", default-features = false }
+i-slint-core = { version = "=1.19.1", default-features = false }
 lz4_flex = { version = "=0.11.6", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
 winit = { version = "=0.30.2", default-features = false }
 png = "=0.18.1"
@@ -46,8 +46,8 @@ sha2 = "0.10"
 pulldown-cmark = "0.10"
 vt100 = "0.15"
 # Reuse Slint's own text shaper for the native help document typesetting;
-# the vendored 0.11 tree is already in the build graph via the patch below.
-parley = { version = "=0.11.1", default-features = false, features = ["std"] }
+# the vendored 0.12 tree is already in the build graph via the patch below.
+parley = { version = "=0.12.0", default-features = false, features = ["std"] }
 serde = { version = "1", default-features = false, features = ["std", "derive"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -91,7 +91,7 @@ windows-sys-dialog = { package = "windows-sys", version = "0.59", features = [
 ] }
 
 [build-dependencies]
-slint-build = { version = "=1.18.0" }
+slint-build = { version = "=1.19.1" }
 lz4_flex = { version = "=0.11.6", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
 # Rasterizes the workspace file-icon SVG set. The generator is shared with
 # 安卓版 so both shells resolve the same icons.
@@ -124,14 +124,14 @@ codegen-units = 8
 
 [patch.crates-io]
 html2md = { path = "vendor/html2md-0.2.15" }
-i-slint-compiler = { path = "vendor/i-slint-compiler-1.18" }
-i-slint-backend-winit = { path = "vendor/i-slint-backend-winit-1.18" }
+i-slint-compiler = { path = "vendor/i-slint-compiler-1.19" }
+i-slint-backend-winit = { path = "vendor/i-slint-backend-winit-1.19" }
 softbuffer = { path = "vendor/softbuffer-0.4.8" }
-i-slint-common = { path = "vendor/i-slint-common-1.18" }
-i-slint-core = { path = "vendor/i-slint-core-1.18" }
-i-slint-renderer-software = { path = "vendor/i-slint-renderer-software-1.18" }
-fontique = { path = "vendor/fontique-0.11" }
-parley = { path = "vendor/parley-0.11" }
+i-slint-common = { path = "vendor/i-slint-common-1.19" }
+i-slint-core = { path = "vendor/i-slint-core-1.19" }
+i-slint-renderer-software = { path = "vendor/i-slint-renderer-software-1.19" }
+fontique = { path = "vendor/fontique-0.12" }
+parley = { path = "vendor/parley-0.12" }
 winit = { path = "vendor/winit-0.30.2" }
 # Shared Win7 fork (workspace-wide, also used by the Android shell): replaces
 # the Windows 8 PathCchStripPrefix import and widens the clipboard-open retry

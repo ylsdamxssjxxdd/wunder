@@ -1,0 +1,12 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+export component H inherits Rectangle {
+    x: {foo: "42"};
+//     >          <error{Cannot convert { foo: string,} to length}
+    y: [ 45, 45, 45, 45 ];
+//     >                 <error{Cannot convert [float] to length}
+    background: [ { a: 45, b: 55, }, {a: 44, b: 54},];
+//              >                                    <error{Cannot convert [{ a: float,b: float,}] to brush}
+
+}

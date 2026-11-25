@@ -1,602 +1,159 @@
 # Local Win32 and text-stack patches
 
-The `-1.18` source copies are pinned to Slint 1.18.0 (declared in
+The `-1.19` source copies are pinned to Slint 1.19.1 (declared in
 `crates/wunder-desktop/frontend/Cargo.toml`) and are used only through Cargo's
-`[patch.crates-io]` override.
+`[patch.crates-io]` override. They were rebased from the 1.18 fork rather than
+carried over file-for-file: the upstream 1.19 tree is the base, and only the
+behaviors the workbench actually depends on were grafted back.
 
-## Slint 1.18.0 port notes
+## What is local in each crate
 
-- Touch panning no longer waits behind the `Flickable` press delay. A touch press
-  used to return `DelayForwarding(FORWARD_DELAY)` (100 ms), which also stopped the
-  press from reaching any nested scroller: a wide table inside the transcript
-  never saw the press, so its horizontal drag was dead until the delay expired
-  and the finger pressed again. `items/flickable.rs` now forwards the touch press
-  immediately (`ForwardAndInterceptGrab`, without marking the view as capturing,
-  so taps and long-press selection still get their release) and takes the gesture
-  on the first move whose dominant axis it can pan. The dominant-axis test also
-  replaces the old "either axis over 8 px" rule that let the vertical transcript
-  swallow a mostly-horizontal swipe, and the decision now uses the distance since
-  the press rather than a single frame. Tracked by a probe that dispatches
-  `InternalEvent::Touch` through the testing backend: before, a horizontal swipe
-  over a nested wide Flickable left its content at 0; after, it follows the finger
-  while a vertical swipe scrolls only the outer view.
+### `i-slint-common` 1.19.1
 
-Ported from the 1.17.1 patch set with these upstream changes:
+- `bitmapfont.rs` adds `data_packing: u8` to `BitmapGlyph` (0 = 8-bit
+  alpha/SDF, 1 = 1-bit monochrome, 2 = RGB subpixel) while keeping 1.19's
+  generic `Storage` model.
+- `sharedfontique.rs` disables system-font discovery (`system_fonts: false`).
+  The Win7 target must not pull DirectWrite/WinRT bindings in through font
+  enumeration; the shell registers its bundled faces explicitly.
 
-- The text stack moved from fontique/parley 0.10 to 0.11 (`unstable-fontique-011`
-  replaces `unstable-fontique-010`; `slint::fontique_011` replaces
-  `slint::fontique_010` in `src/system_fonts.rs` and
-  `src/app/help_window/layout.rs`). fontique 0.11.1 was audited for the
-  quadratic `load_fonts_from_paths` family-table merge: **not fixed upstream**
-  (the batch map is still shared across the scan and re-merged per font), so
-  `vendor/fontique-0.11` carries the same per-font batch-map fix. Both
-  fontique 0.11 and parley 0.11 keep the `default = ["std"]` change so the
-  `system` discovery feature (DirectWrite/WinRT on Windows) stays off; parley
-  0.11 also keeps the `#[allow(deprecated)]` on the bidi `mask` helper.
-- `i-slint-backend-winit` 1.18 moved the window-event match from
-  `event_loop.rs` into `winitwindowadapter.rs::handle_window_event`. The
-  Win7 event patches were re-applied there: resize-direction reset on
-  maximize/fullscreen transitions, `WindowEvent::Moved` forcing a full
-  software frame, the focus-gain forced complete frame, and `handle_resize`
-  gating the left-press consumption. The maximized-state guard on
-  `request_inner_size` and the hide-window `occluded(true)` are in the same
-  file.
-- External file drag-and-drop: 1.18 core ships `DropArea`/`DropEvent` but its
-  winit backend never maps `WindowEvent::HoveredFile`/`DroppedFile`/
-  `HoveredFileCancelled` into the input pipeline, so only intra-app `DragArea`
-  drags worked. The local backend now accumulates the per-file hover events,
-  forwards `BackendDragEvent::Move` on cursor moves (so `has-drag` and
-  `can-drop` negotiate like internal drags) and delivers
-  `BackendDragEvent::Drop` with a `DataTransfer` carrying the OS file paths.
-  Because `DropEvent` is `#[non_exhaustive]`, `i-slint-core` gained the
-  `DropEvent::new` constructor backends need to build one.
-- `renderer/sw.rs`: 1.18 upstream now presents every disjoint damage
-  rectangle through `present_with_damage` (formerly our per-rect present
-  patch). The local remainder is the deferred-error handling (transient GDI
-  failures set `force_full_repaint` and retry instead of terminating the
-  event loop) plus the frame diagnostics recording.
-- Resize repaints the whole surface again: the damage region computed from
-  the previous frame's item geometry never covers the band a growing window
-  gains, so `softbuffer` kept the old size's pixels there and the compositor
-  scaled that stale frame into the new geometry while the user dragged an
-  edge (visible as a stretched ghost of the previous content). The renderer
-  now records the physical buffer size (`SoftwareRenderer::window_size` /
-  `set_window_size`) and `renderer/sw.rs` forces a full repaint
-  (`RepaintBufferType::NewBuffer`, cache cleared) on every size step.
-- `i-slint-core` 1.18 ships `RetainedLineBreaking` in
-  `textlayout/sharedparley/`: line breaking and its derived metrics are
-  cached in the paragraph cache and reused while width/alignment/overflow are
-  unchanged. This supersedes the local `sharedparley/line_cache.rs`
-  scroll-text patch, which was dropped (both scroll-text patch archives from
-  1.17 have no 1.18 equivalent). The `DirtyRegion::MAX_COUNT` 3→16 raise and
-  the partial-render physical-pixel margin are unchanged and still local;
-  the margin hunk needed `scale_factor().get()` because 1.18 returns a typed
-  `euclid::Scale`.
-- Inline-code capsules are painted per parley glyph run, and parley starts a new
-  run whenever the selected face changes. One `Style::Code` span that mixes
-  scripts — or one whose characters fall back one at a time because the generic
-  `Monospace` family is unmapped — therefore came out as a row of little boxes
-  instead of one background. `textlayout/sharedparley/draw.rs` now accumulates
-  the runs of one span into a single capsule and closes it only when the span
-  ends, the line ends, or a run from outside the span interrupts. The shells
-  also map `GenericFamily::Monospace` to a face that is actually in their
-  collection (desktop: the bundled UI chain; Android: the system's
-  `RobotoMono` / `DroidSansMono` files, else the UI chain), so inline code no
-  longer resolves per character.
-- `i-slint-renderer-software` 1.18 added subpixel-bin offsets to
-  `render_vector_glyph` and a struct `GlyphCacheKey`; the exact-size bitmap
-  strike preference (never stretch a nearby strike, skip zero-width SimSun
-  whitespace bitmaps) and `hint(true)` were re-applied on top of that shape.
-  `sharedparley::draw_text_input` now takes the text layout cache instead of
-  the password-character callback; both call sites pass
-  `self.text_layout_cache`.
-- The compiler's `software-renderer` feature was renamed to
-  `renderer-software`; the `gb2312_table` module gate follows the new name.
-  Upstream rewrote `try_extract_literal_from_element` with the newer binding
-  API, so the local copy of that helper was dropped; the non-positive
-  font-size filter around it is unchanged.
-- `const-field-offset` must be 0.2.1: the 1.18 generator emits
-  `sp::compose_field_offsets`, which only exists in const-field-offset 0.2.1.
-  A lockfile that still pins 0.2.0 fails every `slint::slint!` expansion —
-  run `cargo update -p const-field-offset` after upgrading.
-- 1.18 deprecates the `viewport-*` Flickable/ListView properties in favour of
-  `content-*`. The workbench UI has been renamed to `content-*` throughout.
-- `i-slint-core` `model/repeater.rs` ListView virtualization: the scroll
-  anchor (`RepeaterLayoutState::anchor_y`) is now the exact running sum of
-  the row heights above the window, maintained incrementally with the
-  measured heights of the rows the window moves past (walk-down, prepend)
-  instead of being rewritten every pass as `cached_item_height × offset`,
-  and `content-height` composes the exact prefix plus window plus an
-  estimate for the rows below. A uniform average over the mixed row pitch
-  of the workbench trees (32 px threads vs 36 px group headers) shifted the
-  content by `Δaverage × offset` on every pass — invisible under ~30 rows
-  and a visible jump beyond ~50 — and overestimated totals made the
-  end-of-model "scroll up" correction snap the bottom of the list upward.
-  Seeks past unmeasured rows and row insert/remove notifications above the
-  window still estimate with `cached_item_height`, then stay exact while
-  scrolling contiguously.
-- `frame_throttle.rs` no longer paces frames with a repeating timer at a
-  whole-millisecond period. 60 Hz is 16.667 ms, so a 16 ms period runs at
-  62.5 fps and every ~25th frame lands in the same vertical blank, which reads
-  as a small hitch several times a second; `TimerMode::Repeated` also re-arms
-  from the moment it wakes, so wake-up delay accumulates as drift. The local
-  throttle advances an absolute deadline grid whose period is
-  `Duration::from_nanos(1e12 / refresh_millihertz)` (16/17 ms alternating
-  through Slint's whole-millisecond timer clock), and schedules it with a fresh
-  `Timer::single_shot` from `request_throttled_redraw` only. A timer that is
-  re-`start`ed, or a `Timer::single_shot` registered, from inside its own
-  callback is removed by `TimerList::activate_expired` after the callback
-  returns, which silently ends a self-restarting chain.
+### `parley` 0.12 and `fontique` 0.12
 
-The remaining 1.17 patch intents (gb2312 tiered embedding, bitmap-strike
-embedding preference, ASCII subpixel packing, 1bpp packed glyphs + LRU,
-Win32 GDI ASCII path, softbuffer GDI failure handling, winit 0.30.2 Win32
-caption/erase/minmax overlays) applied to 1.18 with at most line offsets and
-are unchanged in behavior.
+Both are path-patched only to keep feature resolution aligned with the Slint
+pins: `default = ["std"]`, `system` discovery off, `complex-scripts` and
+`bytemuck` retained. fontique 0.12 already deduplicates family tables upstream,
+so the 1.11 quadratic-scan workaround is gone.
 
-## Current runtime system-font rendering
+### `i-slint-compiler` 1.19.1
 
-The workbench loads installed font files through Fontique and uses `VectorFont`.
-Its Swash scaler enables outline hinting and prefers an exact-size monochrome
-bitmap strike before falling back to the outline. This preserves small SimSun
-CJK pixels without stretching a nearby strike or embedding font bytes. The
-bitmap dimensions are checked first: SimSun whitespace can have zero-width
-strikes, which panic in Swash 0.2's row decoder. Empty bitmaps use the outline
-fallback while text layout retains the whitespace advance. The
-existing per-font/size/glyph/variation cache and glyph baseline conversion are
-unchanged. Rendering remains grayscale; the historical PixelFont/GDI ClearType
-patches below do not apply to this runtime path.
+- `passes/embed_glyphs.rs` is the 1.18 port rebased on the 1.19 pass: SimSun
+  bitmap strikes are preferred (`Source::Bitmap(StrikeWith::ExactSize)`),
+  outlines use `hint(true)`, printable ASCII uses `Format::Subpixel`, and
+  fallback faces from the project are merged into the embedded font.
+- `passes/gb2312_table.rs` and the `mod gb2312_table;` declaration supply the
+  GB2312 + UI-literal coverage set used for non-strike sizes.
+- `passes/bitmapfont.rs` and `generator/rust.rs` emit the new `data_packing`
+  field for embedded glyphs.
+- `widgets/fluent/scrollview.slint` keeps the 1.19 `ScrollViewInterface` but
+  drops the two arrow buttons and uses the 2 px offset / whole-track opacity
+  treatment.
+- `builtin_elements.rs` declares the fork-only API the UI already uses:
+  `line-height-factor` on `StyledText`, and the
+  `context-menu(x, y, selected)` callback. Stock 1.19 only ships the former on
+  `Text`, and has no right-click callback at all.
 
-`fonts/vectorfont/tests.rs` checks installed Windows fonts for exact bitmap
-coverage, baseline, cache reuse, hinted fallback and empty whitespace strikes.
-`bundled_subset_matches_master_rendering` additionally renders the bundled
-`res/fonts/simsun-subset.ttf` (produced by `scripts/subset_simsun.py`) against
-the full `simsun.ttf` master glyph-for-glyph at both bitmap-strike and outline
-sizes, guarding the custom EBDT/EBLC rebuild against silent corruption. (The
-sample intentionally excludes U+2212/U+2194/U+25BE: the master SimSun cmap
-itself lacks them, so they fall back to `.notdef` in both fonts.) The
-`font_preview` example
-renders this project's actual software renderer without starting app services;
-an independently installed slint-viewer does not include these Rust patches.
+### `i-slint-core` 1.19.1
 
-## Embedded-font and platform patches
+- `text_selection.rs` (new, window-level) owns cross-block selection state,
+  hit-testing, selection geometry, copy/select-all, drag auto-scroll and
+  right-click dispatch. This is deliberately not 1.19's per-item
+  `textlayout/sharedparley/selection.rs`: the markdown surface selects across
+  many `StyledText` items, which the item-local implementation cannot express.
+- `items/text.rs` grafts `line-height-factor` and `context_menu` onto
+  `StyledTextItem`, reports press/drag/release to the selection layer, paints
+  the caret cursor, and reads `text_selection::covered()` in `render()` so a
+  selection change invalidates the item.
+- `textlayout/sharedparley.rs` passes the item's live selection into
+  `draw_text` and paints the selection background with 1.19's
+  `selection_geometry`; `shaping.rs` uses 1.19's `raw_text_ranges` instead of
+  the fork's paragraph-range workaround.
+- `cursor.rs`, `window.rs`, `item_rendering.rs` and `partial_renderer.rs` keep
+  the window-level drag routing, cursor bookkeeping and physical-pixel damage
+  margin needed by the selection layer.
+- `items/flickable.rs` keeps the 1.18 touch behaviour: a touch press is
+  forwarded immediately instead of waiting out `FORWARD_DELAY`, the gesture is
+  claimed by its dominant axis, and a selection drag keeps ownership of the
+  pointer instead of panning.
+- `model/repeater.rs` keeps exact `anchor_y` prefix sums from measured row
+  heights, including insert/remove shifts and the content-height estimate for
+  unmeasured rows below the window.
+- `DirtyRegion::MAX_COUNT` stays raised to 16.
 
-The behaviors below were written for the original 1.17.1 patch series and now
-live in the `-1.18` directories (see the 1.18.0 port notes above for the
-deltas).
+### `i-slint-renderer-software` 1.19.1
 
-- `i-slint-compiler` ignores non-positive literal font sizes while
-  collecting software-renderer bitmap sizes. Slint's widget interfaces use
-  `font-size: 0px` as an inheritance sentinel; rasterizing it as a real size
-  embeds huge unscaled glyph bitmaps. It also deduplicates the same default
-  font face across exported top-level components; every component still
-  registers the one shared bitmap resource with its renderer.
-- The compiler embeds the first registered project font as one bitmap font
-  resource. rcho uses its bundled SimSun face for digits, English, and CJK;
-  runtime `TextInput` values therefore stay visible without probing system
-  fonts or duplicating a fallback atlas.
-- Pre-rendered glyph embedding prefers the font's embedded monochrome bitmaps
-  (`Source::Bitmap(StrikeWith::ExactSize)` before `Source::Outline`) and turns
-  on swash hinting for the outline fallback. SimSun ships hand-tuned EBDT
-  strikes at 12–18 ppem — the same pixel glyphs GDI/DirectWrite render — so
-  the desktop build keeps SDF off; bitmap strikes cover the common UI sizes
-  and hinted outlines cover the rest.
-- Printable ASCII (English, digits, punctuation, and space) is the deliberate
-  exception: SimSun does not supply it through those small EBDT strikes, so
-  the compiler renders its hinted outline as `swash::zeno::Format::Subpixel`
-  and stores the RGB coverages as `BitmapGlyph::data_packing == 2` (four bytes
-  per pixel, RGB plus a reserved byte). The software renderer identifies that
-  text-only payload and blends its channels independently; ordinary images
-  cannot enter this path. This supplies the ClearType-equivalent step absent
-  from upstream Slint's software renderer, rather than attempting to disguise
-  the problem by swapping Western fonts.
-- On Win7, the renderer registers only the bundled SimSun face with
-  `AddFontMemResourceEx`, then uses a screen-compatible memory DC,
-  `CreateDIBSection`, and `ExtTextOutW` with `CLEARTYPE_NATURAL_QUALITY` to
-  obtain native RGB coverages for ASCII. The DIB is immediately copied into
-  the renderer-owned cache; no system font enumeration or runtime font file
-  lookup is performed. If registration, GDI rasterization, or ClearType
-  detection fails, the pre-embedded Slint glyph remains the fallback.
-- Embedded glyph payloads are size-tiered and bit-packed to bound the binary:
-  strike sizes (12/13/14/15/16/18 px) keep the full cmap, other sizes embed
-  GB2312 + UI literals + ASCII only (`passes/gb2312_table.rs`, generated by
-  `scripts/gen_gb2312_table.py`; out-of-coverage glyphs keep their advance but
-  stay blank instead of becoming tofu). Purely monochrome glyph bitmaps are
-  stored as 1-bit rows (`BitmapGlyph::data_packing == 1`, MSB first). The
-  software renderer expands only the individual packed glyph that is painted
-  (`glyph_alpha_map` in `fonts.rs`), with a per-UI-thread LRU cache capped at
-  1,024 glyphs or 1 MiB. Font registration stays a plain push, so opening a
-  window (a fresh process) never pays a whole-font expansion. The C++ generator does
-  not know about `data_packing`; do not use it for packed fonts.
-- Runtime bitmap-size matching picks the closest embedded size and prefers
-  the larger one on near ties: downscaling a bigger bitmap stays crisp while
-  upstream's always-snap-down upscales smaller strikes and visibly softens
-  text at 150-200% display scaling. `SLINT_FONT_SIZES=18,21,24` in build.rs
-  embeds the sizes those scale factors actually request.
-- The (currently unused) SDF path generates its single scalable atlas at a
-  minimum of 24 px. Slint's upstream 16 px floor visibly thins and breaks
-  dense SimSun strokes when compact 10–13 px Chinese UI labels are sampled by
-  the software renderer. The renderer's upstream contour threshold remains
-  unchanged to avoid making adjacent strokes stick together.
-- `softbuffer` 0.4.8 keeps its MIT and Apache-2.0 license files. Its Win32 GDI
-  resize path returns an error for `CreateCompatibleDC` / `CreateDIBSection`
-  failures and preserves the last valid bitmap; it no longer asserts. The
-  present path also propagates `BitBlt` failures and leaves WM_PAINT invalid,
-  so a transient failed copy is retried instead of validating a white frame.
-- `i-slint-backend-winit` 1.18.0 retains its upstream licensing information. Its
-  software renderer treats those transient surface errors as a deferred frame
-  rather than returning an event-loop terminating error. Retry requests are
-  capped at two until the next successful frame to avoid a permanent redraw
-  loop under sustained memory pressure. Embedded popup stack/geometry changes
-  retain a complete software frame. Steady popups explicitly dirty their whole
-  rectangle plus a physical-pixel rounding margin, so partial Win7/GDI repaints
-  cannot leak underlying toolbar icons through the popup while hover avoids
-  repainting the full workbench. `renderer/sw/popup_repaint.rs` owns this policy;
-  `RCHO_SLINT_POPUP_FULL_REPAINT=1` retains the old full-frame mode for same-exe
-  A/B diagnostics. A hidden/re-shown or
-  moved Win32 window marks its next software frame as a new buffer and queues
-  a redraw: Win7 GDI may discard pixels without updating softbuffer's buffer
-  age, otherwise reused auxiliary windows can reopen white or retain clipped
-  regions after being dragged back onto a display.
-- Its frame throttle rejects implausible monitor refresh rates before picking
-  the redraw-timer interval. `EnumDisplaySettingsExW` documents
-  `dmDisplayFrequency` 0 or 1 as the "hardware default" sentinel, which Win7
-  basic/mirror/remote display drivers actually return; winit forwards it raw,
-  so an unfiltered `1_000_000 / 1000` made every throttled redraw wait one
-  full second (and 0 would divide by zero). Rates outside 20–500 Hz fall back
-  to 60 Hz. Minimized Win32 windows skip software rendering entirely instead
-  of painting a forced full frame into an invisible DIB; the occluded flag
-  stays armed so the restore frame is still complete. Focus gain no longer
-  presents its forced full frame when another frame was presented within the
-  last 250 ms — restoring from minimize previously painted two full frames
-  back-to-back (the queued WM_PAINT frame plus the focus-turn frame). The
-  bookkeeping `Moved` event to the off-screen minimize position no longer
-  forces a full repaint while the window is iconic.
-- `software_diagnostics.rs` also records timestamped windowing events when
-  `RCHO_SLINT_DIAGNOSTICS` is set: `resized` (with the Slint layout-dispatch
-  duration in `ms`), `moved`, `focused` (b = skipped-sync-draw),
-  `occluded`, `state` (a = minimized, b = maximized) and
-  `draw_skip_minimized`. The rcho caption handlers add `showwindow` events
-  measuring how long the synchronous Win32 `ShowWindow(SW_MINIMIZE/
-  SW_MAXIMIZE/SW_RESTORE)` call blocked the event loop — on classic-theme Win7
-  the system zoom-rectangle animation runs inside that call, so a large `ms`
-  there isolates system animation from render-path cost. Events drain through
-  `take_events()` and land as `{"kind":"event", ...}` JSONL lines.
-- The Win32 software present path submits each disjoint damage rectangle to
-  softbuffer instead of one bounding-box BitBlt. Navigation frames dirty the
-  radar canvas, file list and panels at once; the bounding box spanned the
-  whole window and copied megabytes of unchanged pixels every frame.
+- `fonts/pixelfont.rs` expands packing 1 (1 bpp, MSB first) to a single-channel
+  `GlyphAlphaMap`, and packing 2 to `[r, g, b, 0]` per pixel marked
+  `subpixel`. `RenderableGlyph` carries the flag, and the scene/shared-buffer
+  path keeps the three channels instead of folding them to one alpha.
+- `draw_functions.rs` blends the three coverages per target channel
+  (`TargetPixel::blend_subpixel`); formats that cannot do so average them.
+- The two `assert!(region.len() == 3)` checks in `api.rs` are relaxed to
+  `>= 3` because core's `DirtyRegion::MAX_COUNT` is 16. Everything else is
+  stock 1.19.
+
+### `i-slint-backend-winit` 1.19.1
+
+Stock 1.19 plus the workbench modules and Win32 redraw fixes:
+
 - `first_frame.rs` reports the first successfully presented software frame;
-  `Window::set_rendering_notifier` is unsupported by the software renderer, so
-  the workbench cannot learn it through the public API. Startup services
-  (recent-directory restore, decode and map warm-up) wait for this
-  notification plus 10 ms instead of racing the first frame.
-- `frame_capture.rs` implements one-shot frame capture for the workbench
-  screenshot feature: a request arms the capture for one window id, and the
-  software renderer copies the complete frame out of the softbuffer surface
-  just before `present_with_damage` (which consumes the buffer). The copy
-  happens only while armed, so steady-state rendering pays one atomic load;
-  the workbench polls `take()` from a Slint timer after forcing a redraw.
-- On Windows its software renderer queries the Win7-era User32
-  `SystemParametersInfoW` settings `SPI_GETFONTSMOOTHING`,
-  `SPI_GETFONTSMOOTHINGTYPE`, and `SPI_GETFONTSMOOTHINGORIENTATION`. It uses
-  RGB/BGR LCD channel order only when the user has ClearType enabled; disabled
-  ClearType, a failed settings query, or a transposed (rotated) render safely
-  averages the RGB coverage back to normal grayscale anti-aliasing. This adds
-  no DirectWrite, WinRT, or Windows 8+ dependency.
-- Its frameless edge-resize handler explicitly ignores maximized windows and
-  resets any cached resize cursor before dispatching pointer input. Winit still
-  advertises a maximized borderless HWND as resizable; forwarding that gesture
-  into Win7's native resize loop can otherwise strand later move/resize input.
-- Its Winit adapter is registered before the first visibility/layout pass, so
-  the synchronous Win32 `WM_SIZE` emitted by the initial `SetWindowPos` reaches
-  Slint. This removes the first-open bottom gap and makes auxiliary dialogs
-  center correctly on their first display.
-- Frameless auxiliary windows are centered inside the Winit adapter after
-  Slint has resolved their preferred size but before their first native show.
-  The auxiliary rectangle uses that just-requested physical preferred size:
-  Win32 applies `request_inner_size` through `SWP_ASYNCWINDOWPOS`, so
-  `GetWindowRect` would still report the creation size at this point. The
-  active (or maximized workbench) reference HWND is measured with
-  `GetWindowRect`, so Win7's DPI virtualization cannot mix monitor work-area
-  and window coordinate spaces. This avoids the first-open offset that
-  application-level timers could only correct on a later show.
-- Its frameless-window setup keeps Winit's maximize button disabled. A custom
-  Slint title bar owns all caption actions; re-enabling the native maximize
-  box during a resize-property update can expose a latent Win7 caption button
-  after the first minimize or maximize transition.
-- Its Windows top-level surfaces opt out of Winit's transparent/layered DWM
-  path. Every rcho window paints an opaque root, whereas transparent Win32
-  activation can briefly expose erased client-edge pixels before the queued
-  software redraw. On focus gain, the adapter therefore forces and presents a
-  complete frame in the focus-message turn; this keeps the custom border
-  opaque on Win7 and removes the corresponding edge flash on newer Windows.
-- `winit` 0.30.2 retains its upstream licensing information. On X11, each
-  window keeps one preedit-capable XIM context for its whole lifetime.
-  `set_ime_allowed` now changes only the logical enabled state and IC focus;
-  it no longer destroys the XIC and replaces it with a none-style context.
-  Fcitx stores the selected input method (including Sogou) on that context,
-  so both control-level focus changes and window deactivation now return to
-  the same input method. XIM server restart still recreates contexts, while
-  preserving their enabled state and cursor position.
-- Its Win32
-  undecorated-window styles remove `WS_CAPTION`, `WS_SYSMENU`, and native
-  caption boxes while retaining `WS_SIZEBOX`; Winit's default concealed
-  caption is susceptible to appearing after a Win7 frame refresh and stealing
-  the first click from the custom title bar.
-- `winit` 0.30.2's Win32 `IDropTarget` callbacks now take `POINTL pt` by value,
-  matching the OLE IDL and stdcall stack contract. The upstream pointer
-  declaration dereferenced screen coordinates as an address and under-cleaned
-  the x86 stack, crashing external and same-process OLE drags. Its previously
-  unimplemented `QueryInterface` now handles `IID_IUnknown`/`IID_IDropTarget`
-  with the required reference counting and returns `E_NOINTERFACE` for other
-  interfaces, so a same-process drag cannot panic across the COM boundary.
-- `winit` 0.30.2 `capture_mouse` now drops the `WindowState` mutex guard
-  before calling `SetCapture()`, mirroring the guard `release_mouse` already
-  had for `ReleaseCapture()`. `SetCapture` synchronously sends
-  `WM_CAPTURECHANGED` to the window losing capture — the same window when a
-  second mouse button is pressed while another is still held (e.g. fast
-  left+right clicks in a text field) — and the re-entered wndproc locks
-  `window_state` again in the keyboard callback's IME check. `std::sync::Mutex`
-  is not reentrant, so the UI thread self-deadlocked with zero CPU and no
-  panic (nothing for the crash hook to log). Still unfixed upstream in
-  0.30.13.
-- `winit` 0.30.2 completes a right-button gesture consumed by Win32's modal
-  context-menu loop. `WM_EXITMENULOOP` releases mouse capture and emits the
-  missing release only when one is outstanding; a real release before or after
-  that notification is deduplicated. This clears Slint's grabbed/pressed state
-  for every native context menu, including workspace rename and chat-reference
-  actions, instead of relying on a per-dialog synthetic left release.
-- Nested `WM_PAINT` delivery is posted back to the window queue instead of
-  retrying `RedrawWindow` inside the active paint callback. Native menu actions
-  often request a frame while the outer right-button dispatch is still borrowed;
-  the old path consumed `redraw_requested` without ever emitting
-  `RedrawRequested`, leaving the action applied but the window frozen on its old
-  frame until minimize/restore. The posted paint runs after the callback/modal
-  loop unwinds. A real-window regression covers menu exit followed by a nested
-  paint request and requires exactly one deferred redraw.
-- `i-slint-backend-winit` 1.18's redraw latch is self-healing on Windows. A
-  single frame swallowed by a native menu modal loop used to leave
-  `pending_redraw` stuck at true, after which every `request_redraw()` was a
-  no-op and the UI stayed live but frozen on its old frame until minimize or
-  resize. `request_redraw()` now arms a bounded one-shot watchdog (150 ms, at
-  most two retries, skipped while hidden/minimized) that clears the latch and
-  re-queues a frame; focus regain also force-clears the latch when the
-  "recently presented" fast path skips a full draw. Four unit tests cover the
-  lost-frame, presented-frame, unpaintable and retry-cap paths. The upstream
-  smoke test is gated behind a new `standalone-tests` feature so crate-level
-  tests compile when the patched crate is consumed as a workspace dependency.
-- The same latch now ages out instead of relying on retry counts alone. Each
-  request records `pending_since`; if a frame has been pending for more than
-  400 ms it is treated as lost, the latch is cleared and `occluded(true)` forces
-  a complete repaint. A menu opened and dismissed inside one watchdog period
-  used to leave the retry budget untouched and the latch set forever; the
-  context-menu exit path also resets the latch unconditionally and requests one
-  full frame, because `TrackPopupMenu` swallows every paint delivered while it
-  runs. The software renderer additionally publishes the whole surface when
-  `draw()` runs with no damage: a native popup that just closed, or
-  `WM_SETREDRAW` re-enabling the window, asks for pixels Slint reports no damage
-  for, and skipping `present()` left that rectangle on the previous frame.
-- Context menus stay native by default, but the choice is now reachable.
-  `TrackPopupMenu` is a modal loop on the UI thread: while it is open the event
-  loop is borrowed, so no frame is produced and no timer fires — a streaming
-  transcript freezes behind the menu until the user dismisses it, which no
-  amount of redraw bookkeeping can fix. `Window::set_native_popup_menus_enabled()`
-  exposes the existing `WindowInner` switch (previously read but never written)
-  so a window can opt into Slint's in-window popup, which keeps the regular
-  event loop; the desktop shell leaves it on native and only the menu probe
-  flips it to compare both modes.
-- `winit` 0.30.2 no longer drops non-ASCII keyboard text while an IMM32
-  composition is active. Some legacy Chinese IMEs submit full-width punctuation
-  through standalone `WM_CHAR` messages, with neither a keydown nor a
-  corresponding `GCS_RESULTSTR`; the keyboard builder now turns those messages
-  into ordinary text events and combines UTF-16 surrogate pairs. Commit
-  deduplication suppresses only text matching an actual IME result, and a new
-  keydown expires an unmatched echo so repeated identical punctuation is not
-  mistaken for a delayed duplicate. Real-window regressions cover standalone
-  Chinese punctuation, surrogate pairs, exact echo removal, repeated input, and
-  native-menu release ordering.
-- `winit` 0.30.2 `set_ime_cursor_area` / `set_ime_allowed` now run through a
-  new `EventLoopThreadExecutor::defer_to_thread`, which always posts the
-  closure to the thread message target (`EXEC_MSG_ID`) instead of running it
-  inline when already on the event loop thread. Slint dispatches `Ime` events
-  synchronously inside the window procedure, so the inline path used to call
-  `ImmSetCompositionWindow`/`ImmSetCandidateWindow` (and
-  `ImmAssociateContextEx`) nested inside the IME's own `WM_IME_*` delivery.
-  Legacy IMM32 IMEs keep their composition state machine on the focused
-  thread and do not have to survive that re-entry: the re-entrant composition
-  message the IME emits in response recursed through the same path until the
-  UI thread wedged inside the IME DLL — and because win32k must synchronize
-  with the focused thread to move focus or deactivate the IME, the input
-  method then froze in every application until the process was killed.
-  Deferred, the IMM32 writes run in a clean pump turn and the IME's
-  same-thread replies take the ordinary supported re-entry path; a failed
-  post (full queue) reclaims the closure instead of aborting the
-  `panic = "abort"` process. The read-only `ImmGet*` calls inside the
-  `WM_IME_*` handlers and the initial `create_window` disassociation stay
-  inline: they are the standard response pattern and cannot nest.
-  `set_ime_allowed` still writes the `ime_allowed` flag inline, outside the
-  deferred closure: the `WM_IME_STARTCOMPOSITION` handler reads that flag on
-  the next pumped message, so deferring it would let a composition start
-  against the stale value. The inline part is a plain state write with no
-  IMM32 call, so it cannot re-enter the IME state machine; only
-  `ImmAssociateContextEx` is deferred.
-- Frameless Winit windows now acknowledge `WM_NCACTIVATE` themselves after
-  updating their active state and return handled for `WM_ERASEBKGND`. This
-  prevents User32 from briefly drawing or erasing a native non-client edge
-  around the retained `WS_SIZEBOX` before Slint presents the custom border;
-  normally decorated windows retain upstream default processing.
-- For undecorated windows, Winit now constrains `WM_GETMINMAXINFO` maximized
-  bounds to the monitor work area (`rcWork`) rather than the full monitor. The
-  HWND, Slint surface, and taskbar edge therefore share one geometry from the
-  first maximize frame, preventing the Win7 taskbar white-strip flash.
-- `i-slint-common` 1.18.0, `i-slint-core` 1.18.0, and
-  `i-slint-renderer-software` 1.18.0 retain their upstream licensing
-  information. Their feature defaults no longer enable system-font discovery
-  or the shared Fontique/Parley text path. The workbench embeds SimSun, so the
-  Win7 target has no need to query DirectWrite and its WinRT error bindings.
-- `i-slint-core` raises `DirtyRegion::MAX_COUNT` from 3 to 16 (with the
-  matching `PHYSICAL_REGION_MAX_SIZE` in the software renderer). A workbench
-  frame change (radar image + file-list rows + status bar + side panels)
-  dirties far more than three disjoint rectangles; the three-slot merge
-  fallback unioned them into a whole-window bounding box, so every file
-  switch repainted the entire surface (~4 Mpx at 175% scale).
-- The renderer additionally carries the subpixel order from its Winit backend
-  into the embedded bitmap text scene and implements per-channel blending for
-  RGB8, RGB565, premultiplied RGBA, and the Win32 softbuffer target. Text alpha
-  is multiplied into each coverage before compositing, so translucent labels
-  remain correct and a zero-coverage channel never darkens the background.
-- `fontique` 0.11 and `parley` 0.11 are vendored only to keep the feature
-  resolution consistent with the Slint patches above. They retain their
-  upstream license files and must stay version-aligned with the pinned Slint
-  release (0.11 with 1.18.0).
-- `fontique` 0.11 `CommonData::load_fonts_from_paths` now uses a fresh
-  per-font batch map. Upstream reuses one map across the whole directory
-  scan while `register_font_impl` merges that entire map into the family
-  table on every font, so each scanned face re-appends every previously
-  scanned face of its family — family font lists grew quadratically (~29k
-  entries across 121 families on a stock Windows install) and the settings
-  font scan took seconds. The fix keeps the merge linear.
-- `i-slint-core` scene building now skips a subtree whose accumulated clip is
-  empty or whose enclosing opacity chain is fully transparent. `ScrollView`
-  clips its children, but a child that does not clip itself was still walked
-  item by item for every row, including rows scrolled outside the viewport,
-  so per-frame scene cost grew with the whole history instead of the visible
-  rows. The timeline additionally sets `clip: true` on every repeated row root
-  (`ui/timeline.slint`), so a row outside the transcript viewport has an empty
-  clip and is pruned at the row boundary. Culling is safe because an empty
-  clip or zero opacity cannot contribute any descendant pixels.
-- `i-slint-core` partial-render item filtering includes a physical-pixel
-  margin around floating-point item bounds. Software damage is rounded out
-  before clearing; adjacent toolbar borders must remain in the draw list
-  when those rounded edge pixels overlap them. Actual writes still use the
-  renderer's damage clip. This fixes a 261-pixel border gap when keyboard
-  navigation changes the combo text at 175% scale with a stable popup.
+  the software renderer has no `set_rendering_notifier`, so startup services
+  wait on this notification plus 10 ms.
+- `software_diagnostics.rs` records frame timings and windowing events behind
+  `RCHO_SLINT_DIAGNOSTICS`; `renderer/sw.rs` calls
+  `first_frame::notify_presented()` after a successful `present_with_damage`.
+- External Explorer file drags are translated from winit's `HoveredFile` /
+  `DroppedFile` / `HoveredFileCancelled` events into
+  `WindowInner::process_drag_event`: the hover payload is remembered, cursor
+  moves re-position its `DropEvent`, and the first `DroppedFile` consumes the
+  complete path set. Without this, `DropArea` never receives OS drags on
+  Windows.
+- Win32 event handling forces a complete frame when activation repaints the
+  non-client frame, after `TrackPopupMenu` returns, on DPI changes, and when
+  the window is moved (GDI can discard surface bands). Resize requests redraw
+  directly instead of through the frame throttle, and minimized windows skip
+  the forced DIB render.
 
-The patches
-are intentionally narrow for the Win7 software-rendering baseline.
-When any upstream dependency is updated, re-evaluate and reapply only the
-equivalent behavior rather than copying these files blindly. Run
-`../../builders/build-win7-slint.ps1` afterwards; its PE import gate must continue to pass.
+## Behavior intentionally dropped in the 1.19 rebase
 
-## Patch archives and upgrading Slint
+These 1.18 fork changes were not carried over; re-evaluate before restoring
+them one by one:
 
-`vendor/patches/<crate>-<version>.patch` is a unified diff of each vendored
-crate against its pristine crates.io source, so local changes can be replayed
-onto a newer Slint release instead of being rediscovered by hand.
+- The Win32 GDI ClearType ASCII rasterizer in the software renderer. The
+  embedded ASCII sub-pixel payload now keeps its RGB channels, but the runtime
+  installed-font GDI fallback is still absent; the app never registered that
+  face, so this was already dead code in 1.18.
+- The `frame_capture` module. It had no caller: the workbench screenshot path
+  captures the desktop with GDI and keeps its own frozen frame, so an
+  event-loop surface copy would duplicate that work.
+- The Win7 IME deferral and standalone `WM_CHAR` fixes in the winit fork are
+  still present in `vendor/winit-0.30.2`, but the 1.19 backend has not yet been
+  regression-tested with them on a real Win7 machine.
 
-Regenerate after touching vendored code (from `crates/wunder-desktop/frontend/vendor`; the
-pristine copy may come from the cargo registry or a downloaded `.crate`):
+The `patches/softbuffer-0.4.8.patch` and `patches/winit-0.30.2.patch`
+archives remain valid; `softbuffer` and `winit` versions are unchanged by the
+1.19 upgrade.
 
-```sh
-git diff --no-index --ignore-cr-at-eol <pristine>/i-slint-compiler-1.18.0 i-slint-compiler-1.18 > patches/i-slint-compiler-1.18.0.patch
-# same for i-slint-core / i-slint-renderer-software / i-slint-common /
-# i-slint-backend-winit / fontique / parley
-```
+## App-side integration notes
 
-Note: `git apply` is unreliable for replaying these archives inside this
-repository (it silently prints "Skipped patch" for every file and exits 0).
-Use GNU `patch -p<N>` instead — count the directory components in the diff
-headers for N — and inspect every `.rej` file afterwards. For the 1.18
-archives (headers `a/<pristine path>/... b/i-slint-<crate>-1.18/...`) run
-`patch -p2` from inside a pristine source extraction; the `b/`-side names
-resolve for both modified and new files.
+These live outside `vendor/` but break silently on a Slint upgrade:
 
-The Win7 backend overlays are archived alongside those patches as
-`patches/softbuffer-0.4.8.patch` and
-`patches/i-slint-backend-winit-1.18.0.patch`. The pinned Winit overlays are
-archived as `patches/winit-0.30.2.patch`; regenerate the matching archive
-whenever a vendored source changes.
+- `ui/textedit-base.slint` must keep `ScrollView` and `TextInput` as siblings of
+  `ContextMenuArea`, not children. In 1.19 `ContextMenuArea` is a non-visual
+  `Empty` that only carries the `Menu`; putting the scroll view inside it makes
+  `parent.width` zero and the editor unhittable.
+- `ui/composer.slint` is a layout child. Its dynamic card height is exposed as
+  `card-height` and applied as `min-height: self.card-height` at the two usage
+  sites (`ui/main.slint`, `crates/wunder-android/ui/mobile.slint`); a plain
+  `height:` binding is ignored inside a layout.
+- `build.rs` must list experimental features explicitly. 1.19 rejects the old
+  catch-all value `1`; the workbench needs `closures` for the animated
+  `index-of` path.
 
-To upgrade Slint: unpack the new crates.io sources, apply the patch with
-GNU `patch` (see the note above about `git apply`), resolve the rejects by
-reading the intent documented above, then update the `[patch.crates-io]` pins
-and rebuild.
-Most hunks are self-contained (new files like `passes/gb2312_table.rs` and
-`pack_mono_1bpp` never conflict); the expected touch points are
-`passes/embed_glyphs.rs` and `fonts.rs::register_bitmap_font`.
+## Upgrading Slint again
 
-## jni 0.22.4 Android fork
+1. Unpack the new crates.io sources for the five crates plus fontique/parley.
+2. Diff the current `-1.19` tree against that pristine source and replay only
+   the hunks listed above; do not copy whole files, and do not use
+   `patch --merge=diff3` (it anchors unrelated hunks into the wrong impl).
+3. `git apply` silently skips files in this repository and still exits 0; use
+   GNU `patch` and inspect every `.rej`.
+4. Update `[patch.crates-io]` paths and `slint-build` in both
+   `crates/wunder-desktop/frontend/Cargo.toml` and
+   `crates/wunder-android/Cargo.toml`, regenerate `Cargo.lock`, refresh the
+   offline `cargo-vendor-slint` snapshot, then build with
+   `build.bat -t desktop -a win7-x86`.
+5. The Win7 PE import gate must stay green: no `combase.dll`, no
+   `api-ms-win-*`/`ext-ms-win-*`, no `SystemParametersInfoForDpi`,
+   `CreateWaitableTimerEx` or `GetDpiForWindow` strong imports.
 
-`jni-0.22.4` is pinned through `[patch.crates-io]` in `crates/wunder-android/Cargo.toml`
-(registry copies of jni 0.19.0/0.21.1 stay untouched; only the 0.22 line used by
-android-activity 0.6, i-slint-backend-android-activity, rustls-platform-verifier
-and webbrowser is patched). It carries one Android-only fix: on a freshly
-attached `android_main` thread during the first launch after install, ART (via
-the native-bridge runtime) can report a pending exception through
-`ExceptionCheck` while `ExceptionOccurred` finds no exception object at all —
-the two JNI calls are defined to agree, so this violates every caller's
-assumption. Upstream maps exceptions inside `jni_call_with_catch!`/`jni_try!`
-with `.expect("Expected an exception after ExceptionCheck")`, so the phantom
-flag aborted the whole app (SIGABRT before `android_main` runs; the phone shows
-a frozen first frame and none of the first-run setup).
-
-The fork makes `Env::exception_check` self-healing: when `ExceptionCheck` is
-true it cross-checks the authoritative `ExceptionOccurred`, clears the spurious
-flag (one `jni: ExceptionCheck reported a pending exception but
-ExceptionOccurred found none` line per process), and returns false. The
-exception-mapping macros and `Env::exception_catch` keep upstream behavior but
-fall back to an error / the block result instead of panicking if the
-inconsistency is ever observed; `JavaVM::attach_current_thread_with_config`
-treats the phantom flag the same way in its pre-checks. `Env::exception_check`
-is crate-internal to jni 0.22 — the wunder phone bridge on jni 0.21 still sees
-the raw flag, which is why `android_host::install` retries once.
-
-## Shared arboard Win7 fork
-
-`arboard` is pinned through `[patch.crates-io]` to the shared fork at
-`patches/win7/arboard-3.7.0-win7` (see its `PATCH.md`), not a
-copy in `vendor/`. It carries the Win7 replacement for the Windows 8
-`PathCchStripPrefix` static import and the widened clipboard-open retry window
-(25 attempts x 20ms): a clipboard monitor briefly holding the clipboard open
-defeats upstream's ~25ms window, the failure is swallowed by Slint's
-`.ok()`, and paste silently does nothing. When upgrading Slint, keep this pin;
-`clipboard-win` stays a normal crates.io dependency.
-
-## Mandatory Win7 import audit
-
-Windows 7 does not ship `combase.dll`. A startup error naming that DLL means a
-Cargo feature or patched dependency has reintroduced a Windows 8+/WinRT
-dependency; it is **not** a redistributable-runtime problem. Never copy,
-bundle, or ask an operator to install `combase.dll`. Remove the feature or
-dependency that imports it instead.
-
-The final distribution executable, not merely a debug build or a previous
-release, must pass `../../builders/build-win7-slint.ps1`. In addition to `combase.dll`, the
-gate rejects `api-ms-win-*`, `ext-ms-win-*`, `SystemParametersInfoForDpi`,
-`CreateWaitableTimerEx`, and `GetDpiForWindow` strong imports. Before changing
-the text stack, inspect `cargo tree -e features -i fontique`: Fontique/Parley
-`default` or `system` discovery can pull the `windows` WinRT bindings back in.
-
-## Text selection, context menu and the text cursor (i-slint-core)
-
-The markdown surface selects across blocks, so the fork carries a window-level
-selection layer instead of relying on `TextInput`'s own caret model:
-
-- `text_selection.rs` (new) owns the selection state: two endpoints
-  `(ItemWeak, ordinal, byte offset)`, the hit-test helpers, the geometry that
-  reuses `TextLayout::selection_geometry`, copy/all-select, the drag-to-scroll
-  timer and the right-click dispatch.
-- `items/text.rs` gains a `context_menu(x, y, selected)` callback, reports
-  press/drag/release to the selection layer, and sets
-  `BuiltInMouseCursor::Text` on hover (a link still wins with `Pointer`).
-- `textlayout/sharedparley.rs` adds `text_range_at` and paints the selection
-  background inside `draw_text`.
-- `textlayout/sharedparley/shaping.rs` fixes an upstream 1.18.0 defect:
-  every `StyledText` paragraph was shaped with the range `0..0`, so
-  `selection_geometry` could never resolve a rectangle. Paragraph ranges now
-  accumulate.
-- `window.rs` clears the selection on a left press outside a text item, takes
-  over pointer events while dragging (a block only sees `Exit` once the
-  pointer leaves it, so `GrabMouse` alone loses the drag), and routes
-  Ctrl+C / Ctrl+A / Escape.
-- `items/flickable.rs` intercepts instead of starting a pan while a drag
-  selection is active.
-- `cursor.rs` records the cursor each dispatched event resolved to
-  (`last_mouse_cursor()`), because the OS cursor never appears in an offscreen
-  render.
-- `i-slint-compiler/builtin_elements.rs` declares the `context-menu` callback
-  on `StyledText`; without it the builtin has no such callback to bind.
-
-Right-click has no default menu: the host either handles the callback or the
-right click does nothing.
+`RCHO_SLINT_DIAGNOSTICS=1` enables the frame/window event JSONL stream.

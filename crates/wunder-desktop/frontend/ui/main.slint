@@ -8,7 +8,10 @@ import { I18n } from "i18n.slint";
 // the root file get a public wrapper. The fields report focus through
 // components.slint / textedit-base.slint.
 export { TextFieldActivation } from "text_field.slint";
-import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, TurnMark, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow, CommandTask, SubagentItem, SplitContext, LocalBackupRow } from "theme.slint";
+import { DeviceScale, Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, TurnMark, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow, CommandTask, SubagentItem, SplitContext, LocalBackupRow } from "theme.slint";
+// `sync_device_scale` writes the window's ratio into this global, which the
+// greeting mark uses to pick the asset that lands on the physical grid.
+export { DeviceScale }
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
 export { ToastState }
 import { ProcessEntry } from "theme.slint";
@@ -1552,6 +1555,7 @@ export component MainWindow inherits Window {
                                     expanded-toggle => { root.inquiry-expanded-toggle(); }
                                 }
                                 composer := Composer {
+                                    min-height: self.card-height;
                                     draft <=> root.draft; busy: root.command-pending || root.session-loading || root.creating-session || (root.chat-loading && !root.busy) || (root.cloud-chat-active && root.cloud-thread-busy);
                                     // 窄窗保留后台任务与子智能体计数，只收起 CPU/内存读数。
                                     compact-host-hud: root.width < Theme.host-hud-compact-width;
@@ -2018,7 +2022,6 @@ export component MainWindow inherits Window {
         pin-toggled => { root.window-pin-requested(!root.pinned); }
         close-requested => { root.window-close-requested(); }
     }
-    WindowFrame { maximized: root.maximized; }
 
     // Settings live in an internal overlay window instead of replacing the
     // chat area: the shield closes it on click-away, the card swallows stray
@@ -2671,5 +2674,13 @@ export component MainWindow inherits Window {
         copy-selection => { root.copy-selection(); }
         select-all => { root.select-all-text(); }
     }
+    }
+    // Sits outside the clipped surface on purpose: the frame's outer pixel has
+    // to fall outside the window's rounded clip and native region, so the
+    // region itself becomes the hairline's outer edge instead of shaving it.
+    WindowFrame {
+        width: root.width + 2px;
+        height: root.height + 2px;
+        maximized: root.maximized;
     }
 }

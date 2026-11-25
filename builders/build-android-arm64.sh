@@ -3,7 +3,7 @@
 #
 # Required environment (defaults assume the local dev box):
 #   ANDROID_HOME       Android SDK root              (default ~/android-sdk)
-#   ANDROID_NDK_ROOT   NDK root                      (default $ANDROID_HOME/ndk/28.2.13676358)
+#   ANDROID_NDK_ROOT   NDK root                      (default $ANDROID_HOME/ndk/30.0.16248370)
 #   JAVA_HOME          JDK 17                        (default: resolved from javac)
 #   GRADLE             Gradle 8.13+ launcher          (default ~/gradle/gradle-8.13/bin/gradle)
 #   WUNDER_ANDROID_ABIS  Comma-separated ABIs         (default arm64-v8a;
@@ -16,7 +16,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CRATE="$ROOT/crates/wunder-android"
 
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/android-sdk}"
-export ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT:-$ANDROID_HOME/ndk/28.2.13676358}"
+export ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT:-$ANDROID_HOME/ndk/30.0.16248370}"
 # skia-bindings' build script keys off this spelling; without it a cache miss
 # falls into the source-build path and fails before the prebuilt lookup.
 export ANDROID_NDK="${ANDROID_NDK:-$ANDROID_NDK_ROOT}"

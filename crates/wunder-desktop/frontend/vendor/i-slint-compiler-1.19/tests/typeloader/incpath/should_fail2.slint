@@ -1,0 +1,13 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+// cSpell: ignore bhal
+export component X inherits Rectangle {
+    eh := Invalid {
+//        >      <error{Unknown element 'Invalid'}
+        foo: 42;
+    }
+    width: eh.bhal;
+
+    in property <int> hello: eh.foo;
+}

@@ -103,12 +103,15 @@ pub fn install(app: &MainWindow) {
     ])));
     // Keep the preview representative of a live target without making the
     // production window fabricate a target before the backend has one.
+    // 目标暂停展示：`goal-active` 会把输入区的发送键换成停止键，
+    // 示例首屏需要看到发送键本身。
     app.set_goal_visible(true);
-    app.set_goal_active(true);
+    app.set_goal_active(false);
     app.set_goal_objective("整理示例文件".into());
-    app.set_goal_phase("active".into());
+    app.set_goal_phase("paused".into());
     app.set_goal_activation("armed".into());
     app.set_goal_rounds("0/100".into());
+    app.set_goal_paused(true);
     let models: Rc<Vec<Rc<VecModel<TimelineRow>>>> = Rc::new(
         (0..9)
             .map(|index| {

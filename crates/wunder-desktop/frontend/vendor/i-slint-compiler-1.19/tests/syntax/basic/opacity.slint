@@ -1,0 +1,17 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+export component SuperSimple inherits Window {
+
+    opacity: 0.5;
+//           >  <warning{The opacity property cannot be used on the root element, it will not be applied}
+
+    Rectangle {
+        opacity: false;
+//               >    <error{Cannot convert bool to float}
+    }
+
+    visible: false;
+//           >    <warning{The visible property cannot be used on the root element, it will not be applied}
+
+}

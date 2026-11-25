@@ -9,9 +9,9 @@ use crate::engine::{self, Command, Shared};
 use crate::md::MarkdownRenderer;
 use crate::project::{self, RowData};
 use crate::{
-    CommandTask, InquiryOption, InquiryQuestion, MobileBackup, MobilePermission, MobileSession,
-    MobileWindow, MobileWorkspace, ModelCard, SubagentItem, Theme, TimelineRow, TurnMark,
-    WorkspaceFile,
+    CommandTask, DeviceScale, InquiryOption, InquiryQuestion, MobileBackup, MobilePermission,
+    MobileSession, MobileWindow, MobileWorkspace, ModelCard, SubagentItem, Theme, TimelineRow,
+    TurnMark, WorkspaceFile,
 };
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
 use std::collections::HashMap;
@@ -27,6 +27,18 @@ const CACHE_LIMIT: usize = 800;
 
 pub fn build() -> MobileWindow {
     let (ui, model) = create_window();
+    // The greeting mark ships one render per device-pixel ratio and picks the
+    // one that lands on the phone's physical grid, so leaving this at the 1.0
+    // default would upscale a 40px asset. The window is only mapped once
+    // `run()` starts, hence the deferred read instead of one here.
+    {
+        let weak = ui.as_weak();
+        Timer::single_shot(Duration::ZERO, move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.global::<DeviceScale>().set_factor(ui.window().scale_factor());
+            }
+        });
+    }
     // The engine outlives this window; a recreated activity attaches to the
     // same transcript and any turn that is still streaming.
     let handle = engine::acquire();

@@ -35,6 +35,29 @@ the image against this list before calling UI work done.
 - Custom interactive elements should react: set `mouse-cursor`, change the
   background on `has-hover`, and `animate` background/opacity over 150–200ms
   so state changes feel intentional rather than abrupt.
+- Slint 1.19 honors the system's reduced-motion setting on Windows and
+  Android: animations are skipped without code changes. Don't add a second
+  hand-rolled "reduce motion" switch that fights the platform.
+
+## Glass and motion (1.19+)
+
+- `backdrop-blur` on a translucent `Rectangle` produces a frosted-glass panel:
+
+  ```slint
+  Rectangle {
+      background: #ffffff30;
+      backdrop-blur: 6px;
+      border-radius: 12px;
+  }
+  ```
+
+  It is implemented by Skia and FemtoVG only. On the software renderer it has
+  no effect, so do not make content legibility depend on it there; use a
+  pre-blurred image or a more opaque panel as the fallback.
+- `Image` plays animated GIF, PNG, and WebP automatically. Avoid animating a
+  large image behind text unless the renderer has been checked for jank.
+- `animate` supports `angle-interpolation` for choosing the rotation direction,
+  and `animate *` in transitions; prefer these over manual timer loops.
 
 ## Reviewing a screenshot
 

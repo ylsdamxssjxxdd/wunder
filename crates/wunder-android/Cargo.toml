@@ -4,7 +4,7 @@
 name = "wunder-android"
 version = "1.1.0"
 edition = "2021"
-rust-version = "1.92"
+rust-version = "1.95"
 publish = false
 description = "wunder Android client (安卓版): mobile shell over the shared native engine"
 
@@ -37,18 +37,18 @@ wunder-desktop = { path = "../wunder-desktop", default-features = false, feature
 # device. Both feature sets are target-scoped: enabling winit on Android would
 # compile the desktop backend into the APK for no reason.
 [target.'cfg(target_os = "android")'.dependencies]
-slint = { version = "=1.18.0", default-features = false, features = [
+slint = { version = "=1.19.1", default-features = false, features = [
   "backend-android-activity-06",
   "compat-1-2",
   "std",
-  "unstable-fontique-011",
+  "unstable-fontique-012",
 ] }
 # The shared i-slint-core fork's text-selection module needs the parley text
 # stack on every target; the Android backend alone does not pull it in.
-i-slint-core = { version = "=1.18.0", default-features = false, features = ["std", "shared-parley"] }
+i-slint-core = { version = "=1.19.1", default-features = false, features = ["std", "shared-parley"] }
 # src/fonts.rs registers the phone's own CJK, Latin and emoji faces into Slint's
 # shared collection; the APK carries no font files.
-fontique = { version = "=0.11.1", features = ["system"] }
+fontique = { version = "=0.12.0", features = ["system"] }
 android_logger = "0.14"
 # The phone-control host installs itself into the shared runtime; the JNI
 # bridge reaches the Java accessibility service and system intents.
@@ -62,19 +62,19 @@ rustls-platform-verifier = { version = "=0.7.1", default-features = false }
 ndk-context = "0.1.1"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
-slint = { version = "=1.18.0", default-features = false, features = [
+slint = { version = "=1.19.1", default-features = false, features = [
   "backend-winit",
   "compat-1-2",
   "renderer-software",
   "std",
-  "unstable-fontique-011",
+  "unstable-fontique-012",
 ] }
 # `systemfonts` turns on the fork's shared-parley text stack; the selector's
 # renderer-software feature alone leaves it off.
-i-slint-renderer-software = { version = "=1.18.0", default-features = false, features = ["std", "systemfonts"] }
-i-slint-backend-winit = { version = "=1.18.0", default-features = false, features = ["raw-window-handle-06", "renderer-software"] }
-i-slint-core = { version = "=1.18.0", default-features = false, features = ["std", "shared-parley"] }
-fontique = { version = "=0.11.1", features = ["system"] }
+i-slint-renderer-software = { version = "=1.19.1", default-features = false, features = ["std", "systemfonts"] }
+i-slint-backend-winit = { version = "=1.19.1", default-features = false, features = ["raw-window-handle-06", "renderer-software"] }
+i-slint-core = { version = "=1.19.1", default-features = false, features = ["std", "shared-parley"] }
+fontique = { version = "=0.12.0", features = ["system"] }
 
 [profile.dev]
 # 安卓版是独立 workspace，不继承仓库根 Cargo.toml 的 [profile.dev]。
@@ -94,7 +94,7 @@ lto = "thin"
 codegen-units = 1
 
 [build-dependencies]
-slint-build = "=1.18.0"
+slint-build = "=1.19.1"
 # 桌面版 and 安卓版 share one workspace file-icon table; the build helper reads
 # the same `vscode-icons` assets the desktop build does.
 wunder-icon-builder = { path = "../wunder-icon-builder" }
@@ -105,14 +105,14 @@ wunder-icon-builder = { path = "../wunder-icon-builder" }
 # `context-menu` on StyledText.
 [patch.crates-io]
 html2md = { path = "../../crates/wunder-desktop/frontend/vendor/html2md-0.2.15" }
-i-slint-compiler = { path = "../../crates/wunder-desktop/frontend/vendor/i-slint-compiler-1.18" }
-i-slint-backend-winit = { path = "../../crates/wunder-desktop/frontend/vendor/i-slint-backend-winit-1.18" }
+i-slint-compiler = { path = "../../crates/wunder-desktop/frontend/vendor/i-slint-compiler-1.19" }
+i-slint-backend-winit = { path = "../../crates/wunder-desktop/frontend/vendor/i-slint-backend-winit-1.19" }
 softbuffer = { path = "../../crates/wunder-desktop/frontend/vendor/softbuffer-0.4.8" }
-i-slint-common = { path = "../../crates/wunder-desktop/frontend/vendor/i-slint-common-1.18" }
-i-slint-core = { path = "../../crates/wunder-desktop/frontend/vendor/i-slint-core-1.18" }
-i-slint-renderer-software = { path = "../../crates/wunder-desktop/frontend/vendor/i-slint-renderer-software-1.18" }
-fontique = { path = "../../crates/wunder-desktop/frontend/vendor/fontique-0.11" }
-parley = { path = "../../crates/wunder-desktop/frontend/vendor/parley-0.11" }
+i-slint-common = { path = "../../crates/wunder-desktop/frontend/vendor/i-slint-common-1.19" }
+i-slint-core = { path = "../../crates/wunder-desktop/frontend/vendor/i-slint-core-1.19" }
+i-slint-renderer-software = { path = "../../crates/wunder-desktop/frontend/vendor/i-slint-renderer-software-1.19" }
+fontique = { path = "../../crates/wunder-desktop/frontend/vendor/fontique-0.12" }
+parley = { path = "../../crates/wunder-desktop/frontend/vendor/parley-0.12" }
 winit = { path = "../../crates/wunder-desktop/frontend/vendor/winit-0.30.2" }
 arboard = { path = "../../patches/win7/arboard-3.7.0-win7" }
 tungstenite = { path = "../../crates/wunder-desktop/frontend/vendor/tungstenite-0.29.0" }

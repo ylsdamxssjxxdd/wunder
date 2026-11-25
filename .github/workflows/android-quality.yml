@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  RUST_TOOLCHAIN: "1.92.0"
+  RUST_TOOLCHAIN: "1.95.0"
 
 jobs:
   android-instrumented:
@@ -49,7 +49,7 @@ jobs:
         with:
           # setup-android splits this input on single spaces only, so keep the
           # package list on one line.
-          packages: "platforms;android-36 build-tools;36.0.0 ndk;28.2.13676358"
+          packages: "platforms;android-36 build-tools;36.0.0 ndk;30.0.16248370"
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
@@ -125,3 +125,4 @@ jobs:
       - name: Run wunder-android unit tests
         working-directory: crates/wunder-android
         run: cargo test -p wunder-android --lib
+

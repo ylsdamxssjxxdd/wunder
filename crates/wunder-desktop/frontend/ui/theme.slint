@@ -206,6 +206,23 @@ export global TimelineSpin {
     in-out property <float> angle: 0.0;
 }
 
+// The window's device-pixel ratio, pushed from Rust when the window is shown
+// and again whenever the platform reports a new one. Bitmaps that must land on
+// the physical grid (the greeting mark) read it: Slint's software rasteriser
+// samples images bilinearly and ignores `image-rendering`, so a texture larger
+// than its slot is point-sampled and loses the thin lines.
+export global DeviceScale {
+    // `in-out`, not `in`: the compiler folds a constant-bound input property
+    // into the binding and the accessor disappears from the Rust API.
+    in-out property <float> factor: 1.0;
+    // Land a length on the physical pixel grid. A bitmap whose origin keeps a
+    // fractional physical offset is still resampled bilinearly even when its
+    // own size matches the grid, which softens the whole shape.
+    public pure function snap(value: length, factor: float) -> length {
+        return (round((value / 1px) * max(1.0, factor)) * 1px) / max(1.0, factor);
+    }
+}
+
 // A process owns a bounded child model. Keeping this separate from TimelineRow
 // avoids recursive models and lets a live tool update only its own child row.
 export struct ProcessEntry {

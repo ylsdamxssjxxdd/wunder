@@ -32,15 +32,31 @@ bold text.
 - **Transforms** (`transform-rotation`, `transform-scale`, `transform-origin`)
   apply visually to the element and its descendants; the layout box stays the
   same.
+- **Dashed paths** `(1.19+)`: `stroke-dash-array: [6px, 3px];` and
+  `stroke-dash-offset: 2px;` on `Path`; lengths are logical pixels.
 - **Gradients**: `@linear-gradient(angle, color stop%, …)`,
-  `@radial-gradient(circle [radius] [at x y], color stop%, …)` (always
-  circular; radius and center are `(1.17+)`), and
+  `@radial-gradient(circle [radius] [at x y], color stop%, …)` (radius and
+  center are `(1.17+)`; `ellipse` shape is `(1.19+)`), and
   `@conic-gradient([from angle] [at x y], color deg, …)`.
 - **Animations** are declared on *properties*, inside the element whose
   property changes: `animate width { duration: 200ms; }`.
 - **Only bind a property when overriding the default.** An unbound `visible`,
   `opacity`, `x`, … stays compiler-constant; inside a layout an explicit
   `x: 0` even overrides the computed position.
+- **`if`/`for` now affect parent size under edition 1.19.** A parent can grow,
+  and a child reading `parent.width` can become a binding loop
+  (`The binding for the property … is part of a binding loop`). Give the
+  parent an explicit size, or use `width: 100%` instead of `parent.width`.
+- **A size/position set only by states keeps its default in 1.19.** Code that
+  expected `0px` while no state applied must set that value outside the
+  states. See [editions-and-project-file.md](editions-and-project-file.md).
+- **`ContextMenuArea` is not a sizing parent in 1.19.** It lowers to a
+  non-visual `Empty`; a `ScrollView` or `TextInput` inside it can get
+  `parent.width == 0`. Keep `Menu` in it and put the visual children as
+  siblings. See [events-and-overlays.md](events-and-overlays.md).
+- **Experimental features must be named.** `SLINT_ENABLE_EXPERIMENTAL_FEATURES`
+  and `experimental-features` take a list (`closures`, `interfaces`, …); the
+  old catch-all `1` and unknown names are errors.
 
 For "element won't fill / is centered" and "padding does nothing", see
 [language-and-layout.md](language-and-layout.md).

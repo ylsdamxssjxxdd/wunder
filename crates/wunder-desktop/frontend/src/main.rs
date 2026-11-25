@@ -329,7 +329,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
     }
     match first_argument.as_deref().and_then(std::ffi::OsStr::to_str) {
-        Some("--demo") => demo::install(&app),
+        Some("--demo") => {
+            demo::install(&app);
+            // 输入区没有草稿时发送键是灰色禁用态；示例首屏给一段演示
+            // 草稿，直接呈现可用的高亮发送键，删掉文字即可看禁用态。
+            app.set_draft("帮我整理这些示例资料".into());
+        }
         None | Some("--native") => {
             native_runtime::install(&app);
             // 设置 → 数据与恢复：只读写本机文件，装在做真实运行时的形态上。
@@ -403,6 +408,17 @@ fn install_composer_popover_dismissal(app: &MainWindow) {
                 | winit::event::WindowEvent::ScaleFactorChanged { .. }
         ) {
             native_window::sync_main_window_shape(window);
+            if matches!(event, winit::event::WindowEvent::ScaleFactorChanged { .. }) {
+                // The backend records the new ratio while it dispatches this
+                // event, so read it on the next turn rather than the stale
+                // value the filter would still see here.
+                let weak = weak.clone();
+                slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+                    if let Some(app) = weak.upgrade() {
+                        sync_device_scale(&app);
+                    }
+                });
+            }
         }
         // The touch-keyboard gate reads this before Slint dispatches the
         // press that may move focus into a text field.
@@ -545,10 +561,32 @@ fn install_composer_popover_dismissal(app: &MainWindow) {
     });
 }
 
+/// Publish the window's device-pixel ratio to the UI. Slint's software
+/// rasteriser samples bitmaps bilinearly and ignores `image-rendering`, so an
+/// asset drawn away from its own pixel grid loses its thin lines; the greeting
+/// mark therefore ships one render per ratio and picks the matching one.
+fn sync_device_scale(app: &MainWindow) {
+    use slint::winit_030::WinitWindowAccessor;
+
+    let window = app.window();
+    // Slint mirrors the ratio the backend last dispatched, which is still the
+    // 1.0 default until the first scale event; the winit window is created with
+    // the monitor's real factor, so prefer it when it is already there.
+    let factor = window
+        .with_winit_window(|native| native.scale_factor() as f32)
+        .unwrap_or_else(|| window.scale_factor());
+    let scale = app.global::<DeviceScale>();
+    if (scale.get_factor() - factor).abs() > 0.01 {
+        scale.set_factor(factor);
+    }
+}
+
 /// Show the workbench and settle its native silhouette before the first frame.
 pub(crate) fn show_main_window(app: &MainWindow) -> Result<(), slint::PlatformError> {
     app.show()?;
     native_window::sync_main_window_shape(app.window());
+    // The window only knows its monitor's ratio once it exists on screen.
+    sync_device_scale(app);
     Ok(())
 }
 
@@ -1013,9 +1051,9 @@ fn fit_and_center(
 /// wins every character the chain covers, Latin included, because the generic
 /// family list is ordered.
 pub(crate) fn register_bundled_font() -> Result<(), Box<dyn std::error::Error>> {
-    use slint::fontique_011::fontique;
+    use slint::fontique_012::fontique;
 
-    let mut collection = slint::fontique_011::shared_collection();
+    let mut collection = slint::fontique_012::shared_collection();
     startup_point("font_collection_ready");
     let text = bundled_font::misans();
     let symbols = bundled_font::dejavu();
@@ -1139,7 +1177,7 @@ mod bundled_font_tests {
     fn bundled_faces_register_in_priority_order() {
         register_bundled_font().expect("register bundled fonts");
 
-        let mut collection = slint::fontique_011::shared_collection();
+        let mut collection = slint::fontique_012::shared_collection();
         let text = collection.family_id("MiSans").expect("MiSans family");
         let symbols = collection
             .family_id("DejaVu Sans")
@@ -1173,11 +1211,11 @@ mod bundled_font_tests {
     }
 
     fn script_fallback_covers(
-        collection: &mut slint::fontique_011::fontique::Collection,
-        family: slint::fontique_011::fontique::FamilyId,
+        collection: &mut slint::fontique_012::fontique::Collection,
+        family: slint::fontique_012::fontique::FamilyId,
         target: char,
     ) -> bool {
-        use slint::fontique_011::fontique;
+        use slint::fontique_012::fontique;
 
         let mut cache = fontique::SourceCache::default();
         let mut query = collection.query(&mut cache);
@@ -1202,11 +1240,11 @@ mod bundled_font_tests {
     }
 
     fn chain_covers(
-        collection: &mut slint::fontique_011::fontique::Collection,
-        families: &[slint::fontique_011::fontique::FamilyId],
+        collection: &mut slint::fontique_012::fontique::Collection,
+        families: &[slint::fontique_012::fontique::FamilyId],
         target: char,
     ) -> bool {
-        use slint::fontique_011::fontique;
+        use slint::fontique_012::fontique;
 
         let mut cache = fontique::SourceCache::default();
         let mut query = collection.query(&mut cache);
@@ -1349,3 +1387,4 @@ fn install_slint_platform() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|error| format!("初始化 Slint Win7 软件渲染平台失败：{error:?}"))?;
     Ok(())
 }
+

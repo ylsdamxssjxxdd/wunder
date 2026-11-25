@@ -1,4 +1,4 @@
-ARG RUST_BASE_IMAGE=rust:1.92-slim-bookworm
+ARG RUST_BASE_IMAGE=rust:1.95-slim-bookworm
 FROM ${RUST_BASE_IMAGE}
 
 ENV PATH="/usr/local/cargo/bin:${PATH}"

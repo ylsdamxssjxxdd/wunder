@@ -254,8 +254,10 @@ component GroupHeaderRow inherits DragRow {
     label: data.name;
     row-kind: data.kind;
     workspace-id: data.kind == 2 ? "cloud" : data.workspace-id;
-    selected: data.selected;
-    selected-color: Theme.accent-soft;
+    // 工作区标题不画常态底色：分组本身不是一个“被选中的条目”，选中态属于
+    // 下面的线程行。分组状态只落在图标颜色上（展开=工作区本色，收起=灰），
+    // 这样工作区与线程的高亮就不会在同一列里互相抢。
+    selected: false;
     // 工作区标题的底色弧角与线程标题同值（DragRow 默认是更大的 radius-lg），
     // 两个标题叠在一起时才是一条对齐的树。
     border-radius: SidebarMetrics.row-fill-radius;
@@ -266,8 +268,6 @@ component GroupHeaderRow inherits DragRow {
         : (data.expanded ? I18n.ws_collapse_threads : data.path != "" ? data.path : I18n.ws_expand_threads);
     actions-width: data.kind == 2 ? 40px : 84px;
 
-    // Selection indicator on the workspace row.
-    Rectangle { x: 2px; y: (parent.height - 16px) / 2; width: 2px; height: 16px; border-radius: 1px; background: data.selected ? Theme.accent : transparent; }
     HorizontalLayout {
         padding-left: SidebarMetrics.row-padding;
         // 「+」常驻在动作条最右一列，计数与标题在这里让开它。
@@ -295,7 +295,7 @@ component GroupHeaderRow inherits DragRow {
         }
         Text {
             height: parent.height; text: data.name;
-            color: data.selected ? Theme.accent-deep : Theme.text; font-size: Theme.font-md;
+            color: Theme.text; font-size: Theme.font-md;
             vertical-alignment: center; overflow: elide;
             horizontal-stretch: 1;
         }

@@ -216,6 +216,7 @@ mod tests {
             "stdout_terminal": std::io::stdout().is_terminal(),
             "stderr_terminal": std::io::stderr().is_terminal(),
             "workspace_matches_home": std::env::current_dir().unwrap().canonicalize().unwrap() == root.canonicalize().unwrap(),
+            "desktop_launch": std::env::var_os("WUNDER_DESKTOP_CLI").is_some_and(|value| value == "1"),
         });
         let report = root.join(format!("{}.pending", std::process::id()));
         std::fs::write(&report, result.to_string()).unwrap();
@@ -264,6 +265,7 @@ mod tests {
             assert_eq!(result["stdout_terminal"], true);
             assert_eq!(result["stderr_terminal"], true);
             assert_eq!(result["workspace_matches_home"], true);
+            assert_eq!(result["desktop_launch"], true);
         }
     }
 }

@@ -1,0 +1,27 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+export component Foo inherits Rectangle {
+    ComponentContainer {
+//  >                 <error{The @children placeholder cannot appear in a ComponentContainer}
+        @children
+    }
+}
+
+export component Bar inherits Rectangle {
+    Foo { Text {} }
+    ComponentContainer {
+//  >                 <error{ComponentContainers may not have children}
+        Text {}
+    }
+    ComponentContainer {
+//  >                 <error{ComponentContainers may not have children}
+        Text { }
+        for x in 2: Rectangle {}
+        Text { }
+        for x in 2: Rectangle {}
+    }
+
+    ComponentContainer {
+    }
+}

@@ -43,7 +43,7 @@ REQUIRED_FILES = (
     PurePosixPath("crates/wunder-cli/Cargo.toml"),
     PurePosixPath("crates/wunder-desktop/Cargo.toml"),
     PurePosixPath("crates/wunder-desktop/frontend/Cargo.toml"),
-    PurePosixPath("crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/Cargo.toml"),
+    PurePosixPath("crates/wunder-desktop/frontend/vendor/i-slint-core-1.19/Cargo.toml"),
     PurePosixPath("frontend/package.json"),
     PurePosixPath("web/index.html"),
 )

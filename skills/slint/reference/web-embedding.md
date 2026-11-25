@@ -44,9 +44,11 @@ Under a strict Content Security Policy, such as Claude Artifacts, publish both f
   - imports: `(url) => Promise<string | null>`, with `null` for a missing file
   - fonts: `(url) => Promise<Uint8Array>`
 - The interpreter compiles with the [edition](https://docs.slint.dev/latest/docs/slint/guide/language/concepts/editions/) of its own release.
-  The next argument of `compile_from_string_with_style`, such as `"1.18"`, selects another one.
+  The next argument of `compile_from_string_with_style`, such as `"1.18"` or
+  `"1.19"`, selects another one.
 - The last argument of both is the URL of the directory with the `slint-project.json` to apply, read through the import loader.
-  Its `edition` takes precedence.
+  Its `edition` takes precedence. Use `"1.19"` for the 1.19 behavior changes;
+  `"1.18"` keeps old behavior while using 1.19 features.
 - Images don't go through the import loader.
   With a URL as the base, such as `https://…`, `@image-url` paths resolve to URLs that `<img>` elements load.
   A path from the root, such as `/img/logo.png`, resolves on the host of the base URL.
@@ -54,8 +56,9 @@ Under a strict Content Security Policy, such as Claude Artifacts, publish both f
 
 ## Pitfalls
 
-- Before 1.19, hiding the last instance ends the event loop, and later calls fail with "The event loop was already terminated".
-  Reuse the window with `create_with_existing_window()`.
+- 1.19 fixed hiding the last window ending the event loop. On older releases,
+  later calls fail with "The event loop was already terminated"; stay on 1.19+
+  or reuse the window with `create_with_existing_window()`.
 - A Rust panic leaves the module unusable, and its pending promises never settle.
   The panic hook logs it with `console.error`, starting with "panicked at".
   To recover without a reload, import the module again under a new URL fragment, such as `#2`, and give it a new canvas.

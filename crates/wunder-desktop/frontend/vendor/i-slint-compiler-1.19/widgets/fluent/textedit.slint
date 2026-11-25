@@ -1,0 +1,63 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+import { FluentPalette } from "styling.slint";
+import { TextEditBase } from "../common/textedit-base.slint";
+
+import { TextEditInterface } from "../common/std-widget-interfaces.slint";
+
+export component TextEdit {
+    implement TextEditInterface <=> base;
+
+    @deprecated("Please use 'content-width' instead") in-out property <length> viewport-width <=> content-width;
+    @deprecated("Please use 'content-height' instead") in-out property <length> viewport-height <=> content-height;
+    @deprecated("Please use 'content-x' instead") in-out property <length> viewport-x <=> content-x;
+    @deprecated("Please use 'content-y' instead") in-out property <length> viewport-y <=> content-y;
+
+    accessible-role: AccessibleRole.text-input;
+    accessible-enabled: root.enabled;
+    accessible-value <=> text;
+    accessible-placeholder-text: placeholder-text;
+    accessible-read-only: root.read-only;
+    accessible-action-set-value(v) => { text = v; edited(v); }
+    accessible-action-set-selection-offsets(anchor, focus) => { base.set-selection-offsets(anchor, focus); }
+
+    forward-focus: base;
+    horizontal-stretch: 1;
+    vertical-stretch: 1;
+
+    states [
+        disabled when !root.enabled: {
+            base.background: FluentPalette.control-disabled;
+            base.foreground: FluentPalette.text-disabled;
+            base.selection-foreground-color: FluentPalette.text-accent-foreground-disabled;
+            base.placeholder-color: FluentPalette.text-disabled;
+        }
+        focused when root.has-focus: {
+            base.background: FluentPalette.control-input-active;
+            i-focus-border.background: FluentPalette.accent-background;
+        }
+    ]
+
+    base := TextEditBase {
+        width: 100%;
+        height: 100%;
+        background: FluentPalette.control-background;
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: FluentPalette.text-control-border;
+        scroll-view-padding: 12px;
+        foreground: FluentPalette.foreground;
+        placeholder-color: FluentPalette.text-secondary;
+        selection-background-color: FluentPalette.selection-background;
+        selection-foreground-color: FluentPalette.selection-foreground;
+
+        i-focus-border := Rectangle {
+            x: parent.border-radius;
+            y: parent.height - self.height;
+            width: parent.width - 2 * parent.border-radius;
+            height: 2px;
+            border-radius: 1px;
+        }
+    }
+}

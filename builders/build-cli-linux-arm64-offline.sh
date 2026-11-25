@@ -18,7 +18,7 @@ if [[ "$host_arch" == x86_64 ]]; then
   # Accept the initial SDK export with an extra directory level.
   [[ -x "$rust/bin/cargo" ]] || rust="$rust/nightly-2026-03-14-x86_64-unknown-linux-gnu"
 else
-  rust="$offline_root/rust/toolchains/1.92.0-aarch64-unknown-linux-gnu"
+  rust="$offline_root/rust/toolchains/1.95.0-aarch64-unknown-linux-gnu"
 fi
 vendor_root="${WUNDER_CARGO_VENDOR:-$offline_root/cargo-vendor-slint}"
 target="aarch64-unknown-linux-gnu"

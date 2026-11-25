@@ -18,6 +18,11 @@
 #[cfg(unix)]
 use std::sync::OnceLock;
 
+#[cfg(windows)]
+const DESKTOP_LAUNCH_ENV: &str = "WUNDER_DESKTOP_CLI";
+#[cfg(windows)]
+const DESKTOP_LAUNCH_COLUMNS: u16 = 80;
+
 /// Cell aspect assumed when neither a measurement nor an override is available.
 ///
 /// A monospace cell is taller than it is wide, and by how much depends on the
@@ -314,6 +319,35 @@ pub(crate) fn terminal_cell_aspect() -> Option<f32> {
     None
 }
 
+#[cfg(windows)]
+pub(crate) fn configure_desktop_launch_window() {
+    use crossterm::terminal::SetSize;
+    use std::io::{self, IsTerminal};
+
+    if std::env::var_os(DESKTOP_LAUNCH_ENV).is_none() {
+        return;
+    }
+    let mut stdout = io::stdout();
+    if !stdout.is_terminal() {
+        return;
+    }
+    let _ = crossterm::execute!(
+        stdout,
+        SetSize(
+            DESKTOP_LAUNCH_COLUMNS,
+            desktop_launch_rows(DESKTOP_LAUNCH_COLUMNS)
+        )
+    );
+}
+
+#[cfg(windows)]
+fn desktop_launch_rows(columns: u16) -> u16 {
+    (f32::from(columns) / FALLBACK_CELL_ASPECT).round() as u16
+}
+
+#[cfg(not(windows))]
+pub(crate) fn configure_desktop_launch_window() {}
+
 /// Cell aspect from a window size, `None` when the numbers cannot be trusted.
 /// VTE-based terminals (GNOME Terminal, Tilix) report zeroes here, which is why
 /// the terminal query and the fallback matter as much as the measurement.
@@ -331,6 +365,13 @@ fn measured_cell_aspect(columns: u16, rows: u16, width_px: u16, height_px: u16) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn desktop_launch_window_matches_console_cell_aspect() {
+        assert_eq!(desktop_launch_rows(DESKTOP_LAUNCH_COLUMNS), 40);
+        assert_eq!(desktop_launch_rows(60), 30);
+    }
 
     #[test]
     fn the_cell_aspect_comes_from_the_reported_pixel_size() {

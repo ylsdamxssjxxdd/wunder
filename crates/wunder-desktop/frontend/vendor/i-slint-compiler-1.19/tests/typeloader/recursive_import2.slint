@@ -1,0 +1,13 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+import { Rec1 } from "./recursive_import1.slint";
+//                   >                         <error{Recursive import of "📂/tests/typeloader/recursive_import1.slint"}
+
+export component Rec2 inherits Rectangle {
+    property <int> Foo: 44;
+}
+
+export component Rect21 inherits Rec1 {
+    property <int> Bar: 45;
+}

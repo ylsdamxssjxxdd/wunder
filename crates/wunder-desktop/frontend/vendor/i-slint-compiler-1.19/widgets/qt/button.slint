@@ -1,0 +1,56 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+import { ButtonInterface, StandardButtonInterface } from "../common/std-widget-interfaces.slint";
+
+export component Button {
+    implement ButtonInterface <=> native;
+
+    accessible-role: button;
+    accessible-enabled: root.enabled;
+    accessible-checkable: root.checkable;
+    accessible-checked: root.checked;
+    accessible-label: root.text;
+    accessible-action-default => {
+        if (root.enabled) {
+            if (root.checkable) {
+                root.checked = !root.checked;
+            }
+            clicked();
+        }
+    }
+
+    forward-focus: native;
+
+    HorizontalLayout {
+        native := NativeButton { }
+    }
+}
+
+export component StandardButton {
+    implement StandardButtonInterface <=> self;
+
+    in property <StandardButtonKind> kind <=> native.standard-button-kind;
+    in property <bool> enabled <=> native.enabled;
+    in property <bool> primary <=> native.primary;
+    out property <bool> has-focus <=> native.has-focus;
+    out property <bool> pressed <=> native.pressed;
+
+    callback clicked <=> native.clicked;
+
+    forward-focus: native;
+
+    HorizontalLayout {
+        native := NativeButton {
+            accessible-role: button;
+            accessible-label: native.text;
+            accessible-action-default => {
+                if (root.enabled) {
+                    clicked();
+                }
+            }
+            is-standard-button: true;
+            accessible-enabled: root.enabled;
+        }
+    }
+}

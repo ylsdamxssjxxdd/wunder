@@ -7,8 +7,8 @@
 
 import { I18n } from "../../../crates/wunder-desktop/frontend/ui/i18n.slint";
 export { I18n }
-import { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion, CommandTask, SubagentItem, TurnMark, PlanStep, QueueTurn } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
-export { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion }
+import { DeviceScale, Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion, CommandTask, SubagentItem, TurnMark, PlanStep, QueueTurn } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
+export { DeviceScale, Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion }
 import { TimelineView } from "../../../crates/wunder-desktop/frontend/ui/timeline.slint";
 import { Composer, GoalBanner, InquiryPanel, ModelSetupBanner, StatusDock } from "../../../crates/wunder-desktop/frontend/ui/composer.slint";
 import { Action, ConfirmDialog } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
@@ -1368,6 +1368,7 @@ export component MobileWindow inherits Window {
                     }
 
                     composer := Composer {
+                        min-height: self.card-height;
                         mobile: true;
                         // 语音：右侧那颗键在没有草稿时就是麦克风。录音条已经
                         // 贴在输入卡上方，Composer 自己的小胶囊不必重复显示，

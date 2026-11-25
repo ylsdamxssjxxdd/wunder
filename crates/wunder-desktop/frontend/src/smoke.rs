@@ -68,9 +68,14 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
     let editor_y = app.get_composer_editor_y();
     let editor_width = app.get_composer_editor_width();
     let editor_height = app.get_composer_editor_height();
+    eprintln!(
+        "composer editor geometry: {editor_width}x{editor_height} at {editor_x},{editor_y}"
+    );
     require(
         editor_width > 200.0 && editor_height >= 40.0,
-        "composer editor hit area collapsed",
+        &format!(
+            "composer editor hit area collapsed ({editor_width}x{editor_height} at {editor_x},{editor_y})"
+        ),
     )?;
     click(
         app,

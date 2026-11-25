@@ -21,7 +21,7 @@ fn main() {
     }
     // 桌面版's settings dropdowns use the array search helpers, which stock Slint
     // still gates behind the experimental flag.
-    std::env::set_var("SLINT_ENABLE_EXPERIMENTAL_FEATURES", "1");
+    std::env::set_var("SLINT_ENABLE_EXPERIMENTAL_FEATURES", "closures");
     slint_build::compile_with_config(
         "ui/mobile.slint",
         slint_build::CompilerConfiguration::new()

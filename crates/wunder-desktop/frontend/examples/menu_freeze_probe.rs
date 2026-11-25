@@ -65,8 +65,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The shell normally registers its bundled faces; the probe borrows any
     // installed face so the software text stack has a family to resolve.
     {
-        use slint::fontique_011::fontique;
-        let mut collection = slint::fontique_011::shared_collection();
+        use slint::fontique_012::fontique;
+        let mut collection = slint::fontique_012::shared_collection();
         for path in ["C:/Windows/Fonts/msyh.ttc", "C:/Windows/Fonts/arial.ttf"] {
             if let Ok(bytes) = std::fs::read(path) {
                 let families = collection
@@ -183,3 +183,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.run()?;
     Ok(())
 }
+

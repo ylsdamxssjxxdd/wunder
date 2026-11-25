@@ -220,14 +220,20 @@ export component WindowChrome inherits Rectangle {
 // resize hit-test region (the window's resize-border-width) stays untouched.
 export component WindowFrame inherits Rectangle {
     in property <bool> maximized: false;
-    x: 0px;
-    y: 0px;
-    width: 100%;
-    height: 100%;
+    // The frame is one pixel larger than the window on every side and twice as
+    // thick, so only its inner pixel is on screen. Drawing the hairline on the
+    // silhouette itself does not work: the hard-edged native window region
+    // (native_window.rs) shaves the antialiased outer half of a stroke that
+    // follows the rounded boundary, and the four corners then read as breaks
+    // between the straight edges. A stroke that reaches past the silhouette is
+    // covered solidly on every pixel the region keeps, corners included; the
+    // radius is one larger so the inner edge stays on the silhouette.
+    x: -1px;
+    y: -1px;
     z: 1001;
     background: transparent;
     border-color: Theme.window-frame;
-    border-width: 1px;
-    border-radius: root.maximized ? 0px : Theme.radius-lg;
+    border-width: 2px;
+    border-radius: root.maximized ? 0px : Theme.radius-lg + 1px;
     accessible-role: none;
 }

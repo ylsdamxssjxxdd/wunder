@@ -1,0 +1,280 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+use i_slint_compiler::diagnostics::BuildDiagnostics;
+use i_slint_compiler::expression_tree::Expression;
+use i_slint_compiler::generator::OutputFormat;
+use i_slint_compiler::object_tree::{ElementRc, recurse_elem};
+use i_slint_compiler::parser::parse;
+use i_slint_compiler::{CompilerConfiguration, compile_syntax_node};
+use smol_str::ToSmolStr;
+
+fn compile_with_diagnostics(source: &str) -> (ElementRc, BuildDiagnostics) {
+    let mut diagnostics = BuildDiagnostics::default();
+    let syntax_node = parse(source.into(), None, &mut diagnostics);
+    let compiler_config = CompilerConfiguration::new(OutputFormat::Interpreter);
+    let (doc, diagnostics, _) =
+        spin_on::spin_on(compile_syntax_node(syntax_node, diagnostics, compiler_config));
+    assert!(!diagnostics.has_errors(), "{:?}", diagnostics.to_string_vec());
+    (doc.last_exported_component().unwrap().root_element.clone(), diagnostics)
+}
+
+fn compile(source: &str) -> ElementRc {
+    compile_with_diagnostics(source).0
+}
+
+fn find_by_base_type(root: &ElementRc, base_type: &str) -> ElementRc {
+    let mut result = None;
+    recurse_elem(root, &(), &mut |element, _| {
+        if element.borrow().base_type.to_smolstr() == base_type {
+            result = Some(element.clone());
+        }
+    });
+    result.unwrap_or_else(|| panic!("{base_type} element should be generated"))
+}
+
+#[test]
+fn box_shadow_keeps_per_corner_border_radius_bindings() {
+    let root = compile(
+        r#"
+export component TestCase inherits Window {
+    in-out property <length> top-left-radius: 12px;
+    in-out property <length> top-right-radius: 24px;
+    in-out property <length> bottom-right-radius: 36px;
+    in-out property <length> bottom-left-radius: 48px;
+    width: 160px;
+    height: 120px;
+
+    Rectangle {
+        width: 100px;
+        height: 80px;
+        border-radius: 0px;
+        border-top-left-radius: root.top-left-radius;
+        border-top-right-radius: root.top-right-radius;
+        border-bottom-right-radius: root.bottom-right-radius;
+        border-bottom-left-radius: root.bottom-left-radius;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: red;
+    }
+}
+"#,
+    );
+
+    let box_shadow = find_by_base_type(&root, "BoxShadow");
+
+    for property_name in [
+        "border-top-left-radius",
+        "border-top-right-radius",
+        "border-bottom-right-radius",
+        "border-bottom-left-radius",
+    ] {
+        assert!(
+            box_shadow.borrow().binding(property_name).is_some(),
+            "{property_name} binding missing"
+        );
+        let box_shadow_ref = box_shadow.borrow();
+        let binding = box_shadow_ref.binding(property_name).unwrap();
+        assert!(
+            matches!(binding.expression.ignore_debug_hooks(), Expression::PropertyReference(_)),
+            "{property_name} should reference the source rectangle"
+        );
+    }
+}
+
+#[test]
+fn box_shadow_expands_uniform_border_radius_to_corner_bindings() {
+    let root = compile(
+        r#"
+export component TestCase inherits Window {
+    in-out property <length> radius: 24px;
+    width: 160px;
+    height: 120px;
+
+    Rectangle {
+        width: 100px;
+        height: 80px;
+        border-radius: root.radius;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: red;
+    }
+}
+"#,
+    );
+
+    let box_shadow = find_by_base_type(&root, "BoxShadow");
+
+    for property_name in [
+        "border-top-left-radius",
+        "border-top-right-radius",
+        "border-bottom-right-radius",
+        "border-bottom-left-radius",
+    ] {
+        assert!(
+            box_shadow.borrow().binding(property_name).is_some(),
+            "{property_name} binding missing"
+        );
+        let box_shadow_ref = box_shadow.borrow();
+        let binding = box_shadow_ref.binding(property_name).unwrap();
+        assert!(
+            matches!(binding.expression.ignore_debug_hooks(), Expression::PropertyReference(_)),
+            "{property_name} should reference the source rectangle"
+        );
+    }
+}
+
+// Issue #13301
+#[test]
+fn box_shadow_is_inside_the_transform_element() {
+    let root = compile(
+        r#"
+export component TestCase inherits Window {
+    width: 160px;
+    height: 120px;
+
+    Rectangle {
+        width: 100px;
+        height: 80px;
+        background: red;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: black;
+        transform-rotation: 45deg;
+    }
+}
+"#,
+    );
+
+    let transform = find_by_base_type(&root, "Transform");
+    let child_types = transform
+        .borrow()
+        .children
+        .iter()
+        .map(|c| c.borrow().base_type.to_smolstr())
+        .collect::<Vec<_>>();
+    assert_eq!(child_types, ["BoxShadow", "Rectangle"]);
+}
+
+#[test]
+fn box_shadow_tracks_a_background_set_from_a_state() {
+    let root = compile(
+        r#"
+export component TestCase inherits Window {
+    in-out property <bool> active;
+    width: 160px;
+    height: 120px;
+
+    Rectangle {
+        width: 100px;
+        height: 80px;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: red;
+        states [
+            on when root.active: { background: green; }
+        ]
+    }
+}
+"#,
+    );
+
+    let box_shadow = find_by_base_type(&root, "BoxShadow");
+    let box_shadow = box_shadow.borrow();
+    assert!(box_shadow.is_binding_set("background", false));
+}
+
+#[test]
+fn box_shadow_omits_the_paint_the_rectangle_never_sets() {
+    let root = compile(
+        r#"
+export component TestCase inherits Window {
+    width: 160px;
+    height: 120px;
+
+    Rectangle {
+        width: 100px;
+        height: 80px;
+        background: green;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: red;
+    }
+}
+"#,
+    );
+
+    let box_shadow = find_by_base_type(&root, "BoxShadow");
+    let box_shadow = box_shadow.borrow();
+    assert!(box_shadow.is_binding_set("background", false));
+    assert!(!box_shadow.is_binding_set("border-color", false));
+    assert!(!box_shadow.is_binding_set("border-width", false));
+}
+
+#[test]
+fn box_shadow_tracks_a_background_set_through_the_color_alias() {
+    let root = compile(
+        r#"
+export component TestCase inherits Window {
+    width: 160px;
+    height: 120px;
+
+    Rectangle {
+        width: 100px;
+        height: 80px;
+        color: green;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: red;
+    }
+}
+"#,
+    );
+
+    let box_shadow = find_by_base_type(&root, "BoxShadow");
+    let box_shadow = box_shadow.borrow();
+    assert!(box_shadow.is_binding_set("background", false));
+}
+
+#[test]
+fn unpainted_container_warns_that_children_do_not_cast_a_shadow() {
+    let (_, diagnostics) = compile_with_diagnostics(
+        r#"
+export component TestCase inherits Window {
+    Rectangle {
+        drop-shadow-color: black;
+        Rectangle { background: white; }
+    }
+}
+"#,
+    );
+    assert!(
+        diagnostics
+            .to_string_vec()
+            .iter()
+            .any(|message| message.contains("Set a 'background' or border to cast a drop shadow"))
+    );
+}
+
+#[test]
+fn painted_rectangles_do_not_warn_about_missing_shadow_paint() {
+    for paint in [
+        "background: white;",
+        "border-color: red; border-width: 1px;",
+        "states [ active when true: { background: white; } ]",
+        "color: white;",
+    ] {
+        let (_, diagnostics) = compile_with_diagnostics(&format!(
+            r#"
+export component TestCase inherits Window {{
+    Rectangle {{
+        drop-shadow-color: black;
+        {paint}
+    }}
+}}
+"#
+        ));
+        assert!(
+            !diagnostics
+                .to_string_vec()
+                .iter()
+                .any(|message| message
+                    .contains("Set a 'background' or border to cast a drop shadow")),
+            "{paint}"
+        );
+    }
+}

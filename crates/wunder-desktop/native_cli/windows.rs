@@ -67,6 +67,7 @@ pub(super) fn spawn(
     entries.extend([
         (OsString::from("WUNDER_HOME"), home.as_os_str().to_owned()),
         (OsString::from("PATH"), path.to_owned()),
+        (OsString::from("WUNDER_DESKTOP_CLI"), OsString::from("1")),
     ]);
     entries.sort_by_cached_key(|(key, _)| key.to_string_lossy().to_uppercase());
     let mut environment = Vec::new();

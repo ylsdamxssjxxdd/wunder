@@ -1,0 +1,55 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+import { CosmicPalette } from "styling.slint";
+import { TextEditBase } from "../common/textedit-base.slint";
+
+import { TextEditInterface } from "../common/std-widget-interfaces.slint";
+
+export component TextEdit {
+    implement TextEditInterface <=> base;
+
+    @deprecated("Please use 'content-width' instead") in-out property <length> viewport-width <=> content-width;
+    @deprecated("Please use 'content-height' instead") in-out property <length> viewport-height <=> content-height;
+    @deprecated("Please use 'content-x' instead") in-out property <length> viewport-x <=> content-x;
+    @deprecated("Please use 'content-y' instead") in-out property <length> viewport-y <=> content-y;
+
+    accessible-role: AccessibleRole.text-input;
+    accessible-enabled: root.enabled;
+    accessible-value <=> text;
+    accessible-placeholder-text: placeholder-text;
+    accessible-read-only: root.read-only;
+    accessible-action-set-value(v) => { text = v; edited(v); }
+    accessible-action-set-selection-offsets(anchor, focus) => { base.set-selection-offsets(anchor, focus); }
+
+    forward-focus: base;
+    horizontal-stretch: 1;
+    vertical-stretch: 1;
+
+    states [
+        disabled when !root.enabled: {
+            root.opacity: 0.5;
+        }
+    ]
+
+    base := TextEditBase {
+        width: 100%;
+        height: 100%;
+        border-radius: 8px;
+        background: CosmicPalette.control-background;
+        border-width: 1px;
+        border-color: CosmicPalette.control-divider;
+        scroll-view-padding: 12px;
+        foreground: CosmicPalette.foreground;
+        selection-background-color: CosmicPalette.selection-background;
+        selection-foreground-color: CosmicPalette.selection-foreground;
+        placeholder-color: CosmicPalette.placeholder-foreground;
+        if root.has-focus && root.enabled: Rectangle {
+            width: parent.width + 2px;
+            height: parent.height + 2px;
+            border-radius: parent.border-radius + 2px;
+            border-color: CosmicPalette.state-focus;
+            border-width: 1px;
+        }
+    }
+}

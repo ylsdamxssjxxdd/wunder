@@ -17,7 +17,9 @@ component FolderIcon {
 ```
 
 SVGs scale cleanly at any size, and `colorize` repaints the whole image with a
-brush, so a single monochrome asset works in both color schemes.
+brush, so a single monochrome asset works in both color schemes. Since 1.19 an
+SVG magnified with `transform-scale` stays sharp; still prefer rendering it at
+the right size over scaling a bitmap.
 
 If a design specifies glyphs as raw geometry and ships no asset files, **generate
 `.svg` files** from it and use them via `Image` — don't hand-draw glyphs as inline

@@ -26,7 +26,7 @@ if [[ "$(uname -m)" == x86_64 ]]; then
   [[ -x "$desktop_rust/bin/cargo" ]] || desktop_rust="$desktop_rust/nightly-2026-03-14-x86_64-unknown-linux-gnu"
   export PATH="$desktop_rust/bin:$PATH"
 else
-  export PATH="$offline_root/rust/toolchains/1.92.0-aarch64-unknown-linux-gnu/bin:$sdk/usr/bin:$PATH"
+  export PATH="$offline_root/rust/toolchains/1.95.0-aarch64-unknown-linux-gnu/bin:$sdk/usr/bin:$PATH"
 fi
 export WUNDER_AMD64_SDK_ROOT="$sdk"
 

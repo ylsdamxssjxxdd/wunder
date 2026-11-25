@@ -1,0 +1,15 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+export { Foo as Bar }
+//       > <error{'Foo' not found}
+
+export { Image as Plop }
+//       >   <error{Cannot export 'Image' because it is not a component}
+
+export { string as Boob }
+//       >    <error{Cannot export 'string' because it is not a component}
+
+export component Hello inherits Plop {
+//                              >   <error{Unknown element 'Plop'}
+}

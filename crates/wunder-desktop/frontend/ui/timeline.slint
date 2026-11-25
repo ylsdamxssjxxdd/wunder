@@ -4,7 +4,7 @@
 // an entry expands, a streamed line wraps, and the layout follows, which is
 // what a virtualized ListView cannot do while the rows keep changing height.
 import { I18n } from "i18n.slint";
-import { BlockKind, Theme, TimelineRow, PatchCard, TimelineSpin, TurnStatMetric, TurnMark } from "theme.slint";
+import { BlockKind, DeviceScale, Theme, TimelineRow, PatchCard, TimelineSpin, TurnStatMetric, TurnMark } from "theme.slint";
 import { BlockView } from "markdown-rich.slint";
 import { PatchDiffCard } from "patch_diff_card.slint";
 import { WorkflowDetail } from "workflow_detail.slint";
@@ -14,6 +14,28 @@ import { ToolProcess } from "tool_process.slint";
 import { ScrollView, Spinner } from "std-widgets.slint";
 
 // Presentation only: greetings never enter the transcript or its row indices.
+
+// The eva01 mark is delivered one asset per device-pixel ratio. The software
+// rasteriser samples bitmaps bilinearly and ignores `image-rendering`, so a
+// 4x texture in a 40px slot collapses to one surviving texel out of N: the
+// antenna, the eyes and the chest slits break into uneven steps. Handing it a
+// texture whose pixel grid already equals the physical grid makes it a plain
+// texel copy instead (see scripts/generate_eva01_mark.py).
+export global GreetingMark {
+    public pure function image(ratio: float) -> image {
+        ratio < 1.125 ? @image-url("../assets/eva01-mark.png") :
+        ratio < 1.375 ? @image-url("../assets/eva01-mark-50.png") :
+        ratio < 1.625 ? @image-url("../assets/eva01-mark-60.png") :
+        ratio < 1.875 ? @image-url("../assets/eva01-mark-70.png") :
+        ratio < 2.125 ? @image-url("../assets/eva01-mark-80.png") :
+        ratio < 2.375 ? @image-url("../assets/eva01-mark-90.png") :
+        ratio < 2.75 ? @image-url("../assets/eva01-mark-100.png") :
+        ratio < 3.25 ? @image-url("../assets/eva01-mark-120.png") :
+        ratio < 3.75 ? @image-url("../assets/eva01-mark-140.png") :
+        @image-url("../assets/eva01-mark-160.png")
+    }
+}
+
 export component ChatGreeting inherits Rectangle {
     in property <string> text: I18n.chat_greeting;
     in property <bool> loading: false;
@@ -23,19 +45,20 @@ export component ChatGreeting inherits Rectangle {
     private property <length> mark: 40px;
     private property <length> mark-gap: 10px;
     private property <length> top: 6px;
+    private property <float> pixel-ratio: max(1.0, DeviceScale.factor);
     // A Slint row aligns its children to the top, so the mark is placed by
     // hand: centred on the first greeting line while the text is shorter than
     // the mark, then top-aligned once the greeting wraps past it.
-    private property <length> mark-y: root.top + (min(root.mark, greeting-text.preferred-height) - root.mark) / 2;
+    private property <length> mark-y-raw: root.top + (min(root.mark, greeting-text.preferred-height) - root.mark) / 2;
+    // A fractional physical offset would make the rasteriser blend two texels
+    // across the whole mark, so both axes land on the device grid.
+    private property <length> mark-y: DeviceScale.snap(root.mark-y-raw, root.pixel-ratio);
     height: max(root.top + greeting-row.preferred-height, root.mark-y + root.mark) + 6px;
     Image {
-        x: Theme.timeline-padding;
+        x: DeviceScale.snap(Theme.timeline-padding, root.pixel-ratio);
         y: root.mark-y;
         width: root.mark; height: root.mark;
-        // Direct 4x Lanczos resampling retains the source shading and thin
-        // silhouette (see scripts/generate_eva01_mark.py).
-        source: @image-url("../assets/eva01-mark.png");
-        image-rendering: smooth;
+        source: GreetingMark.image(root.pixel-ratio);
     }
     greeting-row := HorizontalLayout {
         x: Theme.timeline-padding + root.mark + root.mark-gap; y: root.top;
@@ -1243,7 +1266,11 @@ export component TimelineView inherits Rectangle {
         content-height: max(self.visible-height, rows-column.preferred-height);
         rows-column := VerticalLayout {
             width: root.column-width;
-            x: (rows-scroll.visible-width - root.column-width) / 2;
+            // Centring the column is a division by two, so it lands on half a
+            // logical pixel as often as not; a bitmap drawn at 1:1 inside it
+            // would then be blended across two texels. Snapping the column
+            // keeps the whole transcript on the device grid.
+            x: DeviceScale.snap((rows-scroll.visible-width - root.column-width) / 2, DeviceScale.factor);
             // The transcript keeps a quiet 24px top inset; rows add their own
             // horizontal padding and vertical rhythm.
             // Without that inset the first block (the greeting on a fresh

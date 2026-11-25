@@ -13,7 +13,8 @@ Both must be on `PATH`. If a tool reports it can't find `slint-lsp` or
 ## Prebuilt binaries (preferred)
 
 Download `https://github.com/slint-ui/slint/releases/latest/download/slint-<tool>-<suffix>`,
-where `<tool>` is `lsp` or `viewer` (pin a version with `…/releases/download/v<version>/…`).
+where `<tool>` is `lsp` or `viewer` (pin a version with `…/releases/download/v<version>/…`;
+for this skill's docs, `v1.19.1`).
 `<suffix>` and the archive layout:
 
 - `x86_64-unknown-linux-gnu.tar.gz`, `universal-apple-darwin.tar.gz` (macOS): binary in `slint-<tool>/`
@@ -45,3 +46,5 @@ installed via `rustup`. For builds against unreleased `master`, add
 `--git https://github.com/slint-ui/slint`.
 `--features mcp` `(1.18+)` gives MCP access to a running `.slint` file (see [debugging-and-mcp.md](reference/debugging-and-mcp.md));
 drop it if you don't need that.
+Since 1.19, `slint-viewer` also accepts `--project-root` and `--edition`, and
+`slint-compiler` is available from npm (`npx slint-compiler`).

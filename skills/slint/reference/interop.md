@@ -41,6 +41,10 @@ ui.run()
   sorted/filtered model and let `.slint` render and forward interactions. Use
   `slint::Timer` for timers; from other threads,
   `slint::invoke_from_event_loop` + a `Weak`.
+- 1.19: minimum Rust version is 1.95; `unstable-fontique-011` is renamed to
+  `unstable-fontique-012`. Set the language edition with
+  `CompilerConfiguration::with_edition((1, 19))`; the `slint!` macro needs
+  `#[edition = "1.19"]`.
 
 ## C++
 
@@ -80,3 +84,13 @@ struct App {
 Same globals/structs via each language's API (getters/setters + callback
 registration); names follow the language's convention (snake_case in Python,
 camelCase in JS). The same host-logic/view split applies.
+
+- 1.19 JS requires Node.js 22.18+ and can import `.slint` files as ES modules.
+  Generate typings with
+  `npx slint-compiler -f typescript ui/main.slint -o ui/main.slint.d.ts`.
+- `slint-ui/esbuild` bundles `.slint` imports for shipping; `SLINT_LIVE_PREVIEW`
+  reloads the UI while editing.
+- 1.19 breaking: JS and Python parse color strings like `.slint`, so `rgb()` /
+  `hsl()` no longer work there; enum values returned by JS keep their dashes.
+- Python: `slint.loader` loads a directory's project file as `slint_project`;
+  `slint.load_file(".")` picks up `slint-project.json` automatically.

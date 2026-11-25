@@ -201,7 +201,9 @@ component ModelPicker inherits Rectangle {
                     height: 40px;
                     width: list.visible-width;
                     border-radius: Theme.radius-sm;
-                    background: row-touch.has-hover ? Theme.hover : transparent;
+                    background: model.key == root.current-key
+                        ? Theme.accent-soft
+                        : row-touch.has-hover ? Theme.hover : transparent;
                     accessible-role: list-item;
                     accessible-label: model.key;
                     // Cloud entries (`cloud/<id>`) stay listed while signed
@@ -209,27 +211,22 @@ component ModelPicker inherits Rectangle {
                     // until the session returns.
                     property <bool> cloud-muted: model.is-cloud && !root.cloud-ready;
                     accessible-action-default => { if !cloud-muted { root.select-model(index, model.key); root.open = false; } }
-                    if model.key == root.current-key : Image {
-                        x: 8px; y: 14px; width: 12px; height: 12px;
-                        source: @image-url("../assets/icons/check.svg");
-                        colorize: Theme.accent-ink; image-fit: contain;
-                    }
                     // 模型行与触发器的图标保持一致：模型是「大脑」，不是机器人。
                     Image {
-                        x: 26px; y: 13px; width: 14px; height: 14px;
+                        x: 12px; y: 13px; width: 14px; height: 14px;
                         source: @image-url("../assets/icons/brain.svg");
                         colorize: cloud-muted ? Theme.border : (model.key == root.current-key ? Theme.accent-ink : Theme.muted);
                         image-fit: contain;
                     }
                     Text {
-                        x: 48px; y: 4px; width: parent.width - 122px; height: 17px;
+                        x: 34px; y: 4px; width: parent.width - 108px; height: 17px;
                         text: model.key;
                         color: cloud-muted ? Theme.muted : (model.key == root.current-key ? Theme.accent-ink : Theme.text);
                         font-size: Theme.font-md; font-weight: 600;
                         vertical-alignment: center; overflow: elide;
                     }
                     Text {
-                        x: 48px; y: 21px; width: parent.width - 122px; height: 15px;
+                        x: 34px; y: 21px; width: parent.width - 108px; height: 15px;
                         // 模型类型（llm）对选模型没有信息量，副标题改为最大上下文量：
                         // 1024 的整数倍按 K 精确换算（32768 → 32K），否则按千位
                         // 近似（128000 → 128K），与厂商文案一致。「K」本身已是
@@ -1733,9 +1730,11 @@ export component Composer inherits Rectangle {
     private property <length> attachment-thumb-width: root.touch-layout ? 64px : 96px;
     private property <length> attachment-thumb-height: root.touch-layout ? 56px : 72px;
     private property <length> attachment-strip-height: root.attachment-thumb-height + 10px;
-    height: (root.touch-layout ? root.mobile-card-height : 136px + root.editor-growth)
+    out property <length> card-height:
+        (root.touch-layout ? root.mobile-card-height : 136px + root.editor-growth)
         + (root.attachments.length > 0 ? root.attachment-strip-height + 6px : 0px)
         + (root.branch-name != "" ? 22px : 0px) + root.queue-height;
+    height: root.card-height;
     private property <bool> plus-open: false;
     private property <bool> model-open: false;
     private property <bool> preset-open: false;
@@ -1827,6 +1826,20 @@ export component Composer inherits Rectangle {
             clicked => { root.focus-editor(); }
         }
     }
+    // 极窄窗的一行输入卡：卡片铺在整行（加号／编辑器／发送）下面，三个控件
+    // 落在同一张卡里；手机仍由编辑器自己画卡。位置直接跟行盒，队列条和附件
+    // 带把行推下去时卡片一起走。
+    if root.compact : Rectangle {
+        x: touch-row.absolute-position.x - root.absolute-position.x;
+        y: touch-row.absolute-position.y - root.absolute-position.y;
+        width: touch-row.width;
+        height: touch-row.height;
+        border-radius: 16px;
+        background: composer-drop.has-drag ? Theme.accent-soft : Theme.surface;
+        border-width: 1px;
+        border-color: composer-drop.has-drag || editor.has-focus ? Theme.accent-ink : Theme.border;
+        TouchArea { clicked => { root.focus-editor(); } }
+    }
     VerticalLayout {
         // The side inset lives on the input band (main.slint), so the goal
         // banner and the inquiry card share this card's edges.
@@ -1868,9 +1881,13 @@ export component Composer inherits Rectangle {
         }
         // Desktop shares one card surface with the action row below the editor;
         // phones keep their own editor card and put plus/send on the same row.
-        HorizontalLayout {
+        touch-row := HorizontalLayout {
             vertical-stretch: 1;
+            min-height: max(root.action-row-height, root.editor-box-height);
             spacing: root.touch-layout ? 8px : 0px;
+            // 窄窗三个控件要落在同一张卡里，左右各让 6px 免得加号/发送贴边。
+            padding-left: root.compact ? 6px : 0px;
+            padding-right: root.compact ? 6px : 0px;
             // 桌面端必须 stretch：居中对齐会让编辑器卡片退化为内容高度，
             // 而卡片高度又绑定父级，最终塌成 0px，整张输入卡不再绘制。
             cross-axis-alignment: root.touch-layout ? CrossAxisAlignment.center : CrossAxisAlignment.stretch;
@@ -1881,8 +1898,10 @@ export component Composer inherits Rectangle {
             // ——窄窗里点加号收不起来就是这个原因。
             Rectangle {
                 visible: root.touch-layout;
-                width: root.mobile ? 40px : 24px;
-                height: root.action-row-height;
+                // visible:false 的元素仍参与布局：宽窗里这颗只服务窄窗的容器
+                // 必须收成 0，否则编辑器会被它推右 24px，输入区左侧空一条。
+                width: root.touch-layout ? (root.mobile ? 40px : 24px) : 0px;
+                height: root.touch-layout ? root.action-row-height : 0px;
                 mobile-plus-btn := Rectangle {
                     x: root.mobile ? 2px : 0px;
                     // 与输入卡的中线对齐：手机 40-36、窄窗 36-24 都居中落下，
@@ -1940,8 +1959,9 @@ export component Composer inherits Rectangle {
                 editor := TextEditBase {
                 x: 0px; y: 0px; width: parent.width; height: parent.height;
                 border-radius: 16px;
-                background: composer-drop.has-drag ? Theme.accent-soft : (root.touch-layout ? Theme.surface : transparent);
-                border-width: root.touch-layout ? 1px : 0px;
+                // 窄窗的卡片由整行那张卡承担，编辑器本身透明；手机仍自己画卡。
+                background: root.mobile ? (composer-drop.has-drag ? Theme.accent-soft : Theme.surface) : transparent;
+                border-width: root.mobile ? 1px : 0px;
                 border-color: composer-drop.has-drag || self.has-focus ? Theme.accent-ink : Theme.border;
                 scroll-view-padding: root.mobile ? 11px : root.compact ? 8px : 14px;
                 accessible-role: text-input;
@@ -2137,23 +2157,25 @@ export component Composer inherits Rectangle {
                 }
             }
             if root.touch-layout && (root.stop-action || root.send-enabled) : Rectangle {
-                width: root.mobile ? 40px : 28px;
+                // 与加号同宽：窄窗 24px，手机 40px 容器里 36px 按钮。
+                width: root.mobile ? 40px : 24px;
                 height: root.action-row-height;
                 mobile-send-btn := Rectangle {
                     x: root.mobile ? 2px : 0px;
-                    y: root.mobile ? 2px : 1px;
-                    width: root.mobile ? 36px : 28px;
-                    height: root.mobile ? 36px : 28px;
+                    // 居中落在输入行里，顶边不再比输入卡高出一截。
+                    y: (parent.height - self.height) / 2;
+                    width: root.mobile ? 36px : 24px;
+                    height: root.mobile ? 36px : 24px;
                     border-radius: root.mobile ? Theme.radius-md : Theme.radius-sm;
                     background: root.stop-action
                         ? (root.stopping ? Theme.border-strong : Theme.accent-ink)
                         : (root.send-enabled ? (mobile-send-touch.has-hover ? Theme.accent-deep : Theme.accent) : Theme.selected);
                     Image {
-                        x: root.stop-action ? (root.mobile ? 12px : 8px) : (root.mobile ? 10px : 6px);
-                        y: root.stop-action ? (root.mobile ? 12px : 8px) : (root.mobile ? 10px : 6px);
-                        width: root.stop-action ? 12px : 16px;
-                        height: root.stop-action ? 12px : 16px;
-                        source: root.stop-action ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/arrow-up.svg");
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        width: root.stop-action ? 12px : 18px;
+                        height: root.stop-action ? 12px : 18px;
+                        source: root.stop-action ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/send-hugeicons.svg");
                         colorize: root.stop-action || root.send-enabled ? #ffffff : Theme.muted;
                         image-fit: contain;
                     }
@@ -2180,21 +2202,21 @@ export component Composer inherits Rectangle {
             // 桌面极窄窗没有语音键：空草稿时保留一个灰色的发送方块，位置固定，
             // 用户不会把「按钮消失」读成输入区坏了。
             if root.compact && !root.stop-action && !root.send-enabled : Rectangle {
-                width: 28px;
+                width: 24px;
                 height: root.action-row-height;
                 Rectangle {
                     x: 0px;
-                    y: 1px;
-                    width: 28px;
-                    height: 28px;
+                    y: (parent.height - self.height) / 2;
+                    width: 24px;
+                    height: 24px;
                     border-radius: Theme.radius-sm;
                     background: Theme.selected;
                     Image {
-                        x: 6px;
-                        y: 6px;
-                        width: 16px;
-                        height: 16px;
-                        source: @image-url("../assets/icons/arrow-up.svg");
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        width: 18px;
+                        height: 18px;
+                        source: @image-url("../assets/icons/send-hugeicons.svg");
                         colorize: Theme.muted;
                         image-fit: contain;
                     }
@@ -2345,12 +2367,13 @@ export component Composer inherits Rectangle {
             // While a reply streams, the square itself becomes the stop action;
             // the editor remains available and Enter sends the next queued turn.
             Rectangle {
-                width: root.mobile ? 40px : 28px; height: root.action-row-height;
+                // 与加号同宽同落点：动作行里两颗键都是 24px、共用一条中线。
+                width: 24px; height: root.action-row-height;
                 send-btn := Rectangle {
-                    y: root.mobile ? 2px : 1px;
-                    width: root.mobile ? 36px : 28px;
-                    height: root.mobile ? 36px : 28px;
-                    border-radius: root.mobile ? Theme.radius-md : Theme.radius-sm;
+                    y: 3px;
+                    width: 24px;
+                    height: 24px;
+                    border-radius: Theme.radius-sm;
                     background: root.stop-action
                         ? (root.stopping ? Theme.border-strong : Theme.accent-ink)
                         : (root.send-enabled ? (send-touch.has-hover ? Theme.accent-deep : Theme.accent) : Theme.selected);
@@ -2358,12 +2381,12 @@ export component Composer inherits Rectangle {
                         // The FA stop glyph is a full-bleed square; a 12px
                         // contain box yields a 10.5px mark, matching the web
                         // client's 12px font-size stop icon. The arrow keeps
-                        // the 16px box.
-                        x: root.stop-action ? (root.mobile ? 12px : 8px) : (root.mobile ? 10px : 6px);
-                        y: root.stop-action ? (root.mobile ? 12px : 8px) : (root.mobile ? 10px : 6px);
-                        width: root.stop-action ? 12px : 16px;
-                        height: root.stop-action ? 12px : 16px;
-                        source: root.stop-action ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/arrow-up.svg");
+                        // the 18px box.
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        width: root.stop-action ? 12px : 18px;
+                        height: root.stop-action ? 12px : 18px;
+                        source: root.stop-action ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/send-hugeicons.svg");
                         colorize: root.stop-action || root.send-enabled ? #ffffff : Theme.muted;
                         image-fit: contain;
                     }
@@ -2426,7 +2449,11 @@ export component Composer inherits Rectangle {
             width: editor.width;
             height: editor.height;
             border-radius: 16px;
-            background: Theme.accent-soft;
+            // The card behind this overlay already switches to the same
+            // accent-soft fill and draws the full outline. A second opaque
+            // fill here only covers the card's side borders across the
+            // editor's height (top half looked borderless).
+            background: transparent;
             HorizontalLayout {
                 alignment: center;
                 cross-axis-alignment: center;

@@ -1,0 +1,40 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+export component NotInIf inherits Rectangle {
+    if true: Rectangle {
+        @children
+//      >       <error{The @children placeholder cannot appear in a conditional element}
+    }
+}
+
+export component NotInFor inherits Rectangle {
+    HorizontalLayout {
+        for xxx in 12: Rectangle {
+            VerticalLayout {
+                @children
+//              >       <error{The @children placeholder cannot appear in a repeated element}
+            }
+        }
+    }
+}
+
+component TestBox inherits Rectangle {
+    @children
+    @children
+//  >       <error{The @children placeholder can only appear once in an element}
+}
+
+export component TestBox2 inherits Rectangle {
+    Rectangle {
+        @children
+    }
+    @children
+//  >       <error{The @children placeholder can only appear once in an element}
+}
+
+export component Final inherits TestBox {
+    Rectangle {
+        @children
+    }
+}

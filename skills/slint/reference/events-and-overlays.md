@@ -26,6 +26,25 @@
   exposed to accessibility frameworks — a hand-rolled overlay menu is neither.
   Set a `MenuBar` directly on the `Window`. `PopupWindow` covers generic
   auto-dismiss popups.
+- **`ContextMenuArea` is a non-visual `Empty` in 1.19, not a container.** It
+  only carries the `Menu` and its right-click area. In particular, do not put
+  `ScrollView` / `TextInput` inside it and then size them from
+  `parent.width`: that width is 0 even though the surrounding card looks fine.
+
+  ```slint
+  Rectangle {
+      ContextMenuArea {
+          Menu { MenuItem { title: "Copy"; activated => { debug("copy"); } } }
+      }
+      ScrollView {           // sibling, not a child of ContextMenuArea
+          TextInput { }
+      }
+  }
+  ```
+
+- `ensure-visible(ScrollBehavior.smooth)` `(1.19+)` is the way to bring a
+  field, row, or focused control into view through nested scrolling; don't
+  hand-compute `content-y` for that.
 - For exact positioning of a non-menu popover (e.g. a button-anchored panel),
   a manual overlay works:
   - Render it as a child of the top-level `Window`, gated by `if open : …`.

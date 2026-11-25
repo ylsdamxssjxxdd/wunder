@@ -27,8 +27,14 @@
 
 `slint-viewer --check ui/main.slint` compiles the file and prints diagnostics
 without opening a window `(1.17+)`: exit 1 on errors, 0 otherwise
-(warnings still print). `-I`/`-L`/`--style` apply. Use this as the fast
-per-file compile check; the host build is only needed for the interop side.
+(warnings still print). `-I`/`-L`/`--style`/`--edition` apply. Since 1.19 it
+also accepts library files and checks every exported component. Use this as
+the fast per-file compile check; the host build is only needed for the interop
+side.
+
+To use a project file, pass its directory (`slint-viewer --project-root . ui/main.slint`)
+or the project file itself; `--edition 1.19` overrides the edition for a
+standalone file.
 
 ## Headless screenshots of a `.slint` file (`slint-viewer --screenshot`)
 
@@ -74,8 +80,10 @@ old.)
 
 Always set `SLINT_EMIT_DEBUG_INFO=1` at *app* build time (preserves element
 IDs/source locations) and `SLINT_MCP_PORT` to a free TCP port at run time (the
-server binds `127.0.0.1:<port>` and logs `Slint MCP server listening on …`). The
-`mcp` feature must also be compiled into the Slint library:
+server binds `127.0.0.1:<port>` by default and logs
+`Slint MCP server listening on …`). Bind another interface explicitly with
+`SLINT_MCP_HOST=0.0.0.0` only when remote access is intended. The `mcp` feature
+must also be compiled into the Slint library:
 
 **Rust:** pass `--features slint/mcp` on the command line (do **not** put `mcp`
 in `Cargo.toml`):

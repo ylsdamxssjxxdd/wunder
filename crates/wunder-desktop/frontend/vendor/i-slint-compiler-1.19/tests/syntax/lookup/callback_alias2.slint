@@ -1,0 +1,21 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+export component Xxx inherits Rectangle {
+
+    foo := Rectangle {
+        callback hello(int) -> int;
+    }
+
+    callback bar(int) -> int;
+    bar <=> foo.hello;
+//  > <error{Unknown property bar in Rectangle}
+
+
+    // #3085
+    callback row-pointer-event <=> dontexist;
+//                                 >       <error{Unknown unqualified identifier 'dontexist'}
+//  >                                       <^error{Binding to callback 'row-pointer-event' must bind to another callback}
+    row-pointer-event => {}
+//  >               <error{Duplicated callback}
+}

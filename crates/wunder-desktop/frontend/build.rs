@@ -48,7 +48,7 @@ fn main() {
     // The vendored Slint gates the array search helpers (`index-of`) behind
     // the experimental flag; the settings dropdowns need them for the
     // stored-value ↔ row mapping.
-    std::env::set_var("SLINT_ENABLE_EXPERIMENTAL_FEATURES", "1");
+    std::env::set_var("SLINT_ENABLE_EXPERIMENTAL_FEATURES", "closures");
     slint_build::compile_with_config(
         "ui/main.slint",
         slint_build::CompilerConfiguration::new()

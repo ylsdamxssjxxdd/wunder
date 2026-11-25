@@ -81,7 +81,7 @@ if [[ "$host_arch" == x86_64 ]]; then
 else
   [[ -x "$gcc_lib/cc1" ]] \
     || fail "ARM64 SDK GCC backend is missing: $gcc_lib/cc1 (run builders/prepare-linux-arm64-devel-sysroot.sh)"
-  export PATH="$offline_root/rust/toolchains/1.92.0-aarch64-unknown-linux-gnu/bin:$PATH"
+  export PATH="$offline_root/rust/toolchains/1.95.0-aarch64-unknown-linux-gnu/bin:$PATH"
 fi
 for command_name in cargo rustc readelf awk grep sort mktemp stat tr tar; do
   require_command "$command_name"
