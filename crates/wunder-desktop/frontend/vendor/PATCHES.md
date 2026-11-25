@@ -103,6 +103,19 @@ so the 1.11 quadratic-scan workaround is gone.
 - The two `assert!(region.len() == 3)` checks in `api.rs` are relaxed to
   `>= 3` because core's `DirtyRegion::MAX_COUNT` is 16. Everything else is
   stock 1.19.
+- `scene.rs`/`draw_functions.rs` carry the image-sampling precision fix
+  inherited from the rcho fork. `SceneTextureExtra` keeps
+  `precise_dx`/`precise_dy`/`precise_off_x`/`precise_off_y` alongside the
+  stock fixed-point fields, and `draw_texture_line` converts them to
+  `Fixed<i32, 16>` for ordinary images. Signed-distance-field glyphs still
+  take the 8-bit ratio / 4-bit offset path (the `fract()` bug that 1.18
+  needed is already fixed upstream in 1.19). Without this hunk the 1/256
+  ratio truncation is multiplied by a large scroll offset and the bitmap
+  drifts several source pixels away from vector overlays at fractional DPI.
+  Verification: zoom a large `Image` (e.g. 1.75× DPI scale plus thousands of
+  pixels of scroll offset) and compare the drawn bitmap against the expected
+  source-cell centroid; the drift is tens of physical pixels before the
+  patch and under 2 px after it.
 
 ### `i-slint-backend-winit` 1.19.1
 
@@ -170,6 +183,10 @@ These live outside `vendor/` but break silently on a Slint upgrade:
 2. Diff the current `-1.19` tree against that pristine source and replay only
    the hunks listed above; do not copy whole files, and do not use
    `patch --merge=diff3` (it anchors unrelated hunks into the wrong impl).
+   The `scene.rs`/`draw_functions.rs` sampling hunk is the one that silently
+   regresses: it looks correct at 1:1 and only shows up after fractional-DPI
+   zoom plus a large scroll offset, so a clean 1:1 screenshot does not prove
+   it survived the replay.
 3. `git apply` silently skips files in this repository and still exits 0; use
    GNU `patch` and inspect every `.rej`.
 4. Update `[patch.crates-io]` paths and `slint-build` in both

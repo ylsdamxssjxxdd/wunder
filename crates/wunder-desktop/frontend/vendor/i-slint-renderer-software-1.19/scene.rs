@@ -432,6 +432,13 @@ pub struct SceneTextureExtra {
     /// Offset which is the coordinate of the "image pixel" which going to be drawn at location SceneItem::pos
     pub off_x: Fixed<u16, 4>,
     pub off_y: Fixed<u16, 4>,
+    /// Ordinary images use these full-precision values so large scroll offsets
+    /// cannot amplify fixed-point ratio quantization into source-pixel drift.
+    /// Signed-distance-field glyphs keep the 8-bit ratio / 4-bit offset path.
+    pub precise_dx: f32,
+    pub precise_dy: f32,
+    pub precise_off_x: f32,
+    pub precise_off_y: f32,
     /// Color to colorize. When not transparent, consider that the image is an alpha map and always use that color.
     /// The alpha of this color is ignored. (it is supposed to be mixed in `Self::alpha`)
     pub colorize: Color,
@@ -475,25 +482,48 @@ impl SceneTextureExtra {
         };
 
         let source_size = texture.source_size().cast::<i32>();
-        let (dx, dy) = if let Some(tiling) = &texture.tiling {
-            offset -= euclid::vec2(tiling.offset_x, tiling.offset_y).cast();
+        let (dx, dy, off_x, off_y, precise_dx, precise_dy, precise_off_x, precise_off_y) =
+            if let Some(tiling) = &texture.tiling {
+                offset -= euclid::vec2(tiling.offset_x, tiling.offset_y).cast();
 
-            // FIXME: gap
-            let _ = tiling.gap_x;
-            let _ = tiling.gap_y;
+                // FIXME: gap
+                let _ = tiling.gap_x;
+                let _ = tiling.gap_y;
 
-            (Fixed::from_f32(tiling.scale_x)?, Fixed::from_f32(tiling.scale_y)?)
-        } else {
-            let (dst_w, dst_h) = if texture.rotation.is_transpose() {
-                (texture.dst_height as i32, texture.dst_width as i32)
+                let scale_x = Fixed::from_f32(tiling.scale_x)?;
+                let scale_y = Fixed::from_f32(tiling.scale_y)?;
+                (
+                    scale_x,
+                    scale_y,
+                    Fixed::try_from_fixed(scale_x * offset.x).ok()?,
+                    Fixed::try_from_fixed(scale_y * offset.y).ok()?,
+                    tiling.scale_x,
+                    tiling.scale_y,
+                    tiling.scale_x * offset.x as f32,
+                    tiling.scale_y * offset.y as f32,
+                )
             } else {
-                (texture.dst_width as i32, texture.dst_height as i32)
+                let (dst_w, dst_h) = if texture.rotation.is_transpose() {
+                    (texture.dst_height as i32, texture.dst_width as i32)
+                } else {
+                    (texture.dst_width as i32, texture.dst_height as i32)
+                };
+                let scale_x = source_size.width as f32 / dst_w as f32;
+                let scale_y = source_size.height as f32 / dst_h as f32;
+                // Ensure at least 1/256 to avoid division by zero in draw_texture_line
+                let dx = Fixed::<i32, 8>::from_fraction(source_size.width, dst_w).max(Fixed(1));
+                let dy = Fixed::<i32, 8>::from_fraction(source_size.height, dst_h).max(Fixed(1));
+                (
+                    dx,
+                    dy,
+                    Fixed::try_from_fixed(dx * offset.x).ok()?,
+                    Fixed::try_from_fixed(dy * offset.y).ok()?,
+                    scale_x,
+                    scale_y,
+                    scale_x * offset.x as f32,
+                    scale_y * offset.y as f32,
+                )
             };
-            // Ensure at least 1/256 to avoid division by zero in draw_texture_line
-            let dx = Fixed::<i32, 8>::from_fraction(source_size.width, dst_w).max(Fixed(1));
-            let dy = Fixed::<i32, 8>::from_fraction(source_size.height, dst_h).max(Fixed(1));
-            (dx, dy)
-        };
 
         Some((
             Self {
@@ -502,8 +532,12 @@ impl SceneTextureExtra {
                 rotation: texture.rotation,
                 dx: Fixed::try_from_fixed(dx).ok()?,
                 dy: Fixed::try_from_fixed(dy).ok()?,
-                off_x: Fixed::try_from_fixed(dx * offset.x).ok()?,
-                off_y: Fixed::try_from_fixed(dy * offset.y).ok()?,
+                off_x,
+                off_y,
+                precise_dx,
+                precise_dy,
+                precise_off_x,
+                precise_off_y,
                 subpixel: texture.subpixel,
                 subpixel_enabled: texture.subpixel_enabled,
                 subpixel_bgr: texture.subpixel_bgr,

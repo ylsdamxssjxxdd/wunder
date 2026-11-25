@@ -43,6 +43,7 @@ pub(super) fn draw_texture_line(
             subpixel,
             subpixel_enabled,
             subpixel_bgr,
+            ..
         },
     } = *texture;
 
@@ -51,10 +52,24 @@ pub(super) fn draw_texture_line(
     let y = line - span.origin.y_length();
     let y = if rotation.mirror_width() { span.size.height - y.get() - 1 } else { y.get() } as i32;
 
-    let off_y = Fixed::<i32, 8>::from_fixed(off_y);
-    let dx = Fixed::<i32, 8>::from_fixed(dx);
-    let dy = Fixed::<i32, 8>::from_fixed(dy);
-    let off_x = Fixed::<i32, 8>::from_fixed(off_x);
+    // Signed-distance-field glyphs keep the original 8-bit ratio / 4-bit offset
+    // path; ordinary images use the full-precision ratio and clip offset so a
+    // large scroll offset cannot amplify the 1/256 quantization into drift.
+    let (off_y, dx, dy, off_x) = if format == TexturePixelFormat::SignedDistanceField {
+        (
+            Fixed::<i32, 16>::try_from_fixed(off_y).unwrap(),
+            Fixed::<i32, 16>::from_fixed(dx),
+            Fixed::<i32, 16>::from_fixed(dy),
+            Fixed::<i32, 16>::try_from_fixed(off_x).unwrap(),
+        )
+    } else {
+        (
+            Fixed::<i32, 16>::from_f32(texture.extra.precise_off_y).unwrap(),
+            Fixed::<i32, 16>::from_f32(texture.extra.precise_dx).unwrap(),
+            Fixed::<i32, 16>::from_f32(texture.extra.precise_dy).unwrap(),
+            Fixed::<i32, 16>::from_f32(texture.extra.precise_off_x).unwrap(),
+        )
+    };
     let bpp = format.bpp();
 
     if !rotation.is_transpose() {
@@ -300,7 +315,7 @@ pub(super) fn draw_texture_line(
         subpixel: bool,
         subpixel_enabled: bool,
         subpixel_bgr: bool,
-        (stride, delta): (usize, Fixed<i32, 8>),
+        (stride, delta): (usize, Fixed<i32, 16>),
         mut pos: impl FnMut(usize) -> (usize, u8, u8),
     ) {
         match format {
@@ -435,7 +450,7 @@ pub(super) fn draw_texture_line(
             }
             TexturePixelFormat::SignedDistanceField => {
                 const RANGE: i32 = 6;
-                let factor = (362 * 256 / delta.0) * RANGE; // 362 ≃ 255 * sqrt(2)
+                let factor = (362 * 256 / Fixed::<i32, 8>::from_fixed(delta).0) * RANGE; // 362 ≃ 255 * sqrt(2)
                 let opaque = TargetPixel::from_rgb(color.red(), color.green(), color.blue());
                 for pix in line_buffer {
                     let (pos, col_f, row_f) = pos(1);
@@ -2165,6 +2180,10 @@ fn unscaled_texture_line_wraps_into_next_tile() {
                 dy: Fixed::from_integer(1),
                 off_x: Fixed(24),
                 off_y: Fixed(0),
+                precise_dx: 1.0,
+                precise_dy: 1.0,
+                precise_off_x: 1.5,
+                precise_off_y: 0.0,
                 colorize: Color::default(),
                 alpha: 0xff,
                 rotation: Default::default(),

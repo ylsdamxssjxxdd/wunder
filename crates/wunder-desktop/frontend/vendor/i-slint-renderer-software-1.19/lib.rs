@@ -2859,6 +2859,11 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
                             dy: scale_delta,
                             off_x: Fixed::try_from_fixed(off_x).unwrap(),
                             off_y: Fixed::try_from_fixed(off_y).unwrap(),
+                            // SDF glyphs keep the fixed-point path; these mirror it.
+                            precise_dx: scale_delta.0 as f32 / 256.0,
+                            precise_dy: scale_delta.0 as f32 / 256.0,
+                            precise_off_x: off_x.0 as f32 / 256.0,
+                            precise_off_y: off_y.0 as f32 / 256.0,
                             subpixel: glyph.subpixel,
                             subpixel_enabled: glyph.subpixel && cfg!(target_os = "windows"),
                             subpixel_bgr: false,
