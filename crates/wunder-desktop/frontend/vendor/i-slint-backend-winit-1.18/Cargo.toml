@@ -42,6 +42,10 @@ accessibility = [
     "i-slint-core/accessibility-text",
 ]
 default = []
+# The upstream smoke test needs the `slint` dev-dependency, which is not
+# available when this patched crate is consumed as a workspace dependency.
+# Unit tests that only exercise local logic still run with default features.
+standalone-tests = []
 raw-window-handle-06 = ["i-slint-core/raw-window-handle-06"]
 renderer-femtovg = [
     "i-slint-renderer-femtovg/opengl",

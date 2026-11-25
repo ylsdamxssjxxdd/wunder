@@ -1,14 +1,29 @@
-diff --git a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-backend-winit-1.18.0/.cargo-ok b/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-backend-winit-1.18.0/.cargo-ok
+diff --git a/i-slint-backend-winit-1.18.0/.cargo-ok b/i-slint-backend-winit-1.18.0/.cargo-ok
 deleted file mode 100644
 index 5f8b795..0000000
---- a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-backend-winit-1.18.0/.cargo-ok
+--- a/i-slint-backend-winit-1.18.0/.cargo-ok
 +++ /dev/null
 @@ -1 +0,0 @@
 -{"v":1}
 \ No newline at end of file
-diff --git a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-backend-winit-1.18.0/drag_resize_window.rs b/i-slint-backend-winit-1.18/drag_resize_window.rs
+diff --git a/i-slint-backend-winit-1.18.0/Cargo.toml b/i-slint-backend-winit-1.18/Cargo.toml
+index 07a06bf..1f4e203 100644
+--- a/i-slint-backend-winit-1.18.0/Cargo.toml
++++ b/i-slint-backend-winit-1.18/Cargo.toml
+@@ -42,6 +42,10 @@ accessibility = [
+     "i-slint-core/accessibility-text",
+ ]
+ default = []
++# The upstream smoke test needs the `slint` dev-dependency, which is not
++# available when this patched crate is consumed as a workspace dependency.
++# Unit tests that only exercise local logic still run with default features.
++standalone-tests = []
+ raw-window-handle-06 = ["i-slint-core/raw-window-handle-06"]
+ renderer-femtovg = [
+     "i-slint-renderer-femtovg/opengl",
+diff --git a/i-slint-backend-winit-1.18.0/drag_resize_window.rs b/i-slint-backend-winit-1.18/drag_resize_window.rs
 index 050cf11..e4b40ec 100644
---- a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-backend-winit-1.18.0/drag_resize_window.rs
+--- a/i-slint-backend-winit-1.18.0/drag_resize_window.rs
 +++ b/i-slint-backend-winit-1.18/drag_resize_window.rs
 @@ -11,7 +11,16 @@ pub fn handle_cursor_move_for_resize(
      current_direction: Option<ResizeDirection>,
@@ -76,9 +91,9 @@ index 050cf11..e4b40ec 100644
 +        assert!(!can_resize_window(false, false, false, false));
 +    }
 +}
-diff --git a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-backend-winit-1.18.0/event_loop.rs b/i-slint-backend-winit-1.18/event_loop.rs
+diff --git a/i-slint-backend-winit-1.18.0/event_loop.rs b/i-slint-backend-winit-1.18/event_loop.rs
 index 48d8487..213b43e 100644
---- a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-backend-winit-1.18.0/event_loop.rs
+--- a/i-slint-backend-winit-1.18.0/event_loop.rs
 +++ b/i-slint-backend-winit-1.18/event_loop.rs
 @@ -101,7 +101,9 @@ impl winit::application::ApplicationHandler<SlintEvent> for EventLoopState {
          if matches!(
@@ -268,9 +283,9 @@ index 0000000..00d6e4a
 +        }
 +    }
 +}
-diff --git a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-backend-winit-1.18.0/frame_throttle.rs b/i-slint-backend-winit-1.18/frame_throttle.rs
+diff --git a/i-slint-backend-winit-1.18.0/frame_throttle.rs b/i-slint-backend-winit-1.18/frame_throttle.rs
 index 9c3dc61..1399917 100644
---- a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-backend-winit-1.18.0/frame_throttle.rs
+--- a/i-slint-backend-winit-1.18.0/frame_throttle.rs
 +++ b/i-slint-backend-winit-1.18/frame_throttle.rs
 @@ -1,9 +1,11 @@
  // Copyright © SixtyFPS GmbH <info@slint.dev>
@@ -285,7 +300,7 @@ index 9c3dc61..1399917 100644
  
  #[cfg(target_vendor = "apple")]
  mod apple_display_link;
-@@ -32,51 +34,93 @@
+@@ -32,51 +34,93 @@ pub trait FrameThrottle {
      fn request_throttled_redraw(&self, winit_window: &winit::window::Window);
  }
  
@@ -406,9 +421,9 @@ index 9c3dc61..1399917 100644
      else {
          return;
      };
-diff --git a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-backend-winit-1.18.0/lib.rs b/i-slint-backend-winit-1.18/lib.rs
-index 1924501..c82a211 100644
---- a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-backend-winit-1.18.0/lib.rs
+diff --git a/i-slint-backend-winit-1.18.0/lib.rs b/i-slint-backend-winit-1.18/lib.rs
+index 1924501..d0abd66 100644
+--- a/i-slint-backend-winit-1.18.0/lib.rs
 +++ b/i-slint-backend-winit-1.18/lib.rs
 @@ -68,6 +68,15 @@ pub enum EventResult {
      PreventDefault,
@@ -456,6 +471,28 @@ index 1924501..c82a211 100644
                  )
              }
              .is_ok();
+@@ -1334,7 +1345,7 @@ fn create_renderer(
+ 
+ impl private::WinitWindowAccessorSealed for i_slint_core::api::Window {}
+ 
+-#[cfg(test)]
++#[cfg(all(test, feature = "standalone-tests"))]
+ mod testui {
+     slint::slint! {
+         export component App inherits Window {
+@@ -1344,7 +1355,11 @@ mod testui {
+ }
+ 
+ // Sorry, can't test with rust test harness and multiple threads.
+-#[cfg(not(any(target_arch = "wasm32", target_vendor = "apple")))]
++#[cfg(all(
++    test,
++    feature = "standalone-tests",
++    not(any(target_arch = "wasm32", target_vendor = "apple"))
++))]
+ #[test]
+ fn test_window_accessor_and_rwh() {
+     slint::platform::set_platform(Box::new(crate::Backend::new().unwrap())).unwrap();
 diff --git a/i-slint-backend-winit-1.18/renderer/sw/popup_repaint.rs b/i-slint-backend-winit-1.18/renderer/sw/popup_repaint.rs
 new file mode 100644
 index 0000000..9323d3a
@@ -537,11 +574,11 @@ index 0000000..9323d3a
 +        (visible, changed || (visible && self.full_repaint_check))
 +    }
 +}
-diff --git a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-backend-winit-1.18.0/renderer/sw.rs b/i-slint-backend-winit-1.18/renderer/sw.rs
-index 966a4e2..97d1d33 100644
---- a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-backend-winit-1.18.0/renderer/sw.rs
+diff --git a/i-slint-backend-winit-1.18.0/renderer/sw.rs b/i-slint-backend-winit-1.18/renderer/sw.rs
+index 966a4e2..a0fc5a6 100644
+--- a/i-slint-backend-winit-1.18.0/renderer/sw.rs
 +++ b/i-slint-backend-winit-1.18/renderer/sw.rs
-@@ -9,20 +9,31 @@ use i_slint_core::graphics::Rgb8Pixel;
+@@ -9,20 +9,38 @@ use i_slint_core::graphics::Rgb8Pixel;
  use i_slint_core::platform::PlatformError;
  use i_slint_core::renderer::DrawOutcome;
  pub use i_slint_renderer_software::SoftwareRenderer;
@@ -569,12 +606,19 @@ index 966a4e2..97d1d33 100644
 +    /// Win32 can erase a hidden or moved GDI surface without updating the
 +    /// softbuffer age. The next visible frame must therefore ignore the age
 +    /// and render every pixel once.
++    ///
++    /// A surface resize sets it too: the partial-rendering cache only knows
++    /// the items of the previous frame, so nothing dirties the band the window
++    /// just gained (or the rows a shorter window no longer covers), and the
++    /// buffer keeps the previous size's pixels there. The compositor scales
++    /// that stale frame into the new geometry while the user drags an edge,
++    /// which reads as a stretched ghost of the old content.
 +    force_full_repaint: Cell<bool>,
 +    popup_repaint: popup_repaint::PopupRepaint,
  }
  
  #[repr(transparent)]
-@@ -61,6 +72,21 @@ impl TargetPixel for SoftBufferPixel {
+@@ -61,6 +79,21 @@ impl TargetPixel for SoftBufferPixel {
          *self = x.into();
      }
  
@@ -596,7 +640,7 @@ index 966a4e2..97d1d33 100644
      fn from_rgb(r: u8, g: u8, b: u8) -> Self {
          Self(0xff000000 | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32))
      }
-@@ -74,14 +100,61 @@ impl WinitSoftwareRenderer {
+@@ -74,14 +107,61 @@ impl WinitSoftwareRenderer {
      pub fn new_suspended(
          _shared_backend_data: &Rc<crate::SharedBackendData>,
      ) -> Result<Box<dyn WinitCompatibleRenderer>, PlatformError> {
@@ -659,7 +703,7 @@ index 966a4e2..97d1d33 100644
  impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
      fn render(&self, window: &i_slint_core::api::Window) -> Result<DrawOutcome, PlatformError> {
          let size = window.size();
-@@ -99,22 +172,48 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
+@@ -99,22 +179,56 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
          };
  
          let winit_window = surface.window().clone();
@@ -676,6 +720,14 @@ index 966a4e2..97d1d33 100644
 +            eprintln!("Slint software surface resize deferred: {error}");
 +            self.retry_deferred_resize(&winit_window);
 +            return Ok(DrawOutcome::Success);
++        }
++        // `set_repaint_buffer_type` below only clears the item cache when the
++        // buffer kind changes, so a resize that keeps the same kind would
++        // repaint just the damage rectangles of the old geometry.
++        let surface_size = (width.get(), height.get());
++        if self.renderer.window_size() != Some(surface_size) {
++            self.force_full_repaint.set(true);
++            self.renderer.set_window_size(Some(surface_size));
 +        }
  
 -        let mut target_buffer = surface
@@ -719,7 +771,7 @@ index 966a4e2..97d1d33 100644
          let region = if std::env::var_os("SLINT_LINE_BY_LINE").is_none() {
              let buffer: &mut [SoftBufferPixel] =
                  bytemuck::cast_slice_mut(target_buffer.deref_mut());
-@@ -149,22 +248,74 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
+@@ -149,22 +263,87 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
              })
          };
  
@@ -770,11 +822,24 @@ index 966a4e2..97d1d33 100644
 +            height.get(),
 +            &target_buffer,
 +        );
-+        if !damage_rects.is_empty() {
++        // `draw()` also runs when the operating system asks for pixels that
++        // Slint has no damage for: a native Win32 popup menu just closed over
++        // part of the window, or `WM_SETREDRAW` cleared the client area. The
++        // surface is the only copy of those pixels, so publish all of it
++        // instead of leaving the exposed area on the previous frame.
++        if damage_rects.is_empty() {
              winit_window.pre_present_notify();
 -            target_buffer
 -                .present_with_damage(&damage)
 -                .map_err(|e| format!("Error presenting softbuffer buffer: {e}"))?;
++            if let Err(error) = target_buffer.present() {
++                present_failed = true;
++                eprintln!("Slint software surface present deferred: {error}");
++                self.force_full_repaint.set(true);
++                self.retry_deferred_resize(&winit_window);
++            }
++        } else {
++            winit_window.pre_present_notify();
 +            if let Err(error) = target_buffer.present_with_damage(&damage_rects) {
 +                present_failed = true;
 +                eprintln!("Slint software surface present deferred: {error}");
@@ -786,7 +851,7 @@ index 966a4e2..97d1d33 100644
 +                self.retry_deferred_resize(&winit_window);
 +            }
 +        }
-+        if !present_failed && !damage_rects.is_empty() {
++        if !present_failed {
 +            crate::first_frame::notify_presented();
 +        }
 +        if let Some(present_start) = present_start {
@@ -806,7 +871,7 @@ index 966a4e2..97d1d33 100644
          }
          Ok(DrawOutcome::Success)
      }
-@@ -176,7 +327,7 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
+@@ -176,7 +355,7 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
      fn occluded(&self, _: bool) {
          // On X11 and Windows, the buffer is completely cleared when the window is hidden
          // and the buffer age doesn't respect that, so clean the partial rendering cache
@@ -815,7 +880,7 @@ index 966a4e2..97d1d33 100644
      }
  
      fn resume(
-@@ -212,3 +363,15 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
+@@ -212,3 +391,15 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
          Ok(())
      }
  }
@@ -959,9 +1024,9 @@ index 0000000..a773d16
 +    samples().and_then(|s| s.events.lock().ok().map(|mut e| std::mem::take(&mut *e)))
 +        .unwrap_or_default()
 +}
-diff --git a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-backend-winit-1.18.0/winitwindowadapter.rs b/i-slint-backend-winit-1.18/winitwindowadapter.rs
-index 1ad204f..a26e1e9 100644
---- a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-backend-winit-1.18.0/winitwindowadapter.rs
+diff --git a/i-slint-backend-winit-1.18.0/winitwindowadapter.rs b/i-slint-backend-winit-1.18/winitwindowadapter.rs
+index 1ad204f..eda9fd4 100644
+--- a/i-slint-backend-winit-1.18.0/winitwindowadapter.rs
 +++ b/i-slint-backend-winit-1.18/winitwindowadapter.rs
 @@ -114,7 +114,10 @@ fn filter_out_zero_width_or_height(
              v
@@ -994,7 +1059,139 @@ index 1ad204f..a26e1e9 100644
      )) = min_size.zip(max_size)
      {
          min_width < max_width || min_height < max_height
-@@ -415,6 +426,11 @@ pub struct WinitWindowAdapter {
+@@ -374,13 +385,130 @@ pub(crate) enum WindowVisibility {
+     Shown,
+ }
+ 
++/// Tracks whether a frame has been requested but not presented yet.
++///
++/// A native Win32 context menu runs its own modal loop inside the event that
++/// opened it. A frame requested around that loop can be consumed without ever
++/// reaching `RedrawRequested`; leaving the latch set would then make every
++/// later `request_redraw()` a no-op (the UI stays live but frozen on its old
++/// frame). The one-shot watchdog below re-arms the latch when that happens.
++#[derive(Default)]
++struct RedrawLatch {
++    pending: Cell<bool>,
++    #[cfg(target_os = "windows")]
++    watchdog_armed: Cell<bool>,
++    #[cfg(target_os = "windows")]
++    retries: Cell<u8>,
++    /// When the current request started waiting. A window that never presents
++    /// keeps this timestamp, so the next request can tell a normal coalesced
++    /// frame apart from one that was lost.
++    #[cfg(target_os = "windows")]
++    pending_since: Cell<Option<std::time::Instant>>,
++}
++
++impl RedrawLatch {
++    fn get(&self) -> bool {
++        self.pending.get()
++    }
++
++    fn replace(&self, value: bool) -> bool {
++        #[cfg(target_os = "windows")]
++        {
++            if !value {
++                self.retries.set(0);
++                self.pending_since.set(None);
++            } else if !self.pending.get() {
++                self.pending_since.set(Some(std::time::Instant::now()));
++            }
++        }
++        self.pending.replace(value)
++    }
++
++    /// Clear the latch after a frame was presented, so the watchdog retries
++    /// start from zero for the next request.
++    fn presented(&self) {
++        self.pending.set(false);
++        #[cfg(target_os = "windows")]
++        {
++            self.retries.set(0);
++            self.pending_since.set(None);
++        }
++    }
++
++    /// Reset without presenting, used by show/hide and focus transitions that
++    /// deliberately force a fresh frame.
++    fn reset(&self) {
++        self.pending.set(false);
++        #[cfg(target_os = "windows")]
++        {
++            self.watchdog_armed.set(false);
++            self.retries.set(0);
++            self.pending_since.set(None);
++        }
++    }
++
++    /// A frame that has been requested for longer than `max` without reaching
++    /// `draw()` was lost: the modal loop of a native menu, `WM_SETREDRAW`, or
++    /// an early-returned paint can swallow it. Take the latch back so the
++    /// caller can schedule a real one and force a complete repaint — a lost
++    /// frame must never turn every later request into a no-op.
++    #[cfg(target_os = "windows")]
++    fn take_stalled(&self, max: std::time::Duration) -> bool {
++        if !self.pending.get() {
++            return false;
++        }
++        let Some(since) = self.pending_since.get() else { return false };
++        if since.elapsed() < max {
++            return false;
++        }
++        self.pending.set(false);
++        self.pending_since.set(None);
++        self.retries.set(0);
++        true
++    }
++
++    /// Returns true when the caller should schedule the watchdog timer.
++    #[cfg(target_os = "windows")]
++    fn arm_watchdog(&self) -> bool {
++        !self.watchdog_armed.replace(true)
++    }
++
++    /// Called when the watchdog fires. Returns true when the caller must
++    /// request a fresh frame because the previously scheduled one was lost.
++    #[cfg(target_os = "windows")]
++    fn watchdog_tick(&self, paintable: bool) -> bool {
++        self.watchdog_armed.set(false);
++        if !self.pending.get() {
++            self.retries.set(0);
++            return false;
++        }
++        if !paintable {
++            // A minimized/hidden window has no frame to lose. Drop the latch
++            // so the restore path can arm a fresh one.
++            self.pending.set(false);
++            self.retries.set(0);
++            return false;
++        }
++        // Bound the self-healing: if the window really cannot paint, leave the
++        // remaining recovery to focus/visibility transitions instead of
++        // spinning a timer forever.
++        const MAX_WATCHDOG_RETRIES: u8 = 2;
++        if self.retries.get() >= MAX_WATCHDOG_RETRIES {
++            return false;
++        }
++        self.retries.set(self.retries.get() + 1);
++        self.pending.set(false);
++        true
++    }
++}
++
+ /// GraphicsWindow is an implementation of the [WindowAdapter][`crate::eventloop::WindowAdapter`] trait. This is
+ /// typically instantiated by entry factory functions of the different graphics back ends.
+ pub struct WinitWindowAdapter {
+     pub shared_backend_data: Rc<SharedBackendData>,
+     window: corelib::api::Window,
+     pub(crate) self_weak: Weak<Self>,
+-    pending_redraw: Cell<bool>,
++    pending_redraw: RedrawLatch,
+     constraints: Cell<corelib::window::LayoutConstraints>,
+     /// Indicates if the window is shown, from the perspective of the API user.
+     shown: Cell<WindowVisibility>,
+@@ -415,6 +543,11 @@ pub struct WinitWindowAdapter {
      /// Whether the current winit window has presented a frame.
      first_frame_presented: Cell<bool>,
  
@@ -1006,7 +1203,7 @@ index 1ad204f..a26e1e9 100644
      #[cfg(target_arch = "wasm32")]
      virtual_keyboard_helper: RefCell<Option<super::wasm_input_helper::WasmInputHelper>>,
  
-@@ -462,6 +478,14 @@ pub struct WinitWindowAdapter {
+@@ -462,6 +595,14 @@ pub struct WinitWindowAdapter {
      current_resize_direction: Cell<Option<ResizeDirection>>,
      /// Allocates small i32 finger ids for winit's per-device u64 touch ids.
      touch_finger_ids: RefCell<crate::touch_finger_id::TouchFingerIdAllocator>,
@@ -1021,7 +1218,7 @@ index 1ad204f..a26e1e9 100644
  }
  
  impl WinitWindowAdapter {
-@@ -494,6 +518,8 @@ impl WinitWindowAdapter {
+@@ -494,6 +635,8 @@ impl WinitWindowAdapter {
              has_explicit_size: Default::default(),
              pending_resize_event_after_show: Default::default(),
              first_frame_presented: Default::default(),
@@ -1030,7 +1227,7 @@ index 1ad204f..a26e1e9 100644
              renderer,
              #[cfg(target_arch = "wasm32")]
              virtual_keyboard_helper: Default::default(),
-@@ -516,9 +542,13 @@ impl WinitWindowAdapter {
+@@ -516,9 +659,13 @@ impl WinitWindowAdapter {
              pressed: Default::default(),
              current_resize_direction: Default::default(),
              touch_finger_ids: Default::default(),
@@ -1045,7 +1242,7 @@ index 1ad204f..a26e1e9 100644
  
          self_rc
      }
-@@ -747,6 +777,16 @@ impl WinitWindowAdapter {
+@@ -747,6 +894,16 @@ impl WinitWindowAdapter {
              ),
          };
  
@@ -1062,7 +1259,7 @@ index 1ad204f..a26e1e9 100644
          #[cfg(muda)]
          {
              let menubar = self.menubar();
-@@ -775,17 +815,19 @@ impl WinitWindowAdapter {
+@@ -775,17 +932,19 @@ impl WinitWindowAdapter {
          }
  
          {
@@ -1089,7 +1286,7 @@ index 1ad204f..a26e1e9 100644
          for waker in self.window_existence_wakers.take().into_iter() {
              waker.wake();
          }
-@@ -810,7 +852,8 @@ impl WinitWindowAdapter {
+@@ -810,7 +969,8 @@ impl WinitWindowAdapter {
                      // Note: Don't register the window in inactive_windows for re-creation later, as creating the window
                      // on wayland implies making it visible. Unfortunately, winit won't allow creating a window on wayland
                      // that's not visible.
@@ -1099,7 +1296,7 @@ index 1ad204f..a26e1e9 100644
                      drop(last_instance);
                  } else {
                      i_slint_core::debug_log!(
-@@ -827,7 +870,15 @@ impl WinitWindowAdapter {
+@@ -827,7 +987,15 @@ impl WinitWindowAdapter {
      }
  
      pub(crate) fn window_attributes() -> Result<WindowAttributes, PlatformError> {
@@ -1116,10 +1313,13 @@ index 1ad204f..a26e1e9 100644
  
          // Only until the component's own title reaches the window
          attrs = attrs.with_title(i_slint_core::window::application_name().to_string());
-@@ -864,6 +915,25 @@ impl WinitWindowAdapter {
+@@ -862,7 +1030,26 @@ impl WinitWindowAdapter {
+             return Ok(()); // caller bug, doesn't make sense to call draw() when not shown
+         }
  
-         self.pending_redraw.set(false);
- 
+-        self.pending_redraw.set(false);
++        self.pending_redraw.presented();
++
 +        // A minimized Win32 window has no visible client area: rendering a
 +        // forced full frame into the DIB is wasted work and stalls the
 +        // minimize/restore transition on slow CPUs. The renderer's occluded
@@ -1138,11 +1338,10 @@ index 1ad204f..a26e1e9 100644
 +            );
 +            return Ok(());
 +        }
-+
+ 
          if let Some(winit_window) = self.winit_window_or_none.borrow().as_window() {
              // on macOS we sometimes don't get a resize event after calling
-             // request_inner_size(), it returning None (promising a resize event), and then delivering RedrawRequested. To work around this,
-@@ -884,6 +954,8 @@ impl WinitWindowAdapter {
+@@ -884,6 +1071,8 @@ impl WinitWindowAdapter {
          }
          if matches!(outcome?, DrawOutcome::Success) {
              self.first_frame_presented.set(true);
@@ -1151,7 +1350,7 @@ index 1ad204f..a26e1e9 100644
          } else {
              // Frame was skipped (e.g. surface occluded). pending_redraw was already
              // cleared above, so re-arm it so we try again.
-@@ -903,7 +975,10 @@ impl WinitWindowAdapter {
+@@ -903,7 +1092,10 @@ impl WinitWindowAdapter {
          f: impl FnOnce(&super::ios::KeyboardCurveSampler) -> R,
      ) -> Option<R> {
          let winit_window_or_none = self.winit_window_or_none.borrow();
@@ -1163,7 +1362,7 @@ index 1ad204f..a26e1e9 100644
          {
              Some(f(keyboard_curve_sampler))
          } else {
-@@ -941,7 +1016,10 @@ impl WinitWindowAdapter {
+@@ -941,7 +1133,10 @@ impl WinitWindowAdapter {
                      Some(muda_adapter)
                  }
                  (
@@ -1175,7 +1374,7 @@ index 1ad204f..a26e1e9 100644
                      MudaType::Context,
                  ) => Some(context_menu_muda_adapter),
                  (WinitWindowOrNone::None(..), _) => None,
-@@ -1052,7 +1130,9 @@ impl WinitWindowAdapter {
+@@ -1052,7 +1247,9 @@ impl WinitWindowAdapter {
      }
  
      pub fn set_accent_color(&self, color: Color) {
@@ -1186,7 +1385,7 @@ index 1ad204f..a26e1e9 100644
      }
  
      fn query_system_accent_color() -> Color {
-@@ -1113,7 +1193,9 @@ impl WinitWindowAdapter {
+@@ -1113,7 +1310,9 @@ impl WinitWindowAdapter {
      }
  
      pub fn set_color_scheme(&self, scheme: ColorScheme) {
@@ -1197,7 +1396,7 @@ index 1ad204f..a26e1e9 100644
  
          // Update the menubar theme
          #[cfg(all(target_os = "windows", muda))]
-@@ -1142,11 +1224,15 @@ impl WinitWindowAdapter {
+@@ -1142,11 +1341,15 @@ impl WinitWindowAdapter {
  
      #[cfg(target_os = "ios")]
      pub fn set_platform_default_font_size(&self, size: i_slint_core::lengths::LogicalLength) {
@@ -1215,7 +1414,7 @@ index 1ad204f..a26e1e9 100644
  
          if let Some(minimized) = winit_window.is_minimized() {
              self.minimized.set(minimized);
-@@ -1175,6 +1261,14 @@ impl WinitWindowAdapter {
+@@ -1175,6 +1378,14 @@ impl WinitWindowAdapter {
          if fullscreen != self.window().is_fullscreen() {
              self.window().set_fullscreen(fullscreen);
          }
@@ -1230,7 +1429,7 @@ index 1ad204f..a26e1e9 100644
      }
  
      #[cfg(enable_accesskit)]
-@@ -1184,7 +1278,9 @@ impl WinitWindowAdapter {
+@@ -1184,7 +1395,9 @@ impl WinitWindowAdapter {
          std::cell::Ref::filter_map(
              self.winit_window_or_none.try_borrow().ok()?,
              |wor: &WinitWindowOrNone| match wor {
@@ -1241,7 +1440,7 @@ index 1ad204f..a26e1e9 100644
                  WinitWindowOrNone::None(..) => None,
              },
          )
-@@ -1196,10 +1292,14 @@ impl WinitWindowAdapter {
+@@ -1196,10 +1409,14 @@ impl WinitWindowAdapter {
          self_weak: Weak<Self>,
          callback: impl FnOnce(&RefCell<crate::accesskit::AccessKitAdapter>),
      ) {
@@ -1258,7 +1457,7 @@ index 1ad204f..a26e1e9 100644
              WinitWindowOrNone::None(..) => {}
          }
      }
-@@ -1209,12 +1309,13 @@ impl WinitWindowAdapter {
+@@ -1209,12 +1426,13 @@ impl WinitWindowAdapter {
      #[cfg(target_os = "macos")]
      fn setup_macos_color_observer(&self) {
          let self_weak = self.self_weak.clone();
@@ -1275,7 +1474,7 @@ index 1ad204f..a26e1e9 100644
          let observer = unsafe {
              objc2_foundation::NSNotificationCenter::defaultCenter()
                  .addObserverForName_object_queue_usingBlock(
-@@ -1265,6 +1366,20 @@ impl WinitWindowAdapter {
+@@ -1265,6 +1483,20 @@ impl WinitWindowAdapter {
          self.window().dispatch_event(WindowEvent::internal(event));
      }
  
@@ -1288,7 +1487,7 @@ index 1ad204f..a26e1e9 100644
 +        data.set_file_paths(files.iter().map(|file| file.as_path()));
 +        corelib::items::DropEvent::new(
 +            data,
-+            LogicalPosition { x: position.x, y: position.y },
++            corelib::api::LogicalPosition { x: position.x, y: position.y },
 +            corelib::items::DragAction::Copy,
 +        )
 +    }
@@ -1296,7 +1495,7 @@ index 1ad204f..a26e1e9 100644
      /// Handles a winit window event for this window: applies the window event filter, feeds
      /// accesskit, updates the cursor and dispatches the corresponding Slint event.
      /// The event loop is needed to create the custom cursor.
-@@ -1302,7 +1417,15 @@ impl WinitWindowAdapter {
+@@ -1302,7 +1534,15 @@ impl WinitWindowAdapter {
          match event {
              WinitWindowEvent::RedrawRequested => self.draw()?,
              WinitWindowEvent::Resized(size) => {
@@ -1312,7 +1511,7 @@ index 1ad204f..a26e1e9 100644
  
                  // Entering fullscreen, maximizing or minimizing the window will
                  // trigger a resize event. We need to update the internal window
-@@ -1311,6 +1434,18 @@ impl WinitWindowAdapter {
+@@ -1311,6 +1551,18 @@ impl WinitWindowAdapter {
                  // See: https://github.com/rust-windowing/winit/issues/2334
                  self.window_state_event();
  
@@ -1331,10 +1530,19 @@ index 1ad204f..a26e1e9 100644
                  // Some platforms (e.g., Windows) may not emit an Occluded event when minimized,
                  // so manually mark the window as occluded if its size is zero.
                  #[cfg(target_os = "windows")]
-@@ -1322,6 +1457,28 @@ impl WinitWindowAdapter {
+@@ -1321,6 +1573,36 @@ impl WinitWindowAdapter {
+                 }
  
                  resized?;
-             }
++
++                // The window is already at its new size in the compositor, but
++                // the surface still shows the previous frame there. Asking for
++                // a redraw directly — instead of through the frame throttle —
++                // keeps a resize from waiting out the pacing period, so the
++                // band the window just gained is filled on the next pass of
++                // the event loop rather than up to a refresh later.
++                winit_window.request_redraw();
++            }
 +            // Win7/GDI can discard portions of a software surface while a
 +            // native window is dragged across another window. Winit 0.30 does
 +            // not reliably emit Occluded in that case, so invalidate the
@@ -1356,16 +1564,24 @@ index 1ad204f..a26e1e9 100644
 +                    self.renderer.occluded(true);
 +                    self.request_redraw();
 +                }
-+            }
+             }
              WinitWindowEvent::CloseRequested => {
                  self.window()
-                     .dispatch_event_with_result(corelib::platform::WindowEvent::CloseRequested)?;
-@@ -1330,7 +1487,59 @@ impl WinitWindowAdapter {
+@@ -1330,7 +1612,75 @@ impl WinitWindowAdapter {
                  // Work around https://github.com/rust-windowing/winit/issues/4371
                  let have_focus =
                      if cfg!(target_os = "macos") { winit_window.has_focus() } else { have_focus };
 -                self.activation_changed(have_focus)?;
 +                let activation_result = self.activation_changed(have_focus);
++
++                // Slint's popups are drawn inside this window, so nothing takes
++                // the focus away from it and a context menu would otherwise stay
++                // on screen after the user switches to another application. A
++                // native menu disappears with the window activation; close ours
++                // on the same edge.
++                if !have_focus {
++                    WindowInner::from_pub(self.window()).close_all_popups();
++                }
 +
 +                // A child/auxiliary Win32 window can expose or cover part of
 +                // a software-rendered parent without producing an Occluded
@@ -1402,6 +1618,13 @@ index 1ad204f..a26e1e9 100644
 +                            activation_result.and_then(|_| self.draw())?;
 +                        } else {
 +                            activation_result?;
++                            // A native menu can swallow the queued frame while
++                            // the window is inactive. A plain request_redraw()
++                            // is inert while the latch is stuck, so force a
++                            // fresh frame instead of relying on the skipped
++                            // full draw above.
++                            self.pending_redraw.reset();
++                            self.request_redraw();
 +                        }
 +                    } else {
 +                        crate::software_diagnostics::record_event(
@@ -1421,12 +1644,14 @@ index 1ad204f..a26e1e9 100644
              }
  
              WinitWindowEvent::KeyboardInput { event, is_synthetic, .. } => {
-@@ -1472,6 +1681,16 @@ impl WinitWindowAdapter {
+@@ -1470,8 +1820,21 @@ impl WinitWindowAdapter {
+                 let position = position.to_logical(runtime_window.scale_factor() as f64);
+                 let cursor_pos = euclid::point2(position.x, position.y);
                  self.cursor_pos.set(cursor_pos);
-                 // winit sends this event at a very high frequency, so coalesce the moves.
-                 self.shared_backend_data.buffer_mouse_move(&self.self_weak, cursor_pos);
+-                // winit sends this event at a very high frequency, so coalesce the moves.
+-                self.shared_backend_data.buffer_mouse_move(&self.self_weak, cursor_pos);
 +                if let Some(mut event) = self.drag_event.borrow_mut().clone() {
-+                    event.position = LogicalPosition { x: cursor_pos.x, y: cursor_pos.y };
++                    event.position = corelib::api::LogicalPosition { x: cursor_pos.x, y: cursor_pos.y };
 +                    runtime_window.process_drag_event(corelib::input::BackendDragEvent::Move {
 +                        event,
 +                        allowed: corelib::items::AllowedDragActions {
@@ -1434,11 +1659,16 @@ index 1ad204f..a26e1e9 100644
 +                            ..Default::default()
 +                        },
 +                    });
++                } else {
++                    // A foreign file drag must not also produce an ordinary Moved:
++                    // that event hits the editor under the DropArea and immediately
++                    // exits the hover established by DragMove above.
++                    self.shared_backend_data.buffer_mouse_move(&self.self_weak, cursor_pos);
 +                }
              }
              WinitWindowEvent::CursorLeft { .. } => {
                  // On the html canvas, we don't get the mouse move or release event when outside the canvas. So we have no choice but canceling the event
-@@ -1509,8 +1728,8 @@ impl WinitWindowAdapter {
+@@ -1509,8 +1872,8 @@ impl WinitWindowAdapter {
                      winit::event::ElementState::Pressed => {
                          if button == PointerEventButton::Left
                              && self.current_resize_direction.get().is_some()
@@ -1448,7 +1678,7 @@ index 1ad204f..a26e1e9 100644
                              return Ok(());
                          }
  
-@@ -1574,6 +1793,13 @@ impl WinitWindowAdapter {
+@@ -1574,6 +1937,13 @@ impl WinitWindowAdapter {
                  self.update_accent_color();
              }
              WinitWindowEvent::Occluded(occluded) => {
@@ -1462,7 +1692,7 @@ index 1ad204f..a26e1e9 100644
                  self.renderer.occluded(occluded);
  
                  // wgpu hands out no drawable while the window isn't visible, see
-@@ -1609,6 +1835,50 @@ impl WinitWindowAdapter {
+@@ -1609,6 +1979,50 @@ impl WinitWindowAdapter {
              WinitWindowEvent::AxisMotion { .. } => {
                  // Ignored, but happens often and is also ignored for the purpose of bundling CursorMoved.
              }
@@ -1513,15 +1743,16 @@ index 1ad204f..a26e1e9 100644
              _ => {}
          }
  
-@@ -1632,9 +1902,13 @@ impl WinitWindowAdapter {
+@@ -1632,9 +2046,13 @@ impl WinitWindowAdapter {
          }
  
          self.shown.set(visibility);
 -        self.pending_resize_event_after_show.set(!matches!(visibility, WindowVisibility::Hidden));
+-        self.pending_redraw.set(false);
+-        if matches!(visibility, WindowVisibility::ShownFirstTime | WindowVisibility::Shown) {
 +        self.pending_resize_event_after_show
 +            .set(!matches!(visibility, WindowVisibility::Hidden));
-         self.pending_redraw.set(false);
--        if matches!(visibility, WindowVisibility::ShownFirstTime | WindowVisibility::Shown) {
++        self.pending_redraw.reset();
 +        if matches!(
 +            visibility,
 +            WindowVisibility::ShownFirstTime | WindowVisibility::Shown
@@ -1529,7 +1760,7 @@ index 1ad204f..a26e1e9 100644
              let recreating_window = matches!(visibility, WindowVisibility::Shown);
  
              let Some(winit_window) = self.winit_window() else {
-@@ -1671,6 +1945,11 @@ impl WinitWindowAdapter {
+@@ -1671,6 +2089,11 @@ impl WinitWindowAdapter {
  
              if !platform_dictates_window_size()
                  && winit_window.fullscreen().is_none()
@@ -1541,7 +1772,7 @@ index 1ad204f..a26e1e9 100644
                  && !self.has_explicit_size.get()
                  && preferred_size.width > 0 as Coord
                  && preferred_size.height > 0 as Coord
-@@ -1682,6 +1961,29 @@ impl WinitWindowAdapter {
+@@ -1682,6 +2105,29 @@ impl WinitWindowAdapter {
                  self.resize_window(size.into())?;
              };
  
@@ -1571,7 +1802,7 @@ index 1ad204f..a26e1e9 100644
              // Pre-render the first frame before mapping the window to avoid a flash of
              // uninitialized VRAM on X11 (no background_pixmap). Skipped on Wayland, where
              // rendering before the initial configure makes the compositor mis-size the window.
-@@ -1705,6 +2007,15 @@ impl WinitWindowAdapter {
+@@ -1705,6 +2151,15 @@ impl WinitWindowAdapter {
                  });
              }
  
@@ -1581,13 +1812,13 @@ index 1ad204f..a26e1e9 100644
 +            // native frame appears, but the client area remains untouched.
 +            // Always enqueue a frame after making an existing surface visible.
 +            self.renderer.occluded(false);
-+            self.pending_redraw.set(false);
++            self.pending_redraw.reset();
 +            self.request_redraw();
 +
              // In wasm a request_redraw() issued before show() results in a draw() even when the window
              // isn't visible, as opposed to regular windowing systems. The compensate for the lost draw,
              // explicitly render the first frame on show().
-@@ -1726,6 +2037,13 @@ impl WinitWindowAdapter {
+@@ -1726,6 +2181,13 @@ impl WinitWindowAdapter {
              self.context_menu.take();
  
              // Wayland doesn't support hiding a window, only destroying it entirely.
@@ -1601,7 +1832,7 @@ index 1ad204f..a26e1e9 100644
              if self.winit_window_or_none.borrow().as_window().is_some_and(|winit_window| {
                  use raw_window_handle::HasWindowHandle;
                  winit_window.window_handle().is_ok_and(|h| {
-@@ -1753,6 +2071,101 @@ impl WinitWindowAdapter {
+@@ -1753,10 +2215,108 @@ impl WinitWindowAdapter {
          }
      }
  
@@ -1703,7 +1934,14 @@ index 1ad204f..a26e1e9 100644
      pub(crate) fn visibility(&self) -> WindowVisibility {
          self.shown.get()
      }
-@@ -1767,15 +2180,25 @@ impl WinitWindowAdapter {
+ 
++    // Vendored i-slint-backend-winit: the field is read by the redraw logic
++    // below, but wunder's frontend never calls this accessor.
++    #[allow(dead_code)]
+     pub(crate) fn pending_redraw(&self) -> bool {
+         self.pending_redraw.get()
+     }
+@@ -1767,15 +2327,25 @@ impl WinitWindowAdapter {
          std::future::poll_fn(move |context| {
              let Some(self_) = self_weak.upgrade() else {
                  return std::task::Poll::Ready(Err(
@@ -1732,7 +1970,7 @@ index 1ad204f..a26e1e9 100644
                      }
                      std::task::Poll::Pending
                  }
-@@ -1805,9 +2228,10 @@ impl WindowAdapter for WinitWindowAdapter {
+@@ -1805,9 +2375,10 @@ impl WindowAdapter for WinitWindowAdapter {
      fn position(&self) -> Option<corelib::api::PhysicalPosition> {
          match &*self.winit_window_or_none.borrow() {
              WinitWindowOrNone::HasWindow { window, .. } => match window.outer_position() {
@@ -1746,12 +1984,25 @@ index 1ad204f..a26e1e9 100644
                  Err(_) => None,
              },
              WinitWindowOrNone::None(attributes) => {
-@@ -1852,8 +2276,11 @@ impl WindowAdapter for WinitWindowAdapter {
+@@ -1851,12 +2422,47 @@ impl WindowAdapter for WinitWindowAdapter {
+     }
  
      fn request_redraw(&self) {
-         if !self.pending_redraw.replace(true)
+-        if !self.pending_redraw.replace(true)
 -            && let WinitWindowOrNone::HasWindow { window, frame_throttle, .. } =
 -                &*self.winit_window_or_none.borrow()
++        // A request that has been waiting far longer than a frame means the
++        // previous one never reached `draw()` (native menu modal loop, lost
++        // paint). Repaint completely instead of coalescing into a dead latch.
++        let stalled = self
++            .pending_redraw
++            .take_stalled(std::time::Duration::from_millis(400));
++        if stalled {
++            self.renderer.occluded(true);
++        }
++        let already = self.pending_redraw.replace(true);
++        let schedule = !already || stalled;
++        if schedule
 +            && let WinitWindowOrNone::HasWindow {
 +                window,
 +                frame_throttle,
@@ -1760,7 +2011,31 @@ index 1ad204f..a26e1e9 100644
          {
              frame_throttle.request_throttled_redraw(window);
          }
-@@ -1925,6 +2352,8 @@ impl WindowAdapter for WinitWindowAdapter {
++
++        #[cfg(target_os = "windows")]
++        if self.pending_redraw.arm_watchdog() {
++            let weak = self.self_weak.clone();
++            corelib::timers::Timer::single_shot(
++                std::time::Duration::from_millis(150),
++                move || {
++                    let Some(window) = weak.upgrade() else {
++                        return;
++                    };
++                    let paintable = !matches!(window.shown.get(), WindowVisibility::Hidden)
++                        && !window.winit_window().is_some_and(|w| {
++                            w.is_minimized() == Some(true)
++                        });
++                    let retry = window.pending_redraw.watchdog_tick(paintable);
++                    if retry {
++                        window.request_redraw();
++                    }
++                },
++            );
++        }
+     }
+ 
+     #[allow(clippy::unnecessary_cast)] // Coord is used!
+@@ -1925,6 +2531,8 @@ impl WindowAdapter for WinitWindowAdapter {
              }
          }
  
@@ -1769,7 +2044,7 @@ index 1ad204f..a26e1e9 100644
          // Adjust the size of the window to the value of the width and height property (if these property are changed from .slint).
          // But not if there is a pending resize in flight as that resize will reset these properties back
          if ((existing_size.width - width).abs() > 1. || (existing_size.height - height).abs() > 1.)
-@@ -1938,7 +2367,13 @@ impl WindowAdapter for WinitWindowAdapter {
+@@ -1938,7 +2546,13 @@ impl WindowAdapter for WinitWindowAdapter {
              // If we're in fullscreen state, don't try to resize the window but maintain the surface
              // size we've been assigned to from the windowing system. Weston/Wayland don't like it
              // when we create a surface that's bigger than the screen due to constraints (#532).
@@ -1784,7 +2059,7 @@ index 1ad204f..a26e1e9 100644
                  // TODO: don't ignore error, propagate to caller
                  let immediately_resized = self
                      .resize_window(winit::dpi::LogicalSize::new(width, height).into())
-@@ -1973,7 +2408,7 @@ impl WindowAdapter for WinitWindowAdapter {
+@@ -1973,7 +2587,7 @@ impl WindowAdapter for WinitWindowAdapter {
              self.fullscreen.set(m);
          }
  
@@ -1793,7 +2068,7 @@ index 1ad204f..a26e1e9 100644
          if m != self.maximized.get() {
              self.maximized.set(m);
              winit_window_or_none.set_maximized(m);
-@@ -2005,11 +2440,15 @@ impl WindowAdapter for WinitWindowAdapter {
+@@ -2005,11 +2619,15 @@ impl WindowAdapter for WinitWindowAdapter {
          winit_window_or_none.set_resizable(resizable);
          // Important: Filter out (temporary?) zero width/heights, to avoid attempting to create a zero surface. For example, with wayland
          // the client-side rendering ends up passing a zero width/height to the renderer.
@@ -1813,7 +2088,7 @@ index 1ad204f..a26e1e9 100644
          winit_window_or_none.set_max_inner_size(winit_max_inner, sf as f64);
  
          if !platform_dictates_window_size() {
-@@ -2018,8 +2457,9 @@ impl WindowAdapter for WinitWindowAdapter {
+@@ -2018,8 +2636,9 @@ impl WindowAdapter for WinitWindowAdapter {
  
          // Auto-resize to the preferred size if users (SlintPad) requests it
          #[cfg(target_arch = "wasm32")]
@@ -1825,7 +2100,7 @@ index 1ad204f..a26e1e9 100644
          {
              if is_preferred_sized_canvas(&canvas) {
                  let pref = new_constraints.preferred;
-@@ -2147,8 +2587,9 @@ impl WindowAdapterInternal for WinitWindowAdapter {
+@@ -2147,8 +2766,9 @@ impl WindowAdapterInternal for WinitWindowAdapter {
          match request {
              corelib::window::InputMethodRequest::Enable(..) => {
                  let mut vkh = self.virtual_keyboard_helper.borrow_mut();
@@ -1837,7 +2112,7 @@ index 1ad204f..a26e1e9 100644
                  else {
                      return;
                  };
-@@ -2202,8 +2643,10 @@ impl WindowAdapterInternal for WinitWindowAdapter {
+@@ -2202,8 +2822,10 @@ impl WindowAdapterInternal for WinitWindowAdapter {
          // Set before showing: on Windows the activation event can arrive before this returns.
          self.context_menu.replace(Some(context_menu_item));
  
@@ -1850,7 +2125,27 @@ index 1ad204f..a26e1e9 100644
          {
              // On Windows, we must destroy the muda menu before re-creating a new one
              drop(context_menu_muda_adapter.borrow_mut().take());
-@@ -2246,7 +2689,9 @@ impl WindowAdapterInternal for WinitWindowAdapter {
+@@ -2214,6 +2836,19 @@ impl WindowAdapterInternal for WinitWindowAdapter {
+                 self.event_loop_proxy.clone(),
+             ) {
+                 context_menu_muda_adapter.replace(Some(new_adapter));
++                // TrackPopupMenu ran a modal loop on this thread: while it was
++                // open no RedrawRequested could be delivered, and on the way
++                // out the window was re-enabled without a paint. Present one
++                // complete frame now, otherwise the menu's rectangle keeps the
++                // pre-menu pixels and only a focus transition can recover it.
++                //
++                // The latch is cleared unconditionally: any frame requested
++                // while the modal loop ran is gone for good, and waiting for
++                // the timeout to notice would still swallow the next request
++                // when the menu was opened and dismissed inside one period.
++                self.pending_redraw.reset();
++                self.renderer.occluded(true);
++                self.request_redraw();
+                 return true;
+             }
+         }
+@@ -2246,7 +2881,9 @@ impl WindowAdapterInternal for WinitWindowAdapter {
          component: ItemTreeRef,
          _: &mut dyn Iterator<Item = core::pin::Pin<ItemRef<'_>>>,
      ) {
@@ -1861,7 +2156,7 @@ index 1ad204f..a26e1e9 100644
          if let Ok(mut a) = accesskit_adapter_cell.try_borrow_mut() {
              a.unregister_item_tree(component);
          };
-@@ -2310,7 +2755,10 @@ impl WindowAdapterInternal for WinitWindowAdapter {
+@@ -2310,7 +2947,10 @@ impl WindowAdapterInternal for WinitWindowAdapter {
  impl Drop for WinitWindowAdapter {
      fn drop(&mut self) {
          self.shared_backend_data.unregister_window(
@@ -1873,7 +2168,7 @@ index 1ad204f..a26e1e9 100644
          );
  
          #[cfg(target_os = "macos")]
-@@ -2405,8 +2853,14 @@ fn is_preferred_sized_canvas(canvas: &web_sys::HtmlCanvasElement) -> bool {
+@@ -2405,8 +3045,14 @@ fn is_preferred_sized_canvas(canvas: &web_sys::HtmlCanvasElement) -> bool {
  #[cfg(target_family = "wasm")]
  fn canvas_has_explicit_size_set(canvas: &web_sys::HtmlCanvasElement) -> bool {
      let style = canvas.style();
@@ -1890,3 +2185,63 @@ index 1ad204f..a26e1e9 100644
      {
          return true;
      }
+@@ -2421,3 +3067,59 @@ fn canvas_has_explicit_size_set(canvas: &web_sys::HtmlCanvasElement) -> bool {
+     computed_style.get_property_value("width").ok().as_deref() != Some("auto")
+         || computed_style.get_property_value("height").ok().as_deref() != Some("auto")
+ }
++
++#[cfg(all(test, target_os = "windows"))]
++mod redraw_latch_tests {
++    use super::RedrawLatch;
++
++    #[test]
++    fn presented_frame_clears_the_watchdog() {
++        let latch = RedrawLatch::default();
++        assert!(!latch.replace(true), "first request must schedule a frame");
++        assert!(latch.arm_watchdog(), "first request must arm the watchdog");
++        assert!(!latch.arm_watchdog(), "one watchdog at a time");
++        latch.presented();
++        assert!(!latch.watchdog_tick(true), "no lost frame to repair");
++        assert!(latch.arm_watchdog(), "watchdog flag released after its tick");
++    }
++
++    #[test]
++    fn lost_frame_rearms_once() {
++        let latch = RedrawLatch::default();
++        assert!(!latch.replace(true));
++        assert!(latch.arm_watchdog());
++        assert!(latch.watchdog_tick(true), "lost frame must be re-requested");
++        assert!(!latch.get(), "re-arm clears the stuck latch");
++        assert!(
++            !latch.replace(true),
++            "the re-request must schedule a fresh frame"
++        );
++    }
++
++    #[test]
++    fn minimized_window_does_not_spin_the_watchdog() {
++        let latch = RedrawLatch::default();
++        assert!(!latch.replace(true));
++        assert!(latch.arm_watchdog());
++        assert!(!latch.watchdog_tick(false), "nothing can paint while minimized");
++        assert!(!latch.get(), "restore path can arm a fresh frame");
++    }
++
++    #[test]
++    fn watchdog_retries_are_bounded() {
++        let latch = RedrawLatch::default();
++        assert!(!latch.replace(true));
++        assert!(latch.arm_watchdog());
++        assert!(latch.watchdog_tick(true));
++        assert!(!latch.replace(true));
++        assert!(latch.arm_watchdog());
++        assert!(latch.watchdog_tick(true));
++        assert!(!latch.replace(true));
++        assert!(latch.arm_watchdog());
++        assert!(!latch.watchdog_tick(true), "third tick must stop retrying");
++        assert!(latch.get(), "latch stays set for focus/visibility recovery");
++        latch.reset();
++        assert!(!latch.get());
++        assert!(latch.arm_watchdog(), "reset releases the watchdog flag");
++    }
++}

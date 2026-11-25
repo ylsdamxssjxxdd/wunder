@@ -640,8 +640,10 @@ export component Sidebar inherits Rectangle {
                     }
                     if row.kind == 1 : DragRow {
                         x: SidebarMetrics.gutter;
+                        // 上下各让出 row-air：行格节距不变，高亮底色之间才有缝。
+                        y: SidebarMetrics.row-air;
                         width: parent.width - SidebarMetrics.gutter * 2;
-                        height: parent.height;
+                        height: parent.height - SidebarMetrics.row-air * 2;
                         border-radius: SidebarMetrics.row-fill-radius;
                         // Selection mode freezes reordering, as on the web.
                         enabled: !root.busy && !root.selection-mode;
@@ -681,8 +683,11 @@ export component Sidebar inherits Rectangle {
                     }
                     if row.kind == 3 : Rectangle {
                         x: SidebarMetrics.gutter;
+                        // 与本地线程行同一套气口：云线程和本地线程在同一条树里，
+                        // 两者的高亮块必须一样高、一样有缝。
+                        y: SidebarMetrics.row-air;
                         width: parent.width - SidebarMetrics.gutter * 2;
-                        height: parent.height;
+                        height: parent.height - SidebarMetrics.row-air * 2;
                         border-radius: SidebarMetrics.row-fill-radius;
                         background: row.active || cloud-thread-touch.has-hover ? Theme.accent-soft : transparent;
                         cloud-thread-touch := TouchArea {
@@ -1047,7 +1052,10 @@ export component Sidebar inherits Rectangle {
         y: 0px;
         width: 1px;
         height: parent.height;
-        z: 4;
+        // 底部设置行整层压在侧栏上（z: 5），它铺满整宽，会把右缘这条 1px 线
+        // 最后 41px 盖掉，肉眼就是「设置按钮右边少一截框线」。框线必须压在
+        // 底栏之上，整列才是一条连贯的边。
+        z: 6;
         background: Theme.border;
     }
 

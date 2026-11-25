@@ -1765,10 +1765,10 @@ export component Composer inherits Rectangle {
     out property <bool> popover-open: root.plus-open || root.model-open;
     out property <bool> plus-open-state: root.plus-open;
     out property <bool> model-open-state: root.model-open;
-    out property <length> plus-trigger-x: plus-btn.absolute-position.x;
-    out property <length> plus-trigger-y: plus-btn.absolute-position.y;
-    out property <length> plus-trigger-width: plus-btn.width;
-    out property <length> plus-trigger-height: plus-btn.height;
+    out property <length> plus-trigger-x: root.touch-layout ? mobile-plus-btn.absolute-position.x : plus-btn.absolute-position.x;
+    out property <length> plus-trigger-y: root.touch-layout ? mobile-plus-btn.absolute-position.y : plus-btn.absolute-position.y;
+    out property <length> plus-trigger-width: root.touch-layout ? mobile-plus-btn.width : plus-btn.width;
+    out property <length> plus-trigger-height: root.touch-layout ? mobile-plus-btn.height : plus-btn.height;
     out property <length> plus-menu-x: root.plus-open ? plus_menu.absolute-position.x : -1px;
     out property <length> plus-menu-y: root.plus-open ? plus_menu.absolute-position.y : -1px;
     out property <length> plus-menu-width: root.plus-open ? plus_menu.width : 0px;
@@ -1874,12 +1874,20 @@ export component Composer inherits Rectangle {
             // 桌面端必须 stretch：居中对齐会让编辑器卡片退化为内容高度，
             // 而卡片高度又绑定父级，最终塌成 0px，整张输入卡不再绘制。
             cross-axis-alignment: root.touch-layout ? CrossAxisAlignment.center : CrossAxisAlignment.stretch;
-            if root.touch-layout : Rectangle {
+            // 不用 if 包：原生侧按 mobile-plus-btn 的窗口坐标判断「按的是不是
+            // 加号本身」。if 会把名字关进条件元素里，外层拿不到它的几何（宽窗
+            // 那颗 plus-btn 在窄窗也没参与布局），触发矩形只能落在没有意义的
+            // 位置，按加号就被当成「点在别处」先关一次、松手再被 onClick 打开
+            // ——窄窗里点加号收不起来就是这个原因。
+            Rectangle {
+                visible: root.touch-layout;
                 width: root.mobile ? 40px : 24px;
                 height: root.action-row-height;
                 mobile-plus-btn := Rectangle {
                     x: root.mobile ? 2px : 0px;
-                    y: root.mobile ? 2px : 3px;
+                    // 与输入卡的中线对齐：手机 40-36、窄窗 36-24 都居中落下，
+                    // 原先写死 3px 时窄窗的加号比输入框中心高 3px。
+                    y: (parent.height - self.height) / 2;
                     width: root.mobile ? 36px : 24px;
                     height: root.mobile ? 36px : 24px;
                     border-radius: root.mobile ? Theme.radius-md : Theme.radius-sm;

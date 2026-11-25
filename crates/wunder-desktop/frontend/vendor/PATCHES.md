@@ -355,6 +355,38 @@ deltas).
   frame until minimize/restore. The posted paint runs after the callback/modal
   loop unwinds. A real-window regression covers menu exit followed by a nested
   paint request and requires exactly one deferred redraw.
+- `i-slint-backend-winit` 1.18's redraw latch is self-healing on Windows. A
+  single frame swallowed by a native menu modal loop used to leave
+  `pending_redraw` stuck at true, after which every `request_redraw()` was a
+  no-op and the UI stayed live but frozen on its old frame until minimize or
+  resize. `request_redraw()` now arms a bounded one-shot watchdog (150 ms, at
+  most two retries, skipped while hidden/minimized) that clears the latch and
+  re-queues a frame; focus regain also force-clears the latch when the
+  "recently presented" fast path skips a full draw. Four unit tests cover the
+  lost-frame, presented-frame, unpaintable and retry-cap paths. The upstream
+  smoke test is gated behind a new `standalone-tests` feature so crate-level
+  tests compile when the patched crate is consumed as a workspace dependency.
+- The same latch now ages out instead of relying on retry counts alone. Each
+  request records `pending_since`; if a frame has been pending for more than
+  400 ms it is treated as lost, the latch is cleared and `occluded(true)` forces
+  a complete repaint. A menu opened and dismissed inside one watchdog period
+  used to leave the retry budget untouched and the latch set forever; the
+  context-menu exit path also resets the latch unconditionally and requests one
+  full frame, because `TrackPopupMenu` swallows every paint delivered while it
+  runs. The software renderer additionally publishes the whole surface when
+  `draw()` runs with no damage: a native popup that just closed, or
+  `WM_SETREDRAW` re-enabling the window, asks for pixels Slint reports no damage
+  for, and skipping `present()` left that rectangle on the previous frame.
+- The desktop shell shows context menus with Slint's own popup instead of a
+  native Win32 menu. `TrackPopupMenu` is a modal loop on the UI thread: while it
+  is open the event loop is borrowed, so no frame is produced and no timer fires
+  — a streaming transcript froze behind the menu until the user dismissed it,
+  which no amount of redraw bookkeeping can fix. `Window::set_native_popup_menus_enabled()`
+  exposes the existing `WindowInner` switch (previously read but never written)
+  and the shell turns it off once at startup. Because the popup is drawn inside
+  the window and nothing takes the focus away, a window deactivation now closes
+  active popups so they do not outlive the window switch like a native menu
+  would.
 - `winit` 0.30.2 no longer drops non-ASCII keyboard text while an IMM32
   composition is active. Some legacy Chinese IMEs submit full-width punctuation
   through standalone `WM_CHAR` messages, with neither a keydown nor a

@@ -602,24 +602,101 @@ impl Drop for ThreadLeaseHeartbeat {
     }
 }
 
-/// 本地进程重启后的状态收敛。上一进程被关闭时不会有机会把运行中的线程
-/// 落成终态，监视缓存和受理表因此会把它们永久标成运行中。启动时结算
-/// 这些孤儿，并跳过仍被其它存活客户端（命令行）持有的线程。
-fn recover_restarted_threads(desktop: &DesktopRuntime, instance_id: &str) -> usize {
-    let user = desktop.user_id.trim();
+/// 结算上一进程崩在中间、仍在执行的线程：标中断那一轮、释放 120 秒 TTL
+/// 的执行锁、收敛监视状态。
+///
+/// 执行锁不清的话，这段时间里打开线程一律回 Busy——这是唯一必须赶在用户
+/// 操作之前完成的收尾。锁行只出现在真正执行过的线程上，数量由崩溃瞬间的
+/// 并发决定（通常 0～2 条），所以留在启动路径上几乎不花时间。
+///
+/// 只动“没人正在用”的线程：命令行等其它本地客户端仍在执行时一定持有自己
+/// 的打开租约，按租约让位；租约读不到时也宁可留给 TTL 兜底。
+fn settle_restarted_executions(
+    state: &wunder_server::state::AppState,
+    user_id: &str,
+) -> usize {
+    let user = user_id.trim();
     if user.is_empty() {
         return 0;
     }
-    let storage = &desktop.state.storage;
-    let records = desktop.state.monitor.load_records_by_user(
-        user,
+    let storage = &state.storage;
+    let Ok(locks) = storage.list_session_locks_by_user(user) else {
+        return 0;
+    };
+    let mut settled = 0usize;
+    for lock in locks {
+        let session = lock.session_id.trim().to_string();
+        if session.is_empty() {
+            continue;
+        }
+        match storage.get_thread_open_lease(&session, user) {
+            Ok(Some(_)) => continue,
+            Err(error) => {
+                tracing::warn!(%error, session, "skip restarted thread settle: lease unreadable");
+                continue;
+            }
+            Ok(None) => {}
+        }
+        if let Err(error) = state
+            .thread_store
+            .settle_orphaned_turns_for_restart(&session)
+        {
+            tracing::warn!(%error, session, "settle restarted thread failed");
+            continue;
+        }
+        // 还有待派发任务会继续执行：保留执行锁与监视状态，别把它画成已停止。
+        let tails = state
+            .storage
+            .thread_turn_tails(user, std::slice::from_ref(&session))
+            .unwrap_or_default();
+        let still_active = tails
+            .get(&session)
+            .map(|tail| matches!(tail.turn_status.as_str(), "accepted" | "queued" | "running"))
+            .unwrap_or(false);
+        if still_active {
+            continue;
+        }
+        // 线程已无活跃轮次：残留的执行锁只可能属于已退出的上一进程。
+        if let Err(error) = storage.force_release_session_lock(&session) {
+            tracing::warn!(%error, session, "release orphaned session lock failed");
+            continue;
+        }
+        if state.monitor.settle_restarted_session(&session) {
+            settled += 1;
+        }
+    }
+    settled
+}
+
+/// 启动收尾的后台部分：上一进程留下的轮次、监视缓存与任务台账痕迹。
+///
+/// 它们只决定历史怎么显示（以及台账统计），不影响用户能不能操作，因此不占
+/// 启动路径。逐条处理并在条目之间让出一段时间，避免和首屏自己的会话列表、
+/// 个人概况查询抢同一块慢盘。
+///
+/// 结算一律走 `settle_thread_orphans`：它与受理共用同一把线程闸，且只在
+/// 没有存活执行锁、轮次也已陈旧时动手，因此不会打断用户刚发出的新一轮。
+async fn settle_restarted_state(state: Arc<wunder_server::state::AppState>, user_id: String) {
+    let user = user_id.trim().to_string();
+    if user.is_empty() {
+        return;
+    }
+    // 任务台账会留下上一进程的 running 行：队列只领取 pending/retry，没有
+    // 人会再收尾它们，归档门禁却会一直把它当成在途工作。
+    let thread_runtime = state.kernel.thread_runtime.clone();
+    match thread_runtime.settle_orphaned_running_tasks(&user).await {
+        Ok(0) => {}
+        Ok(settled) => tracing::info!(settled, "settled orphaned running task rows"),
+        Err(error) => tracing::warn!(%error, "settle orphaned running task rows failed"),
+    }
+    let records = state.monitor.load_records_by_user(
+        &user,
         // `waiting` 是停在问询/审批上的运行态：上一进程消失后它同样没有
         // 执行器，不收敛就会一直显示「等待回答」并挡住归档。
         Some(&["running", "cancelling", "queued", "waiting"]),
         None,
         128,
     );
-    let mut candidates: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for payload in &records {
         let Some(session_id) = payload.get("session_id").and_then(Value::as_str) else {
@@ -629,71 +706,16 @@ fn recover_restarted_threads(desktop: &DesktopRuntime, instance_id: &str) -> usi
         if session_id.is_empty() || !seen.insert(session_id.to_string()) {
             continue;
         }
-        candidates.push(session_id.to_string());
-    }
-    // 崩溃时正在执行的线程还会留下一条 120 秒 TTL 的执行锁。打开线程时
-    // 这道锁直接判 Busy，同样表现为“线程打不开”，而监视缓存里未必还有
-    // 对应的运行记录。本进程刚启动，没有任何本地执行者，因此这些锁在
-    // 结算孤儿轮次后只要线程没有活跃轮次就可以立即释放。
-    if let Ok(locks) = storage.list_session_locks_by_user(user) {
-        for lock in locks {
-            let session_id = lock.session_id.trim();
-            if session_id.is_empty() || !seen.insert(session_id.to_string()) {
-                continue;
-            }
-            candidates.push(session_id.to_string());
+        // 用户已经在跑这个线程：残留状态归新一轮所有，不能再结算。
+        if thread_runtime.has_local_execution(session_id) {
+            continue;
         }
-    }
-    let mut settled = 0usize;
-    for session_id in &candidates {
-        match storage.get_thread_open_lease(session_id, user) {
-            // 其它客户端仍在操作该线程，保留它的运行状态。
-            Ok(Some(lease)) if lease.client_kind != "desktop" => continue,
-            // 单实例桌面：同客户端的旧租约只能来自已退出的上一进程。
-            Ok(Some(lease)) if lease.owner_instance_id != instance_id => {
-                let _ = storage.release_thread_open_lease(
-                    session_id,
-                    &lease.owner_instance_id,
-                    lease.fencing_token,
-                );
-            }
-            // 租约读失败时宁可保留运行状态，也不能误结算仍被其它客户端执行
-            // 的线程；下一次启动还会再尝试。
-            Err(error) => {
-                tracing::warn!(%error, session_id, "skip restarted thread settle: lease unreadable");
-                continue;
-            }
-            Ok(_) => {}
-        }
-        if let Err(error) = desktop
-            .state
-            .thread_store
-            .settle_orphaned_turns_for_restart(session_id)
-        {
+        if let Err(error) = thread_runtime.settle_thread_orphans(session_id).await {
             tracing::warn!(%error, session_id, "settle restarted thread failed");
-            continue;
         }
-        let tails = storage
-            .thread_turn_tails(user, std::slice::from_ref(session_id))
-            .unwrap_or_default();
-        let still_active = tails
-            .get(session_id)
-            .map(|tail| matches!(tail.turn_status.as_str(), "accepted" | "queued" | "running"))
-            .unwrap_or(false);
-        if still_active {
-            // 待派发任务会继续执行，保留监视状态。
-            continue;
-        }
-        // 线程已无活跃轮次：残留的执行锁只可能属于已退出的上一进程。
-        // 保留它会让下一次打开在 TTL 内一直回 Busy（呈现为锁定）。
-        if let Err(error) = storage.force_release_session_lock(session_id) {
-            tracing::warn!(%error, session_id, "release orphaned session lock failed");
-        }
-        if desktop.state.monitor.settle_restarted_session(session_id) {
-            settled += 1;
-        }
+        state.monitor.settle_restarted_session(session_id);
+        tokio::time::sleep(Duration::from_millis(40)).await;
     }
-    settled
 }
 
 impl NativeDesktop {
@@ -792,8 +814,8 @@ impl NativeDesktop {
             tracing::info!("skip startup recovery: another desktop instance is alive");
         }
         if !args.background_runtime && !another_desktop_alive {
-            // 这三步都要摸数据库，是最容易在老机器上把「正在加载运行时…」拖长
-            // 的部分，各自记一个阶段耗时，卡在哪一步可以直接从启动日志读出。
+            // 启动关键路径上只做两件“不立刻做就会挡住用户”的事，各自都只是
+            // 一两条 SQL；其余收尾只影响显示与统计，放到首屏之后后台慢慢做。
             //
             // 桌面版由单实例锁保证本机只有一个桌面进程，因此上一次崩溃/强杀
             // 留下的 desktop 打开租约必然是死的。不清扫时线程要等满 15 秒
@@ -814,35 +836,28 @@ impl NativeDesktop {
                 "desktop:purge_thread_leases",
                 stage_start.elapsed().as_secs_f64() * 1000.0,
             );
+            // 崩溃留下的执行锁有 120 秒 TTL：不清的话这段时间内打开线程一律
+            // 回 Busy。锁行只会出现在真正执行过的线程上，通常 0～2 条。
             stage_start = std::time::Instant::now();
-            let recovered = recover_restarted_threads(&desktop, &instance_id);
-            if recovered > 0 {
-                tracing::info!(recovered, "settled restarted thread status");
+            let settled = settle_restarted_executions(&desktop.state, &desktop.user_id);
+            if settled > 0 {
+                tracing::info!(settled, "settled restarted thread status");
             }
             wunder_server::startup_probe::point(
-                "desktop:settle_restarted_threads",
+                "desktop:settle_restarted_executions",
                 stage_start.elapsed().as_secs_f64() * 1000.0,
             );
-            stage_start = std::time::Instant::now();
-            // 任务台账同样会留下上一进程的 running 行：队列只领取
-            // pending/retry，没有人会再收尾它们，归档门禁却会一直把它当成
-            // 在途工作。趁启动没有本地执行器时一次结清。
-            let thread_runtime = desktop.state.kernel.thread_runtime.clone();
-            let user_id = desktop.user_id.clone();
-            match runtime.block_on(async move {
-                thread_runtime.settle_orphaned_running_tasks(&user_id).await
-            }) {
-                Ok(settled) if settled > 0 => {
-                    tracing::info!(settled, "settled orphaned running task rows");
-                }
-                Ok(_) => {}
-                Err(error) => tracing::warn!(%error, "settle orphaned running task rows failed"),
+            // 监视缓存里成批的 running/queued/waiting 残留只决定历史怎么显示，
+            // 与用户能不能操作无关；老机器上逐条收敛要摸很多次慢盘，因此整体
+            // 交给首屏之后的后台。结算走与受理共用线程闸的安全路径。
+            {
+                let state = Arc::clone(&desktop.state);
+                let user_id = desktop.user_id.clone();
+                runtime.spawn(async move {
+                    settle_restarted_state(state, user_id).await;
+                });
             }
-            wunder_server::startup_probe::point(
-                "desktop:settle_orphaned_tasks",
-                stage_start.elapsed().as_secs_f64() * 1000.0,
-            );
-            // 崩溃留下的执行锁有 120 秒 TTL：启动瞬间它仍算“存活”，上面的
+            // 崩溃留下的执行锁有 120 秒 TTL：启动瞬间它仍算“存活”，后台的
             // 孤儿结算会跳过这类任务。锁过期后再补一次结算，避免任务行永远
             // 停在 running（归档门禁会一直把它当成在途工作）。活着的实例
             // 仍由 has_live_session_lock 保护，不会被误结算。

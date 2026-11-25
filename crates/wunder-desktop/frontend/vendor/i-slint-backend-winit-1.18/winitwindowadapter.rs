@@ -385,13 +385,130 @@ pub(crate) enum WindowVisibility {
     Shown,
 }
 
+/// Tracks whether a frame has been requested but not presented yet.
+///
+/// A native Win32 context menu runs its own modal loop inside the event that
+/// opened it. A frame requested around that loop can be consumed without ever
+/// reaching `RedrawRequested`; leaving the latch set would then make every
+/// later `request_redraw()` a no-op (the UI stays live but frozen on its old
+/// frame). The one-shot watchdog below re-arms the latch when that happens.
+#[derive(Default)]
+struct RedrawLatch {
+    pending: Cell<bool>,
+    #[cfg(target_os = "windows")]
+    watchdog_armed: Cell<bool>,
+    #[cfg(target_os = "windows")]
+    retries: Cell<u8>,
+    /// When the current request started waiting. A window that never presents
+    /// keeps this timestamp, so the next request can tell a normal coalesced
+    /// frame apart from one that was lost.
+    #[cfg(target_os = "windows")]
+    pending_since: Cell<Option<std::time::Instant>>,
+}
+
+impl RedrawLatch {
+    fn get(&self) -> bool {
+        self.pending.get()
+    }
+
+    fn replace(&self, value: bool) -> bool {
+        #[cfg(target_os = "windows")]
+        {
+            if !value {
+                self.retries.set(0);
+                self.pending_since.set(None);
+            } else if !self.pending.get() {
+                self.pending_since.set(Some(std::time::Instant::now()));
+            }
+        }
+        self.pending.replace(value)
+    }
+
+    /// Clear the latch after a frame was presented, so the watchdog retries
+    /// start from zero for the next request.
+    fn presented(&self) {
+        self.pending.set(false);
+        #[cfg(target_os = "windows")]
+        {
+            self.retries.set(0);
+            self.pending_since.set(None);
+        }
+    }
+
+    /// Reset without presenting, used by show/hide and focus transitions that
+    /// deliberately force a fresh frame.
+    fn reset(&self) {
+        self.pending.set(false);
+        #[cfg(target_os = "windows")]
+        {
+            self.watchdog_armed.set(false);
+            self.retries.set(0);
+            self.pending_since.set(None);
+        }
+    }
+
+    /// A frame that has been requested for longer than `max` without reaching
+    /// `draw()` was lost: the modal loop of a native menu, `WM_SETREDRAW`, or
+    /// an early-returned paint can swallow it. Take the latch back so the
+    /// caller can schedule a real one and force a complete repaint — a lost
+    /// frame must never turn every later request into a no-op.
+    #[cfg(target_os = "windows")]
+    fn take_stalled(&self, max: std::time::Duration) -> bool {
+        if !self.pending.get() {
+            return false;
+        }
+        let Some(since) = self.pending_since.get() else { return false };
+        if since.elapsed() < max {
+            return false;
+        }
+        self.pending.set(false);
+        self.pending_since.set(None);
+        self.retries.set(0);
+        true
+    }
+
+    /// Returns true when the caller should schedule the watchdog timer.
+    #[cfg(target_os = "windows")]
+    fn arm_watchdog(&self) -> bool {
+        !self.watchdog_armed.replace(true)
+    }
+
+    /// Called when the watchdog fires. Returns true when the caller must
+    /// request a fresh frame because the previously scheduled one was lost.
+    #[cfg(target_os = "windows")]
+    fn watchdog_tick(&self, paintable: bool) -> bool {
+        self.watchdog_armed.set(false);
+        if !self.pending.get() {
+            self.retries.set(0);
+            return false;
+        }
+        if !paintable {
+            // A minimized/hidden window has no frame to lose. Drop the latch
+            // so the restore path can arm a fresh one.
+            self.pending.set(false);
+            self.retries.set(0);
+            return false;
+        }
+        // Bound the self-healing: if the window really cannot paint, leave the
+        // remaining recovery to focus/visibility transitions instead of
+        // spinning a timer forever.
+        const MAX_WATCHDOG_RETRIES: u8 = 2;
+        if self.retries.get() >= MAX_WATCHDOG_RETRIES {
+            return false;
+        }
+        self.retries.set(self.retries.get() + 1);
+        self.pending.set(false);
+        true
+    }
+}
+
 /// GraphicsWindow is an implementation of the [WindowAdapter][`crate::eventloop::WindowAdapter`] trait. This is
 /// typically instantiated by entry factory functions of the different graphics back ends.
 pub struct WinitWindowAdapter {
     pub shared_backend_data: Rc<SharedBackendData>,
     window: corelib::api::Window,
     pub(crate) self_weak: Weak<Self>,
-    pending_redraw: Cell<bool>,
+    pending_redraw: RedrawLatch,
     constraints: Cell<corelib::window::LayoutConstraints>,
     /// Indicates if the window is shown, from the perspective of the API user.
     shown: Cell<WindowVisibility>,
@@ -913,7 +1030,7 @@ impl WinitWindowAdapter {
             return Ok(()); // caller bug, doesn't make sense to call draw() when not shown
         }
 
-        self.pending_redraw.set(false);
+        self.pending_redraw.presented();
 
         // A minimized Win32 window has no visible client area: rendering a
         // forced full frame into the DIB is wasted work and stalls the
@@ -1497,6 +1614,15 @@ impl WinitWindowAdapter {
                     if cfg!(target_os = "macos") { winit_window.has_focus() } else { have_focus };
                 let activation_result = self.activation_changed(have_focus);
 
+                // Slint's popups are drawn inside this window, so nothing takes
+                // the focus away from it and a context menu would otherwise stay
+                // on screen after the user switches to another application. A
+                // native menu disappears with the window activation; close ours
+                // on the same edge.
+                if !have_focus {
+                    WindowInner::from_pub(self.window()).close_all_popups();
+                }
+
                 // A child/auxiliary Win32 window can expose or cover part of
                 // a software-rendered parent without producing an Occluded
                 // event. Its backing DIB may then report a reusable age even
@@ -1532,6 +1658,13 @@ impl WinitWindowAdapter {
                             activation_result.and_then(|_| self.draw())?;
                         } else {
                             activation_result?;
+                            // A native menu can swallow the queued frame while
+                            // the window is inactive. A plain request_redraw()
+                            // is inert while the latch is stuck, so force a
+                            // fresh frame instead of relying on the skipped
+                            // full draw above.
+                            self.pending_redraw.reset();
+                            self.request_redraw();
                         }
                     } else {
                         crate::software_diagnostics::record_event(
@@ -1915,7 +2048,7 @@ impl WinitWindowAdapter {
         self.shown.set(visibility);
         self.pending_resize_event_after_show
             .set(!matches!(visibility, WindowVisibility::Hidden));
-        self.pending_redraw.set(false);
+        self.pending_redraw.reset();
         if matches!(
             visibility,
             WindowVisibility::ShownFirstTime | WindowVisibility::Shown
@@ -2024,7 +2157,7 @@ impl WinitWindowAdapter {
             // native frame appears, but the client area remains untouched.
             // Always enqueue a frame after making an existing surface visible.
             self.renderer.occluded(false);
-            self.pending_redraw.set(false);
+            self.pending_redraw.reset();
             self.request_redraw();
 
             // In wasm a request_redraw() issued before show() results in a draw() even when the window
@@ -2289,7 +2422,18 @@ impl WindowAdapter for WinitWindowAdapter {
     }
 
     fn request_redraw(&self) {
-        if !self.pending_redraw.replace(true)
+        // A request that has been waiting far longer than a frame means the
+        // previous one never reached `draw()` (native menu modal loop, lost
+        // paint). Repaint completely instead of coalescing into a dead latch.
+        let stalled = self
+            .pending_redraw
+            .take_stalled(std::time::Duration::from_millis(400));
+        if stalled {
+            self.renderer.occluded(true);
+        }
+        let already = self.pending_redraw.replace(true);
+        let schedule = !already || stalled;
+        if schedule
             && let WinitWindowOrNone::HasWindow {
                 window,
                 frame_throttle,
@@ -2297,6 +2441,27 @@ impl WindowAdapter for WinitWindowAdapter {
             } = &*self.winit_window_or_none.borrow()
         {
             frame_throttle.request_throttled_redraw(window);
+        }
+
+        #[cfg(target_os = "windows")]
+        if self.pending_redraw.arm_watchdog() {
+            let weak = self.self_weak.clone();
+            corelib::timers::Timer::single_shot(
+                std::time::Duration::from_millis(150),
+                move || {
+                    let Some(window) = weak.upgrade() else {
+                        return;
+                    };
+                    let paintable = !matches!(window.shown.get(), WindowVisibility::Hidden)
+                        && !window.winit_window().is_some_and(|w| {
+                            w.is_minimized() == Some(true)
+                        });
+                    let retry = window.pending_redraw.watchdog_tick(paintable);
+                    if retry {
+                        window.request_redraw();
+                    }
+                },
+            );
         }
     }
 
@@ -2671,6 +2836,19 @@ impl WindowAdapterInternal for WinitWindowAdapter {
                 self.event_loop_proxy.clone(),
             ) {
                 context_menu_muda_adapter.replace(Some(new_adapter));
+                // TrackPopupMenu ran a modal loop on this thread: while it was
+                // open no RedrawRequested could be delivered, and on the way
+                // out the window was re-enabled without a paint. Present one
+                // complete frame now, otherwise the menu's rectangle keeps the
+                // pre-menu pixels and only a focus transition can recover it.
+                //
+                // The latch is cleared unconditionally: any frame requested
+                // while the modal loop ran is gone for good, and waiting for
+                // the timeout to notice would still swallow the next request
+                // when the menu was opened and dismissed inside one period.
+                self.pending_redraw.reset();
+                self.renderer.occluded(true);
+                self.request_redraw();
                 return true;
             }
         }
@@ -2888,4 +3066,60 @@ fn canvas_has_explicit_size_set(canvas: &web_sys::HtmlCanvasElement) -> bool {
 
     computed_style.get_property_value("width").ok().as_deref() != Some("auto")
         || computed_style.get_property_value("height").ok().as_deref() != Some("auto")
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod redraw_latch_tests {
+    use super::RedrawLatch;
+
+    #[test]
+    fn presented_frame_clears_the_watchdog() {
+        let latch = RedrawLatch::default();
+        assert!(!latch.replace(true), "first request must schedule a frame");
+        assert!(latch.arm_watchdog(), "first request must arm the watchdog");
+        assert!(!latch.arm_watchdog(), "one watchdog at a time");
+        latch.presented();
+        assert!(!latch.watchdog_tick(true), "no lost frame to repair");
+        assert!(latch.arm_watchdog(), "watchdog flag released after its tick");
+    }
+
+    #[test]
+    fn lost_frame_rearms_once() {
+        let latch = RedrawLatch::default();
+        assert!(!latch.replace(true));
+        assert!(latch.arm_watchdog());
+        assert!(latch.watchdog_tick(true), "lost frame must be re-requested");
+        assert!(!latch.get(), "re-arm clears the stuck latch");
+        assert!(
+            !latch.replace(true),
+            "the re-request must schedule a fresh frame"
+        );
+    }
+
+    #[test]
+    fn minimized_window_does_not_spin_the_watchdog() {
+        let latch = RedrawLatch::default();
+        assert!(!latch.replace(true));
+        assert!(latch.arm_watchdog());
+        assert!(!latch.watchdog_tick(false), "nothing can paint while minimized");
+        assert!(!latch.get(), "restore path can arm a fresh frame");
+    }
+
+    #[test]
+    fn watchdog_retries_are_bounded() {
+        let latch = RedrawLatch::default();
+        assert!(!latch.replace(true));
+        assert!(latch.arm_watchdog());
+        assert!(latch.watchdog_tick(true));
+        assert!(!latch.replace(true));
+        assert!(latch.arm_watchdog());
+        assert!(latch.watchdog_tick(true));
+        assert!(!latch.replace(true));
+        assert!(latch.arm_watchdog());
+        assert!(!latch.watchdog_tick(true), "third tick must stop retrying");
+        assert!(latch.get(), "latch stays set for focus/visibility recovery");
+        latch.reset();
+        assert!(!latch.get());
+        assert!(latch.arm_watchdog(), "reset releases the watchdog flag");
+    }
 }

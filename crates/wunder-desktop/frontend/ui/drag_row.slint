@@ -14,6 +14,11 @@ import { Theme } from "theme.slint";
 // - 线程行只缩进一格：状态点列起于 28px，标题恰好接到工作区标题列（48px）。
 export global SidebarMetrics {
     in-out property <length> thread-height: 32px;
+    // 行底色（选中/悬停）上下各收进的气口。行格节距仍是 32px，但相邻两条线程
+    // 同时高亮时，两片 8px 圆角的底色原本直接贴合，读起来是一整块；各收 2px
+    // 留出 4px 的缝，才是两条。落点解析按行格顶缘算（DragRow 用 absolute - y
+    // 还原格顶），所以行内缩不影响拖拽。
+    in-out property <length> row-air: 2px;
     // 分组行格比线程行格高一圈气口：上方把这一组和上一组分开，下方把工作区
     // 标题和它的第一条线程拉开。两行底色原本直接贴合，选中时读起来像一整块。
     in-out property <length> group-height: 40px;

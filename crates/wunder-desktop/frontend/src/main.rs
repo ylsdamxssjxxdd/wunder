@@ -142,6 +142,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = MainWindow::new()?;
     startup_log("main_window_new", startup_boot);
+    // 右键菜单用 Slint 自己的弹层，不走原生 Win32 菜单。TrackPopupMenu 会在 UI
+    // 线程跑嵌套模态循环：菜单开着期间不出帧、不跑定时器，正在流式输出的回复会
+    // 整段冻住，只有收起菜单才恢复。弹层留在同一事件循环里，菜单开着页面照常刷新。
+    app.window().set_native_popup_menus_enabled(false);
     // 界面语言：窗口把 `runtime-language` 派生成 `ui-zh` 后回传，这里落到
     // `I18n.zh`。先装回调，任何设置投影（启动加载 / 设置页保存）都会即时生效。
     ui_language::install(&app);
@@ -661,10 +665,9 @@ fn startup_stage_note(stage: &str) -> Option<&'static str> {
         "orchestrator_done" => Some("正在准备任务调度…"),
         "thread_runtime_done" => Some("正在接入消息渠道…"),
         "channel_hub_done" => Some("正在恢复定时任务…"),
-        "new_done" => Some("正在清理上次运行…"),
-        "desktop:purge_thread_leases"
-        | "desktop:settle_restarted_threads"
-        | "desktop:settle_orphaned_tasks" => Some("正在收尾上次运行…"),
+        "new_done" => Some("正在准备本地数据…"),
+        // 启动收尾（上次运行残留的锁/轮次/台账）已挪到首屏之后后台进行，
+        // 不再占用启动横幅：它只影响历史怎么显示，用户不必等它。
         _ => None,
     }
 }

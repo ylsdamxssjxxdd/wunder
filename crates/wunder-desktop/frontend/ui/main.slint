@@ -2052,6 +2052,12 @@ export component MainWindow inherits Window {
             TouchArea { }
             VerticalLayout {
                 spacing: 0px;
+                // 卡片下沿留出与圆角同宽的一条：设置页自带整块底色（导航列 +
+                // 内容列都铺满到边），而卡片这层 clip 是矩形裁剪，底色会盖住
+                // 下沿的弧线和描边——顶部因为标题行是透明的所以是圆的，底部就
+                // 成了直角。让内容止步于弧线的起点（y = 高 - 半径处弧线正好
+                // 与卡片同宽），下沿的圆角就交还给卡片自己画。
+                padding-bottom: root.settings-fullscreen ? 0px : Theme.radius-xl;
                 HorizontalLayout {
                     height: root.narrow ? 48px : 44px;
                     padding-left: root.narrow ? 8px : 16px;

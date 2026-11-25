@@ -1345,7 +1345,7 @@ fn create_renderer(
 
 impl private::WinitWindowAccessorSealed for i_slint_core::api::Window {}
 
-#[cfg(test)]
+#[cfg(all(test, feature = "standalone-tests"))]
 mod testui {
     slint::slint! {
         export component App inherits Window {
@@ -1355,7 +1355,11 @@ mod testui {
 }
 
 // Sorry, can't test with rust test harness and multiple threads.
-#[cfg(not(any(target_arch = "wasm32", target_vendor = "apple")))]
+#[cfg(all(
+    test,
+    feature = "standalone-tests",
+    not(any(target_arch = "wasm32", target_vendor = "apple"))
+))]
 #[test]
 fn test_window_accessor_and_rwh() {
     slint::platform::set_platform(Box::new(crate::Backend::new().unwrap())).unwrap();

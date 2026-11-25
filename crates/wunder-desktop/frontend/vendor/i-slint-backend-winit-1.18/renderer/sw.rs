@@ -301,7 +301,20 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
             height.get(),
             &target_buffer,
         );
-        if !damage_rects.is_empty() {
+        // `draw()` also runs when the operating system asks for pixels that
+        // Slint has no damage for: a native Win32 popup menu just closed over
+        // part of the window, or `WM_SETREDRAW` cleared the client area. The
+        // surface is the only copy of those pixels, so publish all of it
+        // instead of leaving the exposed area on the previous frame.
+        if damage_rects.is_empty() {
+            winit_window.pre_present_notify();
+            if let Err(error) = target_buffer.present() {
+                present_failed = true;
+                eprintln!("Slint software surface present deferred: {error}");
+                self.force_full_repaint.set(true);
+                self.retry_deferred_resize(&winit_window);
+            }
+        } else {
             winit_window.pre_present_notify();
             if let Err(error) = target_buffer.present_with_damage(&damage_rects) {
                 present_failed = true;
@@ -314,7 +327,7 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
                 self.retry_deferred_resize(&winit_window);
             }
         }
-        if !present_failed && !damage_rects.is_empty() {
+        if !present_failed {
             crate::first_frame::notify_presented();
         }
         if let Some(present_start) = present_start {

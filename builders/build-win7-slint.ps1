@@ -97,29 +97,39 @@ $env:RANLIB_i686_win7_windows_gnu = Join-Path $MingwBin 'i686-w64-mingw32-gcc-ra
 # windows-targets 0.48 only recognizes target_vendor=pc/uwp in its build
 # script. Resolve its prebuilt GNU import library explicitly for the Win7
 # vendor target used by this repository.
-$metadataArgs = @("metadata", "--locked", "--manifest-path", $manifest, "--format-version", "1", "--filter-platform", $target)
-if ($CargoExe) {
-  $metadataJson = & $cargoCommand @metadataArgs
-} else {
-  $metadataJson = & cargo "+$Toolchain" @metadataArgs
+#
+# The directory is taken from Cargo's own source roots rather than from
+# `cargo metadata`: the resolved 32-bit graph is past 2 MB, where Windows
+# PowerShell 5.1's ConvertFrom-Json spins for minutes and then throws on the
+# size limit, and the assembly-loading alternatives are equally slow here.
+$cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE ".cargo" }
+$sourceRoots = @()
+$sourceConfig = Join-Path $cargoHome "config.toml"
+if (Test-Path -LiteralPath $sourceConfig) {
+  # build-win7-offline.ps1 points crates-io at a vendored directory; use it
+  # first so the import library always matches the sources being compiled.
+  $vendorLine = Select-String -LiteralPath $sourceConfig -Pattern '^\s*directory\s*=\s*"([^"]+)"' |
+    Select-Object -First 1
+  if ($vendorLine) { $sourceRoots += $vendorLine.Matches[0].Groups[1].Value }
 }
-if ($LASTEXITCODE -ne 0) {
-  throw "cargo metadata failed with exit code $LASTEXITCODE"
-}
-$metadata = $metadataJson | ConvertFrom-Json
-$windowsImportPackages = @($metadata.packages |
-  Where-Object { $_.name -eq "windows_i686_gnu" })
-if ($windowsImportPackages.Count -eq 0) {
-  throw "windows_i686_gnu is missing from the Slint dependency graph"
+if ($sourceRoots.Count -eq 0) {
+  $registryRoot = Join-Path $cargoHome "registry\src"
+  if (Test-Path -LiteralPath $registryRoot) {
+    $sourceRoots += @(Get-ChildItem -LiteralPath $registryRoot -Directory |
+      ForEach-Object { $_.FullName })
+  }
 }
 $windowsImportDirs = @()
-foreach ($windowsImportPackage in $windowsImportPackages) {
-  $windowsImportDir = Join-Path (Split-Path -Parent $windowsImportPackage.manifest_path) "lib"
-  $windowsImportLibraries = @(Get-ChildItem -LiteralPath $windowsImportDir -Filter "libwindows.*.a" -File -ErrorAction SilentlyContinue)
-  if ($windowsImportLibraries.Count -eq 0) {
-    throw "missing Windows import library in: $windowsImportDir"
-  }
-  $windowsImportDirs += $windowsImportDir
+foreach ($sourceRoot in ($sourceRoots | Select-Object -Unique)) {
+  $windowsImportDirs += @(
+    Get-ChildItem -LiteralPath $sourceRoot -Directory -Filter "windows_i686_gnu-*" -ErrorAction SilentlyContinue |
+      ForEach-Object { Join-Path $_.FullName "lib" } |
+      Where-Object { Test-Path -LiteralPath $_ }
+  )
+}
+$windowsImportDirs = @($windowsImportDirs | Select-Object -Unique)
+if ($windowsImportDirs.Count -eq 0) {
+  throw "windows_i686_gnu is missing from the Cargo sources under $cargoHome"
 }
 $existingRustFlags = $env:CARGO_TARGET_I686_WIN7_WINDOWS_GNU_RUSTFLAGS
 $nativeLinkFlag = (($windowsImportDirs | Select-Object -Unique) |

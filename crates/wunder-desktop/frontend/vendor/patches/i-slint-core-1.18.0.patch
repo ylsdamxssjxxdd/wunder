@@ -1945,3 +1945,28 @@ index f7f5622f..926514ee 100644
      /// Returns true if the window is visible
      pub fn is_visible(&self) -> bool {
          self.strong_component_ref.borrow().is_some()
+
+diff --git a/i-slint-core-1.18.0/api.rs b/i-slint-core-1.18/api.rs
+index 35b6d16..4209c54 100644
+--- a/i-slint-core-1.18.0/api.rs
++++ b/i-slint-core-1.18/api.rs
+@@ -536,6 +536,19 @@ impl Window {
+         self.0.window_adapter().request_redraw()
+     }
+ 
++    /// Chooses whether context menus are handed to the platform or drawn by Slint.
++    ///
++    /// A native Win32 menu runs `TrackPopupMenu`, a modal message loop on the UI
++    /// thread: while it is open the event loop is borrowed, so no frame is drawn
++    /// and no timer fires — a streaming transcript or an animation freezes behind
++    /// the menu until the user dismisses it. Slint's own popup keeps the regular
++    /// event loop and repaints the window underneath.
++    ///
++    /// Defaults to `true` (native menus).
++    pub fn set_native_popup_menus_enabled(&self, enabled: bool) {
++        self.0.native_popup_menus_enabled.set(enabled);
++    }
++
+     /// This function returns the scale factor that allows converting between logical and
+     /// physical pixels.
+     pub fn scale_factor(&self) -> f32 {
