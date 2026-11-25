@@ -105,6 +105,19 @@ for ABI in "${ABI_LIST[@]}"; do
     target_dir="${CARGO_TARGET_DIR:-$PWD/target}"
     mkdir -p "android/app/src/main/jniLibs/$ABI"
     cp "$target_dir/$TARGET/release/libwunder_android.so" "android/app/src/main/jniLibs/$ABI/"
+    # Skia is C++ and the NDK clang driver links libwunder_android.so against
+    # libc++_shared.so. Gradle only packages jniLibs, and the emulator's system
+    # libc++ is older than NDK 30 (it lacks std::__ndk1::__hash_memory), so the
+    # APK must carry the exact NDK runtime next to the Rust library.
+    libcxx_shared="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$TARGET/libc++_shared.so"
+    if [[ ! -f "$libcxx_shared" ]]; then
+        libcxx_shared="$(find "$ANDROID_NDK_ROOT" -path "*/sysroot/usr/lib/$TARGET/libc++_shared.so" -print -quit)"
+    fi
+    [[ -f "$libcxx_shared" ]] || {
+        echo "libc++_shared.so is missing for $TARGET under $ANDROID_NDK_ROOT" >&2
+        exit 2
+    }
+    cp -f "$libcxx_shared" "android/app/src/main/jniLibs/$ABI/"
 done
 
 GRADLE="${GRADLE:-$HOME/gradle/gradle-8.13/bin/gradle}"

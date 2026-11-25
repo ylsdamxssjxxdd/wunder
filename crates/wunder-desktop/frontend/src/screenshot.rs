@@ -846,6 +846,25 @@ pub fn capture_fullscreen(app: slint::Weak<MainWindow>, hide_window: bool) {
     });
 }
 
+/// Cursor position in the frozen frame's pixels. The selector opens without a
+/// pointer move, so this is what lets Space snap to the window the user was
+/// actually pointing at before the hotkey fired.
+fn cursor_in_frame(origin_x: i32, origin_y: i32, width: u32, height: u32) -> (f32, f32) {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::POINT;
+        use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+        let mut point = POINT { x: 0, y: 0 };
+        if unsafe { GetCursorPos(&mut point) } != 0 {
+            let x = (point.x - origin_x).clamp(0, width.saturating_sub(1) as i32);
+            let y = (point.y - origin_y).clamp(0, height.saturating_sub(1) as i32);
+            return (x as f32, y as f32);
+        }
+    }
+    ((width as f32) / 2.0, (height as f32) / 2.0)
+}
+
 fn show_selector(app: slint::Weak<MainWindow>, frame: screen_capture::ScreenCapture) {
     let (width, height) = (frame.width, frame.height);
     let (origin_x, origin_y) = (frame.origin_x, frame.origin_y);
@@ -895,6 +914,9 @@ fn show_selector(app: slint::Weak<MainWindow>, frame: screen_capture::ScreenCapt
         // The selector window is reused across captures; drop the drag state
         // and any detection state a previous session may have left behind.
         overlay.set_auto_detect(false);
+        let (pointer_x, pointer_y) = cursor_in_frame(origin_x, origin_y, width, height);
+        overlay.set_initial_pointer_x(pointer_x);
+        overlay.set_initial_pointer_y(pointer_y);
         overlay.invoke_arm();
         // A borderless top-level window whose size is merely requested can be
         // constrained to the work area. That makes a 1600 px capture render

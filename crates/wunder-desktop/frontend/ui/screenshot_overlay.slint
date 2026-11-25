@@ -11,9 +11,9 @@ import { Theme } from "theme.slint";
 // selection made against it then lands at a fraction of its intended size.
 //
 // Interaction model, matching what drawing tools do:
-//   * No selection: dragging draws a new region, a plain click selects the
-//     window rectangle under the pointer (the candidates are detected by Rust),
-//     and the detected window under the pointer is outlined while hovering.
+//   * Idle: drag draws a region. Space snaps the selection to the window or
+//     control under the pointer; the window tree is built lazily on that key,
+//     so opening the selector costs no detection work.
 //   * With a selection: dragging inside moves it, dragging one of the eight
 //     handles resizes it, a click outside starts a new region.
 //
@@ -57,9 +57,8 @@ export component ScreenshotOverlay inherits Window {
     // Physical size of the frozen frame the selector is drawn over.
     in property <int> frame-width: 0;
     in property <int> frame-height: 0;
-    // Window / control detection under the pointer. Currently off: manual
-    // framing is the supported path, and it keeps the selector free of
-    // cross-process probes.
+    // Legacy hover-autodetect switch. The selector is key-driven now (Space
+    // calls `detect-at-pointer`); this stays false so hover never probes.
     in property <bool> auto-detect: false;
     // Detected window rectangle under the pointer, in frozen-frame pixels,
     // resolved by Rust against the window tree it detected for this frame.
@@ -131,11 +130,16 @@ export component ScreenshotOverlay inherits Window {
     // below can never divide by zero on a window that has not been laid out.
     private property <float> view-width: max(1px, root.width) / 1px;
     private property <float> view-height: max(1px, root.height) / 1px;
-    // Pointer position in selector pixels. Tracked even though hover detection
-    // is off, so the detection key knows where the user is pointing without
-    // waiting for another move event.
-    private property <float> pointer-x: root.view-width / 2;
-    private property <float> pointer-y: root.view-height / 2;
+    // Pointer position in frozen-frame pixels. Tracked even though hover
+    // detection is off, so the detection key knows where the user is pointing
+    // without waiting for another move event. Rust seeds it with the real
+    // cursor when the selector opens, so Space works before the first move.
+    private property <float> pointer-x: root.frame-width * 1.0 / 2.0;
+    private property <float> pointer-y: root.frame-height * 1.0 / 2.0;
+    // Real cursor position in frame pixels for the capture being armed. -1
+    // means the platform could not read it; the selector then starts centered.
+    in property <float> initial-pointer-x: -1;
+    in property <float> initial-pointer-y: -1;
     // Window rectangle the current on-demand detection snapped to. A later
     // element answer only refines the selection while the user has not moved
     // or resized it in the meantime.
@@ -194,8 +198,8 @@ export component ScreenshotOverlay inherits Window {
     /// the selector stays responsive even over a busy application.
     function detect-at-pointer() {
         if root.mode != 0 { return; }
-        let fx = root.to-frame-x(root.pointer-x);
-        let fy = root.to-frame-y(root.pointer-y);
+        let fx = round(root.pointer-x);
+        let fy = round(root.pointer-y);
         let region = root.region-at(fx, fy);
         if region.w < 8 || region.h < 8 { return; }
         root.sel-x = root.to-view-x(region.x);
@@ -267,8 +271,8 @@ export component ScreenshotOverlay inherits Window {
         root.detect-base-y = 0;
         root.detect-base-w = 0;
         root.detect-base-h = 0;
-        root.pointer-x = root.view-width / 2;
-        root.pointer-y = root.view-height / 2;
+        root.pointer-x = root.initial-pointer-x >= 0 ? root.initial-pointer-x : root.frame-width * 1.0 / 2.0;
+        root.pointer-y = root.initial-pointer-y >= 0 ? root.initial-pointer-y : root.frame-height * 1.0 / 2.0;
         root.reset-hover();
         root.reset-selection();
     }
@@ -505,8 +509,8 @@ export component ScreenshotOverlay inherits Window {
             } else if event.kind == PointerEventKind.move {
                 let x = self.mouse-x / 1px;
                 let y = self.mouse-y / 1px;
-                root.pointer-x = x;
-                root.pointer-y = y;
+                root.pointer-x = root.to-frame-x(x);
+                root.pointer-y = root.to-frame-y(y);
                 if root.mode == 0 {
                     if root.has-selection {
                         // Keep the window under the pointer current even with
@@ -518,8 +522,8 @@ export component ScreenshotOverlay inherits Window {
                         root.cursor-edge = 0;
                         if root.auto-detect {
                             root.hover-at(x, y);
-                            root.probe-x = x;
-                            root.probe-y = y;
+                            root.probe-x = root.pointer-x;
+                            root.probe-y = root.pointer-y;
                             root.probe-generation += 1;
                         }
                     }

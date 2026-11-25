@@ -24,6 +24,14 @@ import android.window.OnBackInvokedDispatcher;
 public class WunderActivity extends NativeActivity {
     private static final String TAG = "WunderBack";
 
+    static {
+        // Slint's Android backend renders through Skia, so libwunder_android.so
+        // needs the NDK's libc++ runtime. Load the APK copy explicitly before
+        // NativeActivity loads the native shell: the emulator's system libc++
+        // is older and does not provide std::__ndk1::__hash_memory.
+        System.loadLibrary("c++_shared");
+    }
+
     // Kept as Object so class loading on API 26-32 never resolves the
     // API 33+ callback type. Casts only happen inside the guarded path.
     private Object backCallback;

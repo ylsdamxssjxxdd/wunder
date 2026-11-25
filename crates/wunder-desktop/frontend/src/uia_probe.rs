@@ -262,40 +262,6 @@ mod imp {
         x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom
     }
 
-    /// Ask the provider for the element under the pointer and keep it only when
-    /// it belongs to the detected window. This is the fast path for windows
-    /// whose accessibility children are slow or absent.
-    fn locate_point(automation: &IUIAutomation, root: RECT, x: i32, y: i32) -> Option<Located> {
-        let point = windows::Win32::Foundation::POINT { x, y };
-        let element = unsafe { automation.ElementFromPoint(point) }.ok()?;
-        let rect = rect_of(&element)?;
-        if !contains(rect, x, y) || !within(rect, root) {
-            return None;
-        }
-        let kind = unsafe { element.CurrentControlType() }
-            .map(|kind| kind.0 as i32)
-            .unwrap_or(0);
-        let rect_area = area(rect);
-        if rect_area <= 0 {
-            return None;
-        }
-        let confident = is_confident(kind, rect_area, area(root));
-        trace!(
-            "point rect={rect:?} kind={kind} area={rect_area} confident={confident}"
-        );
-        Some(Located { rect, confident })
-    }
-
-    /// Whether `rect` lies inside `outer`, allowing a small provider rounding
-    /// error at the edges.
-    fn within(rect: RECT, outer: RECT) -> bool {
-        const TOLERANCE: i32 = 4;
-        rect.left >= outer.left - TOLERANCE
-            && rect.top >= outer.top - TOLERANCE
-            && rect.right <= outer.right + TOLERANCE
-            && rect.bottom <= outer.bottom + TOLERANCE
-    }
-
     fn rect_of(element: &IUIAutomationElement) -> Option<RECT> {
         let rect = unsafe { element.CurrentBoundingRectangle() }.ok()?;
         (rect.right > rect.left && rect.bottom > rect.top).then_some(rect)
@@ -348,18 +314,6 @@ mod imp {
             .map(|kind| kind.0 as i32)
             .unwrap_or(0);
         trace!("walk hwnd={hwnd} point=({x},{y}) root={:?} kind={root_kind}", root);
-        // `ElementFromPoint` asks the provider directly for the deepest element
-        // at the pointer. It is one cross-process call instead of a top-down
-        // walk, and it still works when a lazily built tree exposes no
-        // children (the taskbar's XAML island is a known case). Validate the
-        // answer against the window rectangle so an overlapping popup cannot
-        // hijack the selection.
-        if let Some(point) = locate_point(automation, root, x, y) {
-            if point.confident {
-                return Some(point);
-            }
-            trace!("point not confident rect={:?}", point.rect);
-        }
         let (Some(walker), Some(cache)) = (walker, cache) else {
             return Some(Located {
                 rect: root,
@@ -391,9 +345,16 @@ mod imp {
                 if let Some(rect) = cached_rect(&current) {
                     if contains(rect, x, y) {
                         budget = budget.saturating_sub(1);
-                        let has_children =
-                            unsafe { walker.GetFirstChildElementBuildCache(&current, cache) }.is_ok();
                         let kind = cached_kind(&current);
+                        // Atomic controls are endpoints; asking the provider
+                        // for children only to set `has_children=false` costs
+                        // an extra cross-process call on every button/row.
+                        let has_children = if is_atomic_control(kind) {
+                            false
+                        } else {
+                            budget = budget.saturating_sub(1);
+                            unsafe { walker.GetFirstChildElementBuildCache(&current, cache) }.is_ok()
+                        };
                         trace!(
                             "  depth={depth} candidate={rect:?} kind={kind} children={has_children}"
                         );
