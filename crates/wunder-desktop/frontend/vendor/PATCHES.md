@@ -377,16 +377,15 @@ deltas).
   `draw()` runs with no damage: a native popup that just closed, or
   `WM_SETREDRAW` re-enabling the window, asks for pixels Slint reports no damage
   for, and skipping `present()` left that rectangle on the previous frame.
-- The desktop shell shows context menus with Slint's own popup instead of a
-  native Win32 menu. `TrackPopupMenu` is a modal loop on the UI thread: while it
-  is open the event loop is borrowed, so no frame is produced and no timer fires
-  — a streaming transcript froze behind the menu until the user dismissed it,
-  which no amount of redraw bookkeeping can fix. `Window::set_native_popup_menus_enabled()`
+- Context menus stay native by default, but the choice is now reachable.
+  `TrackPopupMenu` is a modal loop on the UI thread: while it is open the event
+  loop is borrowed, so no frame is produced and no timer fires — a streaming
+  transcript freezes behind the menu until the user dismisses it, which no
+  amount of redraw bookkeeping can fix. `Window::set_native_popup_menus_enabled()`
   exposes the existing `WindowInner` switch (previously read but never written)
-  and the shell turns it off once at startup. Because the popup is drawn inside
-  the window and nothing takes the focus away, a window deactivation now closes
-  active popups so they do not outlive the window switch like a native menu
-  would.
+  so a window can opt into Slint's in-window popup, which keeps the regular
+  event loop; the desktop shell leaves it on native and only the menu probe
+  flips it to compare both modes.
 - `winit` 0.30.2 no longer drops non-ASCII keyboard text while an IMM32
   composition is active. Some legacy Chinese IMEs submit full-width punctuation
   through standalone `WM_CHAR` messages, with neither a keydown nor a

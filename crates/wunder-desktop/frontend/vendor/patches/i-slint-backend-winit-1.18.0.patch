@@ -1025,7 +1025,7 @@ index 0000000..a773d16
 +        .unwrap_or_default()
 +}
 diff --git a/i-slint-backend-winit-1.18.0/winitwindowadapter.rs b/i-slint-backend-winit-1.18/winitwindowadapter.rs
-index 1ad204f..eda9fd4 100644
+index 1ad204f..707d01a 100644
 --- a/i-slint-backend-winit-1.18.0/winitwindowadapter.rs
 +++ b/i-slint-backend-winit-1.18/winitwindowadapter.rs
 @@ -114,7 +114,10 @@ fn filter_out_zero_width_or_height(
@@ -1567,21 +1567,12 @@ index 1ad204f..eda9fd4 100644
              }
              WinitWindowEvent::CloseRequested => {
                  self.window()
-@@ -1330,7 +1612,75 @@ impl WinitWindowAdapter {
+@@ -1330,7 +1612,66 @@ impl WinitWindowAdapter {
                  // Work around https://github.com/rust-windowing/winit/issues/4371
                  let have_focus =
                      if cfg!(target_os = "macos") { winit_window.has_focus() } else { have_focus };
 -                self.activation_changed(have_focus)?;
 +                let activation_result = self.activation_changed(have_focus);
-+
-+                // Slint's popups are drawn inside this window, so nothing takes
-+                // the focus away from it and a context menu would otherwise stay
-+                // on screen after the user switches to another application. A
-+                // native menu disappears with the window activation; close ours
-+                // on the same edge.
-+                if !have_focus {
-+                    WindowInner::from_pub(self.window()).close_all_popups();
-+                }
 +
 +                // A child/auxiliary Win32 window can expose or cover part of
 +                // a software-rendered parent without producing an Occluded
@@ -1644,7 +1635,7 @@ index 1ad204f..eda9fd4 100644
              }
  
              WinitWindowEvent::KeyboardInput { event, is_synthetic, .. } => {
-@@ -1470,8 +1820,21 @@ impl WinitWindowAdapter {
+@@ -1470,8 +1811,21 @@ impl WinitWindowAdapter {
                  let position = position.to_logical(runtime_window.scale_factor() as f64);
                  let cursor_pos = euclid::point2(position.x, position.y);
                  self.cursor_pos.set(cursor_pos);
@@ -1668,7 +1659,7 @@ index 1ad204f..eda9fd4 100644
              }
              WinitWindowEvent::CursorLeft { .. } => {
                  // On the html canvas, we don't get the mouse move or release event when outside the canvas. So we have no choice but canceling the event
-@@ -1509,8 +1872,8 @@ impl WinitWindowAdapter {
+@@ -1509,8 +1863,8 @@ impl WinitWindowAdapter {
                      winit::event::ElementState::Pressed => {
                          if button == PointerEventButton::Left
                              && self.current_resize_direction.get().is_some()
@@ -1678,7 +1669,7 @@ index 1ad204f..eda9fd4 100644
                              return Ok(());
                          }
  
-@@ -1574,6 +1937,13 @@ impl WinitWindowAdapter {
+@@ -1574,6 +1928,13 @@ impl WinitWindowAdapter {
                  self.update_accent_color();
              }
              WinitWindowEvent::Occluded(occluded) => {
@@ -1692,7 +1683,7 @@ index 1ad204f..eda9fd4 100644
                  self.renderer.occluded(occluded);
  
                  // wgpu hands out no drawable while the window isn't visible, see
-@@ -1609,6 +1979,50 @@ impl WinitWindowAdapter {
+@@ -1609,6 +1970,50 @@ impl WinitWindowAdapter {
              WinitWindowEvent::AxisMotion { .. } => {
                  // Ignored, but happens often and is also ignored for the purpose of bundling CursorMoved.
              }
@@ -1743,7 +1734,7 @@ index 1ad204f..eda9fd4 100644
              _ => {}
          }
  
-@@ -1632,9 +2046,13 @@ impl WinitWindowAdapter {
+@@ -1632,9 +2037,13 @@ impl WinitWindowAdapter {
          }
  
          self.shown.set(visibility);
@@ -1760,7 +1751,7 @@ index 1ad204f..eda9fd4 100644
              let recreating_window = matches!(visibility, WindowVisibility::Shown);
  
              let Some(winit_window) = self.winit_window() else {
-@@ -1671,6 +2089,11 @@ impl WinitWindowAdapter {
+@@ -1671,6 +2080,11 @@ impl WinitWindowAdapter {
  
              if !platform_dictates_window_size()
                  && winit_window.fullscreen().is_none()
@@ -1772,7 +1763,7 @@ index 1ad204f..eda9fd4 100644
                  && !self.has_explicit_size.get()
                  && preferred_size.width > 0 as Coord
                  && preferred_size.height > 0 as Coord
-@@ -1682,6 +2105,29 @@ impl WinitWindowAdapter {
+@@ -1682,6 +2096,29 @@ impl WinitWindowAdapter {
                  self.resize_window(size.into())?;
              };
  
@@ -1802,7 +1793,7 @@ index 1ad204f..eda9fd4 100644
              // Pre-render the first frame before mapping the window to avoid a flash of
              // uninitialized VRAM on X11 (no background_pixmap). Skipped on Wayland, where
              // rendering before the initial configure makes the compositor mis-size the window.
-@@ -1705,6 +2151,15 @@ impl WinitWindowAdapter {
+@@ -1705,6 +2142,15 @@ impl WinitWindowAdapter {
                  });
              }
  
@@ -1818,7 +1809,7 @@ index 1ad204f..eda9fd4 100644
              // In wasm a request_redraw() issued before show() results in a draw() even when the window
              // isn't visible, as opposed to regular windowing systems. The compensate for the lost draw,
              // explicitly render the first frame on show().
-@@ -1726,6 +2181,13 @@ impl WinitWindowAdapter {
+@@ -1726,6 +2172,13 @@ impl WinitWindowAdapter {
              self.context_menu.take();
  
              // Wayland doesn't support hiding a window, only destroying it entirely.
@@ -1832,7 +1823,7 @@ index 1ad204f..eda9fd4 100644
              if self.winit_window_or_none.borrow().as_window().is_some_and(|winit_window| {
                  use raw_window_handle::HasWindowHandle;
                  winit_window.window_handle().is_ok_and(|h| {
-@@ -1753,10 +2215,108 @@ impl WinitWindowAdapter {
+@@ -1753,10 +2206,108 @@ impl WinitWindowAdapter {
          }
      }
  
@@ -1941,7 +1932,7 @@ index 1ad204f..eda9fd4 100644
      pub(crate) fn pending_redraw(&self) -> bool {
          self.pending_redraw.get()
      }
-@@ -1767,15 +2327,25 @@ impl WinitWindowAdapter {
+@@ -1767,15 +2318,25 @@ impl WinitWindowAdapter {
          std::future::poll_fn(move |context| {
              let Some(self_) = self_weak.upgrade() else {
                  return std::task::Poll::Ready(Err(
@@ -1970,7 +1961,7 @@ index 1ad204f..eda9fd4 100644
                      }
                      std::task::Poll::Pending
                  }
-@@ -1805,9 +2375,10 @@ impl WindowAdapter for WinitWindowAdapter {
+@@ -1805,9 +2366,10 @@ impl WindowAdapter for WinitWindowAdapter {
      fn position(&self) -> Option<corelib::api::PhysicalPosition> {
          match &*self.winit_window_or_none.borrow() {
              WinitWindowOrNone::HasWindow { window, .. } => match window.outer_position() {
@@ -1984,7 +1975,7 @@ index 1ad204f..eda9fd4 100644
                  Err(_) => None,
              },
              WinitWindowOrNone::None(attributes) => {
-@@ -1851,12 +2422,47 @@ impl WindowAdapter for WinitWindowAdapter {
+@@ -1851,12 +2413,47 @@ impl WindowAdapter for WinitWindowAdapter {
      }
  
      fn request_redraw(&self) {
@@ -2035,7 +2026,7 @@ index 1ad204f..eda9fd4 100644
      }
  
      #[allow(clippy::unnecessary_cast)] // Coord is used!
-@@ -1925,6 +2531,8 @@ impl WindowAdapter for WinitWindowAdapter {
+@@ -1925,6 +2522,8 @@ impl WindowAdapter for WinitWindowAdapter {
              }
          }
  
@@ -2044,7 +2035,7 @@ index 1ad204f..eda9fd4 100644
          // Adjust the size of the window to the value of the width and height property (if these property are changed from .slint).
          // But not if there is a pending resize in flight as that resize will reset these properties back
          if ((existing_size.width - width).abs() > 1. || (existing_size.height - height).abs() > 1.)
-@@ -1938,7 +2546,13 @@ impl WindowAdapter for WinitWindowAdapter {
+@@ -1938,7 +2537,13 @@ impl WindowAdapter for WinitWindowAdapter {
              // If we're in fullscreen state, don't try to resize the window but maintain the surface
              // size we've been assigned to from the windowing system. Weston/Wayland don't like it
              // when we create a surface that's bigger than the screen due to constraints (#532).
@@ -2059,7 +2050,7 @@ index 1ad204f..eda9fd4 100644
                  // TODO: don't ignore error, propagate to caller
                  let immediately_resized = self
                      .resize_window(winit::dpi::LogicalSize::new(width, height).into())
-@@ -1973,7 +2587,7 @@ impl WindowAdapter for WinitWindowAdapter {
+@@ -1973,7 +2578,7 @@ impl WindowAdapter for WinitWindowAdapter {
              self.fullscreen.set(m);
          }
  
@@ -2068,7 +2059,7 @@ index 1ad204f..eda9fd4 100644
          if m != self.maximized.get() {
              self.maximized.set(m);
              winit_window_or_none.set_maximized(m);
-@@ -2005,11 +2619,15 @@ impl WindowAdapter for WinitWindowAdapter {
+@@ -2005,11 +2610,15 @@ impl WindowAdapter for WinitWindowAdapter {
          winit_window_or_none.set_resizable(resizable);
          // Important: Filter out (temporary?) zero width/heights, to avoid attempting to create a zero surface. For example, with wayland
          // the client-side rendering ends up passing a zero width/height to the renderer.
@@ -2088,7 +2079,7 @@ index 1ad204f..eda9fd4 100644
          winit_window_or_none.set_max_inner_size(winit_max_inner, sf as f64);
  
          if !platform_dictates_window_size() {
-@@ -2018,8 +2636,9 @@ impl WindowAdapter for WinitWindowAdapter {
+@@ -2018,8 +2627,9 @@ impl WindowAdapter for WinitWindowAdapter {
  
          // Auto-resize to the preferred size if users (SlintPad) requests it
          #[cfg(target_arch = "wasm32")]
@@ -2100,7 +2091,7 @@ index 1ad204f..eda9fd4 100644
          {
              if is_preferred_sized_canvas(&canvas) {
                  let pref = new_constraints.preferred;
-@@ -2147,8 +2766,9 @@ impl WindowAdapterInternal for WinitWindowAdapter {
+@@ -2147,8 +2757,9 @@ impl WindowAdapterInternal for WinitWindowAdapter {
          match request {
              corelib::window::InputMethodRequest::Enable(..) => {
                  let mut vkh = self.virtual_keyboard_helper.borrow_mut();
@@ -2112,7 +2103,7 @@ index 1ad204f..eda9fd4 100644
                  else {
                      return;
                  };
-@@ -2202,8 +2822,10 @@ impl WindowAdapterInternal for WinitWindowAdapter {
+@@ -2202,8 +2813,10 @@ impl WindowAdapterInternal for WinitWindowAdapter {
          // Set before showing: on Windows the activation event can arrive before this returns.
          self.context_menu.replace(Some(context_menu_item));
  
@@ -2125,7 +2116,7 @@ index 1ad204f..eda9fd4 100644
          {
              // On Windows, we must destroy the muda menu before re-creating a new one
              drop(context_menu_muda_adapter.borrow_mut().take());
-@@ -2214,6 +2836,19 @@ impl WindowAdapterInternal for WinitWindowAdapter {
+@@ -2214,6 +2827,19 @@ impl WindowAdapterInternal for WinitWindowAdapter {
                  self.event_loop_proxy.clone(),
              ) {
                  context_menu_muda_adapter.replace(Some(new_adapter));
@@ -2145,7 +2136,7 @@ index 1ad204f..eda9fd4 100644
                  return true;
              }
          }
-@@ -2246,7 +2881,9 @@ impl WindowAdapterInternal for WinitWindowAdapter {
+@@ -2246,7 +2872,9 @@ impl WindowAdapterInternal for WinitWindowAdapter {
          component: ItemTreeRef,
          _: &mut dyn Iterator<Item = core::pin::Pin<ItemRef<'_>>>,
      ) {
@@ -2156,7 +2147,7 @@ index 1ad204f..eda9fd4 100644
          if let Ok(mut a) = accesskit_adapter_cell.try_borrow_mut() {
              a.unregister_item_tree(component);
          };
-@@ -2310,7 +2947,10 @@ impl WindowAdapterInternal for WinitWindowAdapter {
+@@ -2310,7 +2938,10 @@ impl WindowAdapterInternal for WinitWindowAdapter {
  impl Drop for WinitWindowAdapter {
      fn drop(&mut self) {
          self.shared_backend_data.unregister_window(
@@ -2168,7 +2159,7 @@ index 1ad204f..eda9fd4 100644
          );
  
          #[cfg(target_os = "macos")]
-@@ -2405,8 +3045,14 @@ fn is_preferred_sized_canvas(canvas: &web_sys::HtmlCanvasElement) -> bool {
+@@ -2405,8 +3036,14 @@ fn is_preferred_sized_canvas(canvas: &web_sys::HtmlCanvasElement) -> bool {
  #[cfg(target_family = "wasm")]
  fn canvas_has_explicit_size_set(canvas: &web_sys::HtmlCanvasElement) -> bool {
      let style = canvas.style();
@@ -2185,7 +2176,7 @@ index 1ad204f..eda9fd4 100644
      {
          return true;
      }
-@@ -2421,3 +3067,59 @@ fn canvas_has_explicit_size_set(canvas: &web_sys::HtmlCanvasElement) -> bool {
+@@ -2421,3 +3058,59 @@ fn canvas_has_explicit_size_set(canvas: &web_sys::HtmlCanvasElement) -> bool {
      computed_style.get_property_value("width").ok().as_deref() != Some("auto")
          || computed_style.get_property_value("height").ok().as_deref() != Some("auto")
  }

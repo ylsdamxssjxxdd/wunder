@@ -1614,15 +1614,6 @@ impl WinitWindowAdapter {
                     if cfg!(target_os = "macos") { winit_window.has_focus() } else { have_focus };
                 let activation_result = self.activation_changed(have_focus);
 
-                // Slint's popups are drawn inside this window, so nothing takes
-                // the focus away from it and a context menu would otherwise stay
-                // on screen after the user switches to another application. A
-                // native menu disappears with the window activation; close ours
-                // on the same edge.
-                if !have_focus {
-                    WindowInner::from_pub(self.window()).close_all_popups();
-                }
-
                 // A child/auxiliary Win32 window can expose or cover part of
                 // a software-rendered parent without producing an Occluded
                 // event. Its backing DIB may then report a reusable age even

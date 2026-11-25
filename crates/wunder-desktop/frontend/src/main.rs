@@ -142,10 +142,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = MainWindow::new()?;
     startup_log("main_window_new", startup_boot);
-    // 右键菜单用 Slint 自己的弹层，不走原生 Win32 菜单。TrackPopupMenu 会在 UI
-    // 线程跑嵌套模态循环：菜单开着期间不出帧、不跑定时器，正在流式输出的回复会
-    // 整段冻住，只有收起菜单才恢复。弹层留在同一事件循环里，菜单开着页面照常刷新。
-    app.window().set_native_popup_menus_enabled(false);
     // 界面语言：窗口把 `runtime-language` 派生成 `ui-zh` 后回传，这里落到
     // `I18n.zh`。先装回调，任何设置投影（启动加载 / 设置页保存）都会即时生效。
     ui_language::install(&app);
