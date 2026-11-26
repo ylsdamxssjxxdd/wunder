@@ -27,8 +27,8 @@ for path in "$android_root/sdk" "$android_root/jdk" "$android_root/gradle" \
     "$android_root/assets/packs/browser.tar.xz" "$offline_root/cargo-vendor-slint"; do
     [[ -e "$path" ]] || { echo "离线安卓输入缺失: $path（先按 README 准备 kit 的 android/ 目录）" >&2; exit 2; }
 done
-read -r skia_version skia_hash < <(python3 - \
-    "$repo_root/crates/wunder-android/Cargo.lock" "$offline_root/cargo-vendor-slint" <<'PY'
+skia_info="$(python3 - \
+    "$repo_root/crates/wunder-android/Cargo.lock" "$offline_root/cargo-vendor-slint" "$android_root" <<'PY'
 import json, re, sys
 from pathlib import Path
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
@@ -37,15 +37,14 @@ if not match:
     raise SystemExit("skia-bindings is missing from Cargo.lock")
 version = match.group(1)
 vcs = Path(sys.argv[2]) / f"skia-bindings-{version}" / ".cargo_vcs_info.json"
-hash_value = json.loads(vcs.read_text(encoding="utf-8"))["git"]["sha1"][:12]
+hash_value = json.loads(vcs.read_text(encoding="utf-8"))["git"]["sha1"][:20]
+archive = Path(sys.argv[3]) / "skia-binaries" / version / f"skia-binaries-{hash_value}-aarch64-linux-android-*.tar.gz"
+if not list(archive.parent.glob(archive.name)):
+    raise SystemExit(f"offline Skia prebuilt archive is missing: {archive}")
 print(version, hash_value)
 PY
-)
-skia_archive="$android_root/skia-binaries/$skia_version/skia-binaries-$skia_hash-aarch64-linux-android-*.tar.gz"
-compgen -G "$skia_archive" >/dev/null || {
-    echo "离线 Skia 预编译包缺失: $skia_archive（先按锁定的 skia-bindings 版本准备）" >&2
-    exit 2
-}
+)" || exit 2
+read -r skia_version skia_hash <<< "$skia_info"
 
 host_toolchain=nightly-2026-03-14-aarch64-unknown-linux-gnu
 [[ "$host_arch" == x86_64 ]] && host_toolchain=nightly-2026-03-14-x86_64-unknown-linux-gnu
