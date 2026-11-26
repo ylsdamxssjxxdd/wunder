@@ -1,0 +1,461 @@
+diff --git a/passes/embed_glyphs.rs b/passes/embed_glyphs.rs
+index 8514dad..f0fc548 100644
+--- a/passes/embed_glyphs.rs
++++ b/passes/embed_glyphs.rs
+@@ -12,7 +12,7 @@ use crate::expression_tree::Expression;
+ use crate::expression_types::Unit;
+ use crate::object_tree::*;
+ use crate::source_path::SourcePath;
+-use std::collections::{BTreeMap, BTreeSet, HashMap};
++use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+ use std::rc::Rc;
+ 
+ use i_slint_common::sharedfontique::{self, fontique, skrifa};
+@@ -154,12 +154,14 @@ pub fn embed_glyphs(
+         }
+     }
+ 
+-    let fallback_fonts = get_fallback_fonts();
+-
+     // The collection (system fonts + imported fonts) is built once and shared with
+     // `embed_images`; the imported-font paths come with it.
+     let mut shared = font_collection.lock().unwrap();
+-    let FontCollection { collection, custom_font_paths: font_paths, custom_fonts } = &mut *shared;
++    let FontCollection {
++        collection,
++        custom_font_paths: font_paths,
++        custom_fonts,
++    } = &mut *shared;
+ 
+     let mut custom_face_error = false;
+ 
+@@ -262,6 +264,14 @@ pub fn embed_glyphs(
+         return;
+     }
+ 
++    // The software renderer selects one pre-rendered BitmapFont for an entire
++    // text run. Build that face from every project-owned font: the first
++    // default remains authoritative, while later imported fonts contribute
++    // only glyphs the primary face lacks. This is intentionally compiled into
++    // the font atlas; the Win7 application still never discovers or loads host
++    // system fonts.
++    let fallback_fonts = project_fallback_fonts(&default_fonts, custom_fonts);
++
+     let register_embedded_font = |path: &SourcePath, embedded_bitmap_font: BitmapFont| {
+         let resource_id = doc.embedded_file_resources.borrow_mut().push_and_get_key(
+             crate::embedded_resources::EmbeddedResources {
+@@ -273,11 +283,14 @@ pub fn embed_glyphs(
+         );
+ 
+         for c in doc.exported_roots() {
+-            c.init_code.borrow_mut().font_registration_code.push(Expression::FunctionCall {
+-                function: BuiltinFunction::RegisterBitmapFont.into(),
+-                arguments: vec![Expression::NumberLiteral(resource_id.0 as _, Unit::None)],
+-                source_location: None,
+-            });
++            c.init_code
++                .borrow_mut()
++                .font_registration_code
++                .push(Expression::FunctionCall {
++                    function: BuiltinFunction::RegisterBitmapFont.into(),
++                    arguments: vec![Expression::NumberLiteral(resource_id.0 as _, Unit::None)],
++                    source_location: None,
++                });
+         }
+     };
+ 
+@@ -297,8 +310,26 @@ pub fn embed_glyphs(
+             );
+             return;
+         };
++
++        // TextInput values are runtime data and therefore absent from Slint's
++        // string-literal scan. Include both the selected face and the
++        // project-owned fallback faces: this emits one deterministic bitmap
++        // face instead of relying on the target machine's font fallback.
++        let mut font_characters = characters_seen.clone();
++        for face in core::iter::once(&Font { font: font.clone() }).chain(fallback_fonts.iter()) {
++            let face_ref = skrifa::FontRef::from_index(face.font.blob.data(), face.font.index)
++                .expect("project font is parseable");
++            font_characters.extend(
++                face_ref
++                    .charmap()
++                    .mappings()
++                    .filter_map(|(code_point, _)| char::from_u32(code_point)),
++            );
++        }
+         let axes = font_ref.axes();
+-        let wght_axis = axes.iter().find(|axis| axis.tag() == skrifa::Tag::new(b"wght"));
++        let wght_axis = axes
++            .iter()
++            .find(|axis| axis.tag() == skrifa::Tag::new(b"wght"));
+ 
+         if let Some(wght_axis) = wght_axis {
+             // Variable font: embed one BitmapFont per requested weight
+@@ -316,7 +347,8 @@ pub fn embed_glyphs(
+                     family_name.to_owned(),
+                     Font { font: font.clone() },
+                     &pixel_sizes,
+-                    characters_seen.iter().cloned(),
++                    font_characters.iter().cloned(),
++                    &characters_seen,
+                     &fallback_fonts,
+                     compiler_config,
+                     location.coords(),
+@@ -331,7 +363,8 @@ pub fn embed_glyphs(
+                 family_name.to_owned(),
+                 Font { font: font.clone() },
+                 &pixel_sizes,
+-                characters_seen.iter().cloned(),
++                font_characters.iter().cloned(),
++                &characters_seen,
+                 &fallback_fonts,
+                 compiler_config,
+                 &[],
+@@ -342,35 +375,33 @@ pub fn embed_glyphs(
+         }
+     };
+ 
+-    // default_fonts is in primary-first order (set up by sharedfontique from
+-    // SLINT_DEFAULT_FONT then SLINT_FONT_PATH); preserve it.
+-    for (path, font) in default_fonts.iter() {
+-        custom_fonts.remove(path);
+-        embed_font_by_path(path, font);
+-    }
+-
+-    for (path, font) in custom_fonts.iter() {
++    // The first default face is already composed with every project-owned
++    // fallback above. Registering the fallback as a second full CJK atlas
++    // would duplicate tens of thousands of bitmap glyphs in the executable.
++    if let Some((path, font)) = default_fonts.first() {
+         embed_font_by_path(path, font);
+     }
+ }
+ 
+ #[inline(never)] // workaround https://github.com/rust-lang/rust/issues/104099
+-fn get_fallback_fonts() -> Vec<Font> {
++fn project_fallback_fonts(
++    default_fonts: &[(SourcePath, fontique::QueryFont)],
++    custom_fonts: &BTreeMap<SourcePath, fontique::QueryFont>,
++) -> Vec<Font> {
++    let mut paths: Vec<_> = custom_fonts.iter().collect();
++    paths.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
++
++    let mut seen = HashSet::new();
+     let mut fallback_fonts = Vec::new();
+-
+-    let mut collection = sharedfontique::create_collection(false);
+-    let mut query = collection.query();
+-    query.set_families(
+-        sharedfontique::FALLBACK_FAMILIES.into_iter().map(fontique::QueryFamily::Generic).chain(
+-            core::iter::once(fontique::QueryFamily::Generic(fontique::GenericFamily::Emoji)),
+-        ),
+-    );
+-
+-    query.matches_with(|query_font| {
+-        fallback_fonts.push(Font { font: query_font.clone() });
+-        fontique::QueryStatus::Continue
+-    });
+-
++    for font in default_fonts
++        .iter()
++        .map(|(_, font)| font)
++        .chain(paths.into_iter().map(|(_, font)| font))
++    {
++        if seen.insert((font.blob.id(), font.index)) {
++            fallback_fonts.push(Font { font: font.clone() });
++        }
++    }
+     fallback_fonts
+ }
+ 
+@@ -380,6 +411,7 @@ fn embed_font(
+     font: Font,
+     pixel_sizes: &[i16],
+     character_coverage: impl Iterator<Item = char>,
++    seen_characters: &BTreeSet<char>,
+     fallback_fonts: &[Font],
+     _compiler_config: &CompilerConfiguration,
+     normalized_coords: &[skrifa::instance::NormalizedCoord],
+@@ -399,13 +431,32 @@ fn embed_font(
+ 
+     #[cfg(feature = "sdf-fonts")]
+     let glyphs = if _compiler_config.use_sdf_fonts {
+-        embed_sdf_glyphs(pixel_sizes, &character_map, &font, fallback_fonts, _variations)
++        embed_sdf_glyphs(
++            pixel_sizes,
++            &character_map,
++            &font,
++            fallback_fonts,
++            _variations,
++        )
+     } else {
+-        embed_alpha_map_glyphs(pixel_sizes, &character_map, &font, fallback_fonts, &coords_i16)
++        embed_alpha_map_glyphs(
++            pixel_sizes,
++            &character_map,
++            &font,
++            fallback_fonts,
++            &coords_i16,
++            seen_characters,
++        )
+     };
+     #[cfg(not(feature = "sdf-fonts"))]
+-    let glyphs =
+-        embed_alpha_map_glyphs(pixel_sizes, &character_map, &font, fallback_fonts, &coords_i16);
++    let glyphs = embed_alpha_map_glyphs(
++        pixel_sizes,
++        &character_map,
++        &font,
++        fallback_fonts,
++        &coords_i16,
++        seen_characters,
++    );
+ 
+     let font_ref = skrifa::FontRef::from_index(font.font.blob.data(), font.font.index).unwrap();
+     let location = skrifa::instance::LocationRef::new(normalized_coords);
+@@ -431,6 +482,30 @@ fn embed_font(
+     }
+ }
+ 
++/// Pack an 8-bit alpha map that only contains 0/255 into 1-bit rows (MSB
++/// first, each row padded to a whole byte). Returns None when the map holds
++/// gray values or the dimensions do not match the data.
++#[cfg(not(target_arch = "wasm32"))]
++fn pack_mono_1bpp(data: &[u8], width: usize, height: usize) -> Option<Vec<u8>> {
++    if width == 0 || height == 0 || data.len() < width * height {
++        return None;
++    }
++    let data = &data[..width * height];
++    if !data.iter().all(|&b| b == 0 || b == 255) {
++        return None;
++    }
++    let stride = width.div_ceil(8);
++    let mut packed = vec![0u8; stride * height];
++    for y in 0..height {
++        for x in 0..width {
++            if data[y * width + x] == 255 {
++                packed[y * stride + x / 8] |= 0x80 >> (x % 8);
++            }
++        }
++    }
++    Some(packed)
++}
++
+ #[cfg(not(target_arch = "wasm32"))]
+ fn embed_alpha_map_glyphs(
+     pixel_sizes: &[i16],
+@@ -438,6 +513,7 @@ fn embed_alpha_map_glyphs(
+     font: &Font,
+     fallback_fonts: &[Font],
+     normalized_coords: &[i16],
++    seen_characters: &BTreeSet<char>,
+ ) -> Vec<BitmapGlyphs> {
+     use rayon::prelude::*;
+     use std::cell::RefCell;
+@@ -450,6 +526,11 @@ fn embed_alpha_map_glyphs(
+     pixel_sizes
+         .par_iter()
+         .map(|pixel_size| {
++            // SimSun's EBDT strikes exist at 12-16/18 ppem; keep the full cmap
++            // at those sizes (monochrome bitmaps pack to 1 bit per pixel, so
++            // full coverage is cheap there). Other sizes use hinted outline
++            // rasterization and are bounded to GB2312 + UI literals + ASCII.
++            let full_coverage = matches!(*pixel_size, 12 | 13 | 14 | 15 | 16 | 18);
+             let glyph_data = character_map
+                 .par_iter()
+                 .map(|code_point| {
+@@ -465,21 +546,81 @@ fn embed_alpha_map_glyphs(
+                     let scale = *pixel_size as f32 / fm.units_per_em as f32;
+                     let advance_width = gm.advance_width(glyph_id) * scale;
+ 
++                    // Out-of-coverage glyphs keep their advance but stay blank,
++                    // so rare characters never turn into tofu boxes at sizes
++                    // with bounded coverage.
++                    let covered = full_coverage
++                        || seen_characters.contains(code_point)
++                        || super::gb2312_table::GB2312_CODE_POINTS
++                            .binary_search(&(*code_point as u32))
++                            .is_ok();
++                    if !covered {
++                        return BitmapGlyph {
++                            x_advance: i16::try_from((advance_width * 64.) as i64)
++                                .expect("large advance width"),
++                            ..Default::default()
++                        };
++                    }
++
+                     SCALE_CONTEXT.with(|ctx| {
+                         let font_ref = swash_font_ref(font_to_use);
+                         let mut ctx = ctx.borrow_mut();
+                         let mut scaler = ctx
+                             .builder(font_ref)
+                             .size(*pixel_size as f32)
++                            .hint(true)
+                             .normalized_coords(normalized_coords)
+                             .build();
+-                        let image = swash::scale::Render::new(&[swash::scale::Source::Outline])
++                        // SimSun's small EBDT strikes do not contain ASCII
++                        // glyphs. Rendering those letters/digits as a normal
++                        // alpha mask makes them visibly softer than native GDI
++                        // ClearType on Win7. Keep CJK on the hand-tuned bitmap
++                        // strikes, but render printable ASCII outlines into an
++                        // RGB subpixel mask. The software renderer recognizes
++                        // `data_packing == 2` and blends its three coverages
++                        // independently. This stays fully embedded and avoids
++                        // DirectWrite/system-font dependencies at runtime.
++                        let subpixel = code_point.is_ascii_graphic() || *code_point == ' ';
++                        let image = if subpixel {
++                            swash::scale::Render::new(&[swash::scale::Source::Outline])
++                                .format(swash::zeno::Format::Subpixel)
++                                .render(&mut scaler, glyph_id)
++                        } else {
++                            // Prefer the font's embedded monochrome bitmaps
++                            // (SimSun EBDT strikes at 12-18 ppem): they are
++                            // hand-tuned pixel glyphs. Hinted outlines cover
++                            // the sizes without a strike.
++                            swash::scale::Render::new(&[
++                                swash::scale::Source::Bitmap(
++                                    swash::scale::StrikeWith::ExactSize,
++                                ),
++                                swash::scale::Source::Outline,
++                            ])
+                             .format(swash::zeno::Format::Alpha)
+-                            .render(&mut scaler, glyph_id);
++                            .render(&mut scaler, glyph_id)
++                        };
+ 
+                         match image {
+                             Some(image) => {
+                                 let p = image.placement;
++                                let (data, data_packing) = if subpixel {
++                                    debug_assert_eq!(
++                                        image.data.len(),
++                                        p.width as usize * p.height as usize * 4
++                                    );
++                                    (image.data, 2u8)
++                                } else {
++                                    // EBDT strikes are pure black/white; pack
++                                    // those to 1 bit per pixel (8x smaller in
++                                    // the binary).
++                                    pack_mono_1bpp(
++                                        &image.data,
++                                        p.width as usize,
++                                        p.height as usize,
++                                    )
++                                    .map(|packed| (packed, 1u8))
++                                    .unwrap_or_else(|| (image.data, 0u8))
++                                };
+                                 BitmapGlyph {
+                                     x: i16::try_from(p.left * 64)
+                                         .expect("large glyph x coordinate"),
+@@ -489,24 +630,24 @@ fn embed_alpha_map_glyphs(
+                                     height: i16::try_from(p.height).expect("large height"),
+                                     x_advance: i16::try_from((advance_width * 64.) as i64)
+                                         .expect("large advance width"),
+-                                    data: image.data,
++                                    data_packing,
++                                    data,
+                                 }
+                             }
+                             None => BitmapGlyph {
+-                                x: 0,
+-                                y: 0,
+-                                width: 0,
+-                                height: 0,
+                                 x_advance: i16::try_from((advance_width * 64.) as i64)
+                                     .expect("large advance width"),
+-                                data: vec![],
++                                ..Default::default()
+                             },
+                         }
+                     })
+                 })
+                 .collect();
+ 
+-            BitmapGlyphs { pixel_size: *pixel_size, glyph_data }
++            BitmapGlyphs {
++                pixel_size: *pixel_size,
++                glyph_data,
++            }
+         })
+         .collect()
+ }
+@@ -526,8 +667,16 @@ fn embed_sdf_glyphs(
+     let Some(max_size) = pixel_sizes.iter().max() else {
+         return Vec::new();
+     };
+-    let min_size = pixel_sizes.iter().min().expect("we have a 'max' so the vector is not empty");
+-    let target_pixel_size = (max_size * 2 / 3).max(16).min(RANGE as i16 * min_size);
++    let min_size = pixel_sizes
++        .iter()
++        .min()
++        .expect("we have a 'max' so the vector is not empty");
++    // Slint's upstream 16 px floor is sufficient for Latin UI text, but dense
++    // SimSun strokes lose their structure when sampled down to compact 10–13
++    // px controls. Use a 24 px source for the one scalable GBK atlas: this is
++    // the smallest tested size that keeps the regular SimSun glyph structure
++    // without renderer-side contour shifts that can make strokes stick.
++    let target_pixel_size = (max_size * 2 / 3).max(24).min(RANGE as i16 * min_size);
+ 
+     let glyph_data = character_map
+         .par_iter()
+@@ -552,7 +701,10 @@ fn embed_sdf_glyphs(
+         })
+         .collect::<Vec<_>>();
+ 
+-    vec![BitmapGlyphs { pixel_size: target_pixel_size, glyph_data }]
++    vec![BitmapGlyphs {
++        pixel_size: target_pixel_size,
++        glyph_data,
++    }]
+ }
+ 
+ #[cfg(all(not(target_arch = "wasm32"), feature = "sdf-fonts"))]
+@@ -577,8 +729,10 @@ fn generate_sdf_for_glyph(
+     let glyph_id = face.glyph_index(code_point).unwrap_or_default();
+ 
+     let font_ref = skrifa::FontRef::from_index(font.font.blob.data(), font.font.index).unwrap();
+-    let variation_settings: Vec<_> =
+-        variations.iter().map(|&(tag, value)| (tag, value)).collect::<Vec<_>>();
++    let variation_settings: Vec<_> = variations
++        .iter()
++        .map(|&(tag, value)| (tag, value))
++        .collect::<Vec<_>>();
+     let location = font_ref.axes().location(variation_settings);
+     let metrics = skrifa::metrics::Metrics::new(
+         &font_ref,
+@@ -602,7 +756,10 @@ fn generate_sdf_for_glyph(
+     let width = ((bbox.x_max as f64 - bbox.x_min as f64) * scale + 2.).ceil() as u32;
+     let height = ((bbox.y_max as f64 - bbox.y_min as f64) * scale + 2.).ceil() as u32;
+     let transformation = nalgebra::convert::<_, Affine2<f64>>(Similarity2::new(
+-        Vector2::new(1. - bbox.x_min as f64 * scale, 1. - bbox.y_min as f64 * scale),
++        Vector2::new(
++            1. - bbox.x_min as f64 * scale,
++            1. - bbox.y_min as f64 * scale,
++        ),
+         0.,
+         scale,
+     ));
+@@ -654,6 +811,7 @@ fn generate_sdf_for_glyph(
+             (face.glyph_hor_advance(glyph_id).unwrap() as f64 * scale * 64.).round() as i32,
+         )
+         .expect("large advance width"),
++        data_packing: 0,
+         data: glyph_data,
+     };
+ 
+@@ -682,6 +840,13 @@ pub fn collect_font_sizes_used(
+ ) {
+     let mut add_font_size = |logical_size: f64| {
+         let pixel_size = (logical_size * scale_factor) as i16;
++        // Zero is used by the widget interfaces as an "inherit the default"
++        // sentinel (for example LineEdit's font-size). It is not a drawable
++        // font size. Passing it to the alpha-map rasterizer selects an
++        // effectively unscaled outline and embeds enormous bitmap glyphs.
++        if pixel_size <= 0 {
++            return;
++        }
+         match sizes_seen.binary_search(&pixel_size) {
+             Ok(_) => {}
+             Err(pos) => sizes_seen.insert(pos, pixel_size),

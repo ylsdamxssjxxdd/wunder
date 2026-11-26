@@ -1628,8 +1628,27 @@ impl Item for TextInput {
                 if !self.read_only() {
                     // commit the preedit text on android
                     #[cfg(target_os = "android")]
-                    if self.as_ref().commit_preedit(window_adapter, self_rc) {
-                        Self::FIELD_OFFSETS.edited().apply_pin(self).call(&());
+                    {
+                        let preedit_text = self.preedit_text();
+                        if !preedit_text.is_empty() {
+                            let mut text = String::from(self.text());
+                            let cursor_position = self.cursor_position(&text);
+                            text.insert_str(cursor_position, &preedit_text);
+                            // 先把组词区清空再发布文本：后续同步应描述一个普通
+                            // 光标，而不是刚刚折叠掉的那个范围。
+                            self.preedit_text.set(Default::default());
+                            self.set_text_internal(text.into());
+                            let new_pos = (cursor_position + preedit_text.len()) as i32;
+                            self.anchor_position_byte_offset.set(new_pos);
+                            self.set_cursor_position(
+                                new_pos,
+                                false,
+                                TextChangeNotify::TriggerCallbacks,
+                                window_adapter,
+                                self_rc,
+                            );
+                            Self::FIELD_OFFSETS.edited().apply_pin(self).call(&());
+                        }
                     }
                     self.preedit_text.set(Default::default());
                 }

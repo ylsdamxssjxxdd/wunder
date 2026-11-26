@@ -78,14 +78,14 @@ export component TextEditBase inherits Rectangle {
         enabled: root.enabled;
         Menu {
             if !root.read-only: MenuItem {
-                title: @tr("Undo");
+                title: @tr("撤销");
                 activated => {
                     text-input.undo();
                 }
             }
 
             if !root.read-only: MenuItem {
-                title: @tr("Redo");
+                title: @tr("重做");
                 activated => {
                     text-input.redo();
                 }
@@ -94,7 +94,7 @@ export component TextEditBase inherits Rectangle {
             if !root.read-only: MenuSeparator { }
 
             if !root.read-only: MenuItem {
-                title: @tr("Cut");
+                title: @tr("剪切");
                 enabled: text-input.has-selection;
                 activated => {
                     text-input.cut();
@@ -102,7 +102,7 @@ export component TextEditBase inherits Rectangle {
             }
 
             MenuItem {
-                title: @tr("Copy");
+                title: @tr("复制");
                 enabled: text-input.has-selection;
                 activated => {
                     text-input.copy();
@@ -110,14 +110,14 @@ export component TextEditBase inherits Rectangle {
             }
 
             if !root.read-only: MenuItem {
-                title: @tr("Paste");
+                title: @tr("粘贴");
                 activated => {
                     text-input.paste();
                 }
             }
 
             MenuItem {
-                title: @tr("Select All");
+                title: @tr("全选");
                 enabled: !root.text.is-empty;
                 activated => {
                     text-input.select-all();

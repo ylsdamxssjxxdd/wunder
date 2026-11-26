@@ -1,0 +1,16 @@
+diff --git a/bitmapfont.rs b/bitmapfont.rs
+index 9735324..f859e5b 100644
+--- a/bitmapfont.rs
++++ b/bitmapfont.rs
+@@ -43,6 +43,11 @@ pub struct BitmapGlyph<S: Storage> {
+     /// The horizontal distance to the next glyph
+     /// This is a fixed point number that is shifted by 6 bits
+     pub x_advance: i16,
++    /// How `data` is packed:
++    /// 0 = 8-bit alpha map (or SDF when `BitmapFont::sdf`)
++    /// 1 = 1-bit monochrome rows, MSB first, each row padded to whole bytes
++    /// 2 = 32-bit RGB subpixel coverage map (the fourth byte is unused)
++    pub data_packing: u8,
+     /// The 8-bit alpha map that's to be blended with the current text color
+     /// or 8-bit signed distance field depending on `BitmapFont::sdf`
+     pub data: S::Slice<u8>,

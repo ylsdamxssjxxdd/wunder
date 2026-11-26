@@ -128,6 +128,24 @@ fn hash_coords(coords: &[i16]) -> u64 {
 }
 
 impl VectorFont {
+    /// A strike whose ppem is exactly the requested physical size.
+    ///
+    /// SimSun ships EBDT strikes for UI sizes; scaling a neighbouring strike, or
+    /// falling back to an unhinted outline at 12-13 px, loses the small-CJK
+    /// structure the bundled face keeps on purpose.
+    fn exact_bitmap(&self, glyph_id: NonZeroU16) -> Option<skrifa::bitmap::BitmapGlyph<'_>> {
+        let face = skrifa::FontRef::from_index(self.font_blob.data(), self.font_index).ok()?;
+        let strikes = skrifa::bitmap::BitmapStrikes::with_format(
+            &face,
+            skrifa::bitmap::BitmapFormat::Ebdt,
+        )?;
+        let size = self.pixel_size.get() as f32;
+        strikes.iter().filter(|strike| strike.ppem() == size).find_map(|strike| {
+            strike.get(skrifa::GlyphId::new(glyph_id.get() as u32))
+                .filter(|bitmap| bitmap.ppem_x == size && bitmap.ppem_y == size)
+        })
+    }
+
     fn swash_font_ref(&self) -> swash::FontRef<'_> {
         swash::FontRef {
             data: self.font_blob.data(),
@@ -263,6 +281,7 @@ impl VectorFont {
                 let mut scaler = ctx
                     .builder(font_ref)
                     .size(self.pixel_size.get() as f32)
+                    .hint(true)
                     .normalized_coords(&self.normalized_coords)
                     .build();
                 // Faux italic, for fonts fontique picked as the closest match to an `italic`
@@ -281,13 +300,26 @@ impl VectorFont {
                 // Color first: the layers of a `COLR` font (version 0), then the bitmaps of a
                 // `CBDT` or `sbix` font, scaled to the pixel size. A font without either, and a
                 // stroke, gives the outline.
+                //
+                // A monochrome font with an EBDT strike at exactly this size is sampled from
+                // that strike. Swash would otherwise resize the nearest strike or hint an
+                // outline, both of which soften SimSun at UI sizes. Zero-width whitespace
+                // strikes are skipped: swash decodes them with empty chunks, and the outline
+                // (empty too, advance kept by layout) is the safe fallback.
                 use swash::scale::{Source, StrikeWith};
+                let exact_bitmap = stroke_width.is_none()
+                    && color.is_none()
+                    && self
+                        .exact_bitmap(glyph_id)
+                        .is_some_and(|bitmap| bitmap.width > 0 && bitmap.height > 0);
                 let sources: &[Source] = if color.is_some() {
                     &[
                         Source::ColorOutline(0),
                         Source::ColorBitmap(StrikeWith::BestFit),
                         Source::Outline,
                     ]
+                } else if exact_bitmap {
+                    &[Source::Bitmap(StrikeWith::ExactSize), Source::Outline]
                 } else {
                     &[Source::Outline]
                 };

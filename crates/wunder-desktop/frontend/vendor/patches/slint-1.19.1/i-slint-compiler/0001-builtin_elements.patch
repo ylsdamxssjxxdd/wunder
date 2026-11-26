@@ -1,0 +1,24 @@
+diff --git a/builtin_elements.rs b/builtin_elements.rs
+index 45878dd..bb20618 100644
+--- a/builtin_elements.rs
++++ b/builtin_elements.rs
+@@ -1283,6 +1283,9 @@ fn build(l: &mut Loader) {
+         in property <styled-text> text;
+         /// The vertical alignment of the text.
+         in property <TextVerticalAlignment> vertical-alignment;
++        /// A factor applied to the line height of the text.
++        /// \default 1
++        in property <float> line-height-factor: 1;
+         /// Whether the text can be selected with the mouse.
+         /// Pressing and dragging selects, a double click selects a word and a triple click a paragraph.
+         /// A click that doesn't drag still follows a link.
+@@ -1300,6 +1303,9 @@ fn build(l: &mut Loader) {
+         @shadowable out property <bool> has-selection { BuiltinFunction.StyledTextHasSelection }
+         /// A callback that's invoked when a link in the text is clicked. The parameter contains the clicked link as a string.
+         callback link-clicked(link: string);
++        /// A callback invoked when the text is right-clicked, with the click position in local coordinates
++        /// and whether the click landed inside an existing selection.
++        callback context-menu(x: length, y: length, selected: bool);
+ 
+         /// Selects the text between two UTF-8 byte offsets.
+         /// `anchor` is the end of the selection that stays put and `focus` the end the cursor moves to,

@@ -1,0 +1,15 @@
+diff --git a/api.rs b/api.rs
+index 84f54d3..31cf32e 100644
+--- a/api.rs
++++ b/api.rs
+@@ -99,8 +99,8 @@ pub(crate) const PHYSICAL_REGION_MAX_SIZE: usize = DirtyRegion::MAX_COUNT;
+ #[cfg(cbindgen)]
+ pub const PHYSICAL_REGION_MAX_SIZE: usize = 3;
+ const _: () = {
+-    assert!(PHYSICAL_REGION_MAX_SIZE == 3);
+-    assert!(DirtyRegion::MAX_COUNT == 3);
++    assert!(PHYSICAL_REGION_MAX_SIZE >= 3);
++    assert!(DirtyRegion::MAX_COUNT >= 3);
+ };
+ 
+ /// Represents a rectangular region on the screen, used for partial rendering.

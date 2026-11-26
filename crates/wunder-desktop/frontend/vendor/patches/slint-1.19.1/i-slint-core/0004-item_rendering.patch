@@ -1,0 +1,35 @@
+diff --git a/item_rendering.rs b/item_rendering.rs
+index 20dc76b..f90827e 100644
+--- a/item_rendering.rs
++++ b/item_rendering.rs
+@@ -281,7 +281,17 @@ pub fn render_item_children(
+             };
+ 
+             if matches!(render_result, RenderingResult::ContinueRenderingChildren) {
+-                render_item_children(renderer, component, index as isize, window_adapter);
++                // Nothing below this item can produce pixels when the
++                // accumulated clip is empty (a row scrolled out of the
++                // transcript viewport, a folded row) or an enclosing opacity
++                // made the subtree transparent. Without this, every row of a
++                // non-virtualized scroll column is walked item by item on each
++                // frame, so scroll cost grows with the whole history.
++                let subtree_invisible = renderer.global_alpha_transparent()
++                    || (item.as_ref().clips_children() && renderer.get_current_clip().is_empty());
++                if !subtree_invisible {
++                    render_item_children(renderer, component, index as isize, window_adapter);
++                }
+             }
+             renderer.restore_state();
+             VisitChildrenResult::CONTINUE
+@@ -626,8 +636,9 @@ pub trait RenderText: RenderString {
+     fn wrap(self: Pin<&Self>) -> TextWrap;
+     fn overflow(self: Pin<&Self>) -> TextOverflow;
+     fn is_markdown(self: Pin<&Self>) -> bool;
+-    /// The part of the text drawn as selected, if any.
+-    fn selection(self: Pin<&Self>) -> Option<TextSelection> {
++    /// The bytes a selection covers, with paragraphs counted as if joined by newlines, and the
++    /// colour to fill behind them. `None` for text that can't be selected.
++    fn selection(self: Pin<&Self>) -> Option<(core::ops::Range<usize>, Color)> {
+         None
+     }
+ }

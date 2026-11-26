@@ -3165,6 +3165,23 @@ impl<T: ProcessScene> i_slint_core::item_rendering::ItemRenderer for SceneBuilde
         size: LogicalSize,
         _cache: &CachedRenderingData,
     ) {
+        // ScrollView moves clipped text out of view without changing its
+        // content. Reject it before font matching, line layout and glyph work.
+        // Text overflow is Clip/Elide by default; both stay within the bounds.
+        if !self.should_draw(&LogicalRect::from(size)) {
+            return;
+        }
+
+        // With runtime system fonts Parley already owns font matching and the
+        // shaped paragraph. Avoid constructing another VectorFont merely to
+        // decide which path to take; only an embedded bitmap font can win over
+        // Parley, and none being registered makes that impossible.
+        #[cfg(feature = "systemfonts")]
+        if !fonts::has_bitmap_fonts() && !parley_disabled() {
+            sharedparley::draw_text(self, text, Some(self_rc), size, Some(self.text_layout_cache));
+            return;
+        }
+
         let font_request = text.font_request(self_rc);
 
         let font = {

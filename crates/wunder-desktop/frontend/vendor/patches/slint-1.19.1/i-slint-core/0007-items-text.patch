@@ -1,0 +1,667 @@
+diff --git a/items/text.rs b/items/text.rs
+index d04abbc..16c5986 100644
+--- a/items/text.rs
++++ b/items/text.rs
+@@ -26,13 +26,15 @@ use crate::item_rendering::{
+ use crate::layout::{LayoutInfo, Orientation};
+ use crate::lengths::{LogicalLength, LogicalPoint, LogicalRect, LogicalSize};
+ use crate::platform::Clipboard;
++#[cfg(target_os = "android")]
++use crate::timers::{Timer, TimerMode};
+ #[cfg(feature = "rtti")]
+ use crate::rtti::*;
+ use crate::window::{InputMethodProperties, InputMethodRequest, WindowAdapter, WindowInner};
+ use crate::{Callback, Coord, Property, SharedString, SharedVector};
+ use alloc::{rc::Rc, string::String};
+ use const_field_offset::FieldOffsets;
+-use core::cell::Cell;
++use core::cell::{Cell, RefCell};
+ use core::pin::Pin;
+ #[allow(unused)]
+ use euclid::num::Ceil;
+@@ -251,6 +253,11 @@ pub struct StyledTextItem {
+     pub max_lines: Property<i32>,
+     pub link_clicked: Callback<StringArg>,
+     pub link_color: Property<Color>,
++    /// Leading multiplier over the face's natural line height. Fork-only: upstream has no way
++    /// to space the lines of a `StyledText` block.
++    pub line_height_factor: Property<f32>,
++    /// A right click in window coordinates, plus whether there is a selection to act on.
++    pub context_menu: Callback<(f32, f32, bool)>,
+     pub selectable: Property<bool>,
+     pub selection_background_color: Property<Color>,
+     pub selection_foreground_color: Property<Color>,
+@@ -261,57 +268,14 @@ pub struct StyledTextItem {
+     anchor_position_byte_offset: Property<i32>,
+     cursor_position_byte_offset: Property<i32>,
+     pub cached_rendering_data: CachedRenderingData,
+-    /// The unit of the mouse selection under way, if any.
+-    #[cfg_attr(not(feature = "shared-parley"), allow(dead_code))]
+-    mouse_selection: Cell<MouseSelection>,
+-}
+-
+-/// What a mouse selection in a `StyledText` grows by: a press selects by character, a double
+-/// click by word and a triple click by paragraph.
+-#[repr(u8)]
+-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+-#[cfg_attr(not(feature = "shared-parley"), allow(dead_code))]
+-enum SelectionUnit {
+-    Character = 1,
+-    Word,
+-    Paragraph,
+-}
+-
+-impl SelectionUnit {
+-    /// `click_count` counts the clicks before this one at the same spot.
+-    #[cfg(feature = "shared-parley")]
+-    fn for_click_count(click_count: u8) -> Self {
+-        match click_count % 3 {
+-            0 => Self::Character,
+-            1 => Self::Word,
+-            _ => Self::Paragraph,
+-        }
+-    }
+-}
+-
+-/// An `Option<SelectionUnit>` as a field of the item: cbindgen can't lay an `Option` of an
+-/// enum out for the C++ struct, so it is the unit's discriminant, 0 for `None`.
+-#[repr(transparent)]
+-#[derive(Clone, Copy, Default)]
+-struct MouseSelection(u8);
+-
+-#[cfg(feature = "shared-parley")]
+-impl MouseSelection {
+-    fn get(self) -> Option<SelectionUnit> {
+-        match self.0 {
+-            1 => Some(SelectionUnit::Character),
+-            2 => Some(SelectionUnit::Word),
+-            3 => Some(SelectionUnit::Paragraph),
+-            _ => None,
+-        }
+-    }
+-}
+-
+-#[cfg(feature = "shared-parley")]
+-impl From<Option<SelectionUnit>> for MouseSelection {
+-    fn from(unit: Option<SelectionUnit>) -> Self {
+-        Self(unit.map_or(0, |unit| unit as u8))
+-    }
++    /// Set while a press in this text is selecting: the drag keeps extending the selection.
++    pressed: Cell<bool>,
++    /// What a selection covers of this text, as last drawn, with the colour behind it.
++    shown_selection: RefCell<Option<(core::ops::Range<usize>, Color)>>,
++    #[cfg(target_os = "android")]
++    long_press_timer: Timer,
++    #[cfg(target_os = "android")]
++    long_press_origin: Cell<Option<LogicalPoint>>,
+ }
+ 
+ impl Item for StyledTextItem {
+@@ -354,14 +318,10 @@ impl Item for StyledTextItem {
+         self_rc: &ItemRc,
+         cursor: &mut super::MouseCursorInner,
+     ) -> InputEventResult {
+-        #[cfg(feature = "shared-parley")]
+-        let renderer = window_adapter.renderer();
+-        #[cfg(feature = "shared-parley")]
+-        let scale_factor = crate::lengths::ScaleFactor::new(
+-            WindowInner::from_pub(window_adapter.window()).scale_factor(),
+-        );
+         #[cfg(feature = "shared-parley")]
+         let find_link = |position: &LogicalPoint| {
++            let window_inner = WindowInner::from_pub(window_adapter.window());
++            let scale_factor = crate::lengths::ScaleFactor::new(window_inner.scale_factor());
+             crate::textlayout::sharedparley::link_under_cursor(
+                 scale_factor,
+                 self,
+@@ -369,41 +329,165 @@ impl Item for StyledTextItem {
+                 LogicalSize::from_lengths(self.width(), self.height()),
+                 *position * scale_factor,
+                 window_adapter.window(),
+-                renderer.text_layout_cache(),
++                None,
+             )
+         };
++        // A press starts a selection and grabs the pointer, so the drag keeps coming here even
++        // after it leaves this item; `crate::text_selection` works out which text is under it.
+         #[cfg(feature = "shared-parley")]
+-        // The offsets come from the parley layout, so a renderer drawing another one (the
+-        // software renderer with a bitmap font) gets no mouse selection.
+-        if self.selectable() && renderer.text_has_parley_layout(self, self_rc) {
+-            let offset_at = |position: &LogicalPoint| {
+-                crate::textlayout::sharedparley::byte_offset_under_cursor(
+-                    scale_factor,
+-                    self,
++        let in_window = |position: &LogicalPoint| {
++            self_rc.map_to_window(self_rc.geometry().origin + position.to_vector())
++        };
++        match event {
++            #[cfg(all(target_os = "android", feature = "shared-parley"))]
++            MouseEvent::Pressed { position, button: PointerEventButton::Left, .. } => {
++                // Touch products select on a long press, not on every press:
++                // until the timer fires nothing is selected, a drag is taken
++                // over by the scroll view (which cancels this grab with
++                // `Exit`), and a quick release only follows a link.
++                let self_weak = self_rc.downgrade();
++                let position = *position;
++                self.pressed.set(false);
++                self.long_press_origin.set(Some(position));
++                let adapter = window_adapter.clone();
++                let ctx = WindowInner::from_pub(window_adapter.window()).context();
++                self.long_press_timer.start_on(
++                    ctx,
++                    TimerMode::SingleShot,
++                    ctx.platform().long_press_interval(crate::InternalToken),
++                    move || {
++                        let Some(item_rc) = self_weak.upgrade() else { return };
++                        let Some(text) = item_rc.downcast::<StyledTextItem>() else { return };
++                        text.as_pin_ref().long_press_origin.set(None);
++                        let pressed = crate::text_selection::press(
++                            &item_rc,
++                            text.as_pin_ref(),
++                            &adapter,
++                            position,
++                            2,
++                        );
++                        text.as_pin_ref().pressed.set(pressed);
++                    },
++                );
++                *cursor = super::MouseCursorInner::BuiltIn(if find_link(&position).is_some() {
++                    super::BuiltInMouseCursor::Pointer
++                } else {
++                    super::BuiltInMouseCursor::Text
++                });
++                // Hold the press so a drag can cancel it with `Exit`; the
++                // scroll view's filter still takes over once the finger moves.
++                InputEventResult::GrabMouse
++            }
++            #[cfg(all(target_os = "android", feature = "shared-parley"))]
++            MouseEvent::Moved { position, .. }
++                if self.long_press_origin.get().is_some_and(|origin| {
++                    let dx = position.x - origin.x;
++                    let dy = position.y - origin.y;
++                    dx * dx + dy * dy > 64.0
++                }) =>
++            {
++                // The finger is panning, not holding: hand the gesture to the
++                // scroll view and forget the pending selection.
++                self.long_press_timer.stop();
++                self.long_press_origin.set(None);
++                InputEventResult::EventIgnored
++            }
++            #[cfg(all(target_os = "android", feature = "shared-parley"))]
++            MouseEvent::Released { position, button: PointerEventButton::Left, .. } => {
++                self.long_press_timer.stop();
++                let armed = self.long_press_origin.take().is_some();
++                if self.pressed.get() {
++                    self.pressed.set(false);
++                    crate::text_selection::release();
++                } else if armed {
++                    if let Some(link) = find_link(position) {
++                        *cursor = super::MouseCursorInner::BuiltIn(
++                            super::BuiltInMouseCursor::Pointer,
++                        );
++                        Self::FIELD_OFFSETS.link_clicked().apply_pin(self).call(&(link.into(),));
++                    }
++                }
++                InputEventResult::EventAccepted
++            }
++            #[cfg(all(target_os = "android", feature = "shared-parley"))]
++            MouseEvent::Exit => {
++                self.long_press_timer.stop();
++                self.long_press_origin.set(None);
++                InputEventResult::EventIgnored
++            }
++            #[cfg(all(feature = "shared-parley", not(target_os = "android")))]
++            MouseEvent::Pressed {
++                position,
++                button: PointerEventButton::Left,
++                click_count,
++                ..
++            } => {
++                let pressed = crate::text_selection::press(
+                     self_rc,
+-                    LogicalSize::from_lengths(self.width(), self.height()),
+-                    *position * scale_factor,
+-                    window_adapter.window(),
+-                    renderer.text_layout_cache(),
+-                )
+-            };
+-            if let Some(result) = self.selection_mouse_event(
+-                event,
+-                &find_link,
+-                &offset_at,
+-                cursor,
+-                window_adapter,
+-                self_rc,
+-            ) {
+-                return result;
++                    self,
++                    window_adapter,
++                    *position,
++                    *click_count,
++                );
++                self.pressed.set(pressed);
++                *cursor = super::MouseCursorInner::BuiltIn(
++                    if find_link(position).is_some() {
++                        super::BuiltInMouseCursor::Pointer
++                    } else {
++                        super::BuiltInMouseCursor::Text
++                    },
++                );
++                if pressed {
++                    InputEventResult::GrabMouse
++                } else {
++                    InputEventResult::EventAccepted
++                }
+             }
+-        } else {
+-            // A selection under way ends when `selectable` goes.
+-            self.mouse_selection.take();
+-        }
+-        match event {
+             #[cfg(feature = "shared-parley")]
+-            MouseEvent::Released { position, button: PointerEventButton::Left, .. } => {
++            MouseEvent::Pressed { position, button: PointerEventButton::Right, .. } => {
++                // The menu itself belongs to the application; all this does is keep (or drop)
++                // the selection and tell the UI where the click was, in window coordinates.
++                let has_selection =
++                    crate::text_selection::right_press(self_rc, window_adapter, *position);
++                let at = self_rc.map_to_window(*position);
++                Self::FIELD_OFFSETS
++                    .context_menu()
++                    .apply_pin(self)
++                    .call(&(at.x, at.y, has_selection));
++                *cursor = super::MouseCursorInner::BuiltIn(super::BuiltInMouseCursor::Text);
++                InputEventResult::EventAccepted
++            }
++            #[cfg(feature = "shared-parley")]
++            MouseEvent::Moved { position, .. }
++                if self.pressed.get() && crate::text_selection::dragging() =>
++            {
++                crate::text_selection::drag_to(window_adapter, in_window(position));
++                *cursor = super::MouseCursorInner::BuiltIn(super::BuiltInMouseCursor::Text);
++                InputEventResult::EventAccepted
++            }
++            #[cfg(feature = "shared-parley")]
++            MouseEvent::Released { position, button: PointerEventButton::Left, .. }
++                if self.pressed.get() =>
++            {
++                self.pressed.set(false);
++                // A click that selected nothing is still a click: follow the link under it.
++                if !crate::text_selection::release() {
++                    if let Some(link) = find_link(position) {
++                        *cursor =
++                            super::MouseCursorInner::BuiltIn(super::BuiltInMouseCursor::Pointer);
++                        Self::FIELD_OFFSETS.link_clicked().apply_pin(self).call(&(link.into(),));
++                    }
++                }
++                InputEventResult::EventAccepted
++            }
++            #[cfg(feature = "shared-parley")]
++            MouseEvent::Released {
++                position,
++                button: PointerEventButton::Left,
++                click_count: _,
++                touch_finger_id: _,
++                event_time: _,
++            } => {
+                 if let Some(link) = find_link(position) {
+                     *cursor = super::MouseCursorInner::BuiltIn(super::BuiltInMouseCursor::Pointer);
+                     Self::FIELD_OFFSETS.link_clicked().apply_pin(self).call(&(link.into(),));
+@@ -414,9 +498,13 @@ impl Item for StyledTextItem {
+             MouseEvent::Moved { position, .. }
+             | MouseEvent::Pressed { position, .. }
+             | MouseEvent::Released { position, .. } => {
+-                if find_link(position).is_some() {
+-                    *cursor = super::MouseCursorInner::BuiltIn(super::BuiltInMouseCursor::Pointer);
+-                }
++                // Over the glyphs the pointer turns into a text caret, the way it does in a
++                // browser; a link still wins, because clicking it does something else.
++                *cursor = super::MouseCursorInner::BuiltIn(if find_link(position).is_some() {
++                    super::BuiltInMouseCursor::Pointer
++                } else {
++                    super::BuiltInMouseCursor::Text
++                });
+                 InputEventResult::EventAccepted
+             }
+             _ => InputEventResult::EventIgnored,
+@@ -485,6 +573,9 @@ impl Item for StyledTextItem {
+         self_rc: &ItemRc,
+         size: LogicalSize,
+     ) -> RenderingResult {
++        // Resolved per frame: the selection lives outside the items, so an item only knows what
++        // of it is covered when it is about to be drawn.
++        *self.shown_selection.borrow_mut() = crate::text_selection::covered(self_rc);
+         (*backend).draw_text(self, self_rc, size, &self.cached_rendering_data);
+         RenderingResult::ContinueRenderingChildren
+     }
+@@ -532,6 +623,10 @@ impl RenderString for StyledTextItem {
+         Self::FIELD_OFFSETS.max_lines().apply_pin(self).get()
+     }
+ 
++    fn line_height_factor(self: Pin<&Self>) -> Option<f32> {
++        Some(self.line_height_factor())
++    }
++
+     fn link_color(self: Pin<&Self>) -> Color {
+         self.link_color()
+     }
+@@ -564,16 +659,52 @@ impl RenderText for StyledTextItem {
+         true
+     }
+ 
+-    fn selection(self: Pin<&Self>) -> Option<crate::item_rendering::TextSelection> {
+-        Some(crate::item_rendering::TextSelection {
+-            range: self.selection_range()?,
+-            background: self.selection_background_color(),
+-            foreground: self.selection_foreground_color(),
+-        })
++    fn selection(self: Pin<&Self>) -> Option<(core::ops::Range<usize>, Color)> {
++        // Read here while drawing, which is what makes a selection change repaint this text.
++        crate::text_selection::track();
++        self.shown_selection.borrow().clone()
+     }
+ }
+ 
+ impl StyledTextItem {
++    /// The text as one string, its paragraphs joined by newlines.
++    pub(crate) fn plain(self: Pin<&Self>) -> alloc::string::String {
++        crate::styled_text::get_raw_text(&self.text()).into_owned()
++    }
++
++    /// The byte range a press at `position` (item coordinates) selects.
++    #[cfg(feature = "shared-parley")]
++    pub(crate) fn range_at(
++        self: Pin<&Self>,
++        self_rc: &ItemRc,
++        window_adapter: &Rc<dyn WindowAdapter>,
++        position: LogicalPoint,
++        unit: crate::textlayout::sharedparley::TextUnit,
++    ) -> Option<core::ops::Range<usize>> {
++        let window_inner = WindowInner::from_pub(window_adapter.window());
++        let scale_factor = crate::lengths::ScaleFactor::new(window_inner.scale_factor());
++        let offset = crate::textlayout::sharedparley::byte_offset_under_cursor(
++            scale_factor,
++            self,
++            self_rc,
++            LogicalSize::from_lengths(self.width(), self.height()),
++            position * scale_factor,
++            window_adapter.window(),
++            None,
++        )?;
++        let plain = self.plain();
++        use crate::textlayout::sharedparley::TextUnit;
++        Some(match unit {
++            TextUnit::Character => offset..offset,
++            TextUnit::Word => word_at(&plain, offset),
++            TextUnit::Paragraph => {
++                let start = plain[..offset].rfind('\n').map_or(0, |i| i + 1);
++                let end = plain[offset..].find('\n').map_or(plain.len(), |i| offset + i);
++                start..end
++            }
++        })
++    }
++
+     pub fn font_metrics(
+         self: Pin<&Self>,
+         window_adapter: &Rc<dyn WindowAdapter>,
+@@ -641,100 +772,6 @@ impl StyledTextItem {
+     pub fn clear_selection(self: Pin<&Self>) {
+         self.anchor_position_byte_offset.set(self.cursor_position_byte_offset());
+     }
+-
+-    /// Pressing and dragging selects; a double click selects a word, a triple click a paragraph.
+-    /// `None` for the events the selection doesn't handle, a click without a drag among them:
+-    /// `input_event` then follows a link under it, as without `selectable`.
+-    #[cfg(feature = "shared-parley")]
+-    fn selection_mouse_event(
+-        self: Pin<&Self>,
+-        event: &MouseEvent,
+-        find_link: &dyn Fn(&LogicalPoint) -> Option<std::string::String>,
+-        offset_at: &dyn Fn(&LogicalPoint) -> Option<usize>,
+-        cursor: &mut super::MouseCursorInner,
+-        window_adapter: &Rc<dyn WindowAdapter>,
+-        self_rc: &ItemRc,
+-    ) -> Option<InputEventResult> {
+-        let set = |anchor: usize, focus: usize| {
+-            self.anchor_position_byte_offset.set(anchor as i32);
+-            self.cursor_position_byte_offset.set(focus as i32);
+-        };
+-        match event {
+-            MouseEvent::Pressed {
+-                position, button: PointerEventButton::Left, click_count, ..
+-            } => {
+-                let offset = offset_at(position)?;
+-                let styled = self.text();
+-                let offset = crate::styled_text::clamp_byte_offset(&styled, offset as i32);
+-                let unit = SelectionUnit::for_click_count(*click_count);
+-                self.mouse_selection.set(Some(unit).into());
+-                *cursor = selectable_text_cursor(find_link(position).is_some());
+-                // As in a `TextInput`, the press takes the focus, which clears the selection
+-                // of the item that had it. A no-op when this item has it already.
+-                WindowInner::from_pub(window_adapter.window()).set_focus_item(
+-                    self_rc,
+-                    true,
+-                    FocusReason::PointerClick,
+-                );
+-                let anchor = if window_adapter.window().0.context().modifiers().get().shift() {
+-                    crate::styled_text::clamp_byte_offset(
+-                        &styled,
+-                        self.anchor_position_byte_offset(),
+-                    )
+-                } else {
+-                    offset
+-                };
+-                let (anchor, focus) = selection_by_unit(&styled, anchor, offset, unit);
+-                set(anchor, focus);
+-                Some(InputEventResult::GrabMouse)
+-            }
+-            MouseEvent::Moved { position, .. } => {
+-                let Some(unit) = self.mouse_selection.get().get() else {
+-                    *cursor = selectable_text_cursor(find_link(position).is_some());
+-                    return Some(InputEventResult::EventAccepted);
+-                };
+-                *cursor = selectable_text_cursor(false);
+-                if let Some(offset) = offset_at(position) {
+-                    let styled = self.text();
+-                    let offset = crate::styled_text::clamp_byte_offset(&styled, offset as i32);
+-                    let anchor = crate::styled_text::clamp_byte_offset(
+-                        &styled,
+-                        self.anchor_position_byte_offset(),
+-                    );
+-                    let (anchor, focus) = selection_by_unit(&styled, anchor, offset, unit);
+-                    set(anchor, focus);
+-                }
+-                Some(InputEventResult::GrabMouse)
+-            }
+-            MouseEvent::Released { position, button: PointerEventButton::Left, .. } => {
+-                *cursor = selectable_text_cursor(find_link(position).is_some());
+-                // A press released with nothing selected is a click, left to the link handling
+-                // in `input_event`. (A Shift-click extends the selection without moving.)
+-                let clicked = self.mouse_selection.take().get() == Some(SelectionUnit::Character)
+-                    && !self.has_selection();
+-                if clicked {
+-                    return None;
+-                }
+-                self.copy_clipboard(window_adapter, Clipboard::SelectionClipboard);
+-                Some(InputEventResult::EventAccepted)
+-            }
+-            MouseEvent::Exit => {
+-                self.mouse_selection.take();
+-                Some(InputEventResult::EventIgnored)
+-            }
+-            _ => None,
+-        }
+-    }
+-}
+-
+-/// The pointer over a link, an I-beam over the rest of selectable text.
+-#[cfg(feature = "shared-parley")]
+-fn selectable_text_cursor(over_link: bool) -> super::MouseCursorInner {
+-    super::MouseCursorInner::BuiltIn(if over_link {
+-        super::BuiltInMouseCursor::Pointer
+-    } else {
+-        super::BuiltInMouseCursor::Text
+-    })
+ }
+ 
+ /// `anchor` and `cursor` clamped into `text`, the smaller first.
+@@ -755,36 +792,6 @@ fn ordered_raw_offsets(
+     (anchor.min(cursor), anchor.max(cursor))
+ }
+ 
+-/// `anchor..focus` (either way round), widened to whole words or paragraphs as `unit` says.
+-/// A word or a paragraph lies within one paragraph of `styled`, so the text isn't joined.
+-#[cfg(feature = "shared-parley")]
+-fn selection_by_unit(
+-    styled: &crate::styled_text::StyledText,
+-    anchor: usize,
+-    focus: usize,
+-    unit: SelectionUnit,
+-) -> (usize, usize) {
+-    let unit_at = |offset: usize| -> core::ops::Range<usize> {
+-        let Some((paragraph, range)) = crate::styled_text::paragraph_at(styled, offset) else {
+-            return offset..offset;
+-        };
+-        match unit {
+-            SelectionUnit::Character => offset..offset,
+-            SelectionUnit::Word => {
+-                let word = word_at(&paragraph.text, offset - range.start);
+-                range.start + word.start..range.start + word.end
+-            }
+-            SelectionUnit::Paragraph => range,
+-        }
+-    };
+-    let (anchor_unit, focus_unit) = (unit_at(anchor), unit_at(focus));
+-    if anchor <= focus {
+-        (anchor_unit.start, focus_unit.end)
+-    } else {
+-        (anchor_unit.end, focus_unit.start)
+-    }
+-}
+-
+ /// The implementation of the `Text` element
+ #[repr(C)]
+ #[derive(FieldOffsets, Default, SlintElement)]
+@@ -1627,6 +1634,9 @@ impl Item for TextInput {
+                             let mut text = String::from(self.text());
+                             let cursor_position = self.cursor_position(&text);
+                             text.insert_str(cursor_position, &preedit_text);
++                            // 先把组词区清空再发布文本：后续同步应描述一个普通
++                            // 光标，而不是刚刚折叠掉的那个范围。
++                            self.preedit_text.set(Default::default());
+                             self.set_text_internal(text.into());
+                             let new_pos = (cursor_position + preedit_text.len()) as i32;
+                             self.anchor_position_byte_offset.set(new_pos);
+@@ -1654,7 +1664,16 @@ impl Item for TextInput {
+         size: LogicalSize,
+     ) -> RenderingResult {
+         crate::properties::evaluate_no_tracking(|| {
+-            if self.has_focus() && self.text() != *backend.window().last_ime_text.borrow() {
++            // 组词期间不要把 `text` 回推给平台。Android 后端拿到 `text` 后会
++            // 用它重写输入连接里的 Editable，而 `text` 不含正处于组词状态的
++            // 拼音/英文；每次回推都会把 Editable 里的组合区整个抹掉，组合永远
++            // 攒不起来。组词期间唯一的真相在输入法那边，提交时它会把最终文本
++            // 连同选区一起交回来，那次更新才需要同步。
++            let composing = cfg!(target_os = "android") && !self.preedit_text().is_empty();
++            if self.has_focus()
++                && !composing
++                && self.text() != *backend.window().last_ime_text.borrow()
++            {
+                 let window_adapter = &backend.window().window_adapter();
+                 if let Some(w) = window_adapter.internal(crate::InternalToken) {
+                     w.input_method_request(InputMethodRequest::Update(
+@@ -2147,6 +2166,11 @@ impl TextInput {
+         if self.read_only() || !self.has_focus() {
+             return;
+         }
++        // 组词期间不回推 `text`（原因见 `render`）。
++        #[cfg(target_os = "android")]
++        if !self.preedit_text().is_empty() {
++            return;
++        }
+         if let Some(w) = window_adapter.internal(crate::InternalToken) {
+             w.input_method_request(InputMethodRequest::Update(
+                 self.ime_properties(window_adapter, self_rc),
+@@ -2380,8 +2404,13 @@ impl TextInput {
+             window_adapter,
+             self_rc,
+         );
+-        // Keep the cursor visible while it moves, as for the arrow keys.
+-        self.show_cursor(window_adapter);
++        // Keep the cursor visible while it moves, as for the arrow keys. An
++        // unfocused field has no caret to show: arming the blink timer there
++        // would paint a blinking caret with no keyboard behind it (and repaint
++        // the item every blink cycle).
++        if self.has_focus() {
++            self.show_cursor(window_adapter);
++        }
+     }
+ 
+     pub fn select_all(self: Pin<&Self>, window_adapter: &Rc<dyn WindowAdapter>, self_rc: &ItemRc) {
+@@ -2405,6 +2434,45 @@ impl TextInput {
+         self.as_ref().anchor_position_byte_offset.set(self.as_ref().cursor_position_byte_offset());
+     }
+ 
++    /// Commit the input method's composition (preedit) into `text`, placing the
++    /// caret after the composed run. Returns `true` when there was a composition
++    /// to commit.
++    ///
++    /// The Android host writes `text` back into the input connection's editable
++    /// whenever the IME is told about an update. Apps that replace the draft
++    /// programmatically (voice transcription, history recall) must first collect
++    /// the composition here, otherwise the pending pinyin/word would be merged
++    /// into the new text when the focus is dropped.
++    pub fn commit_preedit(
++        self: Pin<&Self>,
++        window_adapter: &Rc<dyn WindowAdapter>,
++        self_rc: &ItemRc,
++    ) -> bool {
++        let preedit_text = self.preedit_text();
++        if preedit_text.is_empty() {
++            return false;
++        }
++        let mut text = String::from(self.text());
++        let cursor_position = self.cursor_position(&text);
++        text.insert_str(cursor_position, &preedit_text);
++        // 先清空组词区再发布文本：后续同步应描述一个普通光标，而不是刚刚
++        // 折叠掉的那个范围。
++        self.preedit_text.set(Default::default());
++        self.preedit_selection.set(Default::default());
++        self.set_text_internal(text.into());
++        let new_pos = (cursor_position + preedit_text.len()) as i32;
++        self.anchor_position_byte_offset.set(new_pos);
++        self.set_cursor_position(
++            new_pos,
++            false,
++            TextChangeNotify::TriggerCallbacks,
++            window_adapter,
++            self_rc,
++        );
++        Self::FIELD_OFFSETS.edited().apply_pin(self).call(&());
++        true
++    }
++
+     pub fn select_word(self: Pin<&Self>, window_adapter: &Rc<dyn WindowAdapter>, self_rc: &ItemRc) {
+         let text = self.text();
+         let (new_a, new_c) =
+@@ -2892,6 +2960,18 @@ fn paragraph_selection(text: &str, anchor: usize, cursor: usize) -> (usize, usiz
+     }
+ }
+ 
++/// Commit the composition (preedit) of the currently focused [`TextInput`] into
++/// its `text`, if there is one. Used by the Android shell before it replaces the
++/// draft with a transcription, so the pending composition cannot be folded into
++/// (or wipe) the new text when the input method session ends.
++pub fn commit_focused_preedit(window: &crate::api::Window) -> bool {
++    let window_inner = WindowInner::from_pub(window);
++    let Some(item) = window_inner.focus_item.borrow().upgrade() else { return false };
++    let Some(input) = item.downcast::<TextInput>() else { return false };
++    let window_adapter = window_inner.window_adapter();
++    input.as_pin_ref().commit_preedit(&window_adapter, &item)
++}
++
+ pub fn text_item_font_metrics(
+     window_adapter: &Rc<dyn WindowAdapter>,
+     self_rc: &ItemRc,

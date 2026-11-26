@@ -1,0 +1,27 @@
+diff --git a/src/platform_impl/linux/mod.rs b/src/platform_impl/linux/mod.rs
+index 776689f..6f1f5e3 100644
+--- a/src/platform_impl/linux/mod.rs
++++ b/src/platform_impl/linux/mod.rs
+@@ -643,7 +643,12 @@ pub(crate) enum PlatformCustomCursor {
+ 
+ /// Hooks for X11 errors.
+ #[cfg(x11_platform)]
+-pub(crate) static mut XLIB_ERROR_HOOKS: Mutex<Vec<XlibErrorHook>> = Mutex::new(Vec::new());
++// This is mutated only behind the mutex.  `static mut` was used by the
++// original 0.30.2 implementation, but merely borrowing that static is
++// rejected by Rust 2024 compatibility checks and can be unsound.  The local
++// Lazy wrapper provides the required const initialization on this MSRV.
++pub(crate) static XLIB_ERROR_HOOKS: Lazy<Mutex<Vec<XlibErrorHook>>> =
++    Lazy::new(|| Mutex::new(Vec::new()));
+ 
+ #[cfg(x11_platform)]
+ unsafe extern "C" fn x_error_callback(
+@@ -654,7 +659,7 @@ unsafe extern "C" fn x_error_callback(
+     if let Ok(ref xconn) = *xconn_lock {
+         // Call all the hooks.
+         let mut error_handled = false;
+-        for hook in unsafe { XLIB_ERROR_HOOKS.lock() }.unwrap().iter() {
++        for hook in XLIB_ERROR_HOOKS.lock().unwrap().iter() {
+             error_handled |= hook(display as *mut _, event as *mut _);
+         }
+ 

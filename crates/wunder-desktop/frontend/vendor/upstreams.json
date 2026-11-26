@@ -1,0 +1,69 @@
+{
+  "slint_version": "1.19.1",
+  "patch_dir": "patches/slint-1.19.1",
+  "crates": [
+    {
+      "name": "i-slint-common",
+      "version": "1.19.1",
+      "vendor": "i-slint-common-1.19",
+      "kind": "slint",
+      "sha256": "676891b286d16a92564780d48b8890f2eca3a49f02b5ecdaa0201e84cb9c10b0"
+    },
+    {
+      "name": "i-slint-compiler",
+      "version": "1.19.1",
+      "vendor": "i-slint-compiler-1.19",
+      "kind": "slint",
+      "sha256": "1667da24d1930e9f28e41a987e74611c6c923598d7c67a338ed585ad8b43a900"
+    },
+    {
+      "name": "i-slint-core",
+      "version": "1.19.1",
+      "vendor": "i-slint-core-1.19",
+      "kind": "slint",
+      "sha256": "8764dedbc051cd5813c320dfe91e0c5be99169f171e1385c6fc183ae7e1b90ba"
+    },
+    {
+      "name": "i-slint-renderer-software",
+      "version": "1.19.1",
+      "vendor": "i-slint-renderer-software-1.19",
+      "kind": "slint",
+      "sha256": "5ec483856c0dc16a6ad3d9048162231db2e018a389625967ce975ad8025d9b33"
+    },
+    {
+      "name": "i-slint-backend-winit",
+      "version": "1.19.1",
+      "vendor": "i-slint-backend-winit-1.19",
+      "kind": "slint",
+      "sha256": "2d170c0918bd38f3afd3dcced2056f8741b8652867ab2554d58a47ad870eab09"
+    },
+    {
+      "name": "fontique",
+      "version": "0.12.0",
+      "vendor": "fontique-0.12",
+      "kind": "text",
+      "sha256": "bbf1df16263783918b7da396077521f92b729ef7c429444dfcf03581f1448b77"
+    },
+    {
+      "name": "parley",
+      "version": "0.12.0",
+      "vendor": "parley-0.12",
+      "kind": "text",
+      "sha256": "61bd0c0c1737f0b3d3726dc06b225083af213b61913e4fbae1670613a106c6ce"
+    },
+    {
+      "name": "softbuffer",
+      "version": "0.4.8",
+      "vendor": "softbuffer-0.4.8",
+      "kind": "window",
+      "sha256": "aac18da81ebbf05109ab275b157c22a653bb3c12cf884450179942f81bcbf6c3"
+    },
+    {
+      "name": "winit",
+      "version": "0.30.2",
+      "vendor": "winit-0.30.2",
+      "kind": "window",
+      "sha256": "1dc930d6cfbf53c4fe0b95689cdc2e17b8658c3f4214b9953298ccb5a1a15c90"
+    }
+  ]
+}

@@ -1,0 +1,110 @@
+diff --git a/window.rs b/window.rs
+index e6ef421..61fc8d1 100644
+--- a/window.rs
++++ b/window.rs
+@@ -718,7 +718,10 @@ pub struct WindowInner {
+     menubar: RefCell<Option<vtable::VWeak<MenuVTable>>>,
+ 
+     /// Stack of currently active popups
+-    active_popups: RefCell<Vec<PopupWindow>>,
++    pub active_popups: RefCell<Vec<PopupWindow>>,
++    /// Project extension: a live native canvas must keep its event loop running
++    /// while a context menu is open (Win32 TrackPopupMenu runs a modal loop).
++    pub native_popup_menus_enabled: Cell<bool>,
+     next_popup_id: Cell<NonZeroU32>,
+     overlays: RefCell<Vec<ItemTreeRc>>,
+     had_popup_on_press: Cell<bool>,
+@@ -798,6 +801,7 @@ impl WindowInner {
+             last_ime_text: Default::default(),
+             cursor_blinker: Default::default(),
+             active_popups: Default::default(),
++            native_popup_menus_enabled: Cell::new(true),
+             next_popup_id: Cell::new(NonZeroU32::MIN),
+             overlays: Default::default(),
+             had_popup_on_press: Default::default(),
+@@ -943,6 +947,37 @@ impl WindowInner {
+         // handle multiple press release
+         event = self.click_state.check_repeat(event, self.context());
+ 
++        // A left press ends any selection; a press that lands in a selectable text starts a
++        // new one, from that text's own handler (see `crate::text_selection`). A press on a
++        // selection handle keeps the selection so the shell's knob owns the drag.
++        if let MouseEvent::Pressed {
++            position,
++            button: crate::items::PointerEventButton::Left,
++            ..
++        } = &event
++        {
++            let window_adapter = self.window_adapter();
++            crate::text_selection::pressed_at(&window_adapter.window(), *position);
++        }
++
++        // While a selection is being dragged, the pointer belongs to it: the text that began the
++        // drag may have scrolled away or the pointer may be over another block, and neither
++        // should change where the events go. Positions here are the window's, which is what the
++        // selection measures against.
++        if crate::text_selection::dragging() {
++            match event {
++                MouseEvent::Moved { position, .. } => {
++                    crate::text_selection::drag_to(&self.window_adapter(), position);
++                    return Some(MouseDispatchResult { drag_action: None, accepted: true });
++                }
++                MouseEvent::Released { button: crate::items::PointerEventButton::Left, .. } => {
++                    crate::text_selection::release();
++                    return Some(MouseDispatchResult { drag_action: None, accepted: true });
++                }
++                _ => {}
++            }
++        }
++
+         let window_adapter = self.window_adapter();
+         let mut mouse_input_state = self.mouse_input_state.take();
+ 
+@@ -1214,6 +1249,8 @@ impl WindowInner {
+             let handling = window_adapter.set_mouse_cursor(mouse_input_state.cursor.clone());
+             self.mouse_cursor_handling.replace(Some(handling));
+         }
++        // Remembers the shape for tests: a screenshot cannot show an OS cursor.
++        crate::cursor::record(&mouse_input_state.cursor);
+ 
+         let drag_action = mouse_input_state.drop_target_action();
+         self.mouse_input_state.set(mouse_input_state);
+@@ -1416,6 +1453,28 @@ impl WindowInner {
+         internal_key_event.key_event.modifiers =
+             self.context().modifiers().get().modifiers_for(&internal_key_event);
+ 
++        // Copy the text selection, or drop it on Escape. A focused text input keeps its own
++        // handling: it returns false here when it has a selection of its own.
++        if internal_key_event.event_type == KeyEventType::KeyPressed {
++            if matches!(internal_key_event.shortcut(), Some(crate::input::StandardShortcut::Copy))
++                && crate::text_selection::copy(self)
++            {
++                return crate::input::KeyEventResult::EventAccepted;
++            }
++            if matches!(
++                internal_key_event.shortcut(),
++                Some(crate::input::StandardShortcut::SelectAll)
++            ) && crate::text_selection::select_all_in_view(self)
++            {
++                return crate::input::KeyEventResult::EventAccepted;
++            }
++            if internal_key_event.key_event.text.chars().eq([char::from(
++                crate::input::key_codes::Key::Escape,
++            )]) {
++                crate::text_selection::clear();
++            }
++        }
++
+         // Emulate macOS menubar behavior: The OS consumes the event before it reaches any
+         // Slint widgets. Therefore we process the menubar shortcuts here first and abort event
+         // propagation if a shortcut matches.
+@@ -2412,6 +2471,9 @@ impl WindowInner {
+         position: LogicalPosition,
+         parent_item: &ItemRc,
+     ) -> bool {
++        if !self.native_popup_menus_enabled.get() {
++            return false;
++        }
+         if let Some(x) = self.window_adapter().internal(crate::InternalToken) {
+             let position = parent_item.map_to_native_window(
+                 parent_item.geometry().origin + position.to_euclid().to_vector(),

@@ -1,0 +1,20 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index b554603..c6ec71e 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -52,7 +52,6 @@ box-shadow-cache = []
+ default = [
+     "std",
+     "unicode",
+-    "shared-parley",
+ ]
+ ffi = [
+     "dep:static_assertions",
+@@ -97,7 +96,6 @@ std = [
+     "chrono/wasmbind",
+     "chrono/clock",
+     "dep:sys-locale",
+-    "shared-fontique",
+     "i-slint-common/locale-decimal-separator",
+     "i-slint-common/color-parsing",
+     "i-slint-common/markdown",

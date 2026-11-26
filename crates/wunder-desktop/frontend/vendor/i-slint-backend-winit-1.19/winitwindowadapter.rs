@@ -535,6 +535,11 @@ pub struct WinitWindowAdapter {
 
     has_presentable_frame: Cell<bool>,
 
+    /// When the last successful frame was presented. Used on Windows to skip a
+    /// redundant forced full frame on focus gain right after another present.
+    #[cfg(target_os = "windows")]
+    last_presented_frame: Cell<Option<std::time::Instant>>,
+
     #[cfg(target_arch = "wasm32")]
     virtual_keyboard_helper: RefCell<Option<super::wasm_input_helper::WasmInputHelper>>,
 
@@ -622,6 +627,8 @@ impl WinitWindowAdapter {
             has_explicit_size: Default::default(),
             pending_resize_event_after_show: Default::default(),
             has_presentable_frame: Default::default(),
+            #[cfg(target_os = "windows")]
+            last_presented_frame: Default::default(),
             renderer,
             #[cfg(target_arch = "wasm32")]
             virtual_keyboard_helper: Default::default(),
@@ -915,11 +922,16 @@ impl WinitWindowAdapter {
         }
 
         {
-            // Workaround for winit bug #2990
-            // Non-resizable windows can still contain a maximize button,
-            // so we'd have to additionally remove the button.
+            // Work around winit #2990 only for system-decorated windows.
+            // A frameless Slint window owns its caption buttons in client
+            // content; enabling Winit's maximize box here leaves Win7 with a
+            // latent native button that can surface after the first minimize
+            // or maximize state transition.
             let mut buttons = winit_window.enabled_buttons();
-            buttons.set(WindowButtons::MAXIMIZE, resizable);
+            buttons.set(
+                WindowButtons::MAXIMIZE,
+                resizable && winit_window.is_decorated(),
+            );
             winit_window.set_enabled_buttons(buttons);
         }
 
@@ -964,7 +976,14 @@ impl WinitWindowAdapter {
     }
 
     pub(crate) fn window_attributes() -> Result<WindowAttributes, PlatformError> {
-        let mut attrs = WindowAttributes::default().with_transparent(true).with_visible(false);
+        // The workbench paints every Win32 top-level surface opaquely. Keeping a
+        // borderless software-rendered window on Winit's transparent/layered
+        // path lets DWM expose erased client-edge pixels while the window is
+        // being activated (especially on Win7). Keep the native top-level
+        // opaque and let only the actual composited platforms opt in.
+        let mut attrs = WindowAttributes::default()
+            .with_transparent(!cfg!(target_os = "windows"))
+            .with_visible(false);
 
         // Only until the component's own title reaches the window
         attrs = attrs.with_title(i_slint_core::window::application_name().to_string());
@@ -1039,6 +1058,8 @@ impl WinitWindowAdapter {
         }
         if matches!(outcome?, DrawOutcome::Success) {
             self.has_presentable_frame.set(true);
+            #[cfg(target_os = "windows")]
+            self.last_presented_frame.set(Some(std::time::Instant::now()));
         } else {
             // Frame was skipped (e.g. surface occluded). pending_redraw was already
             // cleared above, so re-arm it so we try again.
@@ -1602,15 +1623,42 @@ impl WinitWindowAdapter {
                 let have_focus =
                     if cfg!(target_os = "macos") { winit_window.has_focus() } else { *have_focus };
                 let activation_result = self.activation_changed(have_focus);
-                // Win32 repaints the non-client frame on activation without
-                // telling the client. The software surface keeps the old
-                // border until a complete frame is presented, so force one
-                // now instead of waiting for unrelated damage.
+                // A child/auxiliary Win32 window can expose or cover part of
+                // a software-rendered parent without producing an Occluded
+                // event. Its backing DIB may then report a reusable age even
+                // though GDI erased a frame edge. Repaint a complete frame on
+                // either focus transition so the lower client rule is restored
+                // without requiring a manual move or resize.
                 #[cfg(target_os = "windows")]
-                if have_focus {
+                {
                     self.renderer.occluded(true);
-                    self.draw()?;
+
+                    if have_focus {
+                        // WM_ACTIVATE can expose the client surface before a
+                        // queued redraw is dispatched. Present the forced full
+                        // software frame in this message turn, so the custom
+                        // border never flashes transparent while regaining
+                        // focus on Win7 or newer Windows versions. Skip it when
+                        // a frame was presented just now: restoring from
+                        // minimize otherwise paints two full frames
+                        // back-to-back (the queued WM_PAINT frame plus this
+                        // one), stalling slow CPUs for tens of milliseconds.
+                        let recently_presented =
+                            self.last_presented_frame.get().is_some_and(|at| {
+                                at.elapsed() < std::time::Duration::from_millis(250)
+                            });
+                        if !recently_presented {
+                            activation_result.and_then(|_| self.draw())?;
+                        } else {
+                            activation_result?;
+                        }
+                    } else {
+                        activation_result?;
+                        self.request_redraw();
+                    }
                 }
+
+                #[cfg(not(target_os = "windows"))]
                 activation_result?;
                 #[cfg(target_os = "windows")]
                 if have_focus {
@@ -1823,8 +1871,8 @@ impl WinitWindowAdapter {
                     winit::event::ElementState::Pressed => {
                         if button == PointerEventButton::Left
                             && self.current_resize_direction.get().is_some()
+                            && handle_resize(winit_window, self.current_resize_direction.get())
                         {
-                            handle_resize(winit_window, self.current_resize_direction.get());
                             return Ok(());
                         }
 
@@ -2046,6 +2094,11 @@ impl WinitWindowAdapter {
             if !platform_dictates_window_size()
                 && winit_window.fullscreen().is_none()
                 && !self.has_explicit_size.get()
+                // request_inner_size() restores a maximized Win32 window.
+                // Preserve an initial or existing maximized state and let the
+                // window manager keep the current client size; the preferred
+                // size remains the restore rectangle for the next unmaximize.
+                && !winit_window.is_maximized()
                 && preferred_size.width > 0 as Coord
                 && preferred_size.height > 0 as Coord
                 // Don't set the preferred size as the user may have resized the window

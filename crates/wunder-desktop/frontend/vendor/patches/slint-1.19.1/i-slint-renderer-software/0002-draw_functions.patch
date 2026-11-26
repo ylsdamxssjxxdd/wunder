@@ -1,0 +1,172 @@
+diff --git a/draw_functions.rs b/draw_functions.rs
+index ee3321d..34d68c0 100644
+--- a/draw_functions.rs
++++ b/draw_functions.rs
+@@ -32,7 +32,19 @@ pub(super) fn draw_texture_line(
+         data,
+         format,
+         pixel_stride,
+-        extra: super::SceneTextureExtra { colorize, alpha, rotation, dx, dy, off_x, off_y },
++        extra: super::SceneTextureExtra {
++            colorize,
++            alpha,
++            rotation,
++            dx,
++            dy,
++            off_x,
++            off_y,
++            subpixel,
++            subpixel_enabled,
++            subpixel_bgr,
++            ..
++        },
+     } = *texture;
+ 
+     let source_size = texture.source_size().cast::<i32>();
+@@ -40,10 +52,24 @@ pub(super) fn draw_texture_line(
+     let y = line - span.origin.y_length();
+     let y = if rotation.mirror_width() { span.size.height - y.get() - 1 } else { y.get() } as i32;
+ 
+-    let off_y = Fixed::<i32, 8>::from_fixed(off_y);
+-    let dx = Fixed::<i32, 8>::from_fixed(dx);
+-    let dy = Fixed::<i32, 8>::from_fixed(dy);
+-    let off_x = Fixed::<i32, 8>::from_fixed(off_x);
++    // Signed-distance-field glyphs keep the original 8-bit ratio / 4-bit offset
++    // path; ordinary images use the full-precision ratio and clip offset so a
++    // large scroll offset cannot amplify the 1/256 quantization into drift.
++    let (off_y, dx, dy, off_x) = if format == TexturePixelFormat::SignedDistanceField {
++        (
++            Fixed::<i32, 16>::try_from_fixed(off_y).unwrap(),
++            Fixed::<i32, 16>::from_fixed(dx),
++            Fixed::<i32, 16>::from_fixed(dy),
++            Fixed::<i32, 16>::try_from_fixed(off_x).unwrap(),
++        )
++    } else {
++        (
++            Fixed::<i32, 16>::from_f32(texture.extra.precise_off_y).unwrap(),
++            Fixed::<i32, 16>::from_f32(texture.extra.precise_dx).unwrap(),
++            Fixed::<i32, 16>::from_f32(texture.extra.precise_dy).unwrap(),
++            Fixed::<i32, 16>::from_f32(texture.extra.precise_off_x).unwrap(),
++        )
++    };
+     let bpp = format.bpp();
+ 
+     if !rotation.is_transpose() {
+@@ -88,6 +114,7 @@ pub(super) fn draw_texture_line(
+         let row_fract = row.fract();
+         let contiguous = delta == Fixed::from_integer(1)
+             && alpha == 0xff
++            && !subpixel
+             && has_contiguous_path(format, colorize);
+         while begin < len {
+             if contiguous {
+@@ -103,6 +130,9 @@ pub(super) fn draw_texture_line(
+                     data,
+                     alpha,
+                     colorize,
++                    subpixel,
++                    subpixel_enabled,
++                    subpixel_bgr,
+                     (pixel_stride as usize, dy),
+                     #[inline(always)]
+                     |bpp| {
+@@ -169,6 +199,9 @@ pub(super) fn draw_texture_line(
+                 data,
+                 alpha,
+                 colorize,
++                subpixel,
++                subpixel_enabled,
++                subpixel_bgr,
+                 (stride, dy),
+                 #[inline(always)]
+                 |_| {
+@@ -279,7 +312,10 @@ pub(super) fn draw_texture_line(
+         data: &[u8],
+         alpha: u8,
+         color: Color,
+-        (stride, delta): (usize, Fixed<i32, 8>),
++        subpixel: bool,
++        subpixel_enabled: bool,
++        subpixel_bgr: bool,
++        (stride, delta): (usize, Fixed<i32, 16>),
+         mut pos: impl FnMut(usize) -> (usize, u8, u8),
+     ) {
+         match format {
+@@ -318,7 +354,31 @@ pub(super) fn draw_texture_line(
+                 }
+             }
+             TexturePixelFormat::Rgba => {
+-                if color.alpha() == 0 {
++                if subpixel {
++                    for pix in line_buffer {
++                        let pos = pos(4).0;
++                        if subpixel_enabled {
++                            pix.blend_subpixel(
++                                color,
++                                if subpixel_bgr {
++                                    [data[pos + 2], data[pos + 1], data[pos]]
++                                } else {
++                                    [data[pos], data[pos + 1], data[pos + 2]]
++                                },
++                            );
++                        } else {
++                            let coverage =
++                                ((data[pos] as u16 + data[pos + 1] as u16 + data[pos + 2] as u16)
++                                    / 3) as u8;
++                            pix.blend(PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
++                                ((coverage as u16 * color.alpha() as u16) / 255) as u8,
++                                color.red(),
++                                color.green(),
++                                color.blue(),
++                            )));
++                        }
++                    }
++                } else if color.alpha() == 0 {
+                     for pix in line_buffer {
+                         let pos = pos(4).0;
+                         let p: &[u8] = &data[pos..pos + 4];
+@@ -390,7 +450,7 @@ pub(super) fn draw_texture_line(
+             }
+             TexturePixelFormat::SignedDistanceField => {
+                 const RANGE: i32 = 6;
+-                let factor = (362 * 256 / delta.0) * RANGE; // 362 ≃ 255 * sqrt(2)
++                let factor = (362 * 256 / Fixed::<i32, 8>::from_fixed(delta).0) * RANGE; // 362 ≃ 255 * sqrt(2)
+                 let opaque = TargetPixel::from_rgb(color.red(), color.green(), color.blue());
+                 for pix in line_buffer {
+                     let (pos, col_f, row_f) = pos(1);
+@@ -1525,6 +1585,18 @@ impl PremultipliedRgbaColor {
+ pub trait TargetPixel: Sized + Copy {
+     /// Blend a single pixel with a color
+     fn blend(&mut self, color: PremultipliedRgbaColor);
++    /// Blend one RGB sub-pixel coverage triple. Formats without separate
++    /// channels fall back to their average coverage.
++    fn blend_subpixel(&mut self, color: Color, coverage: [u8; 3]) {
++        let coverage =
++            (coverage[0] as u16 + coverage[1] as u16 + coverage[2] as u16) / 3;
++        self.blend(PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
++            ((coverage as u16 * color.alpha() as u16) / 255) as u8,
++            color.red(),
++            color.green(),
++            color.blue(),
++        )));
++    }
+     /// Blend a color to all the pixel in the slice.
+     fn blend_slice(slice: &mut [Self], color: PremultipliedRgbaColor) {
+         if color.alpha == u8::MAX {
+@@ -2108,9 +2180,16 @@ fn unscaled_texture_line_wraps_into_next_tile() {
+                 dy: Fixed::from_integer(1),
+                 off_x: Fixed(24),
+                 off_y: Fixed(0),
++                precise_dx: 1.0,
++                precise_dy: 1.0,
++                precise_off_x: 1.5,
++                precise_off_y: 0.0,
+                 colorize: Color::default(),
+                 alpha: 0xff,
+                 rotation: Default::default(),
++                subpixel: false,
++                subpixel_enabled: false,
++                subpixel_bgr: false,
+             },
+         };
+         let mut line = [Rgb8Pixel::default(); 7];

@@ -1,0 +1,97 @@
+diff --git a/src/platform_impl/windows/window_state.rs b/src/platform_impl/windows/window_state.rs
+index 911467b..bf802cc 100644
+--- a/src/platform_impl/windows/window_state.rs
++++ b/src/platform_impl/windows/window_state.rs
+@@ -15,8 +15,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
+     SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOREPOSITION, SWP_NOSIZE, SWP_NOZORDER,
+     SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, WINDOWPLACEMENT,
+     WINDOW_EX_STYLE, WINDOW_STYLE, WS_BORDER, WS_CAPTION, WS_CHILD, WS_CLIPCHILDREN,
+-    WS_CLIPSIBLINGS, WS_EX_ACCEPTFILES, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_NOREDIRECTIONBITMAP,
+-    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_EX_WINDOWEDGE, WS_MAXIMIZE, WS_MAXIMIZEBOX, WS_MINIMIZE,
++    WS_CLIPSIBLINGS, WS_EX_ACCEPTFILES, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
++    WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_EX_WINDOWEDGE,
++    WS_MAXIMIZE, WS_MAXIMIZEBOX, WS_MINIMIZE,
+     WS_MINIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_SIZEBOX, WS_SYSMENU, WS_VISIBLE,
+ };
+ 
+@@ -123,6 +124,19 @@ bitflags! {
+ 
+         const CLIP_CHILDREN = 1 << 22;
+ 
++        /// A tool window: never in the taskbar or Alt+Tab. Winit's usual
++        /// approach — `ITaskbarList::DeleteTab` after creation — only removes a
++        /// button that already exists, so a window that is created hidden and
++        /// shown later still gets one. The style bit is the only thing the
++        /// shell honours from the very first show.
++        const SKIP_TASKBAR = 1 << 23;
++
++        /// Never the foreground window (`WS_EX_NOACTIVATE`). The bit has to
++        /// live in the flags and not be poked in afterwards: every state diff
++        /// rebuilds `GWL_EXSTYLE` from this set, and a later show uses
++        /// `SW_SHOW`, which would otherwise activate a notification overlay.
++        const NO_ACTIVATE = 1 << 24;
++
+         const EXCLUSIVE_FULLSCREEN_OR_MASK = WindowFlags::ALWAYS_ON_TOP.bits();
+     }
+ }
+@@ -269,9 +283,15 @@ impl WindowFlags {
+         if self.contains(WindowFlags::VISIBLE) {
+             style |= WS_VISIBLE;
+         }
+-        if self.contains(WindowFlags::ON_TASKBAR) {
++        if self.contains(WindowFlags::ON_TASKBAR) && !self.contains(WindowFlags::SKIP_TASKBAR) {
+             style_ex |= WS_EX_APPWINDOW;
+         }
++        if self.contains(WindowFlags::SKIP_TASKBAR) {
++            style_ex |= WS_EX_TOOLWINDOW;
++        }
++        if self.contains(WindowFlags::NO_ACTIVATE) {
++            style_ex |= WS_EX_NOACTIVATE;
++        }
+         if self.contains(WindowFlags::ALWAYS_ON_TOP) {
+             style_ex |= WS_EX_TOPMOST;
+         }
+@@ -309,6 +329,19 @@ impl WindowFlags {
+             style &= !WS_OVERLAPPEDWINDOW;
+         }
+ 
++        // Winit normally retains WS_CAPTION and WS_SYSMENU for an undecorated
++        // top-level so the frame can participate in Windows' snap behavior;
++        // WM_NCCALCSIZE then covers the non-client area. That works on modern
++        // Windows, but after a frame refresh Win7 may briefly paint the latent
++        // system caption control before the custom client chrome receives its
++        // input. A frameless application already owns those controls, so keep
++        // WS_SIZEBOX for edge resizing/snap but remove every native caption
++        // style from the actual HWND.
++        if !self.contains(WindowFlags::MARKER_DECORATIONS) {
++            style &= !(WS_CAPTION | WS_BORDER | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
++            style_ex &= !WS_EX_WINDOWEDGE;
++        }
++
+         (style, style_ex)
+     }
+ 
+@@ -427,12 +460,21 @@ impl WindowFlags {
+     pub fn adjust_rect(self, hwnd: HWND, mut rect: RECT) -> Result<RECT, io::Error> {
+         unsafe {
+             let mut style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+-            let style_ex = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
++            let mut style_ex = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+ 
+             // Frameless style implemented by manually overriding the non-client area in
+             // `WM_NCCALCSIZE`.
+             if !self.contains(WindowFlags::MARKER_DECORATIONS) {
+-                style &= !(WS_CAPTION | WS_SIZEBOX);
++                // Keep WS_SIZEBOX on the real HWND for edge resize and snap,
++                // but omit it from the synthetic client-size calculation: the
++                // WM_NCCALCSIZE override already makes that border client area.
++                style &= !(WS_CAPTION
++                    | WS_BORDER
++                    | WS_SIZEBOX
++                    | WS_SYSMENU
++                    | WS_MINIMIZEBOX
++                    | WS_MAXIMIZEBOX);
++                style_ex &= !WS_EX_WINDOWEDGE;
+             }
+ 
+             util::win_to_err({

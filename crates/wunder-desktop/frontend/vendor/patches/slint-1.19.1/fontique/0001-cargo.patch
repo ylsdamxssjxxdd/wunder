@@ -1,0 +1,17 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 5501270..aabbae2 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -39,7 +39,11 @@ all-features = true
+ 
+ [features]
+ bytemuck = ["parlance/bytemuck"]
+-default = ["system"]
++# The Slint workbench supplies its own bundled fallback font. Keep the parser
++# and layout support available, but do not opt into platform font discovery:
++# on Windows that feature pulls in DirectWrite/WinRT and makes the Win7 build
++# import combase.dll.
++default = ["std"]
+ fontconfig-dlopen = ["yeslogic-fontconfig-sys?/dlopen"]
+ libm = ["read-fonts/libm"]
+ std = [

@@ -10,12 +10,14 @@ use i_slint_core::platform::PlatformError;
 use i_slint_core::renderer::DrawOutcome;
 pub use i_slint_renderer_software::SoftwareRenderer;
 use i_slint_renderer_software::{PremultipliedRgbaColor, RepaintBufferType, TargetPixel};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 use winit::event_loop::ActiveEventLoop;
 
 use super::WinitCompatibleRenderer;
+
+mod popup_repaint;
 
 pub struct WinitSoftwareRenderer {
     renderer: SoftwareRenderer,
@@ -23,6 +25,22 @@ pub struct WinitSoftwareRenderer {
     surface: RefCell<
         Option<softbuffer::Surface<Arc<winit::window::Window>, Arc<winit::window::Window>>>,
     >,
+    resize_retry_count: Cell<u8>,
+    /// Win32 can erase a hidden or moved GDI surface without updating the
+    /// softbuffer age. The next visible frame must therefore ignore the age
+    /// and render every pixel once.
+    ///
+    /// A surface resize sets it too: the partial-rendering cache only knows
+    /// the items of the previous frame, so nothing dirties the band the window
+    /// just gained (or the rows a shorter window no longer covers), and the
+    /// buffer keeps the previous size's pixels there. The compositor scales
+    /// that stale frame into the new geometry while the user drags an edge,
+    /// which reads as a stretched ghost of the old content.
+    force_full_repaint: Cell<bool>,
+    /// Physical size of the last surface handed to the renderer, so a resize
+    /// that keeps the same softbuffer age still forces a complete frame.
+    last_surface_size: Cell<Option<(u32, u32)>>,
+    popup_repaint: popup_repaint::PopupRepaint,
 }
 
 #[repr(transparent)]
@@ -95,6 +113,10 @@ impl WinitSoftwareRenderer {
             renderer: SoftwareRenderer::new(),
             _context: RefCell::new(None),
             surface: RefCell::new(None),
+            resize_retry_count: Default::default(),
+            force_full_repaint: Default::default(),
+            last_surface_size: Default::default(),
+            popup_repaint: Default::default(),
         }))
     }
 }
@@ -120,20 +142,54 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
         // RCHO_SLINT_DIAGNOSTICS is set.
         let diagnostic_start = crate::software_diagnostics::frame_start();
 
-        surface
-            .resize(width, height)
-            .map_err(|e| format!("Error resizing softbuffer surface: {e}"))?;
+        // On legacy Win32, GDI can transiently reject a DIB allocation while
+        // the user drags a window edge. Rendering is best effort here: keep
+        // the event loop alive and let the next redraw retry instead of
+        // returning an error that terminates it.
+        if let Err(error) = surface.resize(width, height) {
+            eprintln!("Slint software surface resize deferred: {error}");
+            self.retry_deferred_resize(&winit_window);
+            return Ok(DrawOutcome::Success);
+        }
+        // A surface resize keeps the previous size's pixels in the buffer, and
+        // the partial-rendering cache only dirties items of the previous
+        // geometry, so nothing paints the band the window just gained. The
+        // compositor would stretch that stale frame while the user drags an
+        // edge, which reads as a ghost of the old content.
+        let surface_size = (width.get(), height.get());
+        if self.last_surface_size.get() != Some(surface_size) {
+            self.last_surface_size.set(Some(surface_size));
+            self.force_full_repaint.set(true);
+        }
 
-        let mut target_buffer = surface
-            .buffer_mut()
-            .map_err(|e| format!("Error retrieving softbuffer rendering buffer: {e}"))?;
+        let mut target_buffer = match surface.buffer_mut() {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                eprintln!("Slint software surface buffer deferred: {error}");
+                self.retry_deferred_resize(&winit_window);
+                return Ok(DrawOutcome::Success);
+            }
+        };
+        self.resize_retry_count.set(0);
 
+        let (has_embedded_popup, popup_changed) = self.popup_repaint.prepare(window, &self.renderer);
         let age = target_buffer.age();
-        self.renderer.set_repaint_buffer_type(match age {
-            1 => RepaintBufferType::ReusedBuffer,
-            2 => RepaintBufferType::SwappedBuffers,
-            _ => RepaintBufferType::NewBuffer,
-        });
+        // Consume the flag before rendering: a failure below must be able to
+        // arm it again for the retry.
+        let force_full_repaint = self.force_full_repaint.take();
+        // Opening/closing/moving a popup retains a complete repaint. Stable
+        // popups explicitly dirty their own rectangle, so their background is
+        // composited again over the toolbar without clearing every UI cache.
+        self.renderer
+            .set_repaint_buffer_type(if force_full_repaint || popup_changed {
+                RepaintBufferType::NewBuffer
+            } else {
+                match age {
+                    1 => RepaintBufferType::ReusedBuffer,
+                    2 => RepaintBufferType::SwappedBuffers,
+                    _ => RepaintBufferType::NewBuffer,
+                }
+            });
 
         let prepare_ms = diagnostic_start.map(|t| t.elapsed().as_secs_f64() * 1000.0);
         let render_start = diagnostic_start.map(|_| std::time::Instant::now());
@@ -204,14 +260,20 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
                     render_ms: render_ms.unwrap_or_default(),
                     present_ms: present_start.elapsed().as_secs_f64() * 1000.0,
                     damage_pixels,
-                    popup: !i_slint_core::window::WindowInner::from_pub(window)
-                        .active_popups()
-                        .is_empty(),
+                    popup: has_embedded_popup,
                     failed: present_result.is_err(),
                 });
             }
-            present_result?;
-            crate::first_frame::notify_presented();
+            if let Err(error) = present_result {
+                eprintln!("Slint software surface present deferred: {error}");
+                // A failed Win32 BitBlt did not publish that frame, so the
+                // retry must redraw every pixel instead of trusting damage or
+                // the buffer age from the failed presentation.
+                self.force_full_repaint.set(true);
+                self.retry_deferred_resize(&winit_window);
+            } else {
+                crate::first_frame::notify_presented();
+            }
         }
         Ok(DrawOutcome::Success)
     }
@@ -222,8 +284,10 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
 
     fn occluded(&self, _: bool) {
         // On X11 and Windows, the buffer is completely cleared when the window is hidden
-        // and the buffer age doesn't respect that, so clean the partial rendering cache
-        self.renderer.set_repaint_buffer_type(RepaintBufferType::NewBuffer);
+        // and the buffer age doesn't respect that, so clean the partial rendering cache.
+        // Defer to the next render: setting the buffer type here is overwritten by
+        // the age-based choice below before anything is drawn.
+        self.force_full_repaint.set(true);
     }
 
     fn resume(
@@ -256,6 +320,21 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
     fn suspend(&self) -> Result<(), PlatformError> {
         drop(self.surface.borrow_mut().take());
         drop(self._context.borrow_mut().take());
+        // The next resume creates a fresh surface; force a complete first frame.
+        self.last_surface_size.set(None);
+        self.force_full_repaint.set(true);
         Ok(())
+    }
+}
+
+impl WinitSoftwareRenderer {
+    fn retry_deferred_resize(&self, winit_window: &winit::window::Window) {
+        // A permanent allocation failure must not turn into a continuous
+        // redraw loop. Later WM_SIZE and paint events still retry normally.
+        let count = self.resize_retry_count.get().saturating_add(1);
+        self.resize_retry_count.set(count);
+        if count <= 2 {
+            winit_window.request_redraw();
+        }
     }
 }

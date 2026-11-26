@@ -1,0 +1,13 @@
+diff --git a/passes.rs b/passes.rs
+index a83ace9..792d8b0 100644
+--- a/passes.rs
++++ b/passes.rs
+@@ -23,6 +23,8 @@ mod default_geometry;
+ mod deprecated_rotation_origin;
+ #[cfg(feature = "renderer-software")]
+ mod embed_glyphs;
++#[cfg(feature = "renderer-software")]
++mod gb2312_table;
+ mod embed_images;
+ mod flickable;
+ mod focus_handling;

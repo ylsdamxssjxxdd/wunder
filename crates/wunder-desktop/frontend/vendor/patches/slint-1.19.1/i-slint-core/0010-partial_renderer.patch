@@ -1,0 +1,37 @@
+diff --git a/partial_renderer.rs b/partial_renderer.rs
+index 8c76f1a..fe1c743 100644
+--- a/partial_renderer.rs
++++ b/partial_renderer.rs
+@@ -270,7 +270,13 @@ impl core::fmt::Debug for DirtyRegion {
+ 
+ impl DirtyRegion {
+     /// The maximum number of rectangles that can be stored in a DirtyRegion
+-    pub const MAX_COUNT: usize = 3;
++    ///
++    /// rcho: raised from the upstream 3. A workbench frame change (radar
++    /// image + file list row + status bar + side panel) dirties far more
++    /// than three disjoint rectangles; with only three slots the merge
++    /// fallback unions them into a whole-window bounding box, so every file
++    /// switch repainted and presented the entire surface.
++    pub const MAX_COUNT: usize = 16;
+ 
+     /// An iterator over the part of the region (they can overlap)
+     pub fn iter(&self) -> impl Iterator<Item = euclid::Box2D<Coord, LogicalPx>> + '_ {
+@@ -769,6 +775,17 @@ impl<'a, T: ItemRenderer + ItemRendererFeatures> PartialRenderer<'a, T> {
+         self.get_current_clip().intersection(item_bounding_rect).is_some_and(|clipped_geom| {
+             let screen_geom =
+                 self.current_transform().outer_transformed_rect(&clipped_geom.cast()).cast();
++            // Software damage is rounded outward to physical pixels before
++            // clearing the buffer. An adjacent item can contribute to those
++            // edge pixels even though its logical bounds do not intersect
++            // the original damage (e.g. a toolbar border above changed text
++            // at 175% scale). Keep it in the draw list; the actual renderer
++            // still clips writes to the physical damage region.
++            #[cfg(not(slint_int_coord))]
++            let screen_geom = {
++                let pixel = 1.0 / self.scale_factor().get();
++                screen_geom.inflate(pixel, pixel)
++            };
+             self.dirty_region.draw_intersects(screen_geom)
+         })
+     }

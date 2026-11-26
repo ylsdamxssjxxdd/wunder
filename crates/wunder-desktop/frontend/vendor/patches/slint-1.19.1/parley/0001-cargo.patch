@@ -1,0 +1,15 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index eab26d3..a74f5bd 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -45,7 +45,9 @@ bytemuck = [
+     "parley_engine/bytemuck",
+ ]
+ complex-scripts = ["parley_engine/complex-scripts"]
+-default = ["system"]
++# Text layout stays available for the bundled font, while Windows
++# system-font discovery (and its WinRT dependency) stays off for Win7.
++default = ["std"]
+ libm = [
+     "fontique/libm",
+     "parley_engine/libm",

@@ -25,10 +25,24 @@ pub fn handle_cursor_move_for_resize(
     None
 }
 
-pub fn handle_resize(window: &winit::window::Window, direction: Option<ResizeDirection>) {
-    if let Some(dir) = direction {
-        let _ = window.drag_resize_window(dir);
+/// Starts a native resize gesture for `direction`. Returns false when the
+/// gesture is not possible.
+///
+/// A maximized or fullscreen frameless window keeps WS_SIZEBOX for native snap
+/// and edge resize, but starting a resize gesture from its maximized rect
+/// leaves Win7 in a half-resized state that swallows later move/resize input.
+/// The caller also uses the return value to decide whether the left press is
+/// consumed by the border.
+pub fn handle_resize(window: &winit::window::Window, direction: Option<ResizeDirection>) -> bool {
+    let Some(dir) = direction else { return false };
+    if window.is_maximized() || window.fullscreen().is_some() {
+        return false;
     }
+    if window.is_decorated() || !window.is_resizable() {
+        return false;
+    }
+    let _ = window.drag_resize_window(dir);
+    true
 }
 
 /// Get the cursor icon that corresponds to the resize direction.

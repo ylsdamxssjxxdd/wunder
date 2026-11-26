@@ -1,0 +1,32 @@
+diff --git a/target_pixel_buffer.rs b/target_pixel_buffer.rs
+index 0348679..2f046da 100644
+--- a/target_pixel_buffer.rs
++++ b/target_pixel_buffer.rs
+@@ -86,6 +86,14 @@ pub struct DrawTextureArgs {
+ 
+     /// If the texture is to be tiled, this contains the information about the tiling
+     pub tiling: Option<TilingInfo>,
++
++    /// The source holds RGB sub-pixel coverage (`[r,g,b,0]`) rather than a
++    /// single alpha byte per pixel.
++    pub subpixel: bool,
++    /// Use per-channel blending instead of averaging the three coverages.
++    pub subpixel_enabled: bool,
++    /// Swap the first and third coverage byte (BGR instead of RGB).
++    pub subpixel_bgr: bool,
+ }
+ 
+ impl DrawTextureArgs {
+@@ -141,6 +149,12 @@ impl DrawTextureArgs {
+                         stride,
+                         size,
+                     ),
++                    SharedBufferData::SubpixelMap { data, .. } => TextureData::new(
++                        &data.as_slice()[start * 4..end * 4],
++                        TexturePixelFormat::Rgba,
++                        stride * 4,
++                        size,
++                    ),
+                     #[cfg(feature = "owned-pre-rendered-resources")]
+                     SharedBufferData::Texture { textures, texture } => TextureData::new(
+                         crate::scene::texture_pixels(&textures.data, texture, start..end),

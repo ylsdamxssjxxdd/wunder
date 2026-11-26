@@ -1,0 +1,12 @@
+diff --git a/lib.rs b/lib.rs
+index 45d5bc8..2681a4a 100644
+--- a/lib.rs
++++ b/lib.rs
+@@ -69,6 +69,7 @@ pub mod string;
+ pub mod styled_text;
+ #[cfg(test)]
+ mod testing;
++pub mod text_selection;
+ pub mod textlayout;
+ pub mod timers;
+ pub mod translations;

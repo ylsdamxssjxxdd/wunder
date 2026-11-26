@@ -1,0 +1,366 @@
+diff --git a/winitwindowadapter.rs b/winitwindowadapter.rs
+index 18555a4..4b13a8e 100644
+--- a/winitwindowadapter.rs
++++ b/winitwindowadapter.rs
+@@ -535,6 +535,11 @@ pub struct WinitWindowAdapter {
+ 
+     has_presentable_frame: Cell<bool>,
+ 
++    /// When the last successful frame was presented. Used on Windows to skip a
++    /// redundant forced full frame on focus gain right after another present.
++    #[cfg(target_os = "windows")]
++    last_presented_frame: Cell<Option<std::time::Instant>>,
++
+     #[cfg(target_arch = "wasm32")]
+     virtual_keyboard_helper: RefCell<Option<super::wasm_input_helper::WasmInputHelper>>,
+ 
+@@ -582,6 +587,14 @@ pub struct WinitWindowAdapter {
+     current_resize_direction: Cell<Option<ResizeDirection>>,
+     /// Allocates small i32 finger ids for winit's per-device u64 touch ids.
+     touch_finger_ids: RefCell<crate::touch_finger_id::TouchFingerIdAllocator>,
++    /// External file drag payload: Some(paths) while files hover over the
++    /// window, taken by the first DroppedFile and left None until the next
++    /// drag enters. Winit delivers one event per file, both at drag-enter
++    /// and at drop.
++    drag_files: RefCell<Option<Vec<std::path::PathBuf>>>,
++    /// The DropEvent seeded when the drag enters, re-positioned on every
++    /// cursor move so DropAreas can highlight while files hover.
++    drag_event: RefCell<Option<corelib::items::DropEvent>>,
+ }
+ 
+ impl WinitWindowAdapter {
+@@ -614,6 +627,8 @@ impl WinitWindowAdapter {
+             has_explicit_size: Default::default(),
+             pending_resize_event_after_show: Default::default(),
+             has_presentable_frame: Default::default(),
++            #[cfg(target_os = "windows")]
++            last_presented_frame: Default::default(),
+             renderer,
+             #[cfg(target_arch = "wasm32")]
+             virtual_keyboard_helper: Default::default(),
+@@ -636,6 +651,8 @@ impl WinitWindowAdapter {
+             pressed: Default::default(),
+             current_resize_direction: Default::default(),
+             touch_finger_ids: Default::default(),
++            drag_files: Default::default(),
++            drag_event: Default::default(),
+         });
+ 
+         self_rc.shared_backend_data.register_inactive_window((self_rc.clone()) as _);
+@@ -905,11 +922,16 @@ impl WinitWindowAdapter {
+         }
+ 
+         {
+-            // Workaround for winit bug #2990
+-            // Non-resizable windows can still contain a maximize button,
+-            // so we'd have to additionally remove the button.
++            // Work around winit #2990 only for system-decorated windows.
++            // A frameless Slint window owns its caption buttons in client
++            // content; enabling Winit's maximize box here leaves Win7 with a
++            // latent native button that can surface after the first minimize
++            // or maximize state transition.
+             let mut buttons = winit_window.enabled_buttons();
+-            buttons.set(WindowButtons::MAXIMIZE, resizable);
++            buttons.set(
++                WindowButtons::MAXIMIZE,
++                resizable && winit_window.is_decorated(),
++            );
+             winit_window.set_enabled_buttons(buttons);
+         }
+ 
+@@ -954,7 +976,14 @@ impl WinitWindowAdapter {
+     }
+ 
+     pub(crate) fn window_attributes() -> Result<WindowAttributes, PlatformError> {
+-        let mut attrs = WindowAttributes::default().with_transparent(true).with_visible(false);
++        // The workbench paints every Win32 top-level surface opaquely. Keeping a
++        // borderless software-rendered window on Winit's transparent/layered
++        // path lets DWM expose erased client-edge pixels while the window is
++        // being activated (especially on Win7). Keep the native top-level
++        // opaque and let only the actual composited platforms opt in.
++        let mut attrs = WindowAttributes::default()
++            .with_transparent(!cfg!(target_os = "windows"))
++            .with_visible(false);
+ 
+         // Only until the component's own title reaches the window
+         attrs = attrs.with_title(i_slint_core::window::application_name().to_string());
+@@ -991,6 +1020,15 @@ impl WinitWindowAdapter {
+ 
+         self.pending_redraw.set(false);
+ 
++        // A minimized Win32 window has no visible client area. Rendering a
++        // forced full frame into the DIB is wasted work and stalls the
++        // minimize/restore transition. The renderer's occluded flag stays
++        // armed, so the first frame after restore is still a full repaint.
++        #[cfg(target_os = "windows")]
++        if self.winit_window().is_some_and(|window| window.is_minimized() == Some(true)) {
++            return Ok(());
++        }
++
+         // `Occluded(false)` requests the skipped frame.
+         #[cfg(target_os = "ios")]
+         if crate::ios::is_in_background() {
+@@ -1020,6 +1058,8 @@ impl WinitWindowAdapter {
+         }
+         if matches!(outcome?, DrawOutcome::Success) {
+             self.has_presentable_frame.set(true);
++            #[cfg(target_os = "windows")]
++            self.last_presented_frame.set(Some(std::time::Instant::now()));
+         } else {
+             // Frame was skipped (e.g. surface occluded). pending_redraw was already
+             // cleared above, so re-arm it so we try again.
+@@ -1458,6 +1498,20 @@ impl WinitWindowAdapter {
+         self.window().dispatch_event(WindowEvent::internal(event));
+     }
+ 
++    /// Builds the DropEvent for a file payload, addressed at the last known
++    /// cursor position. Used for the drag-enter move and, with a fresh
++    /// position, for the drop itself.
++    fn seed_drop_event(&self, files: &[std::path::PathBuf]) -> corelib::items::DropEvent {
++        let position = self.cursor_pos.get();
++        let mut data = corelib::DataTransfer::default();
++        data.set_file_paths(files.iter().map(|file| file.as_path()));
++        corelib::items::DropEvent::new(
++            data,
++            corelib::api::LogicalPosition { x: position.x, y: position.y },
++            corelib::items::DragAction::Copy,
++        )
++    }
++
+     /// Handles a winit window event for this window: applies the window event filter, feeds
+     /// accesskit, updates the cursor and dispatches the corresponding Slint event.
+     /// The event loop is needed to create the custom cursor.
+@@ -1521,6 +1575,16 @@ impl WinitWindowAdapter {
+                 // See: https://github.com/rust-windowing/winit/issues/2334
+                 self.window_state_event();
+ 
++                // A resize also announces a transition to maximized/fullscreen.
++                // Drop an edge direction cached while the window was still
++                // normal instead of waiting for another cursor move.
++                if self.current_resize_direction.get().is_some()
++                    && (winit_window.is_maximized() || winit_window.fullscreen().is_some())
++                {
++                    self.current_resize_direction.set(None);
++                    winit_window.set_cursor(winit::window::CursorIcon::Default);
++                }
++
+                 // Some platforms (e.g., Windows) may not emit an Occluded event when minimized,
+                 // so manually mark the window as occluded if its size is zero.
+                 #[cfg(target_os = "windows")]
+@@ -1531,6 +1595,24 @@ impl WinitWindowAdapter {
+                 }
+ 
+                 resized?;
++
++                // The compositor already shows the old frame in the enlarged
++                // area. A direct redraw, bypassing the frame throttle, fills
++                // the new band on the next event-loop pass instead of up to a
++                // refresh later.
++                winit_window.request_redraw();
++            }
++            // Win7/GDI can discard parts of a software surface while a native
++            // window is dragged across another window, and winit 0.30 does not
++            // reliably emit Occluded for that. Invalidate the partial-repaint
++            // cache and queue a complete frame. Minimizing also moves the
++            // window off-screen, but nothing is visible there.
++            #[cfg(target_os = "windows")]
++            WinitWindowEvent::Moved(_) => {
++                if winit_window.is_minimized() != Some(true) {
++                    self.renderer.occluded(true);
++                    self.request_redraw();
++                }
+             }
+             WinitWindowEvent::CloseRequested => {
+                 self.window()
+@@ -1540,7 +1622,44 @@ impl WinitWindowAdapter {
+                 // Work around https://github.com/rust-windowing/winit/issues/4371
+                 let have_focus =
+                     if cfg!(target_os = "macos") { winit_window.has_focus() } else { *have_focus };
+-                self.activation_changed(have_focus)?;
++                let activation_result = self.activation_changed(have_focus);
++                // A child/auxiliary Win32 window can expose or cover part of
++                // a software-rendered parent without producing an Occluded
++                // event. Its backing DIB may then report a reusable age even
++                // though GDI erased a frame edge. Repaint a complete frame on
++                // either focus transition so the lower client rule is restored
++                // without requiring a manual move or resize.
++                #[cfg(target_os = "windows")]
++                {
++                    self.renderer.occluded(true);
++
++                    if have_focus {
++                        // WM_ACTIVATE can expose the client surface before a
++                        // queued redraw is dispatched. Present the forced full
++                        // software frame in this message turn, so the custom
++                        // border never flashes transparent while regaining
++                        // focus on Win7 or newer Windows versions. Skip it when
++                        // a frame was presented just now: restoring from
++                        // minimize otherwise paints two full frames
++                        // back-to-back (the queued WM_PAINT frame plus this
++                        // one), stalling slow CPUs for tens of milliseconds.
++                        let recently_presented =
++                            self.last_presented_frame.get().is_some_and(|at| {
++                                at.elapsed() < std::time::Duration::from_millis(250)
++                            });
++                        if !recently_presented {
++                            activation_result.and_then(|_| self.draw())?;
++                        } else {
++                            activation_result?;
++                        }
++                    } else {
++                        activation_result?;
++                        self.request_redraw();
++                    }
++                }
++
++                #[cfg(not(target_os = "windows"))]
++                activation_result?;
+                 #[cfg(target_os = "windows")]
+                 if have_focus {
+                     WindowInner::from_pub(self.window())
+@@ -1700,8 +1819,21 @@ impl WinitWindowAdapter {
+                 let position = position.to_logical(runtime_window.scale_factor() as f64);
+                 let cursor_pos = euclid::point2(position.x, position.y);
+                 self.cursor_pos.set(cursor_pos);
+-                // winit sends this event at a very high frequency, so coalesce the moves.
+-                self.shared_backend_data.buffer_mouse_move(&self.self_weak, cursor_pos);
++                if let Some(mut event) = self.drag_event.borrow_mut().clone() {
++                    event.position = corelib::api::LogicalPosition { x: cursor_pos.x, y: cursor_pos.y };
++                    runtime_window.process_drag_event(corelib::input::BackendDragEvent::Move {
++                        event,
++                        allowed: corelib::items::AllowedDragActions {
++                            copy: true,
++                            ..Default::default()
++                        },
++                    });
++                } else {
++                    // A foreign file drag must not also produce an ordinary Moved:
++                    // that event hits the editor under the DropArea and immediately
++                    // exits the hover established by DragMove above.
++                    self.shared_backend_data.buffer_mouse_move(&self.self_weak, cursor_pos);
++                }
+             }
+             WinitWindowEvent::CursorLeft { .. } => {
+                 // On the html canvas, we don't get the mouse move or release event when outside the canvas. So we have no choice but canceling the event
+@@ -1739,8 +1871,8 @@ impl WinitWindowAdapter {
+                     winit::event::ElementState::Pressed => {
+                         if button == PointerEventButton::Left
+                             && self.current_resize_direction.get().is_some()
++                            && handle_resize(winit_window, self.current_resize_direction.get())
+                         {
+-                            handle_resize(winit_window, self.current_resize_direction.get());
+                             return Ok(());
+                         }
+ 
+@@ -1796,6 +1928,14 @@ impl WinitWindowAdapter {
+                         inner_size_writer.clone().request_inner_size(physical).ok();
+                     }
+                     // TODO: otherwise send a resize event or try to keep the logical size the same.
++                    #[cfg(target_os = "windows")]
++                    {
++                        // A DPI change rewrites the whole client area; reusing
++                        // the old damage would leave stale glyph metrics in
++                        // the already-presented bands.
++                        self.renderer.occluded(true);
++                        self.request_redraw();
++                    }
+                 }
+             }
+             WinitWindowEvent::ThemeChanged(theme) => {
+@@ -1847,6 +1987,50 @@ impl WinitWindowAdapter {
+             WinitWindowEvent::AxisMotion { .. } => {
+                 // Ignored, but happens often and is also ignored for the purpose of bundling CursorMoved.
+             }
++            WinitWindowEvent::HoveredFile(path) => {
++                // DragEnter re-arms the payload; one event per file arrives.
++                let entered = {
++                    let mut files = self.drag_files.borrow_mut();
++                    let files = files.get_or_insert_default();
++                    files.push(path.clone());
++                    files.clone()
++                };
++                if entered.len() == 1 {
++                    let event = self.seed_drop_event(&entered);
++                    self.drag_event.borrow_mut().replace(event.clone());
++                    runtime_window.process_drag_event(corelib::input::BackendDragEvent::Move {
++                        event,
++                        allowed: corelib::items::AllowedDragActions {
++                            copy: true,
++                            ..Default::default()
++                        },
++                    });
++                }
++            }
++            WinitWindowEvent::HoveredFileCancelled => {
++                self.drag_files.borrow_mut().take();
++                if self.drag_event.borrow_mut().take().is_some() {
++                    runtime_window.process_drag_event(corelib::input::BackendDragEvent::Leave);
++                }
++            }
++            WinitWindowEvent::DroppedFile(path) => {
++                // One event per file; the first consumes the set collected at
++                // drag-enter (the same files), the rest belong to that drop.
++                if let Some(mut files) = self.drag_files.borrow_mut().take() {
++                    self.drag_event.borrow_mut().take();
++                    if !files.iter().any(|dropped| dropped == path) {
++                        files.push(path.clone());
++                    }
++                    let event = self.seed_drop_event(&files);
++                    runtime_window.process_drag_event(corelib::input::BackendDragEvent::Drop {
++                        event,
++                        allowed: corelib::items::AllowedDragActions {
++                            copy: true,
++                            ..Default::default()
++                        },
++                    });
++                }
++            }
+             _ => {}
+         }
+ 
+@@ -1910,6 +2094,11 @@ impl WinitWindowAdapter {
+             if !platform_dictates_window_size()
+                 && winit_window.fullscreen().is_none()
+                 && !self.has_explicit_size.get()
++                // request_inner_size() restores a maximized Win32 window.
++                // Preserve an initial or existing maximized state and let the
++                // window manager keep the current client size; the preferred
++                // size remains the restore rectangle for the next unmaximize.
++                && !winit_window.is_maximized()
+                 && preferred_size.width > 0 as Coord
+                 && preferred_size.height > 0 as Coord
+                 // Don't set the preferred size as the user may have resized the window
+@@ -2477,6 +2666,11 @@ impl WindowAdapterInternal for WinitWindowAdapter {
+         // Set before showing: on Windows the activation event can arrive before this returns.
+         self.context_menu.replace(Some(context_menu_item));
+ 
++        let Some(winit_window) = self.winit_window() else {
++            self.context_menu.take();
++            return false;
++        };
++
+         if let WinitWindowOrNone::HasWindow { context_menu_muda_adapter, .. } =
+             &*self.winit_window_or_none.borrow()
+         {
+@@ -2484,11 +2678,20 @@ impl WindowAdapterInternal for WinitWindowAdapter {
+             drop(context_menu_muda_adapter.borrow_mut().take());
+             if let Some(new_adapter) = crate::muda::MudaAdapter::show_context_menu(
+                 self.context_menu.borrow().as_ref().unwrap(),
+-                &self.winit_window().unwrap(),
++                &winit_window,
+                 position,
+                 self.event_loop_proxy.clone(),
+             ) {
+                 context_menu_muda_adapter.replace(Some(new_adapter));
++                // TrackPopupMenu runs a modal loop on this thread: no
++                // RedrawRequested can be delivered while it is open, and the
++                // window is re-enabled on the way out without a paint. The
++                // menu rectangle would otherwise keep the pre-menu pixels
++                // until an unrelated focus transition. Drop any frame request
++                // that was swallowed by the loop and present a complete frame.
++                self.pending_redraw.set(false);
++                self.renderer.occluded(true);
++                winit_window.request_redraw();
+                 return true;
+             }
+         }

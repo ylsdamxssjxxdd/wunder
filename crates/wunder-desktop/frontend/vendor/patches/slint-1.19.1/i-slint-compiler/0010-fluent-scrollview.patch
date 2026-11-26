@@ -1,0 +1,107 @@
+diff --git a/widgets/fluent/scrollview.slint b/widgets/fluent/scrollview.slint
+index 3abcdf7..931bf25 100644
+--- a/widgets/fluent/scrollview.slint
++++ b/widgets/fluent/scrollview.slint
+@@ -1,41 +1,10 @@
+ // Copyright © SixtyFPS GmbH <info@slint.dev>
+ // SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+ 
+-import { FluentPalette, Icons } from "styling.slint";
++import { FluentPalette } from "styling.slint";
+ 
+ import { ScrollViewInterface } from "../common/std-widget-interfaces.slint";
+ 
+-component ScrollViewButton inherits TouchArea {
+-    in property <image> icon;
+-    in property <bool> horizontal;
+-
+-    width: root.horizontal ? 6px : 8px;
+-    height: root.horizontal ? 8px : 6px;
+-
+-    icon := Image {
+-        x: (parent.width - self.width) / 2;
+-        y: (parent.height - self.height) / 2;
+-        width: parent.width;
+-        source: root.icon;
+-        colorize: FluentPalette.border;
+-        accessible-role: none;
+-
+-        animate colorize, opacity { duration: 150ms; }
+-        animate width, height { duration: 150ms; easing: ease-out; }
+-    }
+-
+-    states [
+-        pressed when root.pressed : {
+-            opacity: 1;
+-            icon.width: root.width - 2px;
+-        }
+-        hover when root.has-hover : {
+-            opacity: 1;
+-            icon.colorize: FluentPalette.text-secondary;
+-        }
+-    ]
+-}
+-
+ component ScrollBar inherits Rectangle {
+     in-out property <bool> horizontal;
+     in-out property <length> maximum;
+@@ -46,10 +15,13 @@ component ScrollBar inherits Rectangle {
+ 
+     callback scrolled();
+ 
+-    property <length> offset: 16px;
++    // The stock Fluent style reserves 16 px at both ends for arrow buttons,
++    // even while those buttons are transparent. That makes an idle thumb look
++    // blocked before it reaches either edge. The workbench uses wheel, track
++    // and thumb interaction, so use the complete track and omit the arrows.
++    property <length> offset: 2px;
+     property <length> size: 2px;
+     property <length> track-size: root.horizontal ? root.width - 2 * root.offset : root.height - 2 * offset;
+-    property <length> step-size: 10px;
+ 
+     border-width: 1px;
+     border-radius: 7px;
+@@ -57,11 +29,9 @@ component ScrollBar inherits Rectangle {
+     clip: true;
+ 
+     states [
+-        hover when touch-area.has-hover || down-scroll-button.has-hover || up-scroll-button.has-hover : {
++        hover when touch-area.has-hover : {
+             root.background: FluentPalette.alternate-background;
+             root.size: 6px;
+-            up-scroll-button.opacity: 1;
+-            down-scroll-button.opacity: 1;
+         }
+     ]
+ 
+@@ -120,30 +90,6 @@ component ScrollBar inherits Rectangle {
+             reject
+         }
+     }
+-
+-    up-scroll-button := ScrollViewButton {
+-        opacity: 0;
+-        x: !root.horizontal ? (parent.width - self.width) / 2 : 4px;
+-        y: root.horizontal ? (parent.height - self.height) / 2 : 4px;
+-        icon: root.horizontal ? Icons.left : Icons.up;
+-        horizontal: root.horizontal;
+-
+-        clicked => {
+-            root.value = min(0px, root.value + root.step-size);
+-        }
+-    }
+-
+-    down-scroll-button := ScrollViewButton {
+-        opacity: 0;
+-        x: !root.horizontal ? (parent.width - self.width) / 2 : root.width - self.width - 4px;
+-        y: root.horizontal ? (parent.height - self.height) / 2 : root.height - self.height - 4px;
+-        icon: root.horizontal ? Icons.right : Icons.down;
+-        horizontal: root.horizontal;
+-
+-        clicked => {
+-            root.value = max(-root.maximum, root.value - root.step-size);
+-        }
+-    }
+ }
+ 
+ export component ScrollView {

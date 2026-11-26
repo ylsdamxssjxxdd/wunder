@@ -303,6 +303,14 @@ pub fn register_bitmap_font(font_data: &'static BitmapFont) {
     register(RegisteredFont::Static(font_data));
 }
 
+/// Whether any embedded bitmap font is registered. With none, every text
+/// request resolves to a vector font and Parley owns font matching, so callers
+/// can skip constructing a `VectorFont` only to pick the rendering path.
+#[cfg(feature = "systemfonts")]
+pub(crate) fn has_bitmap_fonts() -> bool {
+    BITMAP_FONTS.with(|fonts| !fonts.borrow().is_empty())
+}
+
 #[cfg(feature = "owned-pre-rendered-resources")]
 pub fn register_shared_bitmap_font(font_data: &Rc<BitmapFont<OwnedStorage>>) {
     register(RegisteredFont::Shared(Rc::downgrade(font_data)));

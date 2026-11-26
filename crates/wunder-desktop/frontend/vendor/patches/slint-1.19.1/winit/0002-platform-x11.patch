@@ -1,0 +1,15 @@
+diff --git a/src/platform/x11.rs b/src/platform/x11.rs
+index 749c400..4ab900c 100644
+--- a/src/platform/x11.rs
++++ b/src/platform/x11.rs
+@@ -81,9 +81,7 @@ pub type XWindow = u32;
+ #[inline]
+ pub fn register_xlib_error_hook(hook: XlibErrorHook) {
+     // Append new hook.
+-    unsafe {
+-        crate::platform_impl::XLIB_ERROR_HOOKS.lock().unwrap().push(hook);
+-    }
++    crate::platform_impl::XLIB_ERROR_HOOKS.lock().unwrap().push(hook);
+ }
+ 
+ /// Additional methods on [`ActiveEventLoop`] that are specific to X11.

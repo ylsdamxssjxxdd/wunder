@@ -1,0 +1,21 @@
+diff --git a/generator/rust.rs b/generator/rust.rs
+index 05afa79..c37f30f 100644
+--- a/generator/rust.rs
++++ b/generator/rust.rs
+@@ -6194,7 +6194,7 @@ fn generate_resources(doc: &Document) -> Vec<TokenStream> {
+ 
+                     let glyphs = glyphs.iter().map(|crate::embedded_resources::BitmapGlyphs{pixel_size, glyph_data}| {
+                         let glyph_data_size = glyph_data.len();
+-                        let glyph_data = glyph_data.iter().map(|crate::embedded_resources::BitmapGlyph{x, y, width, height, x_advance, data}|{
++                        let glyph_data = glyph_data.iter().map(|crate::embedded_resources::BitmapGlyph{x, y, width, height, x_advance, data_packing, data}|{
+                             let data_size = data.len();
+                             let data = proc_macro2::Literal::byte_string(data);
+                             quote!(
+@@ -6204,6 +6204,7 @@ fn generate_resources(doc: &Document) -> Vec<TokenStream> {
+                                     width: #width,
+                                     height: #height,
+                                     x_advance: #x_advance,
++                                    data_packing: #data_packing,
+                                     data: sp::Slice::from_slice({
+                                         #link_section
+                                         static DATA : [u8; #data_size] = *#data;

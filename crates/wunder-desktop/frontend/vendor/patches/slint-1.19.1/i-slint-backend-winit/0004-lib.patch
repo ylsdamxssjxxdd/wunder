@@ -1,0 +1,16 @@
+diff --git a/lib.rs b/lib.rs
+index 7459d15..43b7d7c 100644
+--- a/lib.rs
++++ b/lib.rs
+@@ -71,6 +71,11 @@ pub enum EventResult {
+     PreventDefault,
+ }
+ 
++/// Wunder extension: reports the first frame actually presented by the software renderer.
++pub mod first_frame;
++/// Wunder extension: bounded software-presentation samples used by the self-test.
++pub mod software_diagnostics;
++
+ mod renderer {
+     use std::rc::Weak;
+     use std::sync::Arc;

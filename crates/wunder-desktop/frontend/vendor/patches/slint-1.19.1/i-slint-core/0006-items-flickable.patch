@@ -1,0 +1,101 @@
+diff --git a/items/flickable.rs b/items/flickable.rs
+index 6442ea3..c1a464c 100644
+--- a/items/flickable.rs
++++ b/items/flickable.rs
+@@ -1255,6 +1255,15 @@ impl FlickableData {
+             MouseEvent::Pressed {
+                 position, button: PointerEventButton::Left, event_time, ..
+             } => {
++                // A text edit may own the press for a cross-block selection.
++                // Flickable sits outside the editor, so without this guard the
++                // delayed scroll forwarding steals the drag and the caret never
++                // follows the pointer.
++                if crate::text_selection::drag_in(flick_rc).is_some()
++                    || crate::text_selection::dragging()
++                {
++                    return InputEventFilterResult::ForwardEvent;
++                }
+                 if inner.capture_events.is_none() && !Self::can_pan(flick, flick_rc) {
+                     // There is nothing to pan in either direction: don't hold up the press waiting to see if it turns into a drag,
+                     // just let it fall through to whatever is underneath,
+@@ -1273,6 +1282,13 @@ impl FlickableData {
+ 
+                 if inner.capture_events.is_some() {
+                     InputEventFilterResult::Intercept
++                } else if event.is_from_touch() {
++                    // Touch has no hover phase. Holding the press back for
++                    // FORWARD_DELAY loses the first part of every swipe and
++                    // keeps a nested horizontal scroller from claiming the
++                    // gesture. Forward immediately; the first move whose
++                    // dominant axis this view can pan takes the gesture.
++                    InputEventFilterResult::ForwardAndInterceptGrab
+                 } else {
+                     InputEventFilterResult::DelayForwarding(FORWARD_DELAY.as_millis() as _)
+                 }
+@@ -1287,12 +1303,32 @@ impl FlickableData {
+                 }
+             }
+             MouseEvent::Moved { position, .. } => {
++                // A long press in an editable field selects a word and raises
++                // its handles; the finger that follows extends that range, so
++                // panning here would both scroll the draft and drop the
++                // selection.
++                if inner.capture_events.is_none()
++                    && crate::text_selection::input_dragging(window_adapter, flick_rc)
++                {
++                    return InputEventFilterResult::ForwardAndIgnore;
++                }
+                 let do_intercept = inner.capture_events.is_some()
+                     || inner.pressed_mouse_state.is_some_and(
+                         |(pressed_time, pressed_mouse_position)| {
+                             let mouse_delta = *position - pressed_mouse_position;
+ 
+-                            crate::animations::current_tick() - pressed_time <= DURATION_THRESHOLD
++                            // A forwarded touch press is not held back, so a
++                            // drag may start at any time after it. The exception
++                            // is a long-press selection, which is tracked
++                            // globally and only arms after the press delay.
++                            let window_open = if event.is_from_touch() {
++                                !crate::text_selection::dragging()
++                            } else {
++                                crate::animations::current_tick() - pressed_time
++                                    <= DURATION_THRESHOLD
++                            };
++
++                            window_open
+                                 && self.should_capture_mouse_direction(mouse_delta, flick, flick_rc)
+                         },
+                     );
+@@ -1386,7 +1422,15 @@ impl FlickableData {
+             && abs(mouse_delta.x_length()) > DISTANCE_THRESHOLD;
+         let should_capture_y = (content_height > flickable_height || flick.content_y() != zero)
+             && abs(mouse_delta.y_length()) > DISTANCE_THRESHOLD;
+-        should_capture_x || should_capture_y
++        // Judge the gesture by its dominant axis. A horizontal swipe on a
++        // phone always drifts a few pixels vertically; testing both axes
++        // independently let the vertical view match that drift first and
++        // swallow the drag before a nested horizontal scroller could see it.
++        if abs(mouse_delta.x_length()) > abs(mouse_delta.y_length()) {
++            should_capture_x
++        } else {
++            should_capture_y
++        }
+     }
+ 
+     /// Whether the flickable has any content to pan in either direction, regardless of mouse movement.
+@@ -1416,7 +1460,14 @@ impl FlickableData {
+         let mut inner = self.inner.borrow_mut();
+         let result = match event {
+             MouseEvent::Pressed { .. } => {
+-                inner.capture_events = Some(CaptureEvents::MouseStart);
++                // A touch press only arms the pan. Capturing here would make
++                // the release below swallow the tap, so the child that
++                // received the press would never see its release (link taps
++                // and long-press selection live on that release). Capture
++                // starts on the first move that actually pans.
++                if !event.is_from_touch() {
++                    inner.capture_events = Some(CaptureEvents::MouseStart);
++                }
+                 InputEventResult::GrabMouse
+             }
+             MouseEvent::Exit | MouseEvent::Released { .. } => {

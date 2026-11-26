@@ -1,0 +1,68 @@
+diff --git a/widgets/fluent/menu.slint b/widgets/fluent/menu.slint
+index 100ae09..8572013 100644
+--- a/widgets/fluent/menu.slint
++++ b/widgets/fluent/menu.slint
+@@ -31,16 +31,20 @@ export component MenuBar inherits MenuBarBase {
+     min-layout-height: 40px;
+ }
+ 
++// Workbench override: the popup menu is drawn inside the window, so it has to
++// read like the app's own cards (ui/text_menu.slint) rather than like a
++// full-size Fluent surface. Same surface, hairline, radius, shadow, row height
++// and 13 px label as that menu; the colours mirror ui/design_tokens.slint.
+ export component MenuFrame inherits MenuFrameBase {
+-    background: FluentPalette.background;
+-    border-radius: 7px;
++    background: #FFFFFF;
++    border-radius: 10px;
+     border-width: 1px;
+-    border-color: FluentPalette.border;
+-    drop-shadow-color: FluentPalette.shadow;
+-    drop-shadow-offset-y: 8px;
+-    drop-shadow-blur: 16px;
+-    margin: 5px;
+-    layout-min-width: 280px;
++    border-color: #D7DBE0;
++    drop-shadow-color: #00000030;
++    drop-shadow-offset-y: 3px;
++    drop-shadow-blur: 12px;
++    margin: 4px;
++    layout-min-width: 148px;
+ }
+ 
+ export component MenuItem {
+@@ -51,23 +55,24 @@ export component MenuItem {
+     callback clear-current <=> base.clear-current;
+     callback activate <=> base.activate;
+ 
+-    min-height: entry.is-separator ? 9px : max(32px, base.min-height);
+-    max-height: entry.is-separator ? 9px : base.max-height;
++    min-height: entry.is-separator ? 7px : max(28px, base.min-height);
++    max-height: entry.is-separator ? 7px : base.max-height;
+ 
+     HorizontalLayout {
+-        padding: entry.is-separator ? 4px : 1px;
++        padding: entry.is-separator ? 3px : 1px;
+         padding-left: entry.is-separator ? 0px : 1px;
+         padding-right: entry.is-separator ? 0px : 1px;
+ 
+         base := MenuItemBase {
+-            default-foreground: FluentPalette.foreground;
+-            alternate-foreground: FluentPalette.text-secondary;
+-            current-foreground: FluentPalette.foreground;
+-            current-background: FluentPalette.subtle-secondary;
+-            separator-color: FluentPalette.border;
+-            border-radius: 4px;
+-            horizontal-padding: 11px;
++            default-foreground: #202124;
++            alternate-foreground: #8A919B;
++            current-foreground: #202124;
++            current-background: #F5F6F7;
++            separator-color: #E5E7EB;
++            border-radius: 8px;
++            horizontal-padding: 10px;
+             spacing: 8px;
++            font-size: 13px;
+             sub-menu-icon: @image-url("_arrow_forward.svg");
+             icon-size: 12px;
+         }

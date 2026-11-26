@@ -1,0 +1,71 @@
+diff --git a/fonts/pixelfont.rs b/fonts/pixelfont.rs
+index 898db5b..219dcfc 100644
+--- a/fonts/pixelfont.rs
++++ b/fonts/pixelfont.rs
+@@ -14,10 +14,57 @@ pub trait FontStorage: Storage {
+     fn alpha_map(font: &Self::Font, glyph_set: usize, glyph: usize) -> GlyphAlphaMap;
+ }
+ 
++/// Decode the compiler's packed glyph formats into 8-bit coverage.
++/// `data_packing` 1 expands 1-bit rows (MSB first, padded to whole bytes);
++/// 2 keeps the RGB sub-pixel coverage of a ClearType-style glyph as
++/// `[r, g, b, 0]` per pixel so the software renderer can blend each channel.
++fn decoded_glyph_data<S: Storage>(
++    glyph: &i_slint_core::graphics::BitmapGlyph<S>,
++) -> Option<alloc::vec::Vec<u8>> {
++    let width = glyph.width as usize;
++    let height = glyph.height as usize;
++    match glyph.data_packing {
++        1 => {
++            let stride = width.div_ceil(8);
++            if glyph.data.len() < stride * height {
++                return None;
++            }
++            let mut decoded = alloc::vec![0u8; width * height];
++            for y in 0..height {
++                for x in 0..width {
++                    if glyph.data[y * stride + x / 8] & (0x80 >> (x % 8)) != 0 {
++                        decoded[y * width + x] = 255;
++                    }
++                }
++            }
++            Some(decoded)
++        }
++        2 => {
++            if glyph.data.len() < width * height * 4 {
++                return None;
++            }
++            let mut decoded = alloc::vec![0u8; width * height * 4];
++            for y in 0..height {
++                for x in 0..width {
++                    let source = (y * width + x) * 4;
++                    decoded[source..source + 3]
++                        .copy_from_slice(&glyph.data[source..source + 3]);
++                }
++            }
++            Some(decoded)
++        }
++        _ => None,
++    }
++}
++
+ impl FontStorage for StaticStorage {
+     type Font = &'static BitmapFont;
+     fn alpha_map(font: &Self::Font, glyph_set: usize, glyph: usize) -> GlyphAlphaMap {
+-        GlyphAlphaMap::Static(&font.glyphs[glyph_set].glyph_data[glyph].data)
++        let glyph = &font.glyphs[glyph_set].glyph_data[glyph];
++        match decoded_glyph_data(glyph) {
++            Some(decoded) => GlyphAlphaMap::Rendered(alloc::rc::Rc::from(decoded)),
++            None => GlyphAlphaMap::Static(&glyph.data),
++        }
+     }
+ }
+ 
+@@ -121,6 +168,7 @@ impl<S: FontStorage> GlyphRenderer for PixelFont<S> {
+             alpha_map: S::alpha_map(&self.font, self.glyph_set_index, glyph_index),
+             pixel_stride: glyph.width as u16,
+             sdf: self.font.sdf,
++            subpixel: glyph.data_packing == 2,
+         })
+     }
+     fn scale_delta(&self) -> Fixed<u16, 8> {
