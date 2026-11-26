@@ -3,6 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use std::os::raw::{c_char, c_int, c_long, c_ulong};
 use std::slice;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use x11_dl::xinput2::{
     self, XIDeviceEvent, XIEnterEvent, XIFocusInEvent, XIFocusOutEvent, XIHierarchyEvent,
@@ -41,6 +42,39 @@ use crate::platform_impl::x11::{
 /// The maximum amount of X modifiers to replay.
 pub const MAX_MOD_REPLAY_LEN: usize = 32;
 
+/// How long a forwarded key may wait for its echo. Xlib re-queues an echo
+/// within the next drain batch; a count still pending after this long means
+/// the IME consumed the key without re-injecting it, so a later press of the
+/// same key must be forwarded again instead of being treated as that echo.
+const ECHO_DEADLINE: Duration = Duration::from_millis(500);
+
+/// Extra copies of one echo that libX11 hands back during a burst arrive
+/// within a few milliseconds of the forward. Beyond this window a matching
+/// event is a new physical press and goes back to the IME.
+const ECHO_DUPLICATE_WINDOW: Duration = Duration::from_millis(30);
+
+/// What a drained key event is relative to the keys already forwarded.
+pub(super) enum KeyClaim {
+    /// The IME's echo of a forwarded press; carries that press's order slot.
+    Echo(u64),
+    /// Another copy of an echo that was already delivered; drop it.
+    Duplicate,
+    /// Not an echo: a new physical press.
+    NewPress,
+}
+
+/// One forwarded key identity.
+pub(super) struct ForwardedKey {
+    /// Press-order slots still waiting for their delivery, oldest first. An
+    /// echo claims the newest slot (Xlib re-queues a burst in reverse), which
+    /// lets the replay restore the order the keys were really pressed even
+    /// when several of them share one X timestamp.
+    seqs: VecDeque<u64>,
+    /// `EventProcessor::drain_epoch` when the key was last forwarded.
+    epoch: u64,
+    forwarded_at: Instant,
+}
+
 /// The X11 documentation states: "Keycodes lie in the inclusive range `[8, 255]`".
 const KEYCODE_OFFSET: u8 = 8;
 
@@ -68,15 +102,22 @@ pub struct EventProcessor {
     pub modifiers: Cell<ModifiersState>,
     /// Dispatch an already-scheduled IME echo even if Xlib filters it again.
     pub force_process_echo: bool,
-    /// Identities of key events already handed to the IME for forwarding,
-    /// mapped to the sequence in which they were forwarded. A key event that
-    /// matches one of these is the IME's echo of that key.
+    /// Identities of key events handed to the IME (or buffered alongside its
+    /// echoes), mapped to the order slot used to restore press order and the
+    /// number of presses still waiting for delivery.
+    ///
+    /// The count is what keeps genuine repeats: X timestamps and serials are
+    /// not unique for keys injected in one burst (remote-control software and
+    /// `xdotool type --delay 0` do this), so four presses of the same key can
+    /// all carry the same identity. `ForwardedKey::epoch` separates them from
+    /// an echo: Xlib re-queues an echo while the batch it was filtered in is
+    /// still being processed, so a matching event in the *same* batch is a new
+    /// press, not that echo.
     pub(super) filtered_key_ids: VecDeque<(c_ulong, u32, u8)>,
-    pub(super) filtered_key_seq: std::collections::HashMap<(c_ulong, u32, u8), u64>,
+    pub(super) filtered_key_seq: HashMap<(c_ulong, u32, u8), ForwardedKey>,
     pub(super) next_filtered_key_seq: u64,
-    /// Identities of key events already dispatched to the window.
-    pub(super) delivered_key_ids: VecDeque<(c_ulong, u32, u8)>,
-    pub(super) delivered_key_id_set: std::collections::HashSet<(c_ulong, u32, u8)>,
+    /// Batch counter for `drain_events`; see `ForwardedKey::epoch`.
+    pub(super) drain_epoch: u64,
     // Track filtered modifiers by keycode: X serials are not unique for events
     // delivered in quick succession, and matching those serials makes replay
     // trigger for ordinary input.
@@ -413,8 +454,9 @@ impl EventProcessor {
     }
 
     /// Give a key event its forwarding order slot without forwarding it.
-    pub fn order_key_event(&mut self, xev: &XEvent) {
-        self.record_filtered_key(Self::key_event_identity(xev));
+    /// Returns the slot the replay has to sort this event by.
+    pub fn order_key_event(&mut self, xev: &XEvent) -> u64 {
+        self.record_filtered_key(Self::key_event_identity(xev))
     }
 
     /// Let Xlib complete the XIM round-trip for an echo we plan to replay
@@ -425,42 +467,67 @@ impl EventProcessor {
         self.filter_event(xev);
     }
 
-    /// Mark a key event as dispatched. Returns false for a duplicate echo.
-    pub fn record_delivered_key(&mut self, xev: &XEvent) -> bool {
-        let key: &XKeyEvent = xev.as_ref();
-        if key.keycode == 0 {
-            return true;
-        }
-        const MAX_TRACKED: usize = 256;
-        let id = Self::key_event_identity(xev);
-        if !self.delivered_key_id_set.insert(id) {
-            return false;
-        }
-        self.delivered_key_ids.push_back(id);
-        if self.delivered_key_ids.len() > MAX_TRACKED {
-            if let Some(expired) = self.delivered_key_ids.pop_front() {
-                self.delivered_key_id_set.remove(&expired);
-            }
-        }
-        true
-    }
-
-    fn record_filtered_key(&mut self, id: (c_ulong, u32, u8)) {
-        const MAX_TRACKED: usize = 256;
-        if self.filtered_key_seq.insert(id, self.next_filtered_key_seq).is_none() {
-            self.next_filtered_key_seq += 1;
-            self.filtered_key_ids.push_back(id);
-            if self.filtered_key_ids.len() > MAX_TRACKED {
-                if let Some(expired) = self.filtered_key_ids.pop_front() {
-                    self.filtered_key_seq.remove(&expired);
-                }
-            }
-        }
-    }
-
     /// Whether this key event is an echo of a key already given to the IME.
-    pub fn is_filtered_key(&self, event: &XEvent) -> bool {
-        self.filtered_key_seq.contains_key(&Self::key_event_identity(event))
+    /// Returns the press-order slot it restores, so the replay can undo the
+    /// reverse order of an XIM echo burst.
+    ///
+    /// A claim consumes one pending press, so a later event with the same
+    /// identity in the same batch is treated as a new physical press instead
+    /// of being folded into the same echo. Events from the batch that
+    /// forwarded the key are never echoes: Xlib re-queues those into a later
+    /// drain batch.
+    pub fn claim_filtered_key(&mut self, event: &XEvent) -> KeyClaim {
+        let id = Self::key_event_identity(event);
+        let epoch = self.drain_epoch;
+        let Some(key) = self.filtered_key_seq.get_mut(&id) else {
+            return KeyClaim::NewPress;
+        };
+        if key.epoch == epoch || key.forwarded_at.elapsed() >= ECHO_DEADLINE {
+            return KeyClaim::NewPress;
+        }
+        if let Some(seq) = key.seqs.pop_back() {
+            return KeyClaim::Echo(seq);
+        }
+        // All forwards of this identity have been delivered. libX11 can hand
+        // the same echo back more than once around the burst; those extra
+        // copies must not turn into fresh presses.
+        if key.forwarded_at.elapsed() < ECHO_DUPLICATE_WINDOW {
+            KeyClaim::Duplicate
+        } else {
+            KeyClaim::NewPress
+        }
+    }
+
+    fn record_filtered_key(&mut self, id: (c_ulong, u32, u8)) -> u64 {
+        const MAX_TRACKED: usize = 256;
+        let now = Instant::now();
+        let epoch = self.drain_epoch;
+        let seq = self.next_filtered_key_seq;
+        self.next_filtered_key_seq += 1;
+        if let Some(key) = self.filtered_key_seq.get_mut(&id) {
+            if key.forwarded_at.elapsed() >= ECHO_DEADLINE {
+                // The old slots belong to keys the IME never echoed; they must
+                // not make this press look like one of those stale echoes.
+                key.seqs.clear();
+            }
+            key.seqs.push_back(seq);
+            key.epoch = epoch;
+            key.forwarded_at = now;
+            return seq;
+        }
+        let mut seqs = VecDeque::new();
+        seqs.push_back(seq);
+        self.filtered_key_seq.insert(
+            id,
+            ForwardedKey { seqs, epoch, forwarded_at: now },
+        );
+        self.filtered_key_ids.push_back(id);
+        if self.filtered_key_ids.len() > MAX_TRACKED {
+            if let Some(expired) = self.filtered_key_ids.pop_front() {
+                self.filtered_key_seq.remove(&expired);
+            }
+        }
+        seq
     }
 
     /// Restore the physical order of key events before they are dispatched.
@@ -468,16 +535,16 @@ impl EventProcessor {
     /// Xlib delivers IME-forwarded keys by pushing them back onto the head of
     /// the event queue (`XPutBackEvent`). When an IME forwards several keys in
     /// one protocol read, that turns the batch into a LIFO stack, so fast
-    /// typing would reach the window in reverse order. Each key was tagged
-    /// with its forwarding sequence when handed to the IME, which restores the
-    /// order the keys were actually pressed even when X timestamps collide.
+    /// typing would reach the window in reverse order. Each key carries the
+    /// press-order slot it was forwarded with (echoes claim the newest pending
+    /// slot of their identity), which restores the order the keys were really
+    /// pressed even when X timestamps collide.
     ///
-    /// Runs of key events are sorted by that sequence. IME commit events
+    /// Runs of key events are sorted by that slot. IME commit events
     /// (keycode 0) delimit the runs so their position relative to the
     /// surrounding input is preserved.
-    pub fn sort_ime_echoes(&self, events: &mut [XEvent]) {
-        let self_seq = &self.filtered_key_seq;
-        let is_sortable = |event: &XEvent| {
+    pub fn sort_ime_echoes(&self, events: &mut [(XEvent, u64)]) {
+        let is_sortable = |(event, _): &(XEvent, u64)| {
             let event_type = event.get_type();
             if event_type != xlib::KeyPress && event_type != xlib::KeyRelease {
                 return false;
@@ -497,9 +564,7 @@ impl EventProcessor {
                 end += 1;
             }
             if end - start > 1 {
-                events[start..end].sort_by_key(|event| {
-                    self_seq.get(&Self::key_event_identity(event)).copied().unwrap_or(u64::MAX)
-                });
+                events[start..end].sort_by_key(|(_, seq)| *seq);
             }
             start = end;
         }

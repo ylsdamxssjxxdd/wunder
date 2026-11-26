@@ -430,14 +430,57 @@ mod rounded_region_tests {
 /// — the same token `window_chrome.slint` draws the frame with — so the native
 /// region and the painted edge cannot drift apart if the token changes.
 pub fn sync_main_window_shape(window: &slint::Window, radius_lg: f32) {
-    use slint::winit_030::WinitWindowAccessor;
+    push_shape(window, radius_lg, false);
+}
 
-    let Some((scale, maximized)) =
-        window.with_winit_window(|native| (native.scale_factor() as f32, native.is_maximized()))
-    else {
+/// Re-push the silhouette even when size and radius did not change.
+///
+/// The rounded region only reaches a compositor as a `ShapeNotify` event. One
+/// that starts tracking the shape after the initial push — the window is still
+/// being mapped at that moment — keeps compositing the opaque square buffer
+/// until the shape changes again, so a fresh launch could open with square
+/// corners and round them only after the window was dragged or maximized. The
+/// server notifies subscribers per request rather than per change, so setting
+/// the same region again repairs that gap; the map-settled and focus-gain paths
+/// call this.
+pub fn refresh_main_window_shape(window: &slint::Window, radius_lg: f32) {
+    push_shape(window, radius_lg, true);
+}
+
+fn push_shape(window: &slint::Window, radius_lg: f32, force: bool) {
+    use slint::winit_030::WinitWindowAccessor;
+    use std::cell::Cell;
+
+    thread_local! {
+        /// Physical region last pushed. A resize gesture reports once per frame
+        /// and several of those share a size; the cache keeps each size to one
+        /// X round trip. `refresh_main_window_shape` bypasses it.
+        static LAST_REGION: Cell<Option<(u32, u32, i32)>> = const { Cell::new(None) };
+    }
+
+    let Some((scale, maximized, size)) = window.with_winit_window(|native| {
+        (
+            native.scale_factor() as f32,
+            native.is_maximized(),
+            native.inner_size(),
+        )
+    }) else {
         return;
     };
-    apply_rounded_region(window, if maximized { 0.0 } else { radius_lg.max(0.0) * scale });
+    if size.width == 0 || size.height == 0 {
+        return;
+    }
+    let radius = if maximized {
+        0.0
+    } else {
+        radius_lg.max(0.0) * scale
+    };
+    let region = (size.width, size.height, radius.round() as i32);
+    if !force && LAST_REGION.with(|last| last.get()) == Some(region) {
+        return;
+    }
+    apply_rounded_region(window, radius);
+    LAST_REGION.with(|last| last.set(Some(region)));
 }
 
 #[cfg(windows)]

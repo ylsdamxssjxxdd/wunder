@@ -65,7 +65,34 @@ pub fn is_document(source: &str) -> bool {
 pub fn normalize_destination(source: &str) -> String {
     let trimmed = source.trim();
     let stripped = strip_reference_prefix(trimmed);
-    normalize_windows_separators(stripped)
+    let separated = normalize_windows_separators(stripped);
+    strip_foreign_drive(&separated).to_string()
+}
+
+/// Drop a drive letter no host here can read.
+///
+/// The prompt that teaches the forward-slash rule shows a Windows path, and
+/// some models copy the drive itself onto a POSIX host: `F:/home/me/shot.png`
+/// for a file that really lives at `/home/me/shot.png`. A drive prefix is not
+/// an absolute path off Windows, so the loader treats the whole string as a
+/// workspace-relative entry, joins it under the workspace root and fails —
+/// the card then reads "图片加载失败" while the file is right there. Thread
+/// prompts are frozen once written, so old threads keep producing the shape;
+/// dropping the impossible prefix is the only place that can heal them.
+fn strip_foreign_drive(path: &str) -> &str {
+    if cfg!(windows) {
+        return path;
+    }
+    let bytes = path.as_bytes();
+    let drive_absolute = bytes.len() > 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && bytes[2] == b'/';
+    if drive_absolute {
+        &path[2..]
+    } else {
+        path
+    }
 }
 
 fn strip_reference_prefix(trimmed: &str) -> &str {
@@ -177,20 +204,29 @@ mod tests {
 
     /// A Windows drive path must reach the loader with forward slashes even
     /// when the model wrote backslashes, and a relative path or a URL keeps
-    /// whatever it had.
+    /// whatever it had. Off Windows the drive itself is dropped: it can never
+    /// address a file here, and keeping it turns a real absolute path into a
+    /// missing workspace entry.
     #[test]
     fn windows_drive_paths_are_rewritten_to_forward_slashes() {
+        let with_drive = |rest: &str| {
+            if cfg!(windows) {
+                format!("F:/{rest}")
+            } else {
+                format!("/{rest}")
+            }
+        };
         assert_eq!(
             normalize_destination(r"F:\wunder\workspace\成品.gif"),
-            "F:/wunder/workspace/成品.gif"
+            with_drive("wunder/workspace/成品.gif")
         );
         assert_eq!(
             normalize_destination(r"reference_path:F:\shots\a b.png"),
-            "F:/shots/a b.png"
+            with_drive("shots/a b.png")
         );
         assert_eq!(
             normalize_destination("F:/wunder/workspace/成品.gif"),
-            "F:/wunder/workspace/成品.gif"
+            with_drive("wunder/workspace/成品.gif")
         );
         assert_eq!(
             normalize_destination(r"https://example.com\a.png"),

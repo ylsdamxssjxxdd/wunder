@@ -1164,7 +1164,7 @@ export component TimelineView inherits Rectangle {
     // A permanently running 33ms timer fought touchpad/wheel scrolling and
     // repainted idle history.
     follow-timer := Timer {
-        interval: 16ms; running: root.follow-output && root.follow-pending;
+        interval: 16ms; running: root.follow-output && root.follow-pending && root.gesture-frames == 0;
         triggered => {
             if (!root.follow-scrolled) {
                 root.follow-scrolled = true;
@@ -1174,6 +1174,32 @@ export component TimelineView inherits Rectangle {
                 root.scroll-to-end();
             } else {
                 root.follow-pending = false;
+            }
+        }
+    }
+    // Slint answers a phaseless wheel event with a short viewport animation,
+    // so `scrolled` fires before content-y moves and the offset it reports is
+    // still the pre-gesture one. A single notch therefore used to leave
+    // follow-output on while the transcript sat above the tail: the stream kept
+    // pulling the reader back, and the jump-to-bottom button never appeared
+    // until some later gesture (or the jump-to-top button, which clears the
+    // flag directly). Sample the settled offset for a few frames after the last
+    // gesture instead: a real move away from the tail ends following, while a
+    // wheel tick that stays on the tail (or content growth alone) keeps it.
+    private property <length> gesture-y: 0px;
+    private property <int> gesture-frames: 0;
+    gesture-timer := Timer {
+        interval: 16ms;
+        running: root.gesture-frames > 0;
+        triggered => {
+            root.gesture-frames -= 1;
+            if !root.restore-pending {
+                if rows-scroll.content-y - root.gesture-y > 24px {
+                    root.follow-output = false;
+                } else if rows-scroll.visible-height - rows-scroll.content-height
+                    - rows-scroll.content-y >= -32px {
+                    root.follow-output = true;
+                }
             }
         }
     }
@@ -1322,7 +1348,15 @@ export component TimelineView inherits Rectangle {
             // scrolling. Treating them as scrolling would flip follow on (and
             // snap to the tail) or page older history in on its own.
             if !root.restore-pending {
-                root.follow-output = self.visible-height - self.content-height - self.content-y >= -32px;
+                // A reader gesture owns the viewport for the next few frames.
+                // Record where it started (the wheel animation has not moved
+                // content-y yet) and stop any queued stream follow from pulling
+                // the transcript back while that animation runs.
+                if root.gesture-frames == 0 {
+                    root.gesture-y = self.content-y;
+                }
+                root.gesture-frames = 16;
+                root.follow-pending = false;
                 if self.content-y >= -8px && !root.loading && root.rows.length > 0 && !root.older-requested {
                     root.older-requested = true;
                     root.load-older();

@@ -1,0 +1,26 @@
+// Which row owns the open context menu.
+//
+// A popup takes the pointer away from the row the moment it appears: the row
+// that was right-clicked receives its Exit in the same breath, so its hover
+// fill disappears exactly when the menu shows up and the user cannot tell
+// which entry the menu belongs to. The native shell records the pointer
+// position of the right press here and clears it once the menu closes (item
+// chosen, click elsewhere, Escape, window gone). Rows only test whether that
+// point falls inside their own rectangle, so a row's geometry stays with the
+// row and nothing has to re-derive the tree pitches.
+//
+// 「这个菜单是哪一条的」：弹出菜单一出现就接管指针，被右击的行同时收到 Exit，
+// 悬停底色在菜单亮相的那一刻就没了。原生壳把右键按下时的指针位置投影到这里，
+// 菜单关闭后清空；行只判断这个点是否落在自己的矩形里。
+export global MenuTarget {
+    in-out property <bool> open: false;
+    // Window-space pointer position of the right press.
+    in-out property <length> x: -1px;
+    in-out property <length> y: -1px;
+
+    pure public function hits(left: length, top: length, width: length, height: length) -> bool {
+        return open && width > 0px && height > 0px
+            && x >= left && x < left + width
+            && y >= top && y < top + height;
+    }
+}

@@ -20,11 +20,24 @@ if [[ -n "${WUNDER_CARGO_VENDOR:-}" ]]; then
         --config "source.vendored-sources.directory=\"$WUNDER_CARGO_VENDOR\"")
 fi
 
-export ANDROID_HOME="${ANDROID_HOME:-$HOME/android-sdk}"
-export ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT:-$ANDROID_HOME/ndk/30.0.16248370}"
-# skia-bindings' build script keys off this spelling; without it a cache miss
-# falls into the source-build path and fails before the prebuilt lookup.
-export ANDROID_NDK="${ANDROID_NDK:-$ANDROID_NDK_ROOT}"
+export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/android-sdk}}"
+# Android NDK 必须与 C++ 产物、随包 libc++ 三者同源。runner 镜像会预设
+# ANDROID_NDK_ROOT 指向镜像自带的旧 NDK（GitHub 上是 27.x），直接沿用就会出现
+# 「Skia 用新 libc++ 预编译产物、APK 里装旧 libc++」——装上后一开就死在 dlopen。
+# 所以优先级是：显式 WUNDER_ANDROID_NDK > 目标 NDK 版本目录 > runner 默认。
+WUNDER_ANDROID_NDK_VERSION="${WUNDER_ANDROID_NDK_VERSION:-30.0.16248370}"
+if [[ -n "${WUNDER_ANDROID_NDK:-}" ]]; then
+    export ANDROID_NDK_ROOT="$WUNDER_ANDROID_NDK"
+elif [[ -d "$ANDROID_HOME/ndk/$WUNDER_ANDROID_NDK_VERSION" ]]; then
+    export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/$WUNDER_ANDROID_NDK_VERSION"
+elif [[ -n "${ANDROID_NDK_LATEST_HOME:-}" && -d "${ANDROID_NDK_LATEST_HOME}" ]]; then
+    export ANDROID_NDK_ROOT="$ANDROID_NDK_LATEST_HOME"
+else
+    echo "未找到 NDK $WUNDER_ANDROID_NDK_VERSION（$ANDROID_HOME/ndk）；请安装，或用 WUNDER_ANDROID_NDK 指定一套" >&2
+    exit 2
+fi
+# skia-bindings 的 build script 读这两个拼写；缺了会落到源码编译路径。
+export ANDROID_NDK="$ANDROID_NDK_ROOT"
 export JAVA_HOME="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")}"
 
 host_arch="$(uname -m)"
@@ -106,7 +119,20 @@ for ABI in "${ABI_LIST[@]}"; do
         }
         rustup target add "$TARGET" >/dev/null
     fi
+    # skia-bindings 的产物缓存按 feature key 命中，里面不含 NDK 版本：换过 NDK
+    # 之后它仍会复用旧 NDK 编出来的 Skia，链接照样通过，装到手机上却死在 dlopen。
+    # 这里记住每套 NDK 的 revision，变更时先丢掉旧的 C++ 产物再编。
+    ndk_revision="$(sed -n 's/^Pkg.Revision *= *//p' "$ANDROID_NDK_ROOT/source.properties" | head -1)"
+    ndk_stamp="$PWD/target/.ndk-revision-$TARGET"
+    if [[ -n "$ndk_revision" && -f "$ndk_stamp" && "$(cat "$ndk_stamp")" != "$ndk_revision" ]]; then
+        echo "NDK 从 $(cat "$ndk_stamp") 变为 $ndk_revision，重编 C++ 产物（skia-bindings）" >&2
+        cargo "${cargo_config[@]}" clean -p skia-bindings --target "$TARGET"
+    fi
     cargo "${cargo_config[@]}" build --release --target "$TARGET" --lib
+    if [[ -n "$ndk_revision" ]]; then
+        mkdir -p "$PWD/target"
+        printf '%s' "$ndk_revision" > "$ndk_stamp"
+    fi
     target_dir="${CARGO_TARGET_DIR:-$PWD/target}"
     mkdir -p "android/app/src/main/jniLibs/$ABI"
     cp "$target_dir/$TARGET/release/libwunder_android.so" "android/app/src/main/jniLibs/$ABI/"
@@ -123,6 +149,11 @@ for ABI in "${ABI_LIST[@]}"; do
         exit 2
     }
     cp -f "$libcxx_shared" "android/app/src/main/jniLibs/$ABI/"
+    # 最后一道门：cdylib 需要的 libc++ 符号必须全部由随包的运行时导出。否则
+    # 构建、安装都正常，用户第一次点开就闪退（dlopen: cannot locate symbol）。
+    python3 "$CRATE/scripts/check-native-runtime.py" \
+        --so "android/app/src/main/jniLibs/$ABI/libwunder_android.so" \
+        --libcxx "android/app/src/main/jniLibs/$ABI/libc++_shared.so"
 done
 
 GRADLE="${GRADLE:-$HOME/gradle/gradle-8.13/bin/gradle}"

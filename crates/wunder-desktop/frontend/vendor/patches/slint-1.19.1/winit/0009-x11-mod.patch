@@ -1,8 +1,8 @@
 diff --git a/src/platform_impl/linux/x11/mod.rs b/src/platform_impl/linux/x11/mod.rs
-index 88071b7..51e5ba6 100644
+index 88071b7..707ea05 100644
 --- a/src/platform_impl/linux/x11/mod.rs
 +++ b/src/platform_impl/linux/x11/mod.rs
-@@ -24,6 +24,7 @@ use x11rb::protocol::xkb;
+@@ -24,6 +24,7 @@
  use x11rb::protocol::xproto::{self, ConnectionExt as _};
  use x11rb::x11_utils::X11Error as LogicalError;
  use x11rb::xcb_ffi::ReplyOrIdError;
@@ -10,7 +10,7 @@ index 88071b7..51e5ba6 100644
  
  use crate::error::{EventLoopError, OsError as RootOsError};
  use crate::event::{Event, StartCause, WindowEvent};
-@@ -328,6 +329,12 @@ impl<T: 'static> EventLoop<T> {
+@@ -328,6 +329,11 @@
              first_touch: None,
              active_window: None,
              modifiers: Default::default(),
@@ -18,36 +18,30 @@ index 88071b7..51e5ba6 100644
 +            filtered_key_ids: VecDeque::new(),
 +            filtered_key_seq: Default::default(),
 +            next_filtered_key_seq: 0,
-+            delivered_key_ids: VecDeque::new(),
-+            delivered_key_id_set: Default::default(),
++            drain_epoch: 0,
              is_composing: false,
          };
  
-@@ -577,25 +584,123 @@ impl<T: 'static> EventLoop<T> {
+@@ -577,25 +583,137 @@
      where
          F: FnMut(Event<T>, &RootAEL),
      {
 -        let mut xev = MaybeUninit::uninit();
--
--        while unsafe { self.event_processor.poll_one_event(xev.as_mut_ptr()) } {
--            let mut xev = unsafe { xev.assume_init() };
--            self.event_processor.process_event(&mut xev, |window_target, event| {
--                if let Event::WindowEvent {
--                    window_id: crate::window::WindowId(wid),
--                    event: WindowEvent::RedrawRequested,
--                } = event
--                {
--                    let window_target = EventProcessor::window_target(window_target);
--                    window_target.redraw_sender.send(wid).unwrap();
 +        // With the IME allowed, every physical key goes through XFilterEvent.
 +        // Keys the IME takes come back as echoes, injected at the head of the
 +        // queue (`XPutBackEvent`), which reverses a burst. Both those echoes and
 +        // the keys the IME leaves untouched are buffered under a forwarding
 +        // sequence and replayed in the order the keys were pressed.
-+        let mut ordered: Vec<XEvent> = Vec::new();
++        let mut ordered: Vec<(XEvent, u64)> = Vec::new();
 +        let mut last_forwarded: Option<std::time::Instant> = None;
 +        const ECHO_SETTLE: std::time::Duration = std::time::Duration::from_millis(10);
 +        loop {
++            // A batch id distinguishes a physical press from the echo of an
++            // earlier key: Xlib re-queues that echo into the next batch, so a
++            // matching event drained here cannot be the echo of a key that was
++            // only forwarded while this same batch was processed.
++            self.event_processor.drain_epoch =
++                self.event_processor.drain_epoch.wrapping_add(1);
 +            let mut events: Vec<XEvent> = Vec::new();
 +            let mut xev = MaybeUninit::uninit();
 +            while unsafe { self.event_processor.poll_one_event(xev.as_mut_ptr()) } {
@@ -65,18 +59,39 @@ index 88071b7..51e5ba6 100644
 +                } else {
 +                    0
 +                };
-+
+ 
+-        while unsafe { self.event_processor.poll_one_event(xev.as_mut_ptr()) } {
+-            let mut xev = unsafe { xev.assume_init() };
+-            self.event_processor.process_event(&mut xev, |window_target, event| {
+-                if let Event::WindowEvent {
+-                    window_id: crate::window::WindowId(wid),
+-                    event: WindowEvent::RedrawRequested,
+-                } = event
+-                {
+-                    let window_target = EventProcessor::window_target(window_target);
+-                    window_target.redraw_sender.send(wid).unwrap();
 +                if is_key && keycode != 0 {
-+                    if self.event_processor.is_filtered_key(&xev) {
-+                        self.event_processor.acknowledge_echo(&mut xev);
-+                        ordered.push(xev);
-+                    } else if self.event_processor.forwarding_keys_to_ime() {
++                    match self.event_processor.claim_filtered_key(&xev) {
++                        crate::platform_impl::x11::event_processor::KeyClaim::Echo(seq) => {
++                            self.event_processor.acknowledge_echo(&mut xev);
++                            ordered.push((xev, seq));
++                            continue;
++                        }
++                        crate::platform_impl::x11::event_processor::KeyClaim::Duplicate => {
++                            // Complete the Xlib round-trip and drop the extra
++                            // copy; delivering it would duplicate the character.
++                            self.event_processor.acknowledge_echo(&mut xev);
++                            continue;
++                        }
++                        crate::platform_impl::x11::event_processor::KeyClaim::NewPress => {}
++                    }
++                    if self.event_processor.forwarding_keys_to_ime() {
 +                        // Give the key to the IME here, inline: only filtered
 +                        // keys may be held back, or the IME never sees them.
 +                        last_forwarded = Some(std::time::Instant::now());
 +                        if !self.event_processor.filter_key_event(&mut xev) {
-+                            self.event_processor.order_key_event(&xev);
-+                            ordered.push(xev);
++                            let seq = self.event_processor.order_key_event(&xev);
++                            ordered.push((xev, seq));
 +                        } else {
 +                            // The IME may answer with preedit/commit data that
 +                            // never reaches the window through a key echo.
@@ -121,7 +136,7 @@ index 88071b7..51e5ba6 100644
 +        }
 +    }
 +
-+    fn flush_ordered_keys<F>(&mut self, ordered: &mut Vec<XEvent>, callback: &mut F)
++    fn flush_ordered_keys<F>(&mut self, ordered: &mut Vec<(XEvent, u64)>, callback: &mut F)
 +    where
 +        F: FnMut(Event<T>, &RootAEL),
 +    {
@@ -130,10 +145,7 @@ index 88071b7..51e5ba6 100644
 +        }
 +        self.event_processor.sort_ime_echoes(ordered);
 +        let batch = std::mem::take(ordered);
-+        for mut xev in batch {
-+            if !self.event_processor.record_delivered_key(&xev) {
-+                continue;
-+            }
++        for (mut xev, _seq) in batch {
 +            self.event_processor.force_process_echo = true;
 +            self.dispatch_event(&mut xev, callback);
 +            self.event_processor.force_process_echo = false;

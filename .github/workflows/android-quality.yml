@@ -85,7 +85,16 @@ jobs:
             -no-window -gpu swiftshader_indirect -no-snapshot -noaudio
             -no-boot-anim
           script: |
-            cd crates/wunder-android/android && gradle -PwunderAbis=x86_64 connectedDebugAndroidTest
+            cd crates/wunder-android/android
+            # 失败时把 logcat 与应用自己的崩溃报告带出来：只看到「测试失败」无法
+            # 判断是启动闪退还是断言不符，而匿名日志在 GitHub 上是读不到的。
+            set +e
+            gradle -PwunderAbis=x86_64 connectedDebugAndroidTest
+            status=$?
+            adb logcat -d -v threadtime > "$GITHUB_WORKSPACE/android-logcat.txt" 2>&1
+            adb exec-out run-as dev.wunder.android tar -cf - files/wunder/logs \
+              > "$GITHUB_WORKSPACE/android-crash-logs.tar" 2>/dev/null
+            exit $status
       - name: Upload instrumented test reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -94,6 +103,8 @@ jobs:
           path: |
             **/build/reports/androidTests/**
             **/build/outputs/androidTest-results/**
+            android-logcat.txt
+            android-crash-logs.tar
           if-no-files-found: ignore
 
   android-rust-tests:

@@ -515,6 +515,9 @@ pub fn run_scroll_probe(
     directory: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&directory)?;
+    if std::env::var("WUNDER_SCROLL_FOLLOW_PROBE").is_ok() {
+        return run_scroll_follow_probe(app, directory);
+    }
     std::env::set_var("RCHO_SLINT_DIAGNOSTICS", "1");
     crate::demo::install(app);
     // Optional fixed viewport so the same gesture can be compared across
@@ -604,6 +607,150 @@ pub fn run_scroll_probe(
         directory.join("scroll-metrics.json").display()
     );
     println!("{report}");
+    Ok(())
+}
+
+/// Scroll-follow regression: wheel the transcript away from its tail and check
+/// that the reader is no longer treated as following the stream. The follow
+/// state has to flip even though Slint's wheel scrolling animates `content-y`
+/// over several frames instead of moving it inside the wheel event itself.
+fn run_scroll_follow_probe(
+    app: &MainWindow,
+    directory: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    crate::demo::install(app);
+    app.window()
+        .set_size(slint::LogicalSize::new(1200.0, 800.0));
+    crate::show_main_window(app)?;
+    let mut timeline = crate::timeline::Timeline::new();
+    timeline.set_history(crate::demo::near_limit_rows(40, 12, false));
+    app.set_timeline(timeline.model());
+    app.set_follow_output(true);
+    app.window().take_snapshot()?;
+
+    let report = Rc::new(RefCell::new(Vec::<String>::new()));
+    let failure = Rc::new(RefCell::new(None::<String>));
+    let start = Rc::new(RefCell::new(0.0f32));
+    let frames = Rc::new(RefCell::new(0u32));
+    let timer = Rc::new(slint::Timer::default());
+    let timer_weak = Rc::downgrade(&timer);
+    let weak = app.as_weak();
+    let report_cb = report.clone();
+    let failure_cb = failure.clone();
+    let start_cb = start.clone();
+    let dir_cb = directory.clone();
+    let frames_cb = frames.clone();
+    timer.start(
+        slint::TimerMode::Repeated,
+        std::time::Duration::from_millis(16),
+        move || {
+            let Some(app) = weak.upgrade() else {
+                let _ = slint::quit_event_loop();
+                return;
+            };
+            *frames_cb.borrow_mut() += 1;
+            let frame = *frames_cb.borrow();
+            if frame == 15 {
+                let y = app.get_scroll_y();
+                *start_cb.borrow_mut() = y;
+                report_cb
+                    .borrow_mut()
+                    .push(format!("tail y={y:.1} follow={}", app.get_follow_output()));
+                if !app.get_follow_output() {
+                    *failure_cb.borrow_mut() = Some("transcript did not start at its tail".into());
+                }
+            }
+            // A real mouse wheel arrives through winit with phase Moved, which
+            // the flickable answers with a short animation instead of moving
+            // content-y inside the event. `WindowEvent::PointerScrolled` is
+            // delivered as TouchPhase::Cancelled and would take the immediate
+            // path, so feed the backend's own shape here.
+            if frame == 16 {
+                use i_slint_core::input::{BackendMouseEvent, TouchPhase};
+                use i_slint_core::lengths::LogicalPoint;
+                for _ in 0..1 {
+                    let _ = app.window().dispatch_event_with_result(
+                        slint::platform::WindowEvent::internal(BackendMouseEvent::Wheel {
+                            position: LogicalPoint::new(600.0, 400.0),
+                            delta_x: 0.0,
+                            delta_y: 120.0,
+                            phase: TouchPhase::Moved,
+                        }),
+                    );
+                }
+            }
+            if frame == 70 {
+                let y = app.get_scroll_y();
+                let start = *start_cb.borrow();
+                let follow = app.get_follow_output();
+                report_cb
+                    .borrow_mut()
+                    .push(format!("after wheel up y={y:.1} follow={follow}"));
+                if y - start < 50.0 {
+                    *failure_cb.borrow_mut() = Some(format!(
+                        "wheel up did not move the viewport ({start:.1} -> {y:.1})"
+                    ));
+                }
+                if follow {
+                    *failure_cb.borrow_mut() =
+                        Some("wheel up left follow-output on, so the jump-to-bottom button stays hidden".into());
+                }
+                let _ = snapshot(&app, &dir_cb.join("scroll-follow-after.png"));
+            }
+            // Wheel back down to the tail: following must re-arm, otherwise a
+            // single stray notch would leave a live answer unpinned.
+            if frame == 90 {
+                use i_slint_core::input::{BackendMouseEvent, TouchPhase};
+                use i_slint_core::lengths::LogicalPoint;
+                for _ in 0..3 {
+                    let _ = app.window().dispatch_event_with_result(
+                        slint::platform::WindowEvent::internal(BackendMouseEvent::Wheel {
+                            position: LogicalPoint::new(600.0, 400.0),
+                            delta_x: 0.0,
+                            delta_y: -120.0,
+                            phase: TouchPhase::Moved,
+                        }),
+                    );
+                }
+            }
+            if frame == 150 {
+                let y = app.get_scroll_y();
+                let start = *start_cb.borrow();
+                let follow = app.get_follow_output();
+                report_cb
+                    .borrow_mut()
+                    .push(format!("back at tail y={y:.1} follow={follow}"));
+                if (y - start).abs() > 50.0 {
+                    *failure_cb.borrow_mut() = Some(format!(
+                        "wheel down did not return to the tail ({start:.1} -> {y:.1})"
+                    ));
+                }
+                if !follow {
+                    *failure_cb.borrow_mut() =
+                        Some("wheel back to the tail did not re-arm follow-output".into());
+                }
+                if let Some(timer) = timer_weak.upgrade() {
+                    timer.stop();
+                }
+                let _ = slint::quit_event_loop();
+            }
+        },
+    );
+    app.run()?;
+
+    let text = format!(
+        "{}\n{}",
+        report.borrow().join("\n"),
+        failure.borrow().clone().unwrap_or_else(|| "PASS".into())
+    );
+    std::fs::write(directory.join("scroll-follow.txt"), text.as_bytes())?;
+    if let Some(failure) = failure.borrow().clone() {
+        return Err(failure.into());
+    }
+    println!(
+        "PASS: scroll follow probe wrote {}",
+        directory.join("scroll-follow.txt").display()
+    );
     Ok(())
 }
 

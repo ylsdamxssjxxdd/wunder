@@ -1219,6 +1219,32 @@ impl NativeDesktop {
         reclaimed
     }
 
+    /// 线程打开租约的持有者，以及它是否还活着。
+    ///
+    /// `None` 表示租约属于本进程（或不存在）。前端用它把两种完全不同的情况
+    /// 分开：外部实例**还活着**必须立刻告诉用户去关掉它；持有者已经消失
+    /// 只是上一进程没来得及释放租约，等它自己的 TTL 过期即可，不该弹一句
+    /// “被另一个实例占用”。
+    pub fn thread_open_owner(&self, session_id: &str) -> Option<(String, Option<bool>)> {
+        let lease = self
+            .state()
+            .storage
+            .get_thread_open_lease(session_id, self.user_id())
+            .ok()
+            .flatten()?;
+        if lease.owner_instance_id == self.instance_id {
+            return None;
+        }
+        let kind = match lease.client_kind.as_str() {
+            "cli" => "命令行实例",
+            "desktop" => "另一个桌面版实例",
+            _ => "其他实例",
+        };
+        let alive =
+            instance_liveness::is_instance_alive(&self.instance_dir, &lease.owner_instance_id);
+        Some((kind.to_string(), alive))
+    }
+
     /// 给 THREAD_IN_USE 提示标明是哪种实例占着，方便用户直接去关掉它。
     fn describe_thread_owner(&self, session_id: &str) -> &'static str {
         match self
@@ -1834,13 +1860,22 @@ impl NativeDesktop {
                 .as_deref()
                 .and_then(|source| source.strip_prefix("remote:"))
                 .map(str::to_string),
+            // 租约的持有者已经确认死掉时，这个线程不该继续显示成“被占用”：
+            // 它的租约最多只剩十几秒 TTL，把这个窗口画成锁只会让用户以为
+            // 自己永远打不开。真正活着的外部实例仍然照常上锁。
             locked: self
                 .state()
                 .storage
                 .get_thread_open_lease(&session_id, self.user_id())
                 .ok()
                 .flatten()
-                .is_some_and(|lease| lease.owner_instance_id != self.instance_id),
+                .is_some_and(|lease| {
+                    lease.owner_instance_id != self.instance_id
+                        && instance_liveness::is_instance_alive(
+                            &self.instance_dir,
+                            &lease.owner_instance_id,
+                        ) != Some(false)
+                }),
             reasoning_effort,
             session_model_name,
         }

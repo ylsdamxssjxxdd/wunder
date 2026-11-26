@@ -1,4 +1,5 @@
 import { Theme } from "theme.slint";
+import { MenuTarget } from "menu_target.slint";
 
 // The pitch the sidebar tree lays its rows out with. The native drop resolver
 // walks the same numbers, so a row height only lives in this file.
@@ -105,6 +106,17 @@ export component DragRow inherits Rectangle {
     // Tooltip is attached to the row's real pointer target below. Callers can
     // describe disclosure rows without putting a Tooltip on a visual overlay.
     in property <string> tooltip: root.label;
+    // 这一行是否拥有右键菜单。设置页的模型列表也用 DragRow，右键那里没有
+    // 菜单，不能跟着点亮。
+    in property <bool> has-menu: false;
+    // 右键菜单的目标行（见 menu_target.slint）：菜单开着时，被右击的这一行
+    // 保留选中态的底色加一圈强调色描边，别处右键不会点亮任何行。
+    in property <bool> menu-target: root.has-menu && MenuTarget.hits(
+        root.absolute-position.x,
+        root.absolute-position.y,
+        root.width,
+        root.height,
+    );
     // Width of the hover-action band at the row's right edge. The row tooltip
     // yields there so it cannot compete with the tooltip of a button under the
     // pointer. Zero means the row has no action band.
@@ -134,9 +146,11 @@ export component DragRow inherits Rectangle {
         && DragPreview.pointer-y < root.absolute-position.y + root.height;
     private property <bool> insert-after: DragPreview.pointer-y >= root.absolute-position.y + root.height / 2;
     border-radius: Theme.radius-lg;
-    background: root.selected ? root.selected-color : touch.has-hover || touch.pressed ? Theme.accent-soft : transparent;
-    border-width: root.dragging ? 1px : 0px;
-    border-color: Theme.accent-ink;
+    background: root.selected || root.menu-target ? root.selected-color : touch.has-hover || touch.pressed ? Theme.accent-soft : transparent;
+    // 拖拽中的描边说明「这一行被拿起来了」；菜单目标也描一圈，但颜色收一半，
+    // 免得和拖拽态混在一起。
+    border-width: root.dragging ? 1px : root.menu-target ? 1px : 0px;
+    border-color: root.dragging ? Theme.accent-ink : Theme.accent-ink.transparentize(0.55);
     opacity: root.dragging ? 0.45 : 1;
     accessible-role: button; accessible-label: root.label;
     accessible-action-default => { if root.enabled { root.activate(); } }

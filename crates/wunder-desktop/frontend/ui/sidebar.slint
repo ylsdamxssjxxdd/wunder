@@ -6,6 +6,7 @@
 // the native projection, so the Slint thread only lays out rows; rows
 // drag-reorder through `move-row`.
 import { Theme, SidebarRow, WorkspaceFileRow } from "theme.slint";
+import { MenuTarget } from "menu_target.slint";
 import { I18n } from "i18n.slint";
 import { ListView } from "std-widgets.slint";
 import { DragRow, DragPreview, SidebarMetrics } from "drag_row.slint";
@@ -652,6 +653,8 @@ export component Sidebar inherits Rectangle {
                         width: parent.width - SidebarMetrics.gutter * 2;
                         height: parent.height - SidebarMetrics.row-air * 2;
                         border-radius: SidebarMetrics.row-fill-radius;
+                        // 线程行拥有右键菜单，右键时要留住目标态。
+                        has-menu: true;
                         // Selection mode freezes reordering, as on the web.
                         enabled: !root.busy && !root.selection-mode;
                         selected: row.active;
@@ -696,7 +699,18 @@ export component Sidebar inherits Rectangle {
                         width: parent.width - SidebarMetrics.gutter * 2;
                         height: parent.height - SidebarMetrics.row-air * 2;
                         border-radius: SidebarMetrics.row-fill-radius;
-                        background: row.active || cloud-thread-touch.has-hover ? Theme.accent-soft : transparent;
+                        // 云线程行没有 DragRow 包着，右键目标态在这里自己判断
+                        // （见 menu_target.slint）。
+                        private property <bool> menu-target: MenuTarget.hits(
+                            self.absolute-position.x,
+                            self.absolute-position.y,
+                            self.width,
+                            self.height,
+                        );
+                        background: row.active || self.menu-target || cloud-thread-touch.has-hover
+                            ? Theme.accent-soft : transparent;
+                        border-width: self.menu-target ? 1px : 0px;
+                        border-color: Theme.accent-ink.transparentize(0.55);
                         cloud-thread-touch := TouchArea {
                             mouse-cursor: pointer;
                             accessible-role: button; accessible-label: row.title;

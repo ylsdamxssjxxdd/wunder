@@ -2,6 +2,10 @@ import { MemoryCard, ArchiveCard, RuntimePoint, HeatCard } from "expert_data.sli
 export { MemoryCard, ArchiveCard, RuntimePoint, HeatCard }
 import { ExpertToolGroup } from "expert_widgets.slint";
 export { ExpertToolGroup }
+// `MenuTarget` is written by Rust (sidebar_context.rs) and read by the rows in
+// sidebar.slint / workspace_files.slint; only globals exported from the root
+// file get a generated wrapper.
+export { MenuTarget } from "menu_target.slint";
 import { RuntimeStatus } from "runtime_status.slint";
 import { I18n } from "i18n.slint";
 // Re-exported so the generated Rust API exposes it: only globals exported from

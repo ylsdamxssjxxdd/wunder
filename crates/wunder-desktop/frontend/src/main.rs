@@ -57,6 +57,7 @@ mod screen_capture;
 mod screenshot;
 mod settings_search;
 mod shutdown;
+mod sidebar_context;
 mod single_instance;
 mod smoke;
 mod subagent_detail;
@@ -161,7 +162,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         app.run()?;
         return Ok(());
     }
-    install_composer_popover_dismissal(&app);
+    // 侧栏右键菜单的归属行（见 sidebar_context.rs）：菜单一开就把指针从行上
+    // 拿走，行自己的悬停底色不能说明它是谁的菜单。
+    let sidebar_context = sidebar_context::install(&app);
+    install_composer_popover_dismissal(&app, sidebar_context);
     install_first_frame_probe(startup_boot);
     let close_weak = app.as_weak();
     app.window().on_close_requested(move || {
@@ -393,7 +397,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// full-window transparent TouchArea would consume the first click and make
 /// sidebars, threads and the editor feel one click behind, so this filter only
 /// performs a few geometry checks on press events.
-fn install_composer_popover_dismissal(app: &MainWindow) {
+fn install_composer_popover_dismissal(app: &MainWindow, sidebar_context: sidebar_context::Target) {
     use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
     use std::cell::Cell;
     use std::rc::Rc;
@@ -449,6 +453,16 @@ fn install_composer_popover_dismissal(app: &MainWindow) {
         match event {
             winit::event::WindowEvent::Focused(true)
             | winit::event::WindowEvent::Occluded(false) => {
+                // A compositor learns the rounded region only from
+                // `ShapeNotify`. Re-push it whenever the window comes back into
+                // play, so a launch whose first push raced the mapping rounds
+                // itself instead of waiting for the next resize.
+                if let Some(app) = weak.upgrade() {
+                    native_window::refresh_main_window_shape(
+                        window,
+                        app.global::<Theme>().get_radius_lg(),
+                    );
+                }
                 let weak = weak.clone();
                 slint::Timer::single_shot(std::time::Duration::ZERO, move || {
                     if let Some(app) = weak.upgrade() {
@@ -466,6 +480,21 @@ fn install_composer_popover_dismissal(app: &MainWindow) {
                 button: winit::event::MouseButton::Left,
                 ..
             } => {}
+            // A right press may open a row's context menu; the popup then takes
+            // the pointer away from that row, so record where the press landed
+            // before Slint dispatches it. The row derives its target state from
+            // the point (sidebar_context.rs / ui/menu_target.slint).
+            winit::event::WindowEvent::MouseInput {
+                state: winit::event::ElementState::Pressed,
+                button: winit::event::MouseButton::Right,
+                ..
+            } => {
+                if let Some((x, y)) = pointer_for_filter.get() {
+                    sidebar_context
+                        .note_right_press((x / scale as f64) as f32, (y / scale as f64) as f32);
+                }
+                return EventResult::Propagate;
+            }
             winit::event::WindowEvent::Touch(touch)
                 if touch.phase == winit::event::TouchPhase::Started =>
             {
@@ -938,9 +967,38 @@ fn apply_initial_window_geometry(app: &MainWindow) {
                 .unwrap_or((true, true));
             if (placed && pin_settled) || attempts_handle.get() >= 100 {
                 timer_handle.stop();
+                // The window is mapped and placed. Push the silhouette again
+                // now that the compositor manages it: a first launch whose
+                // fit-and-center lands on the size the window was created with
+                // emits no `Resized`, so this is the only chance to repair a
+                // shape event the compositor missed while the window was still
+                // being mapped.
+                if placed {
+                    if let Some(app) = weak.upgrade() {
+                        settle_window_shape(&app);
+                    }
+                }
             }
         },
     );
+}
+
+/// Re-push the rounded silhouette once the window is mapped and placed, and
+/// once more after the map settles. The second push covers a compositor that
+/// only starts tracking the shape after the map request; re-setting the same
+/// region still produces a `ShapeNotify`, so it is what turns "square corners
+/// on a fresh launch" back into the painted arc.
+fn settle_window_shape(app: &MainWindow) {
+    native_window::refresh_main_window_shape(app.window(), app.global::<Theme>().get_radius_lg());
+    let weak = app.as_weak();
+    slint::Timer::single_shot(std::time::Duration::from_millis(120), move || {
+        if let Some(app) = weak.upgrade() {
+            native_window::refresh_main_window_shape(
+                app.window(),
+                app.global::<Theme>().get_radius_lg(),
+            );
+        }
+    });
 }
 
 /// Re-apply the always-on-top state the last session ended with, after the

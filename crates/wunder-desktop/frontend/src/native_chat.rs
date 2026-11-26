@@ -2568,7 +2568,7 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
             // Lease acquisition and metadata stay on the worker. The first
             // history pass reads headers only; folded process details are
             // paged on demand after the user opens that process.
-            let result = open_with_busy_retry(&desktop, &id, &generation, request);
+            let result = open_with_busy_retry(&desktop, &id, &generation, request, &weak.clone());
             let opened = result.is_ok();
             let _ = weak.upgrade_in_event_loop(move |app| {
                 if app.get_active_session_id() != id
@@ -2658,10 +2658,22 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                         let text = error.to_string();
                         let leased = text.contains("THREAD_IN_USE");
                         let busy = !leased && open_conflict_is_transient(&text);
+                        // The backend already says *who* holds the thread
+                        // ("命令行实例" / "另一个桌面版实例"). Repeating it as a
+                        // generic "另一个 wunder 实例占用" made a leftover lease
+                        // from our own previous process sound like a second
+                        // window the user had to hunt down.
+                        let owner = text
+                            .split_once("THREAD_IN_USE:")
+                            .map(|(_, rest)| rest.trim())
+                            .filter(|rest| !rest.is_empty())
+                            .map(str::to_string);
                         app.set_status(
                             if leased {
-                                "该线程正被另一个 wunder 实例占用；关闭占用实例或稍候再打开"
-                                    .to_string()
+                                owner.unwrap_or_else(|| {
+                                    "该线程仍被另一个 wunder 实例打开；关闭它或稍候再试"
+                                        .to_string()
+                                })
                             } else if busy {
                                 "本地数据正忙，请稍候再打开该线程".to_string()
                             } else {
@@ -2749,19 +2761,56 @@ fn bind_history_paging(app: &MainWindow, state: Rc<RefCell<State>>) {
 /// first click used to fail immediately with THREAD_IN_USE and looked like a
 /// permanently locked thread. The waits stay on the worker thread, and an
 /// abandoned selection stops before the next retry.
+///
+/// The budget covers the whole lease TTL (`LOCAL_THREAD_LEASE_TTL`, 15 s): a
+/// three-second window gave up *inside* the stale-lease interval, so the one
+/// case this retry exists for still ended in "被另一个 wunder 实例占用". A
+/// holder that is provably alive is not waited out — the user has to close it,
+/// and the message says which instance it is.
 fn open_with_busy_retry(
     desktop: &Arc<NativeDesktop>,
     id: &str,
     generation: &Arc<AtomicU64>,
     request: u64,
+    app: &slint::Weak<MainWindow>,
 ) -> anyhow::Result<wunder_desktop::native::NativeChatSnapshot> {
+    const OPEN_BUSY_BUDGET: Duration = Duration::from_millis(18_000);
+    const OPEN_BUSY_NOTICE: Duration = Duration::from_millis(1_200);
+    let started = std::time::Instant::now();
+    let mut noticed = false;
     let mut attempt = 0u32;
     loop {
         match desktop.open_chat_snapshot(id) {
-            Ok(snapshot) => return Ok(snapshot),
-            Err(error) if attempt < 3 && open_conflict_is_transient(&error.to_string()) => {
-                attempt += 1;
-                std::thread::sleep(Duration::from_millis(500 * u64::from(attempt)));
+            Ok(snapshot) => {
+                if noticed {
+                    // The wait is over; whatever the open produced owns the
+                    // status line from here.
+                    let app = app.clone();
+                    let _ = app.upgrade_in_event_loop(|app| app.set_status("".into()));
+                }
+                return Ok(snapshot);
+            }
+            Err(error)
+                if open_conflict_is_transient(&error.to_string())
+                    && started.elapsed() < OPEN_BUSY_BUDGET =>
+            {
+                let text = error.to_string();
+                if text.contains("THREAD_IN_USE") {
+                    // Only a live owner deserves to be reported immediately;
+                    // a lease whose instance is gone is ours to wait out.
+                    if let Some((_, Some(true))) = desktop.thread_open_owner(id) {
+                        return Err(error);
+                    }
+                }
+                if !noticed && started.elapsed() >= OPEN_BUSY_NOTICE {
+                    noticed = true;
+                    let app = app.clone();
+                    let _ = app.upgrade_in_event_loop(|app| {
+                        app.set_status("正在等待线程释放…".into());
+                    });
+                }
+                attempt = attempt.saturating_add(1);
+                std::thread::sleep(Duration::from_millis(250 * u64::from(attempt.min(6))));
                 if generation.load(Ordering::Relaxed) != request {
                     return Err(error);
                 }
@@ -3099,7 +3148,19 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             || app.get_creating_session()
         {
             if waiting_for_history {
-                app.set_status("运行时尚未就绪，请稍候再试".into());
+                // Two different situations hide behind "no snapshot yet": the
+                // selected thread is still being read, or there is no thread at
+                // all because its open was refused. Calling both of them "the
+                // runtime is not ready" told the user the engine was broken,
+                // when all that was missing was an open thread.
+                app.set_status(
+                    if app.get_active_session_id().is_empty() {
+                        "请先选择一个线程，或新建一个线程"
+                    } else {
+                        "正在打开线程，请稍候再试"
+                    }
+                    .into(),
+                );
             } else {
                 app.set_status("正在加载会话，请稍候再试".into());
             }

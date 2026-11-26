@@ -11,6 +11,7 @@
 // upload entry.
 import { Theme, WorkspaceFileRow } from "theme.slint";
 import { SidebarMetrics, PointerChase } from "drag_row.slint";
+import { MenuTarget } from "menu_target.slint";
 import { I18n } from "i18n.slint";
 import { ListView, Button } from "std-widgets.slint";
 import { ModalDialog, Action, InlineInput } from "components.slint";
@@ -321,15 +322,26 @@ export component WorkspaceFilesPanel inherits Rectangle {
                             }
                             for row[index] in root.rows : Rectangle {
                                 height: 28px; width: parent.width;
+                                // 右键菜单的目标行：菜单一开，指针就从行上移走，
+                                // 行自己的悬停底色会消失；这里按右键按下的位置
+                                // 把目标行留住（见 menu_target.slint）。
+                                private property <bool> menu-target: MenuTarget.hits(
+                                    self.absolute-position.x,
+                                    self.absolute-position.y,
+                                    self.width,
+                                    self.height,
+                                );
                                 background: row.path == root.active-path && !root.search-active && row.kind != 2 ? Theme.selected
                                     : row.selected ? Theme.accent-soft
+                                    : self.menu-target ? Theme.accent-soft
                                     : root.dragging && row.path == root.drop-path ? Theme.accent-soft
                                     : row-drop.has-drag ? Theme.accent-soft
                                     : row-touch.has-hover ? Theme.hover : transparent;
                                 // 拖拽落点描边：悬停目标一目了然（文件行不是容器，
                                 // 落到它上面高亮的是它所在目录，不会落在这里）。
-                                border-width: (root.dragging && row.path == root.drop-path) || row-drop.has-drag ? 1px : 0px;
-                                border-color: Theme.accent-ink;
+                                border-width: (root.dragging && row.path == root.drop-path) || row-drop.has-drag || self.menu-target ? 1px : 0px;
+                                border-color: self.menu-target && !(root.dragging && row.path == root.drop-path) && !row-drop.has-drag
+                                    ? Theme.accent-ink.transparentize(0.55) : Theme.accent-ink;
                                 row-touch := TouchArea {
                                     mouse-cursor: pointer;
                                     // 目录刷新/写操作进行中也保持可点：面板不该因为一次

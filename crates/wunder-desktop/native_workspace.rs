@@ -1090,6 +1090,9 @@ impl NativeDesktop {
     /// containment check.
     fn resolve_image_target(&self, root_path: &str, relative: &str) -> Result<PathBuf> {
         let root = PathBuf::from(root_path);
+        // A drive letter that cannot exist on this host would make a real
+        // absolute path look workspace-relative; drop it before resolving.
+        let relative = drop_foreign_drive(relative);
         if let Some(target) = self.chat_attachment_target(relative)? {
             return Ok(target);
         }
@@ -1636,6 +1639,32 @@ fn is_transcript_card(source: &str) -> bool {
     CARD_EXTENSIONS.contains(&extension.as_str())
 }
 
+/// Drop a drive prefix that cannot address a file on this host.
+///
+/// The prompt that teaches the forward-slash rule shows a Windows path, and
+/// some models copy the drive onto a POSIX host: `F:/home/me/shot.png` for a
+/// file that really lives at `/home/me/shot.png`. Off Windows a drive is not
+/// an absolute path, so the whole string would be treated as a
+/// workspace-relative entry, joined under the workspace root and rejected —
+/// the transcript then shows "图片加载失败" while the file is right there.
+/// Thread prompts are frozen once written, so old threads keep producing the
+/// shape; dropping the impossible prefix here is what heals them.
+fn drop_foreign_drive(source: &str) -> &str {
+    if cfg!(windows) {
+        return source;
+    }
+    let bytes = source.as_bytes();
+    let drive_absolute = bytes.len() > 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'/' | b'\\');
+    if drive_absolute {
+        &source[2..]
+    } else {
+        source
+    }
+}
+
 /// One local absolute path, or `None` when the source is relative, a remote
 /// URL, or does not exist. Kept free of state so the boundary rule stays
 /// unit-testable: 相对路径永远按工作区解释，只有本机绝对路径走这条放行。
@@ -1853,6 +1882,31 @@ mod tests {
                 "{rejected}"
             );
         }
+    }
+
+    /// A drive letter copied from a Windows prompt must not hide the real
+    /// absolute path behind it.
+    #[cfg(not(windows))]
+    #[test]
+    fn foreign_drive_prefixes_are_dropped_before_resolution() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("shot.png");
+        std::fs::write(&file, b"png").unwrap();
+        let plain = file.to_str().unwrap();
+        let canonical = file.canonicalize().unwrap();
+        let windows = plain.replace('/', "\\");
+        // Either separator spelling of the remainder must reach the same file.
+        for (prefixed, rest) in [(format!("F:{plain}"), plain), (format!("C:{windows}"), &windows)] {
+            assert_eq!(super::drop_foreign_drive(&prefixed), rest);
+            assert_eq!(
+                super::local_absolute_path(super::drop_foreign_drive(&prefixed)).unwrap(),
+                Some(canonical.clone()),
+                "{prefixed}"
+            );
+        }
+        assert_eq!(super::drop_foreign_drive(plain), plain);
+        // A workspace-relative entry has no drive to confuse.
+        assert_eq!(super::drop_foreign_drive("notes/shot.png"), "notes/shot.png");
     }
 
     #[test]

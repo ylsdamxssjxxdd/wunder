@@ -55,15 +55,41 @@ pub fn is_document(source: &str) -> bool {
 /// not a real URL scheme, so treating it as one only ever breaks a reference.
 /// Any genuine scheme (`http`, `data`, `file`, …) is left untouched.
 pub fn normalize_destination(source: &str) -> String {
-    let trimmed = source.trim();
+    strip_foreign_drive(strip_reference_prefix(source.trim())).to_string()
+}
+
+fn strip_reference_prefix(trimmed: &str) -> &str {
     for prefix in ["reference_path:", "reference-path:"] {
         if let Some(rest) = trimmed.get(..prefix.len()) {
             if rest.eq_ignore_ascii_case(prefix) {
-                return trimmed[prefix.len()..].trim().to_string();
+                return trimmed[prefix.len()..].trim();
             }
         }
     }
-    trimmed.to_string()
+    trimmed
+}
+
+/// Drop a Windows drive letter, which Android can never read.
+///
+/// The prompt that teaches the forward-slash rule shows a Windows path, and
+/// some models copy the drive itself onto Android: `F:/data/app/shot.png` for
+/// a file that really lives at `/data/app/shot.png`. A drive prefix is not an
+/// absolute path here, so the loader treats the whole string as a workspace
+/// entry, joins it under the workspace root and fails — the card then reads
+/// "图片加载失败" while the file is right there. Thread prompts are frozen once
+/// written, so old threads keep producing the shape; dropping the impossible
+/// prefix is the only place that can heal them.
+fn strip_foreign_drive(path: &str) -> &str {
+    let bytes = path.as_bytes();
+    let drive_absolute = bytes.len() > 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && bytes[2] == b'/';
+    if drive_absolute {
+        &path[2..]
+    } else {
+        path
+    }
 }
 
 /// The bare path of a reference, or `None` when it cannot address the
@@ -139,5 +165,20 @@ mod tests {
         assert!(is_image(&normalize_destination(
             "reference_path:/data/app/workspace/a.gif"
         )));
+    }
+
+    /// A Windows drive copied onto Android can never address a file; the
+    /// absolute path behind it still can.
+    #[test]
+    fn foreign_drive_prefixes_are_dropped() {
+        assert_eq!(
+            normalize_destination("F:/data/app/workspace/a.png"),
+            "/data/app/workspace/a.png"
+        );
+        assert_eq!(
+            normalize_destination("reference_path:C:/data/app/a.gif"),
+            "/data/app/a.gif"
+        );
+        assert_eq!(normalize_destination("/data/app/a.png"), "/data/app/a.png");
     }
 }
