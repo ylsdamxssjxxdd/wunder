@@ -5217,10 +5217,6 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
                 dataset_id: "".into(),
             });
         }
-        "agent" => {
-            ui.set_settings_page(8);
-            ui.set_settings_open(true);
-        }
         // 本地工具审批对话框：权限审批选「建议 / 自动编辑」后弹出的那张卡。
         "chat-approval" => {
             ui.set_chat_approval_open(true);

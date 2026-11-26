@@ -97,6 +97,7 @@ compiler clang++ ""
 compiler aarch64-linux-android26-clang aarch64-linux-android26
 compiler aarch64-linux-android26-clang++ aarch64-linux-android26
 passthrough llvm-ar "$llvm_rel/bin/llvm-ar"
+passthrough llvm-nm "$llvm_rel/bin/llvm-nm"
 passthrough llvm-ranlib "$llvm_rel/bin/llvm-ranlib"
 passthrough llvm-strip "$llvm_rel/bin/llvm-strip"
 passthrough llvm-objcopy "$llvm_rel/bin/llvm-objcopy"

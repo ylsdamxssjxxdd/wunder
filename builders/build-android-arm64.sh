@@ -151,8 +151,13 @@ for ABI in "${ABI_LIST[@]}"; do
     candidates+=("$ANDROID_HOME/ndk-libcxx/$ABI/libc++_shared.so")
     candidates+=("$ndk_libcxx")
     nm_args=()
-    if [[ "$host_arch" != aarch64 && "$host_arch" != arm64 && -x "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" ]]; then
+    # 优先用 NDK 自带的 llvm-nm（符号表格式一致）；ARM 宿主上是 android-host-tools.sh
+    # 生成的 qemu 包装器，没有时交给脚本自己从 PATH 找 nm。
+    if [[ "$host_arch" != aarch64 && "$host_arch" != arm64 \
+        && -x "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" ]]; then
         nm_args=(--nm "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm")
+    elif [[ -n "${ANDROID_HOST_BIN:-}" && -x "$ANDROID_HOST_BIN/llvm-nm" ]]; then
+        nm_args=(--nm "$ANDROID_HOST_BIN/llvm-nm")
     fi
     libcxx_shared=""
     check_output=""
