@@ -54,6 +54,10 @@ pub(super) enum KeyClaim {
     Echo(u64),
     /// Not an echo: a new physical press.
     NewPress,
+    /// A repeat delivery of an echo already replayed: Xlib can hand the same
+    /// echoed key back again when it loses track of a burst. Delivering it
+    /// would duplicate the character, so the event is dropped.
+    Duplicate,
 }
 
 /// One forwarded key identity.
@@ -66,6 +70,19 @@ pub(super) struct ForwardedKey {
     /// `EventProcessor::drain_epoch` when the key was last forwarded.
     epoch: u64,
     forwarded_at: Instant,
+}
+
+/// A device-level key report still waiting for the window event it produced.
+///
+/// XInput2 reports every key a device sends before the key event reaches the
+/// window. An XIM echo is re-queued on the client side and never produces one,
+/// so a key event that matches a pending raw report is a real press even when
+/// a remote-control burst gives several presses the same X timestamp.
+pub(super) struct RawKeyPending {
+    time: c_ulong,
+    keycode: u32,
+    pressed: bool,
+    at: Instant,
 }
 
 /// The X11 documentation states: "Keycodes lie in the inclusive range `[8, 255]`".
@@ -111,6 +128,12 @@ pub struct EventProcessor {
     pub(super) next_filtered_key_seq: u64,
     /// Batch counter for `drain_events`; see `ForwardedKey::epoch`.
     pub(super) drain_epoch: u64,
+    /// Device-level key reports whose window event has not been matched yet.
+    pub(super) raw_key_pendings: VecDeque<RawKeyPending>,
+    /// When the last device-level key report arrived; `None` until the window
+    /// has seen one. Unmatched key events are only dropped as duplicates while
+    /// this is fresh.
+    pub(super) last_raw_key_at: Option<Instant>,
     // Track filtered modifiers by keycode: X serials are not unique for events
     // delivered in quick succession, and matching those serials makes replay
     // trigger for ordinary input.
@@ -446,10 +469,14 @@ impl EventProcessor {
         filtered
     }
 
-    /// Give a key event its forwarding order slot without forwarding it.
-    /// Returns the slot the replay has to sort this event by.
-    pub fn order_key_event(&mut self, xev: &XEvent) -> u64 {
-        self.record_filtered_key(Self::key_event_identity(xev))
+    /// Give a key the IME let through its press-order slot for the replay.
+    ///
+    /// Nothing is remembered for later: the IME only echoes keys it filtered,
+    /// so this slot must never be claimed by an echo.
+    pub fn order_key_event(&mut self) -> u64 {
+        let seq = self.next_filtered_key_seq;
+        self.next_filtered_key_seq += 1;
+        seq
     }
 
     /// Let Xlib complete the XIM round-trip for an echo we plan to replay
@@ -465,25 +492,78 @@ impl EventProcessor {
     /// reverse order of an XIM echo burst.
     ///
     /// A claim consumes one pending press, so a later event with the same
-    /// identity in the same batch is treated as a new physical press instead
-    /// of being folded into the same echo. Events from the batch that
-    /// forwarded the key are never echoes: Xlib re-queues those into a later
-    /// drain batch.
+    /// identity is treated as a new physical press instead of being folded into
+    /// the same echo. A device-level report outranks all of that: Xlib re-queues
+    /// an echo on the client side and it never produces one.
     pub fn claim_filtered_key(&mut self, event: &XEvent) -> KeyClaim {
-        let id = Self::key_event_identity(event);
-        let epoch = self.drain_epoch;
-        let Some(key) = self.filtered_key_seq.get_mut(&id) else {
-            return KeyClaim::NewPress;
-        };
-        if key.epoch == epoch || key.forwarded_at.elapsed() >= ECHO_DEADLINE {
+        // A device-level report settles it: echoes are re-queued on the client
+        // side and never produce one, so a matching report makes this a real
+        // press no matter how its identity looks.
+        if self.take_raw_key(event) {
             return KeyClaim::NewPress;
         }
-        // A forwarded press of this identity is still waiting for its echo.
-        // Claims run newest-first: Xlib re-queues a burst in reverse, and the
-        // slot restores the order the keys were pressed in.
-        match key.seqs.pop_back() {
-            Some(seq) => KeyClaim::Echo(seq),
-            None => KeyClaim::NewPress,
+        /// How long a device-level key report makes "no report" trustworthy.
+        /// Raw reports stop while the window is unfocused, so one must have
+        /// arrived recently before an unmatched key event may be dropped.
+        const RAW_REPORT_FRESH: Duration = Duration::from_millis(1000);
+        let id = Self::key_event_identity(event);
+        let epoch = self.drain_epoch;
+        let raw_fresh = self
+            .last_raw_key_at
+            .map(|at| at.elapsed() < RAW_REPORT_FRESH)
+            .unwrap_or(false);
+        if let Some(key) = self.filtered_key_seq.get_mut(&id) {
+            // Without device reports a same-batch match is still a real press;
+            // with them every physical press is already ruled out above.
+            let echo_possible = raw_fresh || key.epoch != epoch;
+            if echo_possible && key.forwarded_at.elapsed() < ECHO_DEADLINE {
+                // A forwarded press of this identity is still waiting for its
+                // echo. Claims run newest-first: Xlib re-queues a burst in
+                // reverse, and the slot restores the order of the presses.
+                if let Some(seq) = key.seqs.pop_back() {
+                    return KeyClaim::Echo(seq);
+                }
+            }
+        }
+        if raw_fresh {
+            // No device report produced this event and no forwarded press is
+            // waiting for an echo: Xlib handed the same echo back again.
+            return KeyClaim::Duplicate;
+        }
+        KeyClaim::NewPress
+    }
+
+    pub fn record_raw_key(&mut self, time: c_ulong, keycode: u32, pressed: bool) {
+        const MAX_PENDING: usize = 256;
+        const MAX_AGE: Duration = Duration::from_millis(1500);
+        let now = Instant::now();
+        while let Some(front) = self.raw_key_pendings.front() {
+            if now.duration_since(front.at) > MAX_AGE {
+                self.raw_key_pendings.pop_front();
+            } else {
+                break;
+            }
+        }
+        self.last_raw_key_at = Some(now);
+        self.raw_key_pendings.push_back(RawKeyPending { time, keycode, pressed, at: now });
+        while self.raw_key_pendings.len() > MAX_PENDING {
+            self.raw_key_pendings.pop_front();
+        }
+    }
+
+    /// Consume the device-level report that produced this key event, if any.
+    fn take_raw_key(&mut self, event: &XEvent) -> bool {
+        let key: &XKeyEvent = event.as_ref();
+        let pressed = event.get_type() == xlib::KeyPress;
+        let matched = self.raw_key_pendings.iter().position(|raw| {
+            raw.time == key.time && raw.keycode == key.keycode && raw.pressed == pressed
+        });
+        match matched {
+            Some(index) => {
+                self.raw_key_pendings.remove(index);
+                true
+            }
+            None => false,
         }
     }
 
@@ -1730,6 +1810,7 @@ impl EventProcessor {
         if keycode < KEYCODE_OFFSET as u32 {
             return;
         }
+        self.record_raw_key(xev.time as c_ulong, keycode, state == ElementState::Pressed);
         let physical_key = xkb::raw_keycode_to_physicalkey(keycode);
 
         callback(&self.target, Event::DeviceEvent {

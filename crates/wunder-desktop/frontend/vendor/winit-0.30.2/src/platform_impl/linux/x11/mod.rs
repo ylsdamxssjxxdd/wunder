@@ -334,6 +334,8 @@ impl<T: 'static> EventLoop<T> {
             filtered_key_seq: Default::default(),
             next_filtered_key_seq: 0,
             drain_epoch: 0,
+            raw_key_pendings: VecDeque::new(),
+            last_raw_key_at: None,
             is_composing: false,
         };
 
@@ -592,10 +594,8 @@ impl<T: 'static> EventLoop<T> {
         let mut last_forwarded: Option<std::time::Instant> = None;
         const ECHO_SETTLE: std::time::Duration = std::time::Duration::from_millis(10);
         loop {
-            // A batch id distinguishes a physical press from the echo of an
-            // earlier key: Xlib re-queues that echo into the next batch, so a
-            // matching event drained here cannot be the echo of a key that was
-            // only forwarded while this same batch was processed.
+            // A batch id separates an echo re-queued by Xlib from the keys
+            // drained alongside the press that produced it.
             self.event_processor.drain_epoch =
                 self.event_processor.drain_epoch.wrapping_add(1);
             let mut events: Vec<XEvent> = Vec::new();
@@ -624,13 +624,18 @@ impl<T: 'static> EventLoop<T> {
                             continue;
                         }
                         crate::platform_impl::x11::event_processor::KeyClaim::NewPress => {}
+                        crate::platform_impl::x11::event_processor::KeyClaim::Duplicate => {
+                            // Xlib handed the same echo back twice; delivering
+                            // it again would duplicate the character.
+                            continue;
+                        }
                     }
                     if self.event_processor.forwarding_keys_to_ime() {
                         // Give the key to the IME here, inline: only filtered
                         // keys may be held back, or the IME never sees them.
                         last_forwarded = Some(std::time::Instant::now());
                         if !self.event_processor.filter_key_event(&mut xev) {
-                            let seq = self.event_processor.order_key_event(&xev);
+                            let seq = self.event_processor.order_key_event();
                             ordered.push((xev, seq));
                         } else {
                             // The IME may answer with preedit/commit data that
