@@ -1,5 +1,5 @@
 diff --git a/src/platform_impl/linux/x11/event_processor.rs b/src/platform_impl/linux/x11/event_processor.rs
-index 9c6b95a..e82b65c 100644
+index 9c6b95a..040520d 100644
 --- a/src/platform_impl/linux/x11/event_processor.rs
 +++ b/src/platform_impl/linux/x11/event_processor.rs
 @@ -3,6 +3,7 @@
@@ -10,7 +10,7 @@ index 9c6b95a..e82b65c 100644
  
  use x11_dl::xinput2::{
      self, XIDeviceEvent, XIEnterEvent, XIFocusInEvent, XIFocusOutEvent, XIHierarchyEvent,
-@@ -41,6 +42,39 @@
+@@ -41,6 +42,32 @@
  /// The maximum amount of X modifiers to replay.
  pub const MAX_MOD_REPLAY_LEN: usize = 32;
  
@@ -20,17 +20,10 @@ index 9c6b95a..e82b65c 100644
 +/// same key must be forwarded again instead of being treated as that echo.
 +const ECHO_DEADLINE: Duration = Duration::from_millis(500);
 +
-+/// Extra copies of one echo that libX11 hands back during a burst arrive
-+/// within a few milliseconds of the forward. Beyond this window a matching
-+/// event is a new physical press and goes back to the IME.
-+const ECHO_DUPLICATE_WINDOW: Duration = Duration::from_millis(30);
-+
 +/// What a drained key event is relative to the keys already forwarded.
 +pub(super) enum KeyClaim {
 +    /// The IME's echo of a forwarded press; carries that press's order slot.
 +    Echo(u64),
-+    /// Another copy of an echo that was already delivered; drop it.
-+    Duplicate,
 +    /// Not an echo: a new physical press.
 +    NewPress,
 +}
@@ -50,7 +43,7 @@ index 9c6b95a..e82b65c 100644
  /// The X11 documentation states: "Keycodes lie in the inclusive range `[8, 255]`".
  const KEYCODE_OFFSET: u8 = 8;
  
-@@ -66,7 +100,28 @@
+@@ -66,7 +93,28 @@
      pub active_window: Option<xproto::Window>,
      /// Latest modifiers we've sent for the user to trigger change in event.
      pub modifiers: Cell<ModifiersState>,
@@ -80,7 +73,7 @@ index 9c6b95a..e82b65c 100644
      pub xmodmap: util::ModifierKeymap,
      pub is_composing: bool,
  }
-@@ -78,26 +133,15 @@
+@@ -78,26 +126,15 @@
      {
          self.process_xevent(xev, &mut callback);
  
@@ -115,7 +108,7 @@ index 9c6b95a..e82b65c 100644
          while let Ok((window, event)) = self.ime_event_receiver.try_recv() {
              let window_id = mkwid(window as xproto::Window);
              let event = match event {
-@@ -125,6 +169,26 @@
+@@ -125,6 +162,26 @@
          }
      }
  
@@ -142,7 +135,7 @@ index 9c6b95a..e82b65c 100644
      /// XFilterEvent tells us when an event has been discarded by the input method.
      /// Specifically, this involves all of the KeyPress events in compose/pre-edit sequences,
      /// along with an extra copy of the KeyRelease events. This also prevents backspace and
-@@ -145,20 +209,36 @@
+@@ -145,20 +202,36 @@
      {
          let event_type = xev.get_type();
  
@@ -190,7 +183,7 @@ index 9c6b95a..e82b65c 100644
              return;
          }
  
-@@ -332,6 +412,164 @@
+@@ -332,6 +405,160 @@
          result != 0
      }
  
@@ -267,16 +260,12 @@ index 9c6b95a..e82b65c 100644
 +        if key.epoch == epoch || key.forwarded_at.elapsed() >= ECHO_DEADLINE {
 +            return KeyClaim::NewPress;
 +        }
-+        if let Some(seq) = key.seqs.pop_back() {
-+            return KeyClaim::Echo(seq);
-+        }
-+        // All forwards of this identity have been delivered. libX11 can hand
-+        // the same echo back more than once around the burst; those extra
-+        // copies must not turn into fresh presses.
-+        if key.forwarded_at.elapsed() < ECHO_DUPLICATE_WINDOW {
-+            KeyClaim::Duplicate
-+        } else {
-+            KeyClaim::NewPress
++        // A forwarded press of this identity is still waiting for its echo.
++        // Claims run newest-first: Xlib re-queues a burst in reverse, and the
++        // slot restores the order the keys were pressed in.
++        match key.seqs.pop_back() {
++            Some(seq) => KeyClaim::Echo(seq),
++            None => KeyClaim::NewPress,
 +        }
 +    }
 +
@@ -355,7 +344,7 @@ index 9c6b95a..e82b65c 100644
      pub fn init_device(&self, device: xinput::DeviceId) {
          let window_target = Self::window_target(&self.target);
          let mut devices = self.devices.borrow_mut();
-@@ -459,14 +697,35 @@
+@@ -459,14 +686,35 @@
  
              let source_window = xev.data.get_long(0) as xproto::Window;
  
@@ -399,7 +388,7 @@ index 9c6b95a..e82b65c 100644
  
              // By our own state flow, `version` should never be `None` at this point.
              let version = self.dnd.version.unwrap_or(5);
-@@ -929,7 +1188,7 @@
+@@ -929,7 +1177,7 @@
          // itself are out of sync due to XkbState being delivered before XKeyEvent, since it's
          // being replayed by the XIM, thus we should replay ourselves.
          let replay = if let Some(position) =

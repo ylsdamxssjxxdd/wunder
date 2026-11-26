@@ -1,5 +1,5 @@
 diff --git a/src/platform_impl/linux/x11/mod.rs b/src/platform_impl/linux/x11/mod.rs
-index 88071b7..707ea05 100644
+index 88071b7..e7f5a73 100644
 --- a/src/platform_impl/linux/x11/mod.rs
 +++ b/src/platform_impl/linux/x11/mod.rs
 @@ -24,6 +24,7 @@
@@ -22,7 +22,7 @@ index 88071b7..707ea05 100644
              is_composing: false,
          };
  
-@@ -577,25 +583,137 @@
+@@ -577,25 +583,131 @@
      where
          F: FnMut(Event<T>, &RootAEL),
      {
@@ -75,12 +75,6 @@ index 88071b7..707ea05 100644
 +                        crate::platform_impl::x11::event_processor::KeyClaim::Echo(seq) => {
 +                            self.event_processor.acknowledge_echo(&mut xev);
 +                            ordered.push((xev, seq));
-+                            continue;
-+                        }
-+                        crate::platform_impl::x11::event_processor::KeyClaim::Duplicate => {
-+                            // Complete the Xlib round-trip and drop the extra
-+                            // copy; delivering it would duplicate the character.
-+                            self.event_processor.acknowledge_echo(&mut xev);
 +                            continue;
 +                        }
 +                        crate::platform_impl::x11::event_processor::KeyClaim::NewPress => {}
