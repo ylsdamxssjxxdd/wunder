@@ -2,13 +2,14 @@
 # 汇总离线安卓工具链到套件的 android/ 目录（在联网准备机上执行一次）。
 #
 # 产物目录由 Gitea 任务容器的 /opt/android 只读挂载使用，内容：
-#   sdk/           Android SDK（platform 36、build-tools、NDK 28.2、licenses）
+#   sdk/           Android SDK（platform 36、build-tools、NDK 30、licenses）
 #   jdk/           Temurin 17（必须能在 Ubuntu 18.04 / glibc 2.27 上运行）
 #   gradle/        Gradle 8.13
 #   gradle-home/   预热过的 ~/.gradle/caches，构建时复制到可写的 /ci-cache 复用
 #   assets/        rootfs.tar.xz、packs/{common,browser}.tar.xz、proot/busybox 运行库与 NOTICE
 #   keystore/      固定调试签名 debug.keystore（保证多次构建的 APK 可覆盖安装）
 #   skia-binaries/ rust-skia 的 aarch64-android 预编译包（离线渲染链必需）
+#   ndk-libcxx/   Skia 预编译产物匹配的 libc++_shared.so（套件 NDK 较旧时必需）
 #
 # 用法（x86_64 任务机）：
 #   packaging/gitea/prepare-android.sh --out /path/to/kit/android \
@@ -16,7 +17,8 @@
 #     --gradle "$HOME/gradle/gradle-8.13" --gradle-home "$HOME/.gradle" \
 #     --rust-std /path/to/rust-std-nightly-aarch64-linux-android.tar.xz \
 #     --offline-sdk /path/to/rust-builder/offline \
-#     --skia /path/to/skia-binaries
+#     --skia /path/to/skia-binaries \
+#     --libcxx /path/to/ndk-30/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so
 #
 # ARM64 任务机（NDK/build-tools 只有 x86_64 宿主版，需内置 qemu）：
 #   把 --jdk 换成 aarch64 Temurin，并追加
@@ -27,7 +29,7 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-NDK_VERSION="${WUNDER_NDK_VERSION:-28.2.13676358}"
+NDK_VERSION="${WUNDER_NDK_VERSION:-30.0.16248370}"
 OUT=""
 SDK=""
 JDK=""
@@ -36,6 +38,7 @@ GRADLE_HOME="${HOME}/.gradle"
 RUST_STD=""
 OFFLINE_SDK=""
 SKIA=""
+LIBCXX=""
 HOST_ARCH="$(uname -m)"
 QEMU=""
 X86_ROOT=""
@@ -52,6 +55,7 @@ while [[ $# -gt 0 ]]; do
         --rust-std) RUST_STD="$2"; shift 2 ;;
         --offline-sdk) OFFLINE_SDK="$2"; shift 2 ;;
         --skia) SKIA="$2"; shift 2 ;;
+        --libcxx) LIBCXX="$2"; shift 2 ;;
         --host-arch) HOST_ARCH="$2"; shift 2 ;;
         --qemu) QEMU="$2"; shift 2 ;;
         --x86-root) X86_ROOT="$2"; shift 2 ;;
@@ -108,6 +112,16 @@ PY
 )"
     [[ -d "$OUT/skia-binaries/$skia_version" ]] || \
         fail "Skia 预编译目录缺少 Cargo.lock 锁定的 $skia_version"
+fi
+
+if [[ -n "$LIBCXX" ]]; then
+    # rust-skia 的预编译产物用较新的 libc++ 编；套件 NDK 较旧时用这份运行时补上
+    # （构建脚本会验证符号闭合，不合格直接拒绝出包）。
+    [[ -f "$LIBCXX" ]] || fail "libc++ 文件不存在: $LIBCXX"
+    mkdir -p "$OUT/ndk-libcxx/arm64-v8a"
+    rsync -a "$LIBCXX" "$OUT/ndk-libcxx/arm64-v8a/libc++_shared.so"
+else
+    echo "[prepare-android] WARN: 未提供 --libcxx；若套件 NDK 低于 r30，离线构建可能因 Skia 依赖的 libc++ 符号缺失而失败" >&2
 fi
 
 if [[ "$HOST_ARCH" == aarch64 || "$HOST_ARCH" == arm64 ]]; then

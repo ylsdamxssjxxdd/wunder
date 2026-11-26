@@ -9,7 +9,7 @@
 set -euo pipefail
 
 root="${1:?用法: android-host-tools.sh <android-root> [ndk-version]}"
-ndk_version="${2:-28.2.13676358}"
+ndk_version="${2:-30.0.16248370}"
 llvm_rel="sdk/ndk/$ndk_version/toolchains/llvm/prebuilt/linux-x86_64"
 build_tools_rel="sdk/build-tools/36.0.0"
 qemu="$root/qemu/qemu-x86_64-static"
@@ -110,7 +110,10 @@ set -euo pipefail
 ROOT="\$(cd -- "\$(dirname -- "\$0")/.." && pwd -P)"
 LLVM="\$ROOT/$llvm_rel"
 SYSROOT="\$LLVM/sysroot"
-CLANGLIB="\$LLVM/lib/clang/19"
+# clang 内置库目录带大版本号（NDK 28 是 19、NDK 30 是 21），跟 NDK 一起变；
+# 写死版本会在换 NDK 后让 rust-linker 找不到 libclang_rt.builtins。
+CLANGLIB=\$(echo \$LLVM/lib/clang/*)
+[[ -d "\$CLANGLIB" ]] || { echo "rust-linker: 找不到 \$LLVM/lib/clang/*" >&2; exit 2; }
 TARGET="\$SYSROOT/usr/lib/aarch64-linux-android/26"
 parts=()
 for arg in "\$@"; do

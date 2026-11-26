@@ -21,21 +21,25 @@ if [[ -n "${WUNDER_CARGO_VENDOR:-}" ]]; then
 fi
 
 export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/android-sdk}}"
-# Android NDK 必须与 C++ 产物、随包 libc++ 三者同源。runner 镜像会预设
-# ANDROID_NDK_ROOT 指向镜像自带的旧 NDK（GitHub 上是 27.x），直接沿用就会出现
-# 「Skia 用新 libc++ 预编译产物、APK 里装旧 libc++」——装上后一开就死在 dlopen。
-# 所以优先级是：显式 WUNDER_ANDROID_NDK > 目标 NDK 版本目录 > runner 默认。
+# Android NDK 要与随包 libc++ 同源。优先级：显式 WUNDER_ANDROID_NDK > 固定版本
+# 目录 > runner 的 latest > 已显式设置的 ANDROID_NDK_ROOT（离线套件只有一套 NDK，
+# ARM 侧的 qemu 包装器也按它生成）> $ANDROID_HOME/ndk 下最新的一个。
+# 不能直接 `ANDROID_NDK_ROOT:-...`：GitHub runner 会预设成镜像自带的旧 NDK（27.x）。
 WUNDER_ANDROID_NDK_VERSION="${WUNDER_ANDROID_NDK_VERSION:-30.0.16248370}"
-if [[ -n "${WUNDER_ANDROID_NDK:-}" ]]; then
-    export ANDROID_NDK_ROOT="$WUNDER_ANDROID_NDK"
-elif [[ -d "$ANDROID_HOME/ndk/$WUNDER_ANDROID_NDK_VERSION" ]]; then
-    export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/$WUNDER_ANDROID_NDK_VERSION"
-elif [[ -n "${ANDROID_NDK_LATEST_HOME:-}" && -d "${ANDROID_NDK_LATEST_HOME}" ]]; then
-    export ANDROID_NDK_ROOT="$ANDROID_NDK_LATEST_HOME"
-else
-    echo "未找到 NDK $WUNDER_ANDROID_NDK_VERSION（$ANDROID_HOME/ndk）；请安装，或用 WUNDER_ANDROID_NDK 指定一套" >&2
+resolve_ndk() {
+    if [[ -n "${WUNDER_ANDROID_NDK:-}" ]]; then echo "$WUNDER_ANDROID_NDK"; return; fi
+    if [[ -d "$ANDROID_HOME/ndk/$WUNDER_ANDROID_NDK_VERSION" ]]; then echo "$ANDROID_HOME/ndk/$WUNDER_ANDROID_NDK_VERSION"; return; fi
+    if [[ -n "${ANDROID_NDK_LATEST_HOME:-}" && -d "${ANDROID_NDK_LATEST_HOME}" ]]; then echo "$ANDROID_NDK_LATEST_HOME"; return; fi
+    if [[ -n "${ANDROID_NDK_ROOT:-}" && -d "${ANDROID_NDK_ROOT}" ]]; then echo "$ANDROID_NDK_ROOT"; return; fi
+    if [[ -d "$ANDROID_HOME/ndk" ]]; then
+        find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1
+    fi
+}
+export ANDROID_NDK_ROOT="$(resolve_ndk)"
+[[ -n "$ANDROID_NDK_ROOT" && -d "$ANDROID_NDK_ROOT" ]] || {
+    echo "未找到 Android NDK（期望 $ANDROID_HOME/ndk/$WUNDER_ANDROID_NDK_VERSION）；请安装，或用 WUNDER_ANDROID_NDK 指定一套" >&2
     exit 2
-fi
+}
 # skia-bindings 的 build script 读这两个拼写；缺了会落到源码编译路径。
 export ANDROID_NDK="$ANDROID_NDK_ROOT"
 export JAVA_HOME="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")}"
@@ -136,24 +140,39 @@ for ABI in "${ABI_LIST[@]}"; do
     target_dir="${CARGO_TARGET_DIR:-$PWD/target}"
     mkdir -p "android/app/src/main/jniLibs/$ABI"
     cp "$target_dir/$TARGET/release/libwunder_android.so" "android/app/src/main/jniLibs/$ABI/"
-    # Skia is C++ and the NDK clang driver links libwunder_android.so against
-    # libc++_shared.so. Gradle only packages jniLibs, and the emulator's system
-    # libc++ is older than NDK 30 (it lacks std::__ndk1::__hash_memory), so the
-    # APK must carry the exact NDK runtime next to the Rust library.
-    libcxx_shared="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$TARGET/libc++_shared.so"
-    if [[ ! -f "$libcxx_shared" ]]; then
-        libcxx_shared="$(find "$ANDROID_NDK_ROOT" -path "*/sysroot/usr/lib/$TARGET/libc++_shared.so" -print -quit)"
+    # 随包 libc++ 必须导出 cdylib 需要的全部符号：Skia 是上游预编译产物（用较新
+    # libc++ 编），旧 NDK 自带的运行时可能缺符号。候选按优先级逐个验证，取第一个
+    # 能自证的：① WUNDER_ANDROID_LIBCXX ② 离线套件的 $ANDROID_HOME/ndk-libcxx
+    # ③ 当前 NDK 的 sysroot 副本。都不行就让构建失败，不发出必然闪退的包。
+    ndk_libcxx="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$TARGET/libc++_shared.so"
+    [[ -f "$ndk_libcxx" ]] || ndk_libcxx="$(find "$ANDROID_NDK_ROOT" -path "*/sysroot/usr/lib/$TARGET/libc++_shared.so" -print -quit)"
+    candidates=()
+    [[ -n "${WUNDER_ANDROID_LIBCXX:-}" ]] && candidates+=("$WUNDER_ANDROID_LIBCXX")
+    candidates+=("$ANDROID_HOME/ndk-libcxx/$ABI/libc++_shared.so")
+    candidates+=("$ndk_libcxx")
+    nm_args=()
+    if [[ "$host_arch" != aarch64 && "$host_arch" != arm64 && -x "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" ]]; then
+        nm_args=(--nm "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm")
     fi
-    [[ -f "$libcxx_shared" ]] || {
-        echo "libc++_shared.so is missing for $TARGET under $ANDROID_NDK_ROOT" >&2
+    libcxx_shared=""
+    check_output=""
+    for candidate in "${candidates[@]}"; do
+        [[ -f "$candidate" ]] || continue
+        if check_output="$(python3 "$CRATE/scripts/check-native-runtime.py" \
+                --so "android/app/src/main/jniLibs/$ABI/libwunder_android.so" \
+                --libcxx "$candidate" "${nm_args[@]}" 2>&1)"; then
+            libcxx_shared="$candidate"
+            echo "$check_output"
+            break
+        fi
+    done
+    if [[ -z "$libcxx_shared" ]]; then
+        echo "$check_output" >&2
+        echo "没有与 C++ 产物匹配的 libc++：请安装较新的 NDK（$WUNDER_ANDROID_NDK_VERSION），或用 WUNDER_ANDROID_LIBCXX 指定一份" >&2
         exit 2
-    }
+    fi
     cp -f "$libcxx_shared" "android/app/src/main/jniLibs/$ABI/"
-    # 最后一道门：cdylib 需要的 libc++ 符号必须全部由随包的运行时导出。否则
-    # 构建、安装都正常，用户第一次点开就闪退（dlopen: cannot locate symbol）。
-    python3 "$CRATE/scripts/check-native-runtime.py" \
-        --so "android/app/src/main/jniLibs/$ABI/libwunder_android.so" \
-        --libcxx "android/app/src/main/jniLibs/$ABI/libc++_shared.so"
+    echo "libc++ ($ABI): $libcxx_shared"
 done
 
 GRADLE="${GRADLE:-$HOME/gradle/gradle-8.13/bin/gradle}"

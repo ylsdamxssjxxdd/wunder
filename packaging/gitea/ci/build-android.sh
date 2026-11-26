@@ -103,7 +103,21 @@ cp -f "$android_root/assets/packs/browser.tar.xz" "$app_src/assets/ubuntu/packs/
 cp -f "$android_root/assets/jniLibs/arm64-v8a/"*.so "$app_src/jniLibs/arm64-v8a/"
 
 export ANDROID_HOME="$android_root/sdk"
-export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/28.2.13676358"
+# 套件里的 NDK 版本由 android/ 目录决定：优先固定版本，否则取最新的一套。
+# 编译产物与随包 libc++ 是否匹配交给 builders/build-android-arm64.sh 验证（符号闭合），
+# 套件可在 android/ndk-libcxx/arm64-v8a/ 放一份与 Skia 预编译产物匹配的 libc++。
+ndk_dir=""
+while IFS= read -r candidate; do
+    [[ -d "$candidate" ]] && { ndk_dir="$candidate"; break; }
+done < <(
+    printf '%s\n' "$ANDROID_HOME/ndk/30.0.16248370"
+    find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -V -r
+)
+[[ -n "$ndk_dir" ]] || { echo "套件缺少 Android NDK：$ANDROID_HOME/ndk" >&2; exit 2; }
+export ANDROID_NDK_ROOT="$ndk_dir"
+if [[ -f "$android_root/ndk-libcxx/arm64-v8a/libc++_shared.so" ]]; then
+    export WUNDER_ANDROID_LIBCXX="$android_root/ndk-libcxx/arm64-v8a/libc++_shared.so"
+fi
 export JAVA_HOME="$android_root/jdk"
 export GRADLE="$android_root/gradle/bin/gradle"
 export GRADLE_USER_HOME="$cache/gradle-home"

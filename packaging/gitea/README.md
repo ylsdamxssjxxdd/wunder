@@ -126,7 +126,7 @@ git push gitea main
   该镜像；ARM 宿主由随包的 qemu-x86_64/i386 binfmt 模拟运行同一个 amd64 镜像，两个剖面的 Release 都带这一附件。
 - `android`（x86_64 或 aarch64 worker）：`wunder-android-<版本>-arm64.apk`，内嵌 proot Ubuntu rootfs、离线
   工具补充包 `common.tar.xz`、浏览器补充包 `browser.tar.xz`（Playwright + Chromium，供知识短片等技能开箱即用）
-  与 proot/busybox 运行库。工具链（Android SDK 36、NDK 28.2、Temurin JDK 17、
+  与 proot/busybox 运行库。工具链（Android SDK 36、NDK 30、Temurin JDK 17、
   Gradle 8.13 与预热缓存）和 APK 资产放在套件 `android/` 目录，由 `<前缀>-android` 卷只读挂载到任务容器的
   `/opt/android`。x86_64 宿主直接用 NDK 原生工具链；aarch64 宿主用套件内置的 `qemu-x86_64-static` 模拟
   x86_64 的 clang/aapt2（Google 只为 x86_64 宿主发布 NDK 与 build-tools），Rust 仍按 aarch64 原生编译。
@@ -178,6 +178,11 @@ git push gitea main
   `android/skia-binaries/<版本>/skia-binaries-<key>.tar.gz`；`ci/build-android.sh` 用
   `SKIA_BINARIES_URL=file://…/{tag}/skia-binaries-{key}.tar.gz` 指过去。skia 版本或特性变化时
   key 会变，以构建日志里 `TRYING TO DOWNLOAD AND INSTALL SKIA BINARIES` 那一行为准。
+  这份预编译产物是用较新的 libc++ 编的（引用 `std::__ndk1::__hash_memory`），而套件里的 NDK 可能较旧：
+  准备机从一套新 NDK（至少 r30）取 `sysroot/usr/lib/aarch64-linux-android/libc++_shared.so`，放到
+  `android/ndk-libcxx/arm64-v8a/libc++_shared.so`。`ci/build-android.sh` 会把它作为
+  `WUNDER_ANDROID_LIBCXX` 交给构建脚本，构建脚本再逐个候选验证符号闭合，不闭合就拒绝出包
+  （否则 APK 装上后一打开就死在 dlopen）。
   补充包（Linux 的 opt/python、opt/git、opt/rg、opt/ffmpeg、opt/browser 与 Win7 的 ia32 同名组件）
   **不在离线端构建**：它要在目标 libc 上编译 git 并铺 Python 运行时，离线机没有这些上游归档与 wheel 索引，
   所以在联网准备机上产好后随套件导出，放在 `supplement-prebuilt/<arch>/`（`amd64`、`arm64`、`win7-ia32` 三份，
