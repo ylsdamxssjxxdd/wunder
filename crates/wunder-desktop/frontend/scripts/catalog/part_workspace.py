@@ -75,4 +75,5 @@ ENTRIES.extend([
     ("wf_delete_body", "删除「{}」？云端文件不可恢复。", "Delete \"{}\"? Cloud files cannot be recovered.", ["name"]),
     ("wf_cloud_confirm_body", "云端要求确认后才会执行此操作。", "The cloud asks for confirmation before running this."),
     ("wf_btn_exec", "确认执行", "Confirm"),
+    ("wf_drop_hint", "松开以放入工作目录", "Release to place files in the workspace"),
 ])

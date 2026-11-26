@@ -14,6 +14,22 @@ pub struct NativeContextUsage {
     pub compacted: bool,
 }
 
+/// The composition of the thread's last outgoing request, as the engine
+/// recorded it at the request gate. Empty parts mean this thread never sent a
+/// request yet; the shells then show the window without a breakdown.
+#[derive(Clone, Debug, Default)]
+pub struct NativeContextWindow {
+    pub model: String,
+    pub provider: String,
+    /// The model's context window, 0 when unknown.
+    pub window: i64,
+    pub tokens: i64,
+    /// True when `tokens` is the vendor's count rather than a local estimate.
+    pub measured: bool,
+    pub turns: i64,
+    pub parts: Vec<wunder_server::context_window::ContextPart>,
+}
+
 impl super::NativeDesktop {
     /// Used/capacity for one thread, independent of billing totals. The
     /// Android shell reads this after opening a thread, switching models and
@@ -21,6 +37,66 @@ impl super::NativeDesktop {
     pub fn context_usage(&self, session: &str) -> Result<NativeContextUsage> {
         self.runtime
             .block_on(snapshot(self.state(), self.user_id(), session))
+    }
+
+    /// The text of one row in the thread's last request. Memory only, so this
+    /// is deliberately synchronous and never touches the database.
+    pub fn context_text(
+        &self,
+        session: &str,
+        slot: i32,
+        tag: &str,
+        name: &str,
+    ) -> Option<String> {
+        self.state()
+            .workspace
+            .context_text(self.user_id(), session, slot, tag, name)
+    }
+
+    /// What the thread's last request was made of. The context card is opened
+    /// from the composer's model trigger, so this has to answer for a thread
+    /// that has never sent anything (window only) as well as for one that has.
+    pub fn context_window(&self, session: &str) -> Result<NativeContextWindow> {
+        self.runtime.block_on(async {
+            let state = self.state();
+            let user = self.user_id().to_string();
+            let target = session.to_string();
+            let db = state.clone();
+            let owner = user.clone();
+            let thread = target.clone();
+            let recorded = blocking::run_db("native.context.window", move || {
+                db.user_store
+                    .get_chat_session(&owner, &thread)?
+                    .ok_or_else(|| anyhow!("chat session not found"))?;
+                Ok(db.workspace.load_session_context_window(&owner, &thread))
+            })
+            .await?;
+            let capacity = wunder_server::api::chat::native_chat_context_capacity(
+                &state, &user, &target,
+            )
+            .await?
+            .map(i64::from)
+            .unwrap_or(0);
+            Ok(match recorded {
+                Some(recorded) => NativeContextWindow {
+                    model: recorded.model,
+                    provider: recorded.provider,
+                    window: if recorded.window > 0 {
+                        recorded.window
+                    } else {
+                        capacity
+                    },
+                    tokens: recorded.tokens,
+                    measured: recorded.measured,
+                    turns: recorded.turns,
+                    parts: recorded.parts,
+                },
+                None => NativeContextWindow {
+                    window: capacity,
+                    ..Default::default()
+                },
+            })
+        })
     }
 }
 

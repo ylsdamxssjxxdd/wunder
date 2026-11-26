@@ -773,6 +773,25 @@ impl Orchestrator {
             tools,
         )
         .ensure_admitted()?;
+        // The context card describes the request that is about to leave, not a
+        // re-derivation of the thread: record its composition here, at the last
+        // gate, so system prompt, tool definitions, results and attachments are
+        // accounted as they are actually sent. Internal summary calls
+        // (`emit_events == false`) must never overwrite the user's thread view.
+        if emit_events {
+            let snapshot = crate::context_window::ContextWindowSnapshot::build(
+                effective_config.provider.as_deref().unwrap_or_default(),
+                effective_config.model.as_deref().unwrap_or_default(),
+                i64::from(effective_config.effective_max_context()),
+                &chat_messages.messages,
+                tools,
+            );
+            self.workspace
+                .remember_context_texts(user_id, session_id, &snapshot);
+            self.workspace
+                .save_session_context_window_async(user_id, session_id, snapshot)
+                .await;
+        }
         let native_tools_attached = tools.is_some_and(|items| !items.is_empty());
         let stream_disabled_reason = crate::llm::should_disable_streaming_for_native_tools(
             &effective_config,
@@ -1794,10 +1813,10 @@ fn parse_context_limit_number(raw: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_LLM_MAX_ATTEMPTS, LLM_UNAVAILABLE_MIN_RETRIES, LlmFailureKind,
         build_context_cache_probe, classify_llm_failure, extract_context_window_limit_hint,
         is_context_window_error_text, is_llm_unavailable_error_text, llm_retry_reason,
-        resolve_llm_max_attempts, resolve_llm_retry_delay,
+        resolve_llm_max_attempts, resolve_llm_retry_delay, LlmFailureKind,
+        DEFAULT_LLM_MAX_ATTEMPTS, LLM_UNAVAILABLE_MIN_RETRIES,
     };
     use crate::core::config::LlmModelConfig;
     use crate::llm::ChatMessage;

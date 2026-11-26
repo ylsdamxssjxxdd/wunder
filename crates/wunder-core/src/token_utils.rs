@@ -8,7 +8,7 @@ const MESSAGE_TOKEN_OVERHEAD: i64 = 4;
 // 图像常驻上下文（不做轮内裁剪），其成本必须被 compaction 如实计入，否则
 // 几十张图会在估算远低于实际时撑爆窗口。对齐 codex 高细节口径：一张缩放后
 // 的图按约 1844 token 固定计（codex RESIZED_IMAGE_BYTES_ESTIMATE=7373 / 4）。
-const IMAGE_TOKEN_ESTIMATE: i64 = 1844;
+pub const IMAGE_TOKEN_ESTIMATE: i64 = 1844;
 
 pub fn approx_token_count(text: &str) -> i64 {
     if text.is_empty() {
@@ -186,6 +186,40 @@ pub fn estimate_content_tokens(content: &Value) -> i64 {
             approx_token_count(&content.to_string())
         }
         _ => approx_token_count(&content.to_string()),
+    }
+}
+
+/// 一段内容里内联图片的张数。口径与 `estimate_content_tokens` 完全一致：
+/// 只有字符串里的 data URL 与结构化 image 块按张计费，文本块里的 URL 仍按
+/// 文本估。上下文窗口据此把图片从消息 token 中拆到「图片」部位。
+pub fn count_image_blocks(content: &Value) -> i64 {
+    match content {
+        Value::Null => 0,
+        Value::String(text) => {
+            if text.starts_with("data:image/") {
+                1
+            } else if text.contains("data:image/") {
+                data_url_regex().find_iter(text).count() as i64
+            } else {
+                0
+            }
+        }
+        Value::Array(items) => items.iter().map(count_image_blocks).sum(),
+        Value::Object(map) => {
+            let part_type = map
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_lowercase();
+            if part_type == "text" {
+                0
+            } else if part_type == "image_url" || map.contains_key("image_url") {
+                1
+            } else {
+                0
+            }
+        }
+        _ => 0,
     }
 }
 

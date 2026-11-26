@@ -42,7 +42,7 @@ pub use commands::{NativeChatCommand, NativeGoal};
 
 #[path = "native_context.rs"]
 mod context;
-pub use context::NativeContextUsage;
+pub use context::{NativeContextUsage, NativeContextWindow};
 
 #[path = "native_chat_process.rs"]
 mod chat_process;

@@ -6,23 +6,23 @@ use crate::path_utils::{
     normalize_path_for_compare, normalize_target_path, strip_windows_verbatim_prefix,
 };
 use crate::storage::{
-    DEFAULT_SANDBOX_CONTAINER_ID, StorageBackend, USER_PRIVATE_CONTAINER_ID,
-    normalize_workspace_container_id,
+    normalize_workspace_container_id, StorageBackend, DEFAULT_SANDBOX_CONTAINER_ID,
+    USER_PRIVATE_CONTAINER_ID,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
 use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
 use regex::Regex;
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64};
+use std::sync::Arc;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Handle;
@@ -283,6 +283,9 @@ pub struct WorkspaceManager {
     usage_stats_cache: Mutex<UsageStatsCache>,
     usage_stats_ttl_s: f64,
     usage_stats_max_users: usize,
+    /// The last request's item text, memory only: never written to storage,
+    /// released with the process.
+    context_texts: crate::context_window::ContextTextCache,
 }
 
 impl WorkspaceManager {
@@ -346,6 +349,7 @@ impl WorkspaceManager {
             usage_stats_cache: Mutex::new(UsageStatsCache::default()),
             usage_stats_ttl_s: USAGE_STATS_TTL_S,
             usage_stats_max_users: USAGE_STATS_MAX_USERS,
+            context_texts: crate::context_window::ContextTextCache::default(),
         }
     }
 
@@ -773,7 +777,9 @@ impl WorkspaceManager {
         text.replace(&public_root, &user_root)
     }
 
-    fn session_context_tokens_key(&self, user_id: &str, session_id: &str) -> String {
+    /// Per-thread meta keys share one shape: the user and the session are made
+    /// filesystem/key safe, and the prefix says what fact the value holds.
+    fn session_meta_key(&self, prefix: &str, user_id: &str, session_id: &str) -> String {
         let safe_user = self.safe_user_id(user_id);
         let safe_session = session_id
             .trim()
@@ -791,28 +797,19 @@ impl WorkspaceManager {
         } else {
             safe_session
         };
-        format!("session_context_tokens:{safe_user}:{safe_session}")
+        format!("{prefix}:{safe_user}:{safe_session}")
+    }
+
+    fn session_context_tokens_key(&self, user_id: &str, session_id: &str) -> String {
+        self.session_meta_key("session_context_tokens", user_id, session_id)
+    }
+
+    fn session_context_window_key(&self, user_id: &str, session_id: &str) -> String {
+        self.session_meta_key("session_context_window", user_id, session_id)
     }
 
     fn session_compacted_key(&self, user_id: &str, session_id: &str) -> String {
-        let safe_user = self.safe_user_id(user_id);
-        let safe_session = session_id
-            .trim()
-            .chars()
-            .map(|ch| {
-                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-                    ch
-                } else {
-                    '_'
-                }
-            })
-            .collect::<String>();
-        let safe_session = if safe_session.trim().is_empty() {
-            "default".to_string()
-        } else {
-            safe_session
-        };
-        format!("session_compacted:{safe_user}:{safe_session}")
+        self.session_meta_key("session_compacted", user_id, session_id)
     }
 
     /// Whether this thread has ever been through a context compaction. The
@@ -1261,10 +1258,8 @@ impl WorkspaceManager {
         // it after the user moved or unplugged it would hide the problem.
         if extract_workspace_key_from_scoped_user(&safe_id).is_some() {
             if !user_root.exists() {
-                return Err(anyhow::anyhow!(
-                    i18n::t("workspace.root_missing")
-                        .replace("{path}", &user_root.to_string_lossy())
-                ));
+                return Err(anyhow::anyhow!(i18n::t("workspace.root_missing")
+                    .replace("{path}", &user_root.to_string_lossy())));
             }
             return Ok(user_root);
         }
@@ -1763,6 +1758,53 @@ impl WorkspaceManager {
         .await;
     }
 
+    pub async fn load_session_context_window_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+    ) -> Option<crate::context_window::ContextWindowSnapshot> {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        run_workspace_db("workspace.load_session_context_window", move || {
+            Ok(workspace.load_session_context_window(&user_id, &session_id))
+        })
+        .await
+        .unwrap_or(None)
+    }
+
+    pub async fn save_session_context_window_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+        snapshot: crate::context_window::ContextWindowSnapshot,
+    ) {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        let _ = run_workspace_db("workspace.save_session_context_window", move || {
+            workspace.save_session_context_window(&user_id, &session_id, &snapshot);
+            Ok(())
+        })
+        .await;
+    }
+
+    pub async fn rescale_session_context_window_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+        total_tokens: i64,
+    ) {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        let _ = run_workspace_db("workspace.rescale_session_context_window", move || {
+            workspace.rescale_session_context_window(&user_id, &session_id, total_tokens);
+            Ok(())
+        })
+        .await;
+    }
+
     pub async fn load_session_compacted_async(
         self: &Arc<Self>,
         user_id: &str,
@@ -2097,6 +2139,80 @@ impl WorkspaceManager {
         let key = self.session_context_tokens_key(user_id, session_id);
         let value = total_tokens.max(0).to_string();
         let _ = self.storage.set_meta(&key, &value);
+    }
+
+    /// Keep the request's item text for the card's detail view. Memory only:
+    /// no part of this snapshot is serialized into the meta record.
+    pub fn remember_context_texts(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        snapshot: &crate::context_window::ContextWindowSnapshot,
+    ) {
+        self.context_texts
+            .put(user_id, session_id, snapshot.clone());
+    }
+
+    /// The text behind one row, if this process still holds the request that
+    /// produced it. `None` after a restart or once the bounded cache evicted it.
+    pub fn context_text(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        slot: i32,
+        tag: &str,
+        name: &str,
+    ) -> Option<String> {
+        self.context_texts
+            .text(user_id, session_id, slot, tag, name)
+    }
+
+    pub fn forget_context_texts(&self, user_id: &str, session_id: &str) {
+        self.context_texts.forget_session(user_id, session_id);
+    }
+
+    /// The composition of this thread's last outgoing request, recorded at the
+    /// request gate. `None` until the thread sends its first request.
+    pub fn load_session_context_window(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Option<crate::context_window::ContextWindowSnapshot> {
+        let key = self.session_context_window_key(user_id, session_id);
+        self.storage
+            .get_meta(&key)
+            .ok()
+            .flatten()
+            .and_then(|raw| serde_json::from_str(raw.trim()).ok())
+    }
+
+    pub fn save_session_context_window(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        snapshot: &crate::context_window::ContextWindowSnapshot,
+    ) {
+        let Ok(serialized) = serde_json::to_string(snapshot) else {
+            return;
+        };
+        let key = self.session_context_window_key(user_id, session_id);
+        let _ = self.storage.set_meta(&key, &serialized);
+    }
+
+    /// Stretch the recorded composition to the tokens the vendor counted for
+    /// the request it describes. Read and write happen in one call so two
+    /// rounds can never interleave into a half-scaled record.
+    pub fn rescale_session_context_window(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        total_tokens: i64,
+    ) {
+        let Some(mut snapshot) = self.load_session_context_window(user_id, session_id) else {
+            return;
+        };
+        snapshot.rescale(total_tokens);
+        self.save_session_context_window(user_id, session_id, &snapshot);
     }
 
     /// Thread-local reasoning selection. `default` deliberately remains a
@@ -3398,7 +3514,11 @@ fn normalize_history_limit(limit: i64) -> Option<i64> {
 }
 
 fn normalize_stream_event_retention_hours(value: i64) -> i64 {
-    if value <= 0 { 0 } else { value }
+    if value <= 0 {
+        0
+    } else {
+        value
+    }
 }
 
 fn purge_session_logs_with_storage(
@@ -3838,7 +3958,7 @@ mod concurrency_tests;
 
 #[cfg(test)]
 mod tests {
-    use super::{TEMP_FILES_IDLE_TTL_S, effective_temp_cleanup_idle_ttl_s};
+    use super::{effective_temp_cleanup_idle_ttl_s, TEMP_FILES_IDLE_TTL_S};
     use crate::storage::{SqliteStorage, StorageBackend, USER_PRIVATE_CONTAINER_ID};
     use crate::tools::{ToolProfile, ToolProfileBinding};
     use serde_json::json;
@@ -4411,12 +4531,10 @@ mod tests {
         let purged = super::cleanup_expired_deleted_session_logs(storage.as_ref(), 24, now);
         assert_eq!(purged, 1);
 
-        assert!(
-            storage
-                .load_thread_context_items("user-a", "session-old", 500, true)
-                .expect("load deleted chat")
-                .is_empty()
-        );
+        assert!(storage
+            .load_thread_context_items("user-a", "session-old", 500, true)
+            .expect("load deleted chat")
+            .is_empty());
         assert_thread_history_removed(dir.path(), "session-old", &old_rollout);
         assert_eq!(
             storage
@@ -4425,12 +4543,10 @@ mod tests {
                 .len(),
             1
         );
-        assert!(
-            storage
-                .load_stream_events("session-old", 0, 8)
-                .expect("load old stream events")
-                .is_empty()
-        );
+        assert!(storage
+            .load_stream_events("session-old", 0, 8)
+            .expect("load old stream events")
+            .is_empty());
         assert_eq!(
             storage
                 .load_stream_events("session-new", 0, 8)
@@ -4450,12 +4566,10 @@ mod tests {
         // A non-positive grace removes its marker only after a complete purge.
         manager.set_deleted_session_log_grace_hours(0);
         manager.schedule_deleted_session_log_cleanup("user-a", "session-new");
-        assert!(
-            storage
-                .load_thread_context_items("user-a", "session-new", 500, true)
-                .expect("load deleted chat")
-                .is_empty()
-        );
+        assert!(storage
+            .load_thread_context_items("user-a", "session-new", 500, true)
+            .expect("load deleted chat")
+            .is_empty());
         assert_thread_history_removed(dir.path(), "session-new", &new_rollout);
     }
 
@@ -4498,12 +4612,10 @@ mod tests {
             super::cleanup_expired_deleted_session_logs(storage.as_ref(), 24, now),
             1
         );
-        assert!(
-            storage
-                .list_expired_deleted_session_log_grace(now, 4)
-                .unwrap()
-                .is_empty()
-        );
+        assert!(storage
+            .list_expired_deleted_session_log_grace(now, 4)
+            .unwrap()
+            .is_empty());
         // An explicit administrative purge propagates errors and its marker
         // is immediately eligible despite the configured grace period.
         storage
@@ -4524,11 +4636,9 @@ mod tests {
             &HashMap::new(),
         );
         manager.set_deleted_session_log_grace_hours(24);
-        assert!(
-            manager
-                .purge_session_logs("fixture-user", "fixture-session")
-                .is_err()
-        );
+        assert!(manager
+            .purge_session_logs("fixture-user", "fixture-session")
+            .is_err());
         assert_eq!(
             storage
                 .list_expired_deleted_session_log_grace(super::now_ts() - 86400.0, 4)
@@ -4599,12 +4709,10 @@ mod tests {
         }
         manager.retention_state.lock().last_cleanup -= manager.retention_interval_s + 1.0;
         manager.maybe_schedule_retention_cleanup();
-        assert!(
-            storage
-                .list_expired_deleted_session_log_grace(super::now_ts(), 4)
-                .unwrap()
-                .is_empty()
-        );
+        assert!(storage
+            .list_expired_deleted_session_log_grace(super::now_ts(), 4)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -4635,12 +4743,10 @@ mod tests {
                 .join("worker")
                 .join("report.md")
         );
-        assert!(
-            !resolved
-                .to_string_lossy()
-                .replace('\\', "/")
-                .contains("workspaces/alice__c__1/workspaces/alice__c__1")
-        );
+        assert!(!resolved
+            .to_string_lossy()
+            .replace('\\', "/")
+            .contains("workspaces/alice__c__1/workspaces/alice__c__1"));
     }
 
     #[test]
@@ -4671,12 +4777,10 @@ mod tests {
         let resolved = workspace
             .resolve_path("alice__aw__", "/workspaces/alice/workspace/out.png")
             .expect("resolve own public path");
-        assert!(
-            resolved
-                .to_string_lossy()
-                .replace('\\', "/")
-                .ends_with("alice/workspace/out.png")
-        );
+        assert!(resolved
+            .to_string_lossy()
+            .replace('\\', "/")
+            .ends_with("alice/workspace/out.png"));
         assert!(
             !resolved
                 .to_string_lossy()
@@ -4861,19 +4965,15 @@ mod tests {
         workspace
             .purge_user_data_with_logs(user_id)
             .expect("purge logs");
-        assert!(
-            storage
-                .load_thread_context_items(user_id, session_id, 500, true)
-                .expect("load deleted chat")
-                .is_empty()
-        );
+        assert!(storage
+            .load_thread_context_items(user_id, session_id, 500, true)
+            .expect("load deleted chat")
+            .is_empty());
         assert_thread_history_removed(_dir.path(), session_id, &rollout);
-        assert!(
-            storage
-                .load_stream_events(session_id, 0, 10)
-                .unwrap()
-                .is_empty()
-        );
+        assert!(storage
+            .load_stream_events(session_id, 0, 10)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -4917,20 +5017,16 @@ mod tests {
             .expect("clear work state");
 
         assert_eq!(removed, 2);
-        assert!(
-            private_root
-                .join("skills")
-                .join("demo")
-                .join("SKILL.md")
-                .exists()
-        );
-        assert!(
-            private_root
-                .join("knowledge")
-                .join("demo")
-                .join("note.txt")
-                .exists()
-        );
+        assert!(private_root
+            .join("skills")
+            .join("demo")
+            .join("SKILL.md")
+            .exists());
+        assert!(private_root
+            .join("knowledge")
+            .join("demo")
+            .join("note.txt")
+            .exists());
         assert!(private_root.join("global").join("tooling.json").exists());
         assert!(!private_root.join("chat_media").exists());
         assert!(!private_root.join("scratch.txt").exists());

@@ -3,6 +3,7 @@
 // Library entrypoint for integration tests and internal reuse.
 pub mod api;
 mod channels;
+pub mod context_window;
 mod core;
 mod gateway;
 mod lsp;

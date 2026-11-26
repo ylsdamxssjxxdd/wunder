@@ -2,8 +2,8 @@
 use wunder_desktop::native::NativeWorkflowEntry;
 
 use crate::{
-    Conversation, DraftRecall, InquiryOption, InquiryQuestion, MainWindow, PlanStep, TimelineRow,
-    runtime_phase::Phase,
+    runtime_phase::Phase, Conversation, DraftRecall, InquiryOption, InquiryQuestion, MainWindow,
+    PlanStep, TimelineRow,
 };
 use serde_json::Value;
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
@@ -12,8 +12,8 @@ use std::{
     collections::VecDeque,
     rc::Rc,
     sync::{
-        Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc,
     },
     time::{Duration, Instant},
 };
@@ -31,7 +31,7 @@ pub(crate) use observer::project_cloud_history;
 pub(crate) use observer::project_history;
 #[path = "native_chat_queue.rs"]
 pub(crate) mod queue;
-use queue::{EntrySignal, ParkedTurn, Recall, drain_entry};
+use queue::{drain_entry, EntrySignal, ParkedTurn, Recall};
 #[path = "native_chat_status.rs"]
 mod status;
 pub(crate) use status::settled_now;
@@ -1152,6 +1152,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         }
     });
     bind_thread_model(app, state.clone());
+    crate::context_window::install(app, state.borrow().desktop.clone());
     bind_attachments(app);
     bind_voice_recording(app, state.clone());
     bind_stop(app, state.clone());
@@ -2671,8 +2672,7 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                         app.set_status(
                             if leased {
                                 owner.unwrap_or_else(|| {
-                                    "该线程仍被另一个 wunder 实例打开；关闭它或稍候再试"
-                                        .to_string()
+                                    "该线程仍被另一个 wunder 实例打开；关闭它或稍候再试".to_string()
                                 })
                             } else if busy {
                                 "本地数据正忙，请稍候再打开该线程".to_string()
@@ -5479,7 +5479,9 @@ fn drive_turn(
                         let queue = state.approvals.entry(session.clone()).or_default();
                         if !queue.iter().any(|entry| entry.id == approval.id) {
                             while queue.len() >= MAX_PENDING_APPROVALS {
-                                let Some(stale) = queue.pop_front() else { break };
+                                let Some(stale) = queue.pop_front() else {
+                                    break;
+                                };
                                 let _ = desktop.decide_chat_approval(&session, &stale.id, "deny");
                             }
                             queue.push_back(approval);
@@ -6242,7 +6244,11 @@ fn apply_event(
                         tool,
                         lines.join("\n"),
                         if terminal {
-                            if failed { "failed" } else { "completed" }
+                            if failed {
+                                "failed"
+                            } else {
+                                "completed"
+                            }
                         } else {
                             "running"
                         },
@@ -6430,6 +6436,8 @@ fn reset_context_usage(app: &MainWindow) {
     app.set_context_known(false);
     app.set_context_counts("".into());
     app.set_context_compacted(false);
+    // 卡片跟着线程走：换线程时关上，并丢掉上一线程的构成。
+    crate::context_window::reset(app);
 }
 
 fn apply_context_usage(app: &MainWindow, usage: wunder_desktop::NativeContextUsage) {
@@ -6465,6 +6473,11 @@ fn apply_context_usage(app: &MainWindow, usage: wunder_desktop::NativeContextUsa
         }
     };
     app.set_context_counts(format!("{} / {} tokens", count(used), count(capacity)).into());
+    // 卡片开着时，线程新的占用就重读一次构成：一轮落定后它立即跟上，
+    // 而不是停在打开那一刻。
+    if app.get_context_window_open() {
+        app.invoke_load_context_window();
+    }
 }
 
 /// Row activity stamp: Unix seconds rendered as local `YYYY-MM-DD HH:MM`.
@@ -6796,10 +6809,9 @@ mod turn_tests {
         live.set_turn_status(output.state(), 1);
         let rows: Vec<_> = live.model().iter().collect();
         assert_eq!(output.state(), "已停止");
-        assert!(
-            rows.iter()
-                .all(|row| row.status_kind != crate::timeline::STATUS_RUNNING)
-        );
+        assert!(rows
+            .iter()
+            .all(|row| row.status_kind != crate::timeline::STATUS_RUNNING));
         assert!(rows.iter().any(|row| row.kind == crate::timeline::KIND_TOOL
             && row.status_kind == crate::timeline::STATUS_FAILED));
     }
@@ -6869,16 +6881,14 @@ mod turn_tests {
             }),
         )
         .unwrap();
-        assert!(
-            !apply_event(
-                &mut output,
-                &mut live,
-                &serde_json::json!({
-                    "event":"final", "data":{"answer":"fixture late answer"}
-                })
-            )
-            .unwrap()
-        );
+        assert!(!apply_event(
+            &mut output,
+            &mut live,
+            &serde_json::json!({
+                "event":"final", "data":{"answer":"fixture late answer"}
+            })
+        )
+        .unwrap());
         assert!(output.failed());
         assert_eq!(output.state(), "执行失败");
     }
@@ -6901,12 +6911,11 @@ mod turn_tests {
         )
         .unwrap();
         live.finish(output.settle());
-        assert!(
-            live.model()
-                .iter()
-                .any(|row| row.kind == crate::timeline::KIND_TOOL
-                    && row.status_kind == crate::timeline::STATUS_FAILED)
-        );
+        assert!(live
+            .model()
+            .iter()
+            .any(|row| row.kind == crate::timeline::KIND_TOOL
+                && row.status_kind == crate::timeline::STATUS_FAILED));
         assert!(!output.failed());
     }
 
@@ -6936,11 +6945,10 @@ mod turn_tests {
         )
         .unwrap());
         live.flush();
-        assert!(
-            live.model()
-                .iter()
-                .any(|row| row.text == "fixture next answer")
-        );
+        assert!(live
+            .model()
+            .iter()
+            .any(|row| row.text == "fixture next answer"));
     }
 
     #[test]
@@ -6959,22 +6967,19 @@ mod turn_tests {
             )
             .unwrap();
             let expected = output.state().to_string();
-            assert!(
-                apply_event(
-                    &mut output,
-                    &mut live,
-                    &serde_json::json!({
-                        "event":"final", "data":{"answer":"fixture final answer"}
-                    })
-                )
-                .unwrap()
-            );
+            assert!(apply_event(
+                &mut output,
+                &mut live,
+                &serde_json::json!({
+                    "event":"final", "data":{"answer":"fixture final answer"}
+                })
+            )
+            .unwrap());
             live.flush();
-            assert!(
-                live.model()
-                    .iter()
-                    .any(|row| row.text == "fixture final answer")
-            );
+            assert!(live
+                .model()
+                .iter()
+                .any(|row| row.text == "fixture final answer"));
             assert_eq!(output.state(), expected);
         }
     }
@@ -7310,16 +7315,14 @@ mod turn_tests {
             }}),
         )
         .unwrap();
-        assert!(
-            !apply_event(
-                &mut output,
-                &mut live,
-                &json!({"event":"reasoning_delta","data":{
-                    "turn_id":"fixture-root","model_round":3,"delta":" stale"
-                }})
-            )
-            .unwrap()
-        );
+        assert!(!apply_event(
+            &mut output,
+            &mut live,
+            &json!({"event":"reasoning_delta","data":{
+                "turn_id":"fixture-root","model_round":3,"delta":" stale"
+            }})
+        )
+        .unwrap());
         live.flush();
         assert_eq!(bar.process_entries.row_count(), 3);
         assert_eq!(
@@ -7799,14 +7802,12 @@ mod turn_tests {
         .unwrap();
         assert_eq!(output.state(), "已停止");
         let before = live.row_count();
-        assert!(
-            !apply_event(
-                &mut output,
-                &mut live,
-                &json!({"event":"final","data":{"content":"Late answer"}}),
-            )
-            .unwrap()
-        );
+        assert!(!apply_event(
+            &mut output,
+            &mut live,
+            &json!({"event":"final","data":{"content":"Late answer"}}),
+        )
+        .unwrap());
         assert_eq!(live.row_count(), before);
         live.flush();
         live.finish(crate::timeline::Settle::Failed);

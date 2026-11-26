@@ -291,7 +291,6 @@ export global I18n {
     out property <string> cp_image_prefix: zh ? "图片 · " : "Images · ";
     out property <string> cp_remove_attachment: zh ? "移除附件" : "Remove attachment";
     out property <string> cp_input_placeholder: zh ? "请输入文本" : "Enter text";
-    out property <string> cp_drop_hint: zh ? "松开以将文件引用到输入区" : "Release to reference files in the composer";
     out property <string> cp_preset_questions: zh ? "预设问题" : "Preset questions";
     out property <string> cp_preset_q1: zh ? "你好，请介绍一下你的能力。" : "Hi, please introduce your capabilities.";
     out property <string> cp_preset_q2: zh ? "请帮我整理当前内容。" : "Please organize the current content.";
@@ -377,12 +376,41 @@ export global I18n {
     public pure function hud_tasks_hint(count: string) -> string { return zh ? "后台任务：" + count + " 个命令正在运行" : "Background tasks: " + count + " running"; }
     out property <string> cp_status_local: zh ? "本地" : "Local";
     out property <string> cp_status_branch: zh ? "分支" : "Branch";
+    out property <string> cp_drop_hint: zh ? "松开以将文件引用到输入区" : "Release to reference files in the composer";
     out property <string> ms_agent_loop: zh ? "智能体循环" : "Agent loop";
     out property <string> ms_state_done: zh ? "任务完成" : "Task complete";
     out property <string> ui_collapse_sidebar: zh ? "收起侧栏" : "Collapse sidebar";
     out property <string> ui_expand_sidebar: zh ? "展开侧栏" : "Expand sidebar";
     out property <string> ui_avatar_mine: zh ? "我" : "Me";
     out property <string> ui_search_placeholder: zh ? "搜索" : "Search";
+    out property <string> cx_title: zh ? "上下文窗口" : "Context window";
+    out property <string> cx_estimate: zh ? "估算" : "Estimated";
+    out property <string> cx_measured: zh ? "已计量" : "Measured";
+    out property <string> cx_used: zh ? "已用上下文" : "Used context";
+    out property <string> cx_health_ok: zh ? "健康" : "Healthy";
+    out property <string> cx_health_warn: zh ? "接近上限" : "Filling up";
+    out property <string> cx_health_bad: zh ? "即将占满" : "Near full";
+    public pure function cx_summary(pct: string, free: string) -> string { return zh ? "已用 " + pct + " · 剩余 " + free + "" : "" + pct + " used · " + free + " free"; }
+    out property <string> cx_free: zh ? "剩余空间" : "Free space";
+    public pure function cx_more_items(count: string) -> string { return zh ? "另外 " + count + " 项" : "" + count + " more"; }
+    out property <string> cx_item_prompt: zh ? "agent 提示词" : "Agent prompt";
+    out property <string> cx_item_reminder: zh ? "系统提醒" : "System reminders";
+    public pure function cx_image(count: string) -> string { return zh ? "图片 ×" + count + "" : "Images ×" + count + ""; }
+    public pure function cx_turn(count: string) -> string { return zh ? "第 " + count + " 轮" : "Turn " + count + ""; }
+    out property <string> cx_item_other: zh ? "内容" : "Content";
+    out property <string> cx_part_system: zh ? "系统提示词" : "System prompt";
+    out property <string> cx_part_tools: zh ? "工具" : "Tools";
+    out property <string> cx_part_files: zh ? "图片" : "Images";
+    out property <string> cx_part_results: zh ? "工具结果" : "Results";
+    out property <string> cx_part_chat: zh ? "会话内容" : "Chat";
+    out property <string> cx_contents: zh ? "内容" : "Contents";
+    out property <string> cx_all: zh ? "全部" : "All";
+    out property <string> cx_nothing: zh ? "这里没有内容" : "Nothing here";
+    public pure function cx_show_all(count: string) -> string { return zh ? "显示全部 " + count + "" : "Show all " + count + ""; }
+    out property <string> cx_show_less: zh ? "收起" : "Show fewer";
+    out property <string> cx_no_request: zh ? "本线程还没有发出请求；第一次发送后，这里显示它实际占用的构成。" : "This thread hasn't sent a request yet. After the first send this shows what it was made of.";
+    out property <string> cx_open: zh ? "查看上下文" : "Open context";
+    out property <string> cx_text_released: zh ? "正文只保留在当前进程内，重启或释放后不可查看。" : "Text lives only in this process; it is gone after a restart or release.";
     out property <string> cloud_threads_title: zh ? "云端智能体与线程" : "Cloud agent and threads";
     out property <string> cloud_threads_earlier: zh ? "更早消息" : "Earlier messages";
     out property <string> cloud_threads_latest: zh ? "回到最新" : "Back to latest";
@@ -792,9 +820,9 @@ export global I18n {
     out property <string> wd_owner: zh ? "群主" : "Owner";
     out property <string> wd_loading_members: zh ? "正在加载成员…" : "Loading members…";
     out property <string> wd_members_empty: zh ? "暂无成员信息" : "No member info";
-    out property <string> so_hint: zh ? "拖动框选 · 空格吸附窗口/控件 · 右键或 Esc 取消" : "Drag to select · Space snaps to a window/control · Right-click or Esc to cancel";
-    out property <string> so_adjust_hint: zh ? "拖动边缘或角点调整 · 拖动选区移动 · 方向键微调 · 空格重新吸附 · Enter 确认" : "Drag edges/corners · Drag inside to move · Arrows nudge · Space re-snaps · Enter confirms";
+    out property <string> so_hint: zh ? "拖动选择截图区域 · 右键或 Esc 取消" : "Drag to select a region · right-click or Esc to cancel";
     out property <string> so_fullscreen: zh ? "全屏" : "Fullscreen";
+    out property <string> so_adjust_hint: zh ? "拖动边缘或角点调整 · 拖动选区移动 · 方向键微调 · 空格重新吸附 · Enter 确认" : "Drag edges/corners · Drag inside to move · Arrows nudge · Space re-snaps · Enter confirms";
     out property <string> tr_title: zh ? "wunder 桌面版" : "wunder Desktop";
     out property <string> tr_name: zh ? "wunder 桌面版" : "wunder Desktop";
     out property <string> tr_show_window: zh ? "显示主窗口" : "Show main window";
@@ -1557,7 +1585,6 @@ export global I18n {
     out property <string> wf_connect_cloud: zh ? "连接云端工作目录" : "Connect to the cloud workspace";
     out property <string> wf_empty: zh ? "当前目录没有文件" : "No files in this directory";
     out property <string> wf_empty_hint: zh ? "拖入文件，或新建目录和文件" : "Drop files here, or create a folder or file";
-    out property <string> wf_drop_hint: zh ? "松开以放入工作目录" : "Release to place files in the workspace";
     out property <string> wf_offline: zh ? "连接云端后，这里显示你的云端工作目录" : "Sign in to the cloud to browse your workspace";
     out property <string> wf_connect: zh ? "去连接" : "Connect";
     out property <string> wf_loading: zh ? "加载中…" : "Loading…";
@@ -1587,4 +1614,5 @@ export global I18n {
     public pure function wf_delete_body(name: string) -> string { return zh ? "删除「" + name + "」？云端文件不可恢复。" : "Delete \"" + name + "\"? Cloud files cannot be recovered."; }
     out property <string> wf_cloud_confirm_body: zh ? "云端要求确认后才会执行此操作。" : "The cloud asks for confirmation before running this.";
     out property <string> wf_btn_exec: zh ? "确认执行" : "Confirm";
+    out property <string> wf_drop_hint: zh ? "松开以放入工作目录" : "Release to place files in the workspace";
 }

@@ -16,6 +16,7 @@ mod command_tasks;
 mod companion_pet;
 mod companion_sprite;
 mod completion_notice;
+mod context_window;
 mod crash_log;
 mod cron_ui;
 mod demo;
@@ -630,10 +631,7 @@ fn sync_device_scale(app: &MainWindow) {
 /// Show the workbench and settle its native silhouette before the first frame.
 pub(crate) fn show_main_window(app: &MainWindow) -> Result<(), slint::PlatformError> {
     app.show()?;
-    native_window::sync_main_window_shape(
-        app.window(),
-        app.global::<Theme>().get_radius_lg(),
-    );
+    native_window::sync_main_window_shape(app.window(), app.global::<Theme>().get_radius_lg());
     // The window only knows its monitor's ratio once it exists on screen.
     sync_device_scale(app);
     Ok(())
@@ -1061,12 +1059,8 @@ fn apply_saved_placement(
     let area_h = (bottom - top).max(1) as u32;
     let width = saved.width.min(area_w);
     let height = saved.height.min(area_h);
-    let x = saved
-        .x
-        .clamp(left, left + area_w as i32 - width as i32);
-    let y = saved
-        .y
-        .clamp(top, top + area_h as i32 - height as i32);
+    let x = saved.x.clamp(left, left + area_w as i32 - width as i32);
+    let y = saved.y.clamp(top, top + area_h as i32 - height as i32);
     let _ = native.request_inner_size(winit::dpi::PhysicalSize::new(width, height));
     native.set_outer_position(winit::dpi::PhysicalPosition::new(x, y));
     if saved.maximized {
@@ -1171,10 +1165,7 @@ pub(crate) fn register_bundled_font() -> Result<(), Box<dyn std::error::Error>> 
     // installed on these targets — the collection is built from the bundled
     // blobs alone — so code reads as UI text on a capsule, which is what
     // `Theme.font-mono` ends up resolving to anyway.)
-    collection.set_generic_families(
-        fontique::GenericFamily::Monospace,
-        chain.iter().copied(),
-    );
+    collection.set_generic_families(fontique::GenericFamily::Monospace, chain.iter().copied());
     // Emoji are drawn, not substituted: naming the face for the emoji generic
     // family is what stops a codepoint from falling through to a bitmap-only
     // system font the software renderer cannot rasterise.
@@ -1204,8 +1195,7 @@ pub(crate) fn register_bundled_font() -> Result<(), Box<dyn std::error::Error>> 
 }
 
 mod bundled_font {
-    static MISANS_LZ4: &[u8] =
-        include_bytes!(concat!(env!("OUT_DIR"), "/MiSans-Regular.ttf.lz4"));
+    static MISANS_LZ4: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/MiSans-Regular.ttf.lz4"));
     static DEJAVU_LZ4: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/DejaVuSans.ttf.lz4"));
     static NOTO_EMOJI_LZ4: &[u8] =
         include_bytes!(concat!(env!("OUT_DIR"), "/NotoEmoji-Regular.ttf.lz4"));
@@ -1280,7 +1270,13 @@ mod bundled_font_tests {
         // the fallback families of the character's script — Common, for both
         // symbols and emoji. One test covers both paths because the shared font
         // collection may only be initialised once per process.
-        for (label, ch) in [("⚠", '⚠'), ("⌘", '⌘'), ("☑", '☑'), ("🎉", '🎉'), ("🚀", '🚀')] {
+        for (label, ch) in [
+            ("⚠", '⚠'),
+            ("⌘", '⌘'),
+            ("☑", '☑'),
+            ("🎉", '🎉'),
+            ("🚀", '🚀'),
+        ] {
             assert!(
                 script_fallback_covers(&mut collection, text, ch),
                 "{label} is not reachable through the Common-script fallback"
@@ -1494,8 +1490,7 @@ mod window_frame_tests {
         let _ui = crate::test_support::lock();
         crate::register_bundled_font().expect("register bundled font");
         let app = MainWindow::new().expect("create main window");
-        app.window()
-            .set_size(slint::PhysicalSize::new(480, 320));
+        app.window().set_size(slint::PhysicalSize::new(480, 320));
         let pixels = app.window().take_snapshot().expect("snapshot");
         let width = pixels.width() as usize;
         let height = pixels.height() as usize;
@@ -1530,6 +1525,3 @@ mod window_frame_tests {
         }
     }
 }
-
-
-

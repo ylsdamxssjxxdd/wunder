@@ -147,6 +147,7 @@ ENTRIES = [
     # ---- screenshot overlay ----
     ("so_hint", "拖动选择截图区域 · 右键或 Esc 取消", "Drag to select a region · right-click or Esc to cancel"),
     ("so_fullscreen", "全屏", "Fullscreen"),
+    ("so_adjust_hint", "拖动边缘或角点调整 · 拖动选区移动 · 方向键微调 · 空格重新吸附 · Enter 确认", "Drag edges/corners · Drag inside to move · Arrows nudge · Space re-snaps · Enter confirms"),
 
     # ---- tray ----
     ("tr_title", "wunder 桌面版", "wunder Desktop"),

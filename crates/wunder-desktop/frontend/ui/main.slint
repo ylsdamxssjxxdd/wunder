@@ -20,6 +20,9 @@ import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, Middle
 export { ToastState }
 import { ProcessEntry } from "theme.slint";
 import { ApprovalPanel, Composer, GoalBanner, InquiryPanel, ModelSetupBanner, StatusDock } from "composer.slint";
+// 上下文窗口卡片：从输入区模型浮层打开，按部位展示这一份请求的构成。
+import { ContextWindowPanel, ContextPartRow, ContextItemRow, ContextTile, ContextCell, ContextTipRow } from "context_window.slint";
+export { ContextPartRow, ContextItemRow, ContextTile, ContextCell, ContextTipRow }
 import { TimelineView } from "timeline.slint";
 import { ChatSplitWorkspace } from "chat_split.slint";
 import { TextMenu, TextMenuState } from "text_menu.slint";
@@ -1136,6 +1139,61 @@ export component MainWindow inherits Window {
     in-out property <float> context-used: -1;
     in-out property <float> context-capacity: -1;
     in-out property <string> context-counts;
+    // ---- 上下文窗口卡片 ----
+    // 数据来自引擎在请求发出前记下的构成；这里只承接投影结果。卡片由输入区
+    // 模型浮层里的「上下文」一行打开，折叠、视图和页签都只是视图状态。
+    in-out property <bool> context-window-open: false;
+    in-out property <bool> context-window-folded: false;
+    in-out property <bool> context-look-map: true;
+    in-out property <int> context-tab: 0;
+    in-out property <bool> context-show-all: false;
+    in-out property <[ContextPartRow]> context-parts: [];
+    in-out property <[ContextItemRow]> context-items: [];
+    in-out property <[ContextTile]> context-tiles: [];
+    in-out property <[ContextCell]> context-cells: [];
+    in-out property <int> context-used-tokens: 0;
+    in-out property <int> context-capacity-tokens: 0;
+    in-out property <string> context-used-text;
+    in-out property <string> context-capacity-text;
+    in-out property <string> context-free-text;
+    in-out property <bool> context-measured: false;
+    in-out property <bool> context-has-data: false;
+    in-out property <string> context-model-label;
+    in-out property <int> context-hidden-count: 0;
+    // 方块/格子的悬停提示卡；文字由 Rust 按选中的条目填。
+    in-out property <bool> context-tip-open: false;
+    in-out property <string> context-tip-kind;
+    in-out property <int> context-tip-slot: 0;
+    in-out property <string> context-tip-tag;
+    in-out property <string> context-tip-name;
+    in-out property <int> context-tip-count: 0;
+    in-out property <string> context-tip-value;
+    in-out property <string> context-tip-pct;
+    in-out property <[ContextTipRow]> context-tip-rows: [];
+    in-out property <int> context-tip-more: 0;
+    // 从方块、格子或内容行打开的内容明细。
+    in-out property <bool> context-detail-open: false;
+    in-out property <string> context-detail-kind;
+    in-out property <int> context-detail-slot: 0;
+    in-out property <string> context-detail-tag;
+    in-out property <string> context-detail-name;
+    in-out property <int> context-detail-count: 0;
+    in-out property <string> context-detail-value;
+    in-out property <string> context-detail-pct;
+    in-out property <string> context-detail-text;
+    in-out property <[ContextItemRow]> context-detail-rows: [];
+    callback load-context-window();
+    callback context-filter-changed();
+    callback context-tile-hover(int);
+    callback context-tile-leave();
+    callback context-tile-open(int);
+    callback context-cell-hover(int);
+    callback context-cell-leave();
+    callback context-cell-open(int);
+    callback context-row-open(int, string, string);
+    callback context-legend-open(int);
+    callback context-map-resized(length, length);
+    callback context-detail-dismissed();
     in-out property <string> reasoning-effort: "default";
     callback stop-generation();
     callback select-thread-model(string);
@@ -1584,6 +1642,10 @@ export component MainWindow inherits Window {
                                 model-key: root.selected-model-key;
                                 model-saving: root.saving;
                                 select-model(index, key) => { root.select-thread-model(key); }
+                                open-context => {
+                                    root.context-window-open = true;
+                                    root.load-context-window();
+                                }
                                 open-model-settings => { root.settings-home = false; root.settings-open = true; root.settings-active-panel = 1; root.refresh-settings(); }
                                 branch-name: root.active-workspace-branch;
                                 host-cpu: root.host-cpu; host-memory: root.host-memory;
@@ -1986,6 +2048,11 @@ export component MainWindow inherits Window {
         select-model(index, key) => {
             root.model-sheet-open = false;
             root.select-thread-model(key);
+        }
+        open-context => {
+            root.model-sheet-open = false;
+            root.context-window-open = true;
+            root.load-context-window();
         }
         open-settings => {
             root.model-sheet-open = false;
@@ -2429,6 +2496,70 @@ export component MainWindow inherits Window {
         message: root.dialog-text;
         close-label: I18n.info_ack;
         closed => { root.dialog-open = false; }
+    }
+    if root.context-window-open : ContextWindowPanel {
+        z: 260;
+        y: Theme.titlebar-height;
+        height: max(0px, parent.height - Theme.titlebar-height);
+        parts: root.context-parts;
+        items: root.context-items;
+        tiles: root.context-tiles;
+        cells: root.context-cells;
+        used-tokens: root.context-used-tokens;
+        capacity-tokens: root.context-capacity-tokens;
+        used-text: root.context-used-text;
+        capacity-text: root.context-capacity-text;
+        free-text: root.context-free-text;
+        measured: root.context-measured;
+        has-data: root.context-has-data;
+        model-label: root.context-model-label;
+        tab: root.context-tab;
+        show-all: root.context-show-all;
+        look-map: root.context-look-map;
+        folded: root.context-window-folded;
+        hidden-count: root.context-hidden-count;
+        tip-open: root.context-tip-open;
+        tip-kind: root.context-tip-kind;
+        tip-slot: root.context-tip-slot;
+        tip-tag: root.context-tip-tag;
+        tip-name: root.context-tip-name;
+        tip-count: root.context-tip-count;
+        tip-value: root.context-tip-value;
+        tip-pct: root.context-tip-pct;
+        tip-rows: root.context-tip-rows;
+        tip-more: root.context-tip-more;
+        detail-open: root.context-detail-open;
+        detail-kind: root.context-detail-kind;
+        detail-slot: root.context-detail-slot;
+        detail-tag: root.context-detail-tag;
+        detail-name: root.context-detail-name;
+        detail-count: root.context-detail-count;
+        detail-value: root.context-detail-value;
+        detail-pct: root.context-detail-pct;
+        detail-text: root.context-detail-text;
+        detail-rows: root.context-detail-rows;
+        dismissed => { root.context-window-open = false; }
+        toggle-fold => { root.context-window-folded = !root.context-window-folded; }
+        toggle-look => { root.context-look-map = !root.context-look-map; }
+        tile-hover(index) => { root.context-tile-hover(index); }
+        tile-leave => { root.context-tile-leave(); }
+        tile-open(index) => { root.context-tile-open(index); }
+        cell-hover(index) => { root.context-cell-hover(index); }
+        cell-leave => { root.context-cell-leave(); }
+        cell-open(index) => { root.context-cell-open(index); }
+        row-open(slot, tag, name) => { root.context-row-open(slot, tag, name); }
+        legend-open(slot) => { root.context-legend-open(slot); }
+        map-resized(width, height) => { root.context-map-resized(width, height); }
+        detail-dismissed => { root.context-detail-dismissed(); }
+        set-tab(slot) => {
+            root.context-tab = slot;
+            root.context-show-all = false;
+            root.context-filter-changed();
+        }
+        toggle-show-all => {
+            root.context-show-all = !root.context-show-all;
+            root.context-filter-changed();
+        }
     }
     if root.archive-detail-open : InfoDialog {
         z: 260;

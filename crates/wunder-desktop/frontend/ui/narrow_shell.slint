@@ -442,6 +442,7 @@ export component NarrowModelSheet inherits Rectangle {
     in property <int> subagent-count: 0;
     callback close();
     callback select-model(int, string);
+    callback open-context();
     callback open-settings();
     callback stop-task(string);
     callback stop-subagent(string);
@@ -520,6 +521,12 @@ export component NarrowModelSheet inherits Rectangle {
 
             Rectangle {
                 height: 26px;
+                // 这一行既是读数也是入口：点开上下文窗口（与宽窗浮层同一张卡片）。
+                border-radius: Theme.radius-sm;
+                background: context-hit.has-hover ? Theme.hover : transparent;
+                accessible-role: button;
+                accessible-label: I18n.cx_open;
+                accessible-action-default => { root.open-context(); }
                 HorizontalLayout {
                     padding-left: 8px;
                     padding-right: 8px;
@@ -543,6 +550,20 @@ export component NarrowModelSheet inherits Rectangle {
                         vertical-alignment: center;
                         overflow: elide;
                     }
+                    Rectangle {
+                        width: 8px; height: parent.height;
+                        Image {
+                            y: (parent.height - 8px) / 2;
+                            width: 8px; height: 8px;
+                            source: @image-url("../assets/icons/chevron-right.svg");
+                            colorize: context-hit.has-hover ? Theme.text-secondary : Theme.muted;
+                            image-fit: contain;
+                        }
+                    }
+                }
+                context-hit := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.open-context(); }
                 }
             }
 

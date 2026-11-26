@@ -3,8 +3,8 @@ use super::empty_output_guard::EmptyOutputGuard;
 use super::retry_governor::{RetryGovernor, SuccessProgressGovernor};
 use super::tool_calls::ToolCall;
 use super::tool_result_payload::{
-    OBSERVATION_MIN_TOKEN_BUDGET, OBSERVATION_TURN_MAX_TOKENS, OBSERVATION_TURN_TARGET_TOKENS,
-    default_observation_token_budget,
+    default_observation_token_budget, OBSERVATION_MIN_TOKEN_BUDGET, OBSERVATION_TURN_MAX_TOKENS,
+    OBSERVATION_TURN_TARGET_TOKENS,
 };
 use super::*;
 use crate::core::llm_speed::TurnDecodeSpeedAccumulator;
@@ -1294,6 +1294,12 @@ impl Orchestrator {
                     confirmed_context_occupancy_tokens = Some(tokens);
                     persisted_context_tokens = tokens;
                     self.workspace.save_session_context_tokens_async(&user_id, &session_id, tokens).await;
+                    // The card's split was measured from this request; the vendor
+                    // just counted its total. Stretch the parts to that count so
+                    // the card can say "measured" without inventing a ratio.
+                    self.workspace
+                        .rescale_session_context_window_async(&user_id, &session_id, tokens)
+                        .await;
                     // 上下文在两次请求之间大幅缩水但本轮没有本地压缩：把这次
                     // 缩水落成轨迹，避免模型“突然忘了”却无从解释。
                     if context_tokens_before_request > 0
@@ -2885,12 +2891,10 @@ mod observation_budget_tests {
         ] {
             let budgets = document_budgets(count);
             assert_eq!(budgets.per_result.len(), count);
-            assert!(
-                budgets
-                    .per_result
-                    .iter()
-                    .all(|budget| *budget == expected_each)
-            );
+            assert!(budgets
+                .per_result
+                .iter()
+                .all(|budget| *budget == expected_each));
             assert_eq!(budgets.per_result.iter().sum::<i64>(), expected_total);
             assert_eq!(budgets.total_tokens, expected_total);
             assert_eq!(
@@ -2958,12 +2962,10 @@ mod observation_budget_tests {
             below_protocol_reserve.total_tokens,
             below_protocol_reserve.protocol_reserve_tokens
         );
-        assert!(
-            below_protocol_reserve
-                .per_result
-                .iter()
-                .all(|budget| *budget == OBSERVATION_MIN_TOKEN_BUDGET)
-        );
+        assert!(below_protocol_reserve
+            .per_result
+            .iter()
+            .all(|budget| *budget == OBSERVATION_MIN_TOKEN_BUDGET));
 
         for observed_context in [63_000, 128_000, i64::MAX] {
             let exhausted = resolve_observation_token_budgets(
@@ -2974,12 +2976,10 @@ mod observation_budget_tests {
             );
             assert_eq!(exhausted.available_context_tokens, 0);
             assert_eq!(exhausted.per_result.len(), 20);
-            assert!(
-                exhausted
-                    .per_result
-                    .iter()
-                    .all(|budget| *budget == OBSERVATION_MIN_TOKEN_BUDGET)
-            );
+            assert!(exhausted
+                .per_result
+                .iter()
+                .all(|budget| *budget == OBSERVATION_MIN_TOKEN_BUDGET));
             assert_eq!(exhausted.total_tokens, exhausted.protocol_reserve_tokens);
         }
     }

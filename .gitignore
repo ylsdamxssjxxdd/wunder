@@ -136,3 +136,4 @@ videos/
 .venv*/
 frontend/dist-new/
 .screenshots/
+docs/context-window/

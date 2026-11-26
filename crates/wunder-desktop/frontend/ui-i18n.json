@@ -1897,6 +1897,11 @@
   "en": "Branch"
  },
  {
+  "key": "cp_drop_hint",
+  "zh": "松开以将文件引用到输入区",
+  "en": "Release to reference files in the composer"
+ },
+ {
   "key": "ms_agent_loop",
   "zh": "智能体循环",
   "en": "Agent loop"
@@ -1925,6 +1930,162 @@
   "key": "ui_search_placeholder",
   "zh": "搜索",
   "en": "Search"
+ },
+ {
+  "key": "cx_title",
+  "zh": "上下文窗口",
+  "en": "Context window"
+ },
+ {
+  "key": "cx_estimate",
+  "zh": "估算",
+  "en": "Estimated"
+ },
+ {
+  "key": "cx_measured",
+  "zh": "已计量",
+  "en": "Measured"
+ },
+ {
+  "key": "cx_used",
+  "zh": "已用上下文",
+  "en": "Used context"
+ },
+ {
+  "key": "cx_health_ok",
+  "zh": "健康",
+  "en": "Healthy"
+ },
+ {
+  "key": "cx_health_warn",
+  "zh": "接近上限",
+  "en": "Filling up"
+ },
+ {
+  "key": "cx_health_bad",
+  "zh": "即将占满",
+  "en": "Near full"
+ },
+ {
+  "key": "cx_summary",
+  "zh": "已用 {} · 剩余 {}",
+  "en": "{} used · {} free",
+  "params": [
+   "pct",
+   "free"
+  ]
+ },
+ {
+  "key": "cx_free",
+  "zh": "剩余空间",
+  "en": "Free space"
+ },
+ {
+  "key": "cx_more_items",
+  "zh": "另外 {} 项",
+  "en": "{} more",
+  "params": [
+   "count"
+  ]
+ },
+ {
+  "key": "cx_item_prompt",
+  "zh": "agent 提示词",
+  "en": "Agent prompt"
+ },
+ {
+  "key": "cx_item_reminder",
+  "zh": "系统提醒",
+  "en": "System reminders"
+ },
+ {
+  "key": "cx_image",
+  "zh": "图片 ×{}",
+  "en": "Images ×{}",
+  "params": [
+   "count"
+  ]
+ },
+ {
+  "key": "cx_turn",
+  "zh": "第 {} 轮",
+  "en": "Turn {}",
+  "params": [
+   "count"
+  ]
+ },
+ {
+  "key": "cx_item_other",
+  "zh": "内容",
+  "en": "Content"
+ },
+ {
+  "key": "cx_part_system",
+  "zh": "系统提示词",
+  "en": "System prompt"
+ },
+ {
+  "key": "cx_part_tools",
+  "zh": "工具",
+  "en": "Tools"
+ },
+ {
+  "key": "cx_part_files",
+  "zh": "图片",
+  "en": "Images"
+ },
+ {
+  "key": "cx_part_results",
+  "zh": "工具结果",
+  "en": "Results"
+ },
+ {
+  "key": "cx_part_chat",
+  "zh": "会话内容",
+  "en": "Chat"
+ },
+ {
+  "key": "cx_contents",
+  "zh": "内容",
+  "en": "Contents"
+ },
+ {
+  "key": "cx_all",
+  "zh": "全部",
+  "en": "All"
+ },
+ {
+  "key": "cx_nothing",
+  "zh": "这里没有内容",
+  "en": "Nothing here"
+ },
+ {
+  "key": "cx_show_all",
+  "zh": "显示全部 {}",
+  "en": "Show all {}",
+  "params": [
+   "count"
+  ]
+ },
+ {
+  "key": "cx_show_less",
+  "zh": "收起",
+  "en": "Show fewer"
+ },
+ {
+  "key": "cx_no_request",
+  "zh": "本线程还没有发出请求；第一次发送后，这里显示它实际占用的构成。",
+  "en": "This thread hasn't sent a request yet. After the first send this shows what it was made of."
+ },
+ {
+  "key": "cx_open",
+  "zh": "查看上下文",
+  "en": "Open context"
+ },
+ {
+  "key": "cx_text_released",
+  "zh": "正文只保留在当前进程内，重启或释放后不可查看。",
+  "en": "Text lives only in this process; it is gone after a restart or release."
  },
  {
   "key": "cloud_threads_title",
@@ -3983,6 +4144,11 @@
   "key": "so_fullscreen",
   "zh": "全屏",
   "en": "Fullscreen"
+ },
+ {
+  "key": "so_adjust_hint",
+  "zh": "拖动边缘或角点调整 · 拖动选区移动 · 方向键微调 · 空格重新吸附 · Enter 确认",
+  "en": "Drag edges/corners · Drag inside to move · Arrows nudge · Space re-snaps · Enter confirms"
  },
  {
   "key": "tr_title",
@@ -7999,5 +8165,10 @@
   "key": "wf_btn_exec",
   "zh": "确认执行",
   "en": "Confirm"
+ },
+ {
+  "key": "wf_drop_hint",
+  "zh": "松开以放入工作目录",
+  "en": "Release to place files in the workspace"
  }
 ]

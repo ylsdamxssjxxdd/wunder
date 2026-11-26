@@ -1,0 +1,41 @@
+# -*- coding: utf-8 -*-
+# The context window card opened from the composer's model trigger.
+
+ENTRIES = [
+    ("cx_title", "上下文窗口", "Context window"),
+    ("cx_estimate", "估算", "Estimated"),
+    ("cx_measured", "已计量", "Measured"),
+    ("cx_used", "已用上下文", "Used context"),
+    ("cx_health_ok", "健康", "Healthy"),
+    ("cx_health_warn", "接近上限", "Filling up"),
+    ("cx_health_bad", "即将占满", "Near full"),
+    ("cx_summary", "已用 {} · 剩余 {}", "{} used · {} free", ["pct", "free"]),
+    ("cx_free", "剩余空间", "Free space"),
+    ("cx_more_items", "另外 {} 项", "{} more", ["count"]),
+    ("cx_item_prompt", "agent 提示词", "Agent prompt"),
+    ("cx_item_reminder", "系统提醒", "System reminders"),
+    ("cx_image", "图片 ×{}", "Images ×{}", ["count"]),
+    ("cx_turn", "第 {} 轮", "Turn {}", ["count"]),
+    ("cx_item_other", "内容", "Content"),
+    ("cx_part_system", "系统提示词", "System prompt"),
+    ("cx_part_tools", "工具", "Tools"),
+    ("cx_part_files", "图片", "Images"),
+    ("cx_part_results", "工具结果", "Results"),
+    ("cx_part_chat", "会话内容", "Chat"),
+    ("cx_contents", "内容", "Contents"),
+    ("cx_all", "全部", "All"),
+    ("cx_nothing", "这里没有内容", "Nothing here"),
+    ("cx_show_all", "显示全部 {}", "Show all {}", ["count"]),
+    ("cx_show_less", "收起", "Show fewer"),
+    (
+        "cx_no_request",
+        "本线程还没有发出请求；第一次发送后，这里显示它实际占用的构成。",
+        "This thread hasn't sent a request yet. After the first send this shows what it was made of.",
+    ),
+    ("cx_open", "查看上下文", "Open context"),
+    (
+        "cx_text_released",
+        "正文只保留在当前进程内，重启或释放后不可查看。",
+        "Text lives only in this process; it is gone after a restart or release.",
+    ),
+]

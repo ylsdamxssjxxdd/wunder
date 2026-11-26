@@ -113,6 +113,7 @@ ENTRIES = [
     # ---- status bar (§8.5) ----
     ("cp_status_local", "本地", "Local"),
     ("cp_status_branch", "分支", "Branch"),
+    ("cp_drop_hint", "松开以将文件引用到输入区", "Release to reference files in the composer"),
 
     # ---- message row ----
     ("ms_agent_loop", "智能体循环", "Agent loop"),
