@@ -14,7 +14,7 @@
 #   packaging/gitea/prepare-android.sh --out /path/to/kit/android \
 #     --sdk "$HOME/android-sdk" --jdk /path/to/temurin-17-x64 \
 #     --gradle "$HOME/gradle/gradle-8.13" --gradle-home "$HOME/.gradle" \
-#     --rust-std /path/to/rust-std-1.92.0-aarch64-linux-android.tar.xz \
+#     --rust-std /path/to/rust-std-nightly-aarch64-linux-android.tar.xz \
 #     --offline-sdk /path/to/rust-builder/offline \
 #     --skia /path/to/skia-binaries
 #
@@ -23,7 +23,7 @@
 #     --host-arch aarch64 --qemu /usr/bin/qemu-x86_64-static --x86-root /path/to/x86_64-root
 #   x86_64-root 是最小 glibc 运行库根（lib64/ld-linux-x86-64.so.2 与 lib/x86_64-linux-gnu/*）。
 #
-# --rust-std 会把 Android std 安装进 --offline-sdk 的 1.92.0 工具链（套件 SDK 卷的源目录）。
+# --rust-std 会把 Android std 安装进 --offline-sdk 的 nightly-2026-03-14 工具链（套件 SDK 卷的源目录）。
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
@@ -97,6 +97,17 @@ if [[ -n "$SKIA" ]]; then
     [[ -d "$SKIA" ]] || fail "Skia 预编译目录不存在: $SKIA"
     mkdir -p "$OUT/skia-binaries"
     rsync -a "$SKIA/" "$OUT/skia-binaries/"
+    skia_version="$(python3 - "$ROOT/crates/wunder-android/Cargo.lock" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+match = re.search(r'\[\[package\]\]\nname = "skia-bindings"\nversion = "([^"]+)"', text)
+if not match:
+    raise SystemExit("skia-bindings is missing from Cargo.lock")
+print(match.group(1))
+PY
+)"
+    [[ -d "$OUT/skia-binaries/$skia_version" ]] || \
+        fail "Skia 预编译目录缺少 Cargo.lock 锁定的 $skia_version"
 fi
 
 if [[ "$HOST_ARCH" == aarch64 || "$HOST_ARCH" == arm64 ]]; then
@@ -117,19 +128,24 @@ fi
 
 if [[ -n "$RUST_STD" ]]; then
     [[ -n "$OFFLINE_SDK" ]] || fail "--rust-std 需要同时给 --offline-sdk（套件 SDK 卷的源目录）"
-    toolchain="$OFFLINE_SDK/rust/toolchains/1.92.0-x86_64-unknown-linux-gnu"
+    case "$HOST_ARCH" in
+        x86_64) host_triple=x86_64-unknown-linux-gnu ;;
+        aarch64|arm64) host_triple=aarch64-unknown-linux-gnu ;;
+        *) fail "不支持的宿主架构: $HOST_ARCH" ;;
+    esac
+    toolchain="$OFFLINE_SDK/rust/toolchains/nightly-2026-03-14-$host_triple"
     [[ -d "$toolchain" ]] || fail "SDK 工具链不存在: $toolchain"
     staging="$(mktemp -d)"
     trap 'rm -rf "$staging"' EXIT
     tar -xJf "$RUST_STD" -C "$staging"
-    std_dir="$staging/rust-std-1.92.0-aarch64-linux-android/lib/rustlib"
+    std_dir="$staging/rust-std-nightly-aarch64-linux-android/rust-std-aarch64-linux-android/lib/rustlib"
     [[ -d "$std_dir/aarch64-linux-android" ]] || fail "rust-std 归档结构不符合预期"
     cp -a "$std_dir/aarch64-linux-android" "$toolchain/lib/rustlib/"
     [[ -f "$std_dir/manifest-rust-std-aarch64-linux-android" ]] && \
         cp -a "$std_dir/manifest-rust-std-aarch64-linux-android" "$toolchain/lib/rustlib/"
 else
-    echo "[prepare-android] WARN: 未提供 --rust-std；请确认 SDK 的 1.92.0 工具链已含 aarch64-linux-android 标准库，" >&2
-    echo "                否则下载 https://static.rust-lang.org/dist/rust-std-1.92.0-aarch64-linux-android.tar.xz 后重跑。" >&2
+    echo "[prepare-android] WARN: 未提供 --rust-std；请确认 SDK 的 nightly-2026-03-14 工具链已含 aarch64-linux-android 标准库，" >&2
+    echo "                否则下载 https://static.rust-lang.org/dist/2026-03-14/rust-std-nightly-aarch64-linux-android.tar.xz 后重跑。" >&2
 fi
 
 required=(sdk/platforms/android-36 jdk/bin/java gradle/bin/gradle \

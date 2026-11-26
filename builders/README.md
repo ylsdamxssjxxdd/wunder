@@ -184,20 +184,22 @@ ARM64 开发 sysroot 首次准备使用 `bash builders/prepare-linux-arm64-devel
 
 Cargo 解析的是**完整锁文件闭包**，不是当前目标的编译闭包。即使只构建 Win7 CLI，vendor 里也必须同时存在 macOS/Android 的 `objc2`、`calloop`、`wayland-backend`、wasm 的 `wgpu-core-deps-wasm` 等永远不参与本次编译的 crate，否则解析阶段就会失败。判断是否完整不能只看目录名：vendor 目录既有 `objc2` 这种不带版本的名字，也有 `objc2-0.5.3`，必须读取每个目录 `Cargo.toml` 的 `package.name/version` 后与 `Cargo.lock` 比对。
 
-补齐的可靠做法是生成一份完整快照再增量复制，而不是猜单个依赖：
+补齐的可靠做法是按锁文件分别生成完整快照再增量复制，而不是猜单个依赖：
 
 ```bash
-cargo vendor --offline --locked temp_dir/vendor-full
+cargo vendor --locked --versioned-dirs /tmp/vendor-main
+(cd crates/wunder-desktop/frontend && cargo vendor --locked --versioned-dirs /tmp/vendor-desktop)
+(cd crates/wunder-android && cargo vendor --locked --versioned-dirs /tmp/vendor-android)
 ```
 
-该命令从本机已填充的 registry 缓存生成全部锁定包（缺失时联网一次），再按上面的元数据映射把目标 vendor 缺少的 `名字-版本` 目录复制进去。复制后用 `builders/check-vendor-crate.ps1` 逐文件核对校验和，避免半份拷贝静默通过：
+这些命令从本机 registry 缓存生成全部锁定包，缓存缺失时联网补齐；只更新仓库内的 `vendor/` 不会更新 `cargo-vendor-slint`。再按上面的元数据映射把目标 vendor 缺少的 `名字-版本` 目录复制进去。复制后用 `builders/check-vendor-crate.ps1` 逐文件核对校验和，避免半份拷贝静默通过：
 
 ```powershell
 ./builders/check-vendor-crate.ps1 -VendorRoot /path/to/cargo-vendor-slint `
   -Crate vt100-0.15.2, vte-0.11.1, vte_generate_state_changes-0.1.2
 ```
 
-最后必须验证解析与真实编译两件事：为每棵 vendor 树临时生成只含 `source.crates-io -> vendored-sources` 的 `CARGO_HOME/config.toml`，执行 `cargo metadata --locked --offline` 确认解析；再跑 `build.bat -t desktop -a win7-x86`、`build.bat -t cli -a win7-x86` 或对应的 Linux 构建，确认新 crate 能编过并进入 PE/ELF 门禁。只做 `-Check` 会跳过 codegen 与链接，不能作为最终验收。
+最后必须验证解析与真实编译两件事：为每棵 vendor 树临时生成只含 `source.crates-io -> vendored-sources` 的 `CARGO_HOME/config.toml`，执行 `cargo metadata --locked --offline` 确认解析；再跑 `build.bat -t desktop -a win7-x86`、`build.bat -t cli -a win7-x86` 或对应的 Linux 构建，确认新 crate 能编过并进入 PE/ELF 门禁。只做 `-Check` 会跳过 codegen 与链接，不能作为最终验收。交付给离线 CI 的 SDK 还要同步重打 `offline-sdk.tar.gz` 与 `SHA256SUMS`，否则重新部署套件会恢复旧 vendor。
 
 
 ## Linux x64 离线 SDK 维护

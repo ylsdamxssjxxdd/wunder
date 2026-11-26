@@ -153,7 +153,7 @@ git push gitea main
   packaging/gitea/prepare-android.sh --out /path/to/kit/android \
     --sdk "$HOME/android-sdk" --jdk /path/to/temurin-17 \
     --gradle "$HOME/gradle/gradle-8.13" --gradle-home "$HOME/.gradle" \
-    --rust-std /path/to/rust-std-1.92.0-aarch64-linux-android.tar.xz \
+    --rust-std /path/to/rust-std-nightly-aarch64-linux-android.tar.xz \
     --offline-sdk /path/to/kit/rust-builder/offline \
     --skia /path/to/skia-binaries
   ```
@@ -173,7 +173,7 @@ git push gitea main
   ```
   合并后再重打 `rust-builder/offline-sdk.tar.gz` 与 `SHA256SUMS`，否则重新部署的套件会在解析阶段报
   `failed to select a version`。
-  Slint 的安卓渲染链还会用 rust-skia 的预编译包（`skia-bindings 0.153.3` 的
+  Slint 的安卓渲染链还会用 rust-skia 的预编译包（`skia-bindings 0.157.0` 的
   `aarch64-linux-android-ganesh-gl-…` 变体），准备机联网下载后放到
   `android/skia-binaries/<版本>/skia-binaries-<key>.tar.gz`；`ci/build-android.sh` 用
   `SKIA_BINARIES_URL=file://…/{tag}/skia-binaries-{key}.tar.gz` 指过去。skia 版本或特性变化时

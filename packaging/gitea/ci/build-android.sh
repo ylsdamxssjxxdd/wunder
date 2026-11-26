@@ -8,6 +8,7 @@ ci_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$ci_dir/../../.." && pwd -P)"
 android_root="${WUNDER_ANDROID_ROOT:-/opt/android}"
 offline_root="${WUNDER_OFFLINE_ROOT:-/opt/offline-sdk}"
+export WUNDER_CARGO_VENDOR="$offline_root/cargo-vendor-slint"
 
 host_arch="$(uname -m)"
 case "$host_arch" in
@@ -26,13 +27,33 @@ for path in "$android_root/sdk" "$android_root/jdk" "$android_root/gradle" \
     "$android_root/assets/packs/browser.tar.xz" "$offline_root/cargo-vendor-slint"; do
     [[ -e "$path" ]] || { echo "离线安卓输入缺失: $path（先按 README 准备 kit 的 android/ 目录）" >&2; exit 2; }
 done
+read -r skia_version skia_hash < <(python3 - \
+    "$repo_root/crates/wunder-android/Cargo.lock" "$offline_root/cargo-vendor-slint" <<'PY'
+import json, re, sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+match = re.search(r'\[\[package\]\]\nname = "skia-bindings"\nversion = "([^"]+)"', text)
+if not match:
+    raise SystemExit("skia-bindings is missing from Cargo.lock")
+version = match.group(1)
+vcs = Path(sys.argv[2]) / f"skia-bindings-{version}" / ".cargo_vcs_info.json"
+hash_value = json.loads(vcs.read_text(encoding="utf-8"))["git"]["sha1"][:12]
+print(version, hash_value)
+PY
+)
+skia_archive="$android_root/skia-binaries/$skia_version/skia-binaries-$skia_hash-aarch64-linux-android-*.tar.gz"
+compgen -G "$skia_archive" >/dev/null || {
+    echo "离线 Skia 预编译包缺失: $skia_archive（先按锁定的 skia-bindings 版本准备）" >&2
+    exit 2
+}
 
-host_toolchain=1.92.0-aarch64-unknown-linux-gnu
-[[ "$host_arch" == x86_64 ]] && host_toolchain=1.92.0-x86_64-unknown-linux-gnu
+host_toolchain=nightly-2026-03-14-aarch64-unknown-linux-gnu
+[[ "$host_arch" == x86_64 ]] && host_toolchain=nightly-2026-03-14-x86_64-unknown-linux-gnu
 [[ -d "$offline_root/rust/toolchains/$host_toolchain/lib/rustlib/aarch64-linux-android/lib" ]] || {
     echo "SDK 的 $host_toolchain 缺少 aarch64-linux-android 标准库（准备机先按 README 安装 rust-std）" >&2
     exit 2
 }
+export PATH="$offline_root/rust/toolchains/$host_toolchain/bin:$PATH"
 
 if [[ "$host_arch" == aarch64 || "$host_arch" == arm64 ]]; then
     # NDK/build-tools 只有 x86_64 宿主版：卷里的 qemu 包装器负责模拟。

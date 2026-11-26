@@ -14,6 +14,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CRATE="$ROOT/crates/wunder-android"
+cargo_config=()
+if [[ -n "${WUNDER_CARGO_VENDOR:-}" ]]; then
+    cargo_config=(--config 'source.crates-io.replace-with="vendored-sources"'
+        --config "source.vendored-sources.directory=\"$WUNDER_CARGO_VENDOR\"")
+fi
 
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/android-sdk}"
 export ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT:-$ANDROID_HOME/ndk/30.0.16248370}"
@@ -101,7 +106,7 @@ for ABI in "${ABI_LIST[@]}"; do
         }
         rustup target add "$TARGET" >/dev/null
     fi
-    cargo build --release --target "$TARGET" --lib
+    cargo "${cargo_config[@]}" build --release --target "$TARGET" --lib
     target_dir="${CARGO_TARGET_DIR:-$PWD/target}"
     mkdir -p "android/app/src/main/jniLibs/$ABI"
     cp "$target_dir/$TARGET/release/libwunder_android.so" "android/app/src/main/jniLibs/$ABI/"
