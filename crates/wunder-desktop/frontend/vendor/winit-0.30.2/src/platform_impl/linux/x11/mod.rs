@@ -623,12 +623,6 @@ impl<T: 'static> EventLoop<T> {
                             ordered.push((xev, seq));
                             continue;
                         }
-                        crate::platform_impl::x11::event_processor::KeyClaim::Duplicate => {
-                            // Complete the Xlib round-trip and drop the extra
-                            // copy; delivering it would duplicate the character.
-                            self.event_processor.acknowledge_echo(&mut xev);
-                            continue;
-                        }
                         crate::platform_impl::x11::event_processor::KeyClaim::NewPress => {}
                     }
                     if self.event_processor.forwarding_keys_to_ime() {

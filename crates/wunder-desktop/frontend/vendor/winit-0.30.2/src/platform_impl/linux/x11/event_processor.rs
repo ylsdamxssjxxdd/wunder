@@ -48,17 +48,10 @@ pub const MAX_MOD_REPLAY_LEN: usize = 32;
 /// same key must be forwarded again instead of being treated as that echo.
 const ECHO_DEADLINE: Duration = Duration::from_millis(500);
 
-/// Extra copies of one echo that libX11 hands back during a burst arrive
-/// within a few milliseconds of the forward. Beyond this window a matching
-/// event is a new physical press and goes back to the IME.
-const ECHO_DUPLICATE_WINDOW: Duration = Duration::from_millis(30);
-
 /// What a drained key event is relative to the keys already forwarded.
 pub(super) enum KeyClaim {
     /// The IME's echo of a forwarded press; carries that press's order slot.
     Echo(u64),
-    /// Another copy of an echo that was already delivered; drop it.
-    Duplicate,
     /// Not an echo: a new physical press.
     NewPress,
 }
@@ -485,16 +478,12 @@ impl EventProcessor {
         if key.epoch == epoch || key.forwarded_at.elapsed() >= ECHO_DEADLINE {
             return KeyClaim::NewPress;
         }
-        if let Some(seq) = key.seqs.pop_back() {
-            return KeyClaim::Echo(seq);
-        }
-        // All forwards of this identity have been delivered. libX11 can hand
-        // the same echo back more than once around the burst; those extra
-        // copies must not turn into fresh presses.
-        if key.forwarded_at.elapsed() < ECHO_DUPLICATE_WINDOW {
-            KeyClaim::Duplicate
-        } else {
-            KeyClaim::NewPress
+        // A forwarded press of this identity is still waiting for its echo.
+        // Claims run newest-first: Xlib re-queues a burst in reverse, and the
+        // slot restores the order the keys were pressed in.
+        match key.seqs.pop_back() {
+            Some(seq) => KeyClaim::Echo(seq),
+            None => KeyClaim::NewPress,
         }
     }
 
