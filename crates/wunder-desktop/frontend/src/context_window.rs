@@ -43,8 +43,6 @@ const TILE_FLOOR: f64 = 700.0;
 const TILE_SIDE: f64 = 16.0;
 const TILE_MIN: f64 = 1500.0;
 const TILE_MAX_ITEMS: usize = 12;
-/// Rows before "show all" takes over.
-const MAX_ROWS: usize = 8;
 const TIP_ROWS: usize = 5;
 const GRID_TIP_ROWS: usize = 4;
 /// Cells in the grid look: each is a quarter of a percent of the window.
@@ -104,7 +102,7 @@ thread_local! {
     /// Hover cards, one per tile in the same order as the tiles model.
     static TIPS: RefCell<Vec<Tip>> = const { RefCell::new(Vec::new()) };
     /// The map box the tiles were solved for; the shell reports it when the
-    /// card opens, unfolds or the window resizes.
+    /// card opens or the window resizes.
     static MAP: Cell<(f64, f64)> = const { Cell::new((DEFAULT_W, DEFAULT_H)) };
 }
 
@@ -215,10 +213,13 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         let Some(record) = record else { return };
         if tip.kind == "item" {
             let session = app.get_active_session_id().to_string();
-            let text = text_desktop.context_text(&session, tip.slot, &tip.tag, &tip.name);
-            open_item_detail(&app, &record, tip.slot, &tip.tag, &tip.name, text);
+            let text =
+                text_desktop.context_text(&session, tip.slot, &tip.tag, &tip.name, tip.count);
+            open_item_detail(
+                &app, &record, tip.slot, &tip.tag, &tip.name, tip.count, text,
+            );
         } else if tip.kind == "part" {
-            open_part_detail(&app, &record, tip.slot, None);
+            open_part_detail(&app, &record, tip.slot);
         }
         close_tip(&app);
     });
@@ -243,24 +244,27 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             let sorted = sorted_items(part);
             if let Some(item) = sorted.get(cell.item as usize) {
                 let session = app.get_active_session_id().to_string();
-                let text = text_desktop.context_text(&session, part.slot, &item.tag, &item.name);
-                open_item_detail(&app, &record, part.slot, &item.tag, &item.name, text);
+                let text = text_desktop
+                    .context_text(&session, part.slot, &item.tag, &item.name, item.count);
+                open_item_detail(
+                    &app, &record, part.slot, &item.tag, &item.name, item.count, text,
+                );
             }
         } else {
-            open_part_detail(&app, &record, cell.slot, None);
+            open_part_detail(&app, &record, cell.slot);
         }
         close_tip(&app);
     });
 
     let text_desktop = Arc::clone(&desktop);
     let weak = app.as_weak();
-    app.on_context_row_open(move |slot, tag, name| {
+    app.on_context_row_open(move |slot, tag, name, count| {
         let Some(app) = weak.upgrade() else { return };
         let record = RECORD.with(|slot| slot.borrow().clone());
         let Some(record) = record else { return };
         let session = app.get_active_session_id().to_string();
-        let text = text_desktop.context_text(&session, slot, &tag, &name);
-        open_item_detail(&app, &record, slot, &tag, &name, text);
+        let text = text_desktop.context_text(&session, slot, &tag, &name, count as i64);
+        open_item_detail(&app, &record, slot, &tag, &name, count as i64, text);
     });
 
     let weak = app.as_weak();
@@ -268,7 +272,22 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         let Some(app) = weak.upgrade() else { return };
         let record = RECORD.with(|cell| cell.borrow().clone());
         let Some(record) = record else { return };
-        open_part_detail(&app, &record, slot, None);
+        open_part_detail(&app, &record, slot);
+    });
+
+    let text_desktop = Arc::clone(&desktop);
+    let weak = app.as_weak();
+    app.on_context_detail_row_toggle(move |index, slot, tag, name, count| {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_context_detail_row_open() == index {
+            app.set_context_detail_row_open(-1);
+            app.set_context_detail_row_text("".into());
+            return;
+        }
+        let session = app.get_active_session_id().to_string();
+        let text = text_desktop.context_text(&session, slot, &tag, &name, count as i64);
+        app.set_context_detail_row_open(index);
+        app.set_context_detail_row_text(text.unwrap_or_default().into());
     });
 
     let weak = app.as_weak();
@@ -315,7 +334,6 @@ pub fn reset(app: &MainWindow) {
     TIPS.with(|slot| slot.borrow_mut().clear());
     app.set_context_window_open(false);
     app.set_context_tab(0);
-    app.set_context_show_all(false);
     app.set_context_has_data(false);
     app.set_context_used_tokens(0);
     app.set_context_capacity_tokens(0);
@@ -328,7 +346,6 @@ pub fn reset(app: &MainWindow) {
     app.set_context_items(ModelRc::new(VecModel::from(Vec::<ContextItemRow>::new())));
     app.set_context_tiles(ModelRc::new(VecModel::from(Vec::<ContextTile>::new())));
     app.set_context_cells(ModelRc::new(VecModel::from(Vec::<ContextCell>::new())));
-    app.set_context_hidden_count(0);
     close_tip(app);
     clear_detail_text(app);
     app.set_context_detail_open(false);
@@ -423,38 +440,20 @@ fn project(app: &MainWindow, record: &Record) {
     app.set_context_detail_open(false);
 }
 
-/// The contents list: every item, or one part's, largest first, with the rows
-/// past the fold hidden behind "show all".
+/// The contents list: every item, or one part's, in the order the request
+/// carried them. The list does not truncate: a tool-definition block must not
+/// hide the turns below it, and there is no show-more step to expand.
 fn project_rows(app: &MainWindow, record: &Record) {
     let tab = app.get_context_tab();
-    let show_all = app.get_context_show_all();
-    let mut rows: Vec<(i32, usize, &ItemRecord)> = record
-        .parts
-        .iter()
-        .filter(|part| tab == 0 || part.slot == tab)
-        .flat_map(|part| {
-            sorted_items(part)
-                .into_iter()
-                .enumerate()
-                .map(move |(rank, item)| (part.slot, rank, item))
-        })
-        .collect();
-    rows.sort_by(|a, b| b.2.tokens.cmp(&a.2.tokens));
+    let rows = list_rows(record, tab);
     let most = rows
         .iter()
         .map(|(_, _, item)| item.tokens)
         .max()
         .unwrap_or(1)
         .max(1);
-    let shown = if show_all {
-        rows.len()
-    } else {
-        rows.len().min(MAX_ROWS)
-    };
-    let hidden = rows.len().saturating_sub(shown);
     let projected: Vec<ContextItemRow> = rows
         .iter()
-        .take(shown)
         .map(|(slot, rank, item)| ContextItemRow {
             slot: *slot,
             tag: item.tag.as_str().into(),
@@ -463,11 +462,33 @@ fn project_rows(app: &MainWindow, record: &Record) {
             tokens_text: fmt_k(item.tokens).into(),
             ratio: (item.tokens as f32 / most as f32).clamp(0.0, 1.0),
             item: (*rank).min(i32::MAX as usize) as i32,
-            on: false,
         })
         .collect();
     app.set_context_items(ModelRc::new(VecModel::from(projected)));
-    app.set_context_hidden_count(hidden.min(i32::MAX as usize) as i32);
+}
+
+/// The rows shown by the contents list, in request order. `rank` is the item's
+/// position in the size-sorted view used by the map and grid, so hovering a row
+/// still lights the same tile.
+fn list_rows<'a>(record: &'a Record, tab: i32) -> Vec<(i32, usize, &'a ItemRecord)> {
+    record
+        .parts
+        .iter()
+        .filter(|part| tab == 0 || part.slot == tab)
+        .flat_map(|part| {
+            let sorted = sorted_items(part);
+            listed_items(part)
+                .into_iter()
+                .map(move |item| {
+                    let rank = sorted
+                        .iter()
+                        .position(|candidate| std::ptr::eq(*candidate, item))
+                        .unwrap_or(0);
+                    (part.slot, rank, item)
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 fn part_rows(record: &Record) -> Vec<ContextPartRow> {
@@ -635,6 +656,13 @@ fn sorted_items(part: &PartRecord) -> Vec<&ItemRecord> {
     let mut items: Vec<&ItemRecord> = part.items.iter().filter(|item| item.tokens > 0).collect();
     items.sort_by(|a, b| b.tokens.cmp(&a.tokens));
     items
+}
+
+/// Items as the request carried them: system prompt and reminders, tools,
+/// images, tool results, then the turns in conversation order. The map and
+/// grid still sort by size; the contents list does not.
+fn listed_items(part: &PartRecord) -> Vec<&ItemRecord> {
+    part.items.iter().filter(|item| item.tokens > 0).collect()
 }
 
 fn tiles(record: &Record, width: f64, height: f64) -> Laid {
@@ -976,18 +1004,18 @@ fn part_tip(record: &Record, part: &PartRecord, item: i32, rows: usize) -> Tip {
     tip
 }
 
-fn open_part_detail(app: &MainWindow, record: &Record, slot: i32, focus: Option<usize>) {
+fn open_part_detail(app: &MainWindow, record: &Record, slot: i32) {
     let Some(part) = record.parts.iter().find(|part| part.slot == slot) else {
         return;
     };
-    let sorted = sorted_items(part);
-    let most = sorted
+    let listed = listed_items(part);
+    let most = listed
         .iter()
         .map(|item| item.tokens)
         .max()
         .unwrap_or(1)
         .max(1);
-    let rows: Vec<ContextItemRow> = sorted
+    let rows: Vec<ContextItemRow> = listed
         .iter()
         .enumerate()
         .map(|(rank, item)| ContextItemRow {
@@ -998,7 +1026,6 @@ fn open_part_detail(app: &MainWindow, record: &Record, slot: i32, focus: Option<
             tokens_text: fmt_k(item.tokens).into(),
             ratio: (item.tokens as f32 / most as f32).clamp(0.0, 1.0),
             item: rank.min(i32::MAX as usize) as i32,
-            on: focus == Some(rank),
         })
         .collect();
     app.set_context_detail_kind("part".into());
@@ -1019,34 +1046,19 @@ fn open_item_detail(
     slot: i32,
     tag: &str,
     name: &str,
+    count: i64,
     text: Option<String>,
 ) {
     let Some(part) = record.parts.iter().find(|part| part.slot == slot) else {
         return;
     };
-    let sorted = sorted_items(part);
-    let Some((at, item)) = sorted
+    let listed = listed_items(part);
+    let Some(item) = listed
         .iter()
-        .enumerate()
-        .find(|(_, item)| item.tag == tag && item.name == name)
+        .find(|item| item.tag == tag && item.name == name && item.count == count)
     else {
         return;
     };
-    let most = sorted.iter().map(|it| it.tokens).max().unwrap_or(1).max(1);
-    let rows: Vec<ContextItemRow> = sorted
-        .iter()
-        .enumerate()
-        .map(|(rank, it)| ContextItemRow {
-            slot: part.slot,
-            tag: it.tag.as_str().into(),
-            name: it.name.as_str().into(),
-            count: it.count.min(i32::MAX as i64) as i32,
-            tokens_text: fmt_k(it.tokens).into(),
-            ratio: (it.tokens as f32 / most as f32).clamp(0.0, 1.0),
-            item: rank.min(i32::MAX as usize) as i32,
-            on: at == rank,
-        })
-        .collect();
     app.set_context_detail_kind("item".into());
     app.set_context_detail_slot(part.slot);
     app.set_context_detail_tag(item.tag.as_str().into());
@@ -1055,14 +1067,19 @@ fn open_item_detail(
     app.set_context_detail_value(fmt_k(item.tokens).into());
     app.set_context_detail_pct(pct(item.tokens, record.tokens).into());
     open_detail_text(app, text.unwrap_or_default());
-    app.set_context_detail_rows(ModelRc::new(VecModel::from(rows)));
+    app.set_context_detail_row_open(-1);
+    app.set_context_detail_row_text("".into());
+    // A single item shows only itself: no list of the part's other items.
+    app.set_context_detail_rows(ModelRc::new(VecModel::from(Vec::<ContextItemRow>::new())));
     app.set_context_detail_open(true);
 }
 
-/// Release the shell's copy of the detail text. The engine's cache still holds
-/// the request; this only clears the Slint property.
+/// Release the shell's copy of the detail text and any expanded part row. The
+/// engine's cache still holds the request; this only clears the Slint shell.
 fn clear_detail_text(app: &MainWindow) {
     app.set_context_detail_text("".into());
+    app.set_context_detail_row_open(-1);
+    app.set_context_detail_row_text("".into());
 }
 
 /// Show the whole item text at once. The card scrolls it; no part is hidden
@@ -1196,6 +1213,74 @@ mod tests {
             item: 0,
             its: Vec::new(),
         }
+    }
+
+    #[test]
+    fn contents_list_keeps_part_order_and_turns_together() {
+        let record = Record {
+            window: 262_144,
+            tokens: 8_621,
+            parts: vec![
+                PartRecord {
+                    slot: 1,
+                    tokens: 3_422,
+                    items: vec![ItemRecord {
+                        tag: "prompt".into(),
+                        name: String::new(),
+                        count: 1,
+                        tokens: 3_422,
+                    }],
+                },
+                PartRecord {
+                    slot: 2,
+                    tokens: 5_003,
+                    items: (0..19)
+                        .map(|index| ItemRecord {
+                            tag: "tool".into(),
+                            name: format!("tool{index}"),
+                            count: 1,
+                            // The later turns must not be broken up by these.
+                            tokens: 263,
+                        })
+                        .collect(),
+                },
+                PartRecord {
+                    slot: 5,
+                    tokens: 196,
+                    items: vec![
+                        ItemRecord {
+                            tag: "turn".into(),
+                            name: String::new(),
+                            count: 1,
+                            tokens: 188,
+                        },
+                        ItemRecord {
+                            tag: "turn".into(),
+                            name: String::new(),
+                            count: 2,
+                            tokens: 8,
+                        },
+                    ],
+                },
+            ],
+            ..Default::default()
+        };
+        let rows = list_rows(&record, 0);
+        let chat: Vec<_> = rows.iter().filter(|(slot, _, _)| *slot == 5).collect();
+        assert_eq!(chat.len(), 2);
+        assert_eq!(chat[0].2.count, 1);
+        assert_eq!(chat[1].2.count, 2);
+        let first_chat = rows.iter().position(|(slot, _, _)| *slot == 5).unwrap();
+        assert_eq!(
+            rows[first_chat - 1].0,
+            2,
+            "all tools belong before the first turn"
+        );
+        assert!(rows[first_chat..].iter().all(|(slot, _, _)| *slot == 5));
+
+        let chat_only = list_rows(&record, 5);
+        assert_eq!(chat_only[0].2.count, 1);
+        assert_eq!(chat_only[1].2.count, 2);
     }
 
     #[test]

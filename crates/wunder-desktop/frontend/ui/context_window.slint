@@ -28,11 +28,9 @@ export struct ContextItemRow {
     tokens-text: string,
     // Share of the largest row, for the small bar.
     ratio: float,
-    // Index among the part's items, largest first: the map and the grid use it
-    // to light one row's tiles and cells.
+    // Index among the part's items: the map and grid light the size-sorted
+    // rank; the part detail uses its listed rank to know which row is open.
     item: int,
-    // The row the detail view or a click points at.
-    on: bool,
 }
 
 // A tile of the window map, in fractions of the map box.
@@ -145,13 +143,15 @@ export global ContextText {
             : I18n.cx_free;
     }
     public pure function item(tag: string, name: string, count: int) -> string {
-        // 工具结果与工具定义同名，结果行补一个部位后缀才分得清。
-        return tag == "result" && name != "" ? name + " · " + I18n.cx_part_results
+        // 工具定义与工具结果同名，各补一个部位后缀，免得把「定义」当成
+        // 本次请求真的调用过这个工具。
+        return tag == "tool" && name != "" ? name + " · " + I18n.cx_item_tool
+            : tag == "result" && name != "" ? name + " · " + I18n.cx_part_results
+            : tag == "turn" ? I18n.cx_turn(count)
             : name != "" ? name
             : tag == "prompt" ? I18n.cx_item_prompt
             : tag == "reminder" ? I18n.cx_item_reminder
             : tag == "image" ? I18n.cx_image(count)
-            : tag == "turn" ? I18n.cx_turn(count)
             : I18n.cx_item_other;
     }
 }
@@ -172,10 +172,7 @@ export component ContextWindowPanel inherits Rectangle {
     in property <string> model-label: "";
     // 0 = 全部, otherwise the selected part's slot.
     in property <int> tab: 0;
-    in property <bool> show-all: false;
     in property <bool> look-map: true;
-    in property <bool> folded: false;
-    in property <int> hidden-count: 0;
     // Hover card of a tile or a cell; the strings are raw keys the panel words.
     in property <bool> tip-open: false;
     in property <string> tip-kind: "";
@@ -199,10 +196,12 @@ export component ContextWindowPanel inherits Rectangle {
     in property <[ContextItemRow]> detail-rows: [];
     // The item's own text, kept whole in process memory and shown in full.
     in property <string> detail-text: "";
+    // A part's rows open one at a time; this is the row index and the text
+    // loaded for it. Empty text means the process no longer holds it.
+    in property <int> detail-row-open: -1;
+    in property <string> detail-row-text: "";
     callback dismissed();
-    callback toggle-fold();
     callback set-tab(int);
-    callback toggle-show-all();
     callback toggle-look();
     callback tile-hover(int);
     callback tile-leave();
@@ -210,9 +209,10 @@ export component ContextWindowPanel inherits Rectangle {
     callback cell-hover(int);
     callback cell-leave();
     callback cell-open(int);
-    callback row-open(int, string, string);
+    callback row-open(int, string, string, int);
     callback legend-open(int);
     callback map-resized(length, length);
+    callback detail-row-toggle(int, int, string, string, int);
     callback detail-dismissed();
 
     width: 100%; height: 100%;
@@ -225,8 +225,8 @@ export component ContextWindowPanel inherits Rectangle {
     // 50 columns on a wide card, 25 on a narrow one; 400 cells cover both.
     private property <int> columns: root.card-w < 520px ? 25 : 50;
     private property <int> cell-rows: root.columns == 50 ? 8 : 16;
-    // 卡片高度：折叠时只留标题行，否则最多 720px，也不超出窗口可用高度。
-    private property <length> card-height: root.folded ? 96px : min(720px, root.height - 24px);
+    // 卡片高度：最多 720px，也不超出窗口可用高度。
+    private property <length> card-height: min(720px, root.height - 24px);
     // 悬停时其余方块变暗，指向的那一块（同部位的格子）保持原色。
     private property <int> focus-slot: 0;
     private property <int> focus-item: -1;
@@ -243,8 +243,9 @@ export component ContextWindowPanel inherits Rectangle {
     private property <string> tip-title: root.tip-kind == "free" ? I18n.cx_free
         : root.tip-kind == "part" ? ContextText.part(root.tip-slot)
         : ContextText.item(root.tip-tag, root.tip-name, root.tip-count);
-    // The detail dialog's text column: its card minus the modal padding.
-    private property <length> detail-text-width: min(560px, root.width - 24px) - Theme.space-5 * 2;
+    // The detail dialog's text column: its card minus the modal padding and a
+    // gutter for the overlay scrollbar.
+    private property <length> detail-text-width: min(560px, root.width - 24px) - Theme.space-5 * 2 - 12px;
 
     ModalDialog {
         card-width: root.card-w;
@@ -257,23 +258,6 @@ export component ContextWindowPanel inherits Rectangle {
             HorizontalLayout {
                 height: 24px;
                 spacing: 6px;
-                Rectangle {
-                    width: 18px; height: 18px;
-                    y: (parent.height - self.height) / 2;
-                    border-radius: 5px;
-                    background: fold-hit.has-hover ? Theme.hover : transparent;
-                    Image {
-                        x: 3px; y: 3px; width: 12px; height: 12px;
-                        source: root.folded
-                            ? @image-url("../assets/icons/chevron-down.svg")
-                            : @image-url("../assets/icons/chevron-up.svg");
-                        colorize: Theme.muted; image-fit: contain;
-                    }
-                    fold-hit := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { root.toggle-fold(); }
-                    }
-                }
                 Text {
                     text: I18n.cx_title;
                     color: Theme.text; font-size: Theme.font-md; font-weight: 700;
@@ -287,14 +271,14 @@ export component ContextWindowPanel inherits Rectangle {
                     colorize: Theme.muted;
                     image-fit: contain;
                 }
-                Text {
+                if root.card-w >= 480px : Text {
                     // 请求打到哪个模型：provider › model
-                    width: min(self.preferred-width, max(0px, root.width - 360px));
+                    width: min(self.preferred-width, max(0px, root.card-w - 430px));
                     text: root.model-label;
                     color: Theme.text-secondary; font-size: Theme.font-xs;
                     vertical-alignment: center; overflow: elide;
                 }
-                Rectangle {
+                if root.card-w >= 340px : Rectangle {
                     height: 17px;
                     width: state-text.preferred-width + 16px;
                     border-radius: 9px;
@@ -306,10 +290,55 @@ export component ContextWindowPanel inherits Rectangle {
                         vertical-alignment: center;
                     }
                 }
+                // 视图切换放在标题行：窄卡时图例可能挤满一行，放在图例末尾会
+                // 被推出卡片边缘。
+                Rectangle {
+                    width: 56px; height: 24px;
+                    border-radius: 7px;
+                    background: Theme.panel;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    HorizontalLayout {
+                        padding-left: 2px; padding-right: 2px;
+                        padding-top: 3px; padding-bottom: 3px;
+                        spacing: 2px;
+                        Rectangle {
+                            width: 24px; height: 16px; border-radius: 5px;
+                            background: root.look-map ? Theme.surface : transparent;
+                            border-width: root.look-map ? 1px : 0px; border-color: Theme.border;
+                            Rectangle { x: 5px; y: 3px; width: 4px; height: 10px; border-radius: 1px; background: root.look-map ? Theme.text : Theme.muted; }
+                            Rectangle { x: 10px; y: 6px; width: 9px; height: 7px; border-radius: 1px; background: root.look-map ? Theme.text : Theme.muted; }
+                            TouchArea { mouse-cursor: pointer; clicked => { root.toggle-look(); } }
+                        }
+                        Rectangle {
+                            width: 24px; height: 16px; border-radius: 5px;
+                            background: root.look-map ? transparent : Theme.surface;
+                            border-width: root.look-map ? 0px : 1px; border-color: Theme.border;
+                            Rectangle { x: 4px; y: 4px; width: 6px; height: 6px; border-radius: 1px; background: root.look-map ? Theme.muted : Theme.text; }
+                            Rectangle { x: 13px; y: 4px; width: 6px; height: 6px; border-radius: 1px; background: root.look-map ? Theme.muted : Theme.text; }
+                            Rectangle { x: 4px; y: 12px; width: 6px; height: 6px; border-radius: 1px; background: root.look-map ? Theme.muted : Theme.text; }
+                            Rectangle { x: 13px; y: 12px; width: 6px; height: 6px; border-radius: 1px; background: root.look-map ? Theme.muted : Theme.text; }
+                            TouchArea { mouse-cursor: pointer; clicked => { root.toggle-look(); } }
+                        }
+                    }
+                }
+                Rectangle {
+                    width: 24px; height: 24px; border-radius: 6px;
+                    background: card-close-hit.has-hover ? Theme.hover : transparent;
+                    Image {
+                        x: 6px; y: 6px; width: 12px; height: 12px;
+                        source: @image-url("../assets/icons/xmark.svg");
+                        colorize: Theme.muted; image-fit: contain;
+                    }
+                    card-close-hit := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.dismissed(); }
+                    }
+                }
             }
 
             // ---- occupancy: the number, its health, what is left ----
-            if !root.folded && root.has-data : VerticalLayout {
+            if root.has-data : VerticalLayout {
                 spacing: 2px;
                 HorizontalLayout {
                     height: 18px;
@@ -359,7 +388,7 @@ export component ContextWindowPanel inherits Rectangle {
                 }
             }
 
-            if !root.folded : chart := Rectangle {
+            chart := Rectangle {
                 // 参考实现的比例：宽卡 3.1:1，窄卡 2:1，高 132–232px 之间；
                 // 卡片本身不高时再让出空间给图例、页签与内容列表，避免被裁掉。
                 // 格子视图不占满这张地图：400 格按列宽决定格边，高度随行数
@@ -506,7 +535,15 @@ export component ContextWindowPanel inherits Rectangle {
                                 root.cell-leave();
                             }
                         }
-                        clicked => { root.cell-open(root.hovered-cell); }
+                        clicked => {
+                            // 点击不一定先经过 moved（触控尤其如此）；按点击位置
+                            // 重新算格子，否则会一直落到默认的第 0 格（系统提示）。
+                            let at = Math.max(0, Math.min(399,
+                                Math.floor((self.mouse-y - grid.pad-y) / (grid.side + 2px)) * root.columns
+                                + Math.floor((self.mouse-x - grid.pad-x) / (grid.side + 2px))));
+                            root.hovered-cell = at;
+                            root.cell-open(at);
+                        }
                     }
                 }
 
@@ -601,12 +638,11 @@ export component ContextWindowPanel inherits Rectangle {
                 }
             }
 
-            if !root.folded && root.parts.length > 0 : HorizontalLayout {
+            if root.parts.length > 0 : HorizontalLayout {
                 height: 20px;
                 spacing: 14px;
-                // 图例一组靠左、视图切换靠右：space-between 只把余量放在两组之间，
-                // 组内条目按名称与值紧凑排列。
-                alignment: space-between;
+                // 图例只放部位，视图切换已移到卡片标题行；这里不抢右侧空间。
+                alignment: start;
                 HorizontalLayout {
                     spacing: 14px;
                     alignment: start;
@@ -690,42 +726,13 @@ export component ContextWindowPanel inherits Rectangle {
                         }
                     }
                 }
-                // 视图切换：树图 / 格子，图标保持中性，只有选中的一颗变深。
-                Rectangle {
-                    width: 56px; height: 20px;
-                    border-radius: 7px;
-                    background: Theme.panel;
-                    border-width: 1px;
-                    border-color: Theme.border;
-                    HorizontalLayout {
-                        padding: 2px; spacing: 2px;
-                        Rectangle {
-                            width: 24px; height: 16px; border-radius: 5px;
-                            background: root.look-map ? Theme.surface : transparent;
-                            border-width: root.look-map ? 1px : 0px; border-color: Theme.border;
-                            Rectangle { x: 5px; y: 3px; width: 4px; height: 10px; border-radius: 1px; background: root.look-map ? Theme.text : Theme.muted; }
-                            Rectangle { x: 10px; y: 6px; width: 9px; height: 7px; border-radius: 1px; background: root.look-map ? Theme.text : Theme.muted; }
-                            TouchArea { mouse-cursor: pointer; clicked => { root.toggle-look(); } }
-                        }
-                        Rectangle {
-                            width: 24px; height: 16px; border-radius: 5px;
-                            background: root.look-map ? transparent : Theme.surface;
-                            border-width: root.look-map ? 0px : 1px; border-color: Theme.border;
-                            Rectangle { x: 4px; y: 4px; width: 6px; height: 6px; border-radius: 1px; background: root.look-map ? Theme.muted : Theme.text; }
-                            Rectangle { x: 13px; y: 4px; width: 6px; height: 6px; border-radius: 1px; background: root.look-map ? Theme.muted : Theme.text; }
-                            Rectangle { x: 4px; y: 12px; width: 6px; height: 6px; border-radius: 1px; background: root.look-map ? Theme.muted : Theme.text; }
-                            Rectangle { x: 13px; y: 12px; width: 6px; height: 6px; border-radius: 1px; background: root.look-map ? Theme.muted : Theme.text; }
-                            TouchArea { mouse-cursor: pointer; clicked => { root.toggle-look(); } }
-                        }
-                    }
-                }
             }
 
-            if !root.folded && root.has-data : Rectangle {
+            if root.has-data : Rectangle {
                 height: 1px; background: Theme.border;
             }
 
-            if !root.folded && root.has-data : HorizontalLayout {
+            if root.has-data : HorizontalLayout {
                 height: 26px;
                 spacing: 8px;
                 alignment: space-between;
@@ -778,12 +785,14 @@ export component ContextWindowPanel inherits Rectangle {
                 }
             }
 
-            if !root.folded && root.has-data : ScrollView {
+            if root.has-data : ScrollView {
                 vertical-stretch: 1;
                 horizontal-scrollbar-policy: always-off;
                 VerticalLayout {
                     spacing: 0px;
                     alignment: start;
+                    // 给覆盖式滚动条留出右侧一条空隙，别让它压住 token 数字。
+                    padding-right: 12px;
                     if root.items.length == 0 : Text {
                         height: 32px;
                         text: I18n.cx_nothing;
@@ -794,7 +803,7 @@ export component ContextWindowPanel inherits Rectangle {
                         height: 28px;
                         width: 100%;
                         border-radius: 6px;
-                        background: item-hit.has-hover || item.on ? Theme.hover : transparent;
+                        background: item-hit.has-hover ? Theme.hover : transparent;
                         Rectangle {
                             width: 6px; height: 6px; border-radius: 3px;
                             x: 6px; y: (parent.height - self.height) / 2;
@@ -846,37 +855,26 @@ export component ContextWindowPanel inherits Rectangle {
                                     root.focus-item = -1;
                                 }
                             }
-                            clicked => { root.row-open(item.slot, item.tag, item.name); }
+                            clicked => { root.row-open(item.slot, item.tag, item.name, item.count); }
                         }
-                    }
-                    if (root.hidden-count > 0) || root.show-all : Rectangle {
-                        height: 26px;
-                        width: 100%;
-                        border-radius: 6px;
-                        background: more-hit.has-hover ? Theme.hover : transparent;
-                        Text {
-                            text: root.show-all ? I18n.cx_show_less : I18n.cx_show_all(root.hidden-count + root.items.length);
-                            color: Theme.accent-ink; font-size: Theme.font-xs;
-                            x: 6px;
-                            width: parent.width - 12px;
-                            vertical-alignment: center;
-                        }
-                        more-hit := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-show-all(); } }
                     }
                 }
             }
         }
     }
 
-    // 从方块、格子或内容行打开的内容：这一部位/条目占多少，里面的条目
-    // 各自占多少。参考实现打开的是请求原文，这里记录的是构成，所以列出
-    // 构成明细而不是正文。
+    // 从方块、格子或内容行打开的内容。单个条目只显示该条目的正文；一个
+    // 部位则列出该部位的条目，点一行就在行下展开它的正文。
     if root.detail-open : ModalDialog {
         card-width: min(560px, root.width - 24px);
-        // 内容多高，弹窗就多高；超过窗口再滚动。
-        card-height: root.detail-text != ""
-            ? min(root.height - 40px, 520px)
-            : min(root.height - 40px, 104px + root.detail-rows.length * 32px);
+        // A part tall enough for its rows (then scrolls); one item tight when
+        // its text has left memory, tall when the text is there.
+        card-height: min(root.height - 40px,
+            root.detail-kind == "part"
+                ? min(520px, max(260px, 150px + root.detail-rows.length * 34px))
+                : root.detail-text != ""
+                    ? 520px
+                    : 220px);
         dismissed => { root.detail-dismissed(); }
         VerticalLayout {
             spacing: 8px;
@@ -884,7 +882,6 @@ export component ContextWindowPanel inherits Rectangle {
             HorizontalLayout {
                 height: 24px;
                 spacing: 8px;
-                alignment: start;
                 Rectangle {
                     width: 8px; height: 8px; border-radius: 4px;
                     y: (parent.height - self.height) / 2;
@@ -946,57 +943,112 @@ export component ContextWindowPanel inherits Rectangle {
                     }
                 }
             }
-            if root.detail-text == "" : ScrollView {
+            // 单个条目：只展示它自己的正文，不再把整个部位的条目铺在下面。
+            // 正文已随进程退出释放时，也只说明这一件事。
+            if root.detail-kind == "item" && root.detail-text == "" : ScrollView {
                 vertical-stretch: 1;
                 horizontal-scrollbar-policy: always-off;
+                content-width: root.detail-text-width;
+                VerticalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    Text {
+                        width: root.detail-text-width;
+                        text: I18n.cx_text_released;
+                        color: Theme.muted; font-size: Theme.font-xs;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+            // 部位：列出条目；点一行展开它的正文/schema，再点收起。
+            if root.detail-kind == "part" : ScrollView {
+                vertical-stretch: 1;
+                horizontal-scrollbar-policy: always-off;
+                content-width: root.detail-text-width;
                 VerticalLayout {
                     spacing: 2px;
                     alignment: start;
-                    if root.detail-kind == "item" : Text {
-                        width: 100%; height: 26px;
-                        text: I18n.cx_text_released;
-                        color: Theme.muted; font-size: Theme.font-xs;
-                        vertical-alignment: center;
-                    }
-                    for row in root.detail-rows : Rectangle {
-                        height: 30px;
-                        width: 100%;
-                        border-radius: 6px;
-                        background: row.on ? Theme.hover : transparent;
+                    for row in root.detail-rows : VerticalLayout {
+                        spacing: 0px;
                         Rectangle {
-                            width: 6px; height: 6px; border-radius: 3px;
-                            x: 6px; y: (parent.height - self.height) / 2;
-                            background: ContextColors.ink(row.slot);
-                        }
-                        Text {
-                            x: 18px; y: 0px;
-                            width: parent.width - 190px; height: parent.height;
-                            text: ContextText.item(row.tag, row.name, row.count);
-                            color: Theme.text; font-size: Theme.font-sm; font-weight: 500;
-                            vertical-alignment: center; overflow: elide;
-                        }
-                        if row.count > 1 && (row.tag == "tool" || row.tag == "result") : Text {
-                            x: parent.width - 178px; y: 0px; height: parent.height;
-                            text: "×" + row.count;
-                            color: Theme.muted; font-size: Theme.font-xs;
-                            vertical-alignment: center;
-                        }
-                        Rectangle {
-                            x: parent.width - 150px; y: (parent.height - 4px) / 2;
-                            width: 72px; height: 4px; border-radius: 2px;
-                            background: #ECEFF2;
+                            height: 30px;
+                            width: 100%;
+                            border-radius: 6px;
+                            background: row-hit.has-hover || root.detail-row-open == row.item ? Theme.hover : transparent;
+                            Image {
+                                x: 7px; y: (parent.height - self.height) / 2;
+                                width: 9px; height: 9px;
+                                source: root.detail-row-open == row.item
+                                    ? @image-url("../assets/icons/chevron-down.svg")
+                                    : @image-url("../assets/icons/chevron-right.svg");
+                                colorize: Theme.muted; image-fit: contain;
+                            }
                             Rectangle {
-                                x: 0px; y: 0px;
-                                width: max(2px, parent.width * row.ratio);
-                                height: parent.height; border-radius: 2px;
+                                width: 6px; height: 6px; border-radius: 3px;
+                                x: 22px; y: (parent.height - self.height) / 2;
                                 background: ContextColors.ink(row.slot);
                             }
+                            Text {
+                                x: 34px; y: 0px;
+                                width: parent.width - 210px; height: parent.height;
+                                text: ContextText.item(row.tag, row.name, row.count);
+                                color: Theme.text; font-size: Theme.font-sm; font-weight: 500;
+                                vertical-alignment: center; overflow: elide;
+                            }
+                            if row.count > 1 && (row.tag == "tool" || row.tag == "result") : Text {
+                                x: parent.width - 178px; y: 0px; height: parent.height;
+                                text: "×" + row.count;
+                                color: Theme.muted; font-size: Theme.font-xs;
+                                vertical-alignment: center;
+                            }
+                            Rectangle {
+                                x: parent.width - 150px; y: (parent.height - 4px) / 2;
+                                width: 72px; height: 4px; border-radius: 2px;
+                                background: #ECEFF2;
+                                Rectangle {
+                                    x: 0px; y: 0px;
+                                    width: max(2px, parent.width * row.ratio);
+                                    height: parent.height; border-radius: 2px;
+                                    background: ContextColors.ink(row.slot);
+                                }
+                            }
+                            Text {
+                                x: parent.width - 72px; y: 0px; width: 72px; height: parent.height;
+                                text: row.tokens-text;
+                                color: Theme.text-secondary; font-size: Theme.font-xs;
+                                vertical-alignment: center; horizontal-alignment: right;
+                            }
+                            row-hit := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.detail-row-toggle(row.item, row.slot, row.tag, row.name, row.count);
+                                }
+                            }
                         }
-                        Text {
-                            x: parent.width - 72px; y: 0px; width: 72px; height: parent.height;
-                            text: row.tokens-text;
-                            color: Theme.text-secondary; font-size: Theme.font-xs;
-                            vertical-alignment: center; horizontal-alignment: right;
+                        if root.detail-row-open == row.item : Rectangle {
+                            width: 100%;
+                            border-radius: 6px;
+                            background: #F6F7F9;
+                            VerticalLayout {
+                                padding-left: 10px;
+                                padding-right: 10px;
+                                padding-top: 8px;
+                                padding-bottom: 8px;
+                                if root.detail-row-text != "" : Text {
+                                    width: 100%;
+                                    text: root.detail-row-text;
+                                    color: Theme.text;
+                                    font-family: Theme.font-mono;
+                                    font-size: 11.5px;
+                                    wrap: word-wrap;
+                                }
+                                if root.detail-row-text == "" : Text {
+                                    width: 100%;
+                                    text: I18n.cx_text_released;
+                                    color: Theme.muted; font-size: Theme.font-xs;
+                                    wrap: word-wrap;
+                                }
+                            }
                         }
                     }
                 }

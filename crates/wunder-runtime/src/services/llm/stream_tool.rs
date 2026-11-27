@@ -164,6 +164,28 @@ pub(super) fn update_responses_tool_call_arguments(acc: &mut Vec<StreamToolCall>
     );
 }
 
+pub(super) fn update_responses_custom_tool_input(
+    acc: &mut Vec<StreamToolCall>,
+    payload: &Value,
+    mode: StreamToolFieldMode,
+) {
+    let item_id = payload.get("item_id").and_then(Value::as_str);
+    let call_id = payload
+        .get("call_id")
+        .or_else(|| payload.get("callId"))
+        .and_then(Value::as_str);
+    let input = payload
+        .get("delta")
+        .or_else(|| payload.get("input"))
+        .and_then(Value::as_str);
+    if input.is_none() && call_id.is_none() && item_id.is_none() {
+        return;
+    }
+    // custom 工具（custom_tool_call / freeform）的输入是语法正文本身，不能再当
+    // JSON 修补，否则补丁会被包装或截断。
+    upsert_response_tool_call(acc, item_id, call_id, None, input, mode, true);
+}
+
 pub(super) fn upsert_responses_tool_calls(acc: &mut Vec<StreamToolCall>, tool_calls: &[Value]) {
     for call in tool_calls {
         let Value::Object(map) = call else {
@@ -614,15 +636,12 @@ pub(super) fn finalize_stream_tool_calls(acc: &[StreamToolCall]) -> Option<Value
             continue;
         };
         let raw_arguments = resolve_stream_tool_call_arguments(call);
-        let arguments = if is_freeform_tool_name(&name) {
-            if call.raw_arguments {
-                raw_arguments.clone()
-            } else {
-                let input =
-                    extract_freeform_tool_input(&raw_arguments).unwrap_or(raw_arguments.clone());
-                serde_json::to_string(&json!({ "input": input }))
-                    .unwrap_or_else(|_| "{}".to_string())
-            }
+        // 自定义/语法工具（`custom_tool_call`）的输入是补丁正文本身，流里拿到的
+        // 是裸文本；要和 `response_tool_call_to_openai` 的非流式结果保持同一种
+        // 形态（`{"input": body}`），补丁工具才认得出参数。
+        let arguments = if is_freeform_tool_name(&name) && call.raw_arguments {
+            let input = extract_freeform_tool_input(&raw_arguments).unwrap_or(raw_arguments.clone());
+            serde_json::to_string(&json!({ "input": input })).unwrap_or_else(|_| "{}".to_string())
         } else {
             raw_arguments
         };

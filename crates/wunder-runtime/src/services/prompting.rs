@@ -607,14 +607,16 @@ fn build_system_prompt_skeleton(
         ]),
     );
 
-    // When `tool_call_mode=function_call`, tool specs and invocation protocol are
-    // provided by the LLM API itself, so we omit the entire tools-protocol block
-    // to keep the system prompt minimal.
-    let tools_block = if tool_call_mode != ToolCallMode::FunctionCall {
-        let tools_text = if !tools.is_empty() {
+    // `function_call` 与 `freeform_call` 都把工具定义挂在请求的 tools 字段上：
+    // 前者由 API 原生声明，后者只是让语法工具的输入形态变成自由文本，同样不写进
+    // 系统提示词。只有文本协议 `tool_call` 才把工具清单渲染成提示词正文。
+    let tools_block = if tool_call_mode == ToolCallMode::FunctionCall {
+        String::new()
+    } else {
+        let tools_text = if tool_call_mode == ToolCallMode::ToolCall && !tools.is_empty() {
             tools
                 .iter()
-                .map(|spec| render_tool_spec(spec, tool_call_mode == ToolCallMode::FreeformCall))
+                .map(|spec| render_tool_spec(spec))
                 .collect::<Vec<_>>()
                 .join("\n")
         } else {
@@ -666,8 +668,6 @@ fn build_system_prompt_skeleton(
             &tools_template,
             &HashMap::from([("available_tools_describe".to_string(), tools_text)]),
         )
-    } else {
-        String::new()
     };
 
     let skills_block = if builtin_skills.is_empty() && user_skills.is_empty() {
@@ -877,7 +877,7 @@ fn build_prompt_key(prompt: Option<&str>) -> String {
     format!("{:x}", hasher.finish())
 }
 
-fn render_tool_spec(spec: &ToolSpec, freeform_mode: bool) -> String {
+fn render_tool_spec(spec: &ToolSpec) -> String {
     // Text protocols pay for every tool definition in the system prompt, so
     // render the reduced model-facing surface instead of the authoritative
     // schema. Execution still validates against the full backend schema.
@@ -887,14 +887,7 @@ fn render_tool_spec(spec: &ToolSpec, freeform_mode: bool) -> String {
     let name = serde_json::to_string(&spec.name).unwrap_or_else(|_| "\"\"".to_string());
     let description =
         serde_json::to_string(&spec.description).unwrap_or_else(|_| "\"\"".to_string());
-    let rendered = render_prompt_tool_spec(spec, freeform_mode);
-    if let Some(format_value) = rendered.get("format") {
-        let format_value =
-            serde_json::to_string(format_value).unwrap_or_else(|_| "null".to_string());
-        return format!(
-            "{{\"name\":{name},\"description\":{description},\"format\":{format_value}}}"
-        );
-    }
+    let rendered = render_prompt_tool_spec(spec);
     let arguments = rendered.get("arguments").unwrap_or(&spec.input_schema);
     let arguments = serde_json::to_string(arguments).unwrap_or_else(|_| "null".to_string());
     format!("{{\"name\":{name},\"description\":{description},\"arguments\":{arguments}}}")

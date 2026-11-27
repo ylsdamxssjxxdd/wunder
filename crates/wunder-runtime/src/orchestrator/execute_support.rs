@@ -578,18 +578,16 @@ fn infer_tool_call_mode_from_frozen_system_prompt(prompt: &str) -> Option<ToolCa
     Some(ToolCallMode::ToolCall)
 }
 
-pub(super) fn uses_native_tool_api(
-    tool_call_mode: ToolCallMode,
-    llm_config: &LlmModelConfig,
-) -> bool {
-    match tool_call_mode {
-        ToolCallMode::FunctionCall => true,
-        ToolCallMode::FreeformCall => matches!(
-            crate::llm::resolve_openai_api_mode(llm_config),
-            crate::llm::OpenAiApiMode::Responses
-        ),
-        ToolCallMode::ToolCall => false,
-    }
+/// 只有文本协议（`tool_call`）才不走原生工具通道。
+///
+/// `freeform_call` 描述的是 apply_patch 这类语法工具的输入形态，不是「不给模型
+/// 工具定义」：ChatCompletions 下 apply_patch 退化为带 `input` 字段的普通函数，
+/// Responses 下才用 `custom` + grammar。两种 API 都必须把工具挂到请求的 tools
+/// 字段上，否则模型手上没有任何可调用工具——普通模型只能在正文里编造调用，
+/// 自带工具的智能体会直接用自己的工具，引擎两边都收不到 tool call，工作过程也就
+/// 只剩最后一段回复。
+pub(super) fn uses_native_tool_api(tool_call_mode: ToolCallMode) -> bool {
+    !matches!(tool_call_mode, ToolCallMode::ToolCall)
 }
 
 /// 从 assistant 已落盘的 tool_calls 项里取 id。数字 id 与历史规整、

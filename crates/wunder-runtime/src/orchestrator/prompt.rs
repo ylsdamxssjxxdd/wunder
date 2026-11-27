@@ -1,5 +1,5 @@
 use super::*;
-use crate::tools::build_responses_freeform_tool;
+use crate::tools::build_freeform_tool;
 use serde::{Deserialize, Serialize};
 
 const MAX_FUNCTION_NAME_LEN: usize = 64;
@@ -218,6 +218,7 @@ impl Orchestrator {
         _user_id: &str,
         _current_agent_id: Option<&str>,
         workspace_id: &str,
+        responses_api: bool,
     ) -> Option<FunctionTooling> {
         if allowed_tool_names.is_empty() {
             return None;
@@ -295,10 +296,16 @@ impl Orchestrator {
             } else {
                 spec.description
             };
+            // 语法工具（custom + grammar）只有 Responses API 认识；ChatCompletions
+            // 里把它降级成带 `input` 字段的普通函数，缺了这一步 chat 端点上的
+            // freeform 会把一个没有参数的工具发出去，模型根本调不动。
             if tool_call_mode == ToolCallMode::FreeformCall {
-                if let Some(tool) =
-                    build_responses_freeform_tool(&spec.name, &description, &function_name)
-                {
+                if let Some(tool) = build_freeform_tool(
+                    &spec.name,
+                    &description,
+                    &function_name,
+                    responses_api,
+                ) {
                     tools.push(tool);
                     continue;
                 }

@@ -116,7 +116,7 @@ pub(crate) use context::{
 };
 pub use dispatch::{execute_builtin_tool, execute_tool};
 pub(crate) use freeform::{
-    build_responses_freeform_tool, extract_freeform_tool_input, is_freeform_tool_name,
+    build_freeform_tool, extract_freeform_tool_input, is_freeform_tool_name,
     render_prompt_tool_spec,
 };
 pub(crate) use lsp_support::touch_lsp_file;

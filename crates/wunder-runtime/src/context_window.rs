@@ -267,14 +267,15 @@ impl ContextWindowSnapshot {
     }
 
     /// The memory-only text behind one card row. `slot` is the shell's 1-based
-    /// palette index; the tag/name pair identifies the row exactly as the
-    /// snapshot recorded it.
-    pub fn item_text(&self, slot: i32, tag: &str, name: &str) -> Option<String> {
+    /// palette index; tag, name and count identify the row exactly as the
+    /// snapshot recorded it. Counts matter for turns: every turn carries an
+    /// empty name, so the ordinal is what keeps "turn 1" and "turn 2" apart.
+    pub fn item_text(&self, slot: i32, tag: &str, name: &str, count: i64) -> Option<String> {
         let kind = PART_KINDS.get(slot.checked_sub(1)? as usize)?;
         let part = self.part(kind)?;
         part.items
             .iter()
-            .find(|item| item.tag == tag && item.name == name)
+            .find(|item| item.tag == tag && item.name == name && item.count == count)
             .map(|item| item.text.clone())
             .filter(|text| !text.is_empty())
     }
@@ -366,6 +367,7 @@ impl ContextTextCache {
         slot: i32,
         tag: &str,
         name: &str,
+        count: i64,
     ) -> Option<String> {
         let key = text_cache_key(user_id, session_id);
         let mut state = self.inner.lock();
@@ -373,7 +375,7 @@ impl ContextTextCache {
         let tick = state.tick;
         let entry = state.entries.get_mut(&key)?;
         entry.tick = tick;
-        entry.snapshot.item_text(slot, tag, name)
+        entry.snapshot.item_text(slot, tag, name, count)
     }
 
     pub fn forget_session(&self, user_id: &str, session_id: &str) {
@@ -637,11 +639,11 @@ mod tests {
             Some(&[json!({"type":"function","function":{"name":"read_file","description":"d"}})]),
         );
         assert_eq!(
-            snapshot.item_text(1, "prompt", ""),
+            snapshot.item_text(1, "prompt", "", 1),
             Some("agent instructions".to_string())
         );
         assert_eq!(
-            snapshot.item_text(4, "result", "read_file"),
+            snapshot.item_text(4, "result", "read_file", 1),
             Some("file body".to_string())
         );
         let stored = serde_json::to_string(&snapshot).expect("snapshot serializes");
@@ -649,7 +651,21 @@ mod tests {
         assert!(!stored.contains("file body"));
         let reloaded: ContextWindowSnapshot =
             serde_json::from_str(&stored).expect("snapshot parses");
-        assert_eq!(reloaded.item_text(1, "prompt", ""), None);
+        assert_eq!(reloaded.item_text(1, "prompt", "", 1), None);
+    }
+
+    #[test]
+    fn turn_text_uses_the_turn_ordinal() {
+        let snapshot = ContextWindowSnapshot::build("p", "m", 8_000, &request(), None);
+        let first = snapshot
+            .item_text(5, "turn", "", 1)
+            .expect("first turn text");
+        let second = snapshot
+            .item_text(5, "turn", "", 2)
+            .expect("second turn text");
+        assert!(first.starts_with("first question"), "{first}");
+        assert!(second.starts_with("second question"), "{second}");
+        assert_ne!(first, second);
     }
 
     #[test]
@@ -660,7 +676,7 @@ mod tests {
         let system = snapshot.part("system").expect("system part");
         assert_eq!(system.items[0].text.len(), long.len());
         assert_eq!(
-            snapshot.item_text(1, "prompt", ""),
+            snapshot.item_text(1, "prompt", "", 1),
             Some(system.items[0].text.clone())
         );
     }
@@ -670,9 +686,9 @@ mod tests {
         let snapshot = ContextWindowSnapshot::build("p", "m", 8_000, &request(), None);
         let cache = ContextTextCache::default();
         cache.put("u", "s", snapshot);
-        let text = cache.text("u", "s", 5, "turn", "").expect("cached turn text");
+        let text = cache.text("u", "s", 5, "turn", "", 1).expect("cached turn text");
         assert!(text.starts_with("first question"));
         cache.forget_session("u", "s");
-        assert_eq!(cache.text("u", "s", 5, "turn", ""), None);
+        assert_eq!(cache.text("u", "s", 5, "turn", "", 1), None);
     }
 }

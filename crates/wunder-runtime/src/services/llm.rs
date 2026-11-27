@@ -70,7 +70,8 @@ use stream_tool::merge_stream_delta_field;
 use stream_tool::{
     StreamToolCall, StreamToolFieldMode, finalize_stream_tool_calls, merge_stream_tool_call_item,
     resolve_stream_tool_call_arguments, resolve_stream_tool_call_name,
-    update_responses_tool_call_arguments, update_responses_tool_call_from_item,
+    update_responses_custom_tool_input, update_responses_tool_call_arguments,
+    update_responses_tool_call_from_item,
     update_stream_tool_calls_delta, update_stream_tool_calls_snapshot, upsert_responses_tool_calls,
 };
 
@@ -2757,6 +2758,25 @@ where
                 }
             }
         }
+        "response.output_item.done" => {
+            if let Some(item) = payload.get("item") {
+                update_responses_tool_call_from_item(tool_calls_accumulator, item);
+            }
+        }
+        "response.custom_tool_call_input.delta" => {
+            update_responses_custom_tool_input(
+                tool_calls_accumulator,
+                payload,
+                StreamToolFieldMode::Delta,
+            );
+        }
+        "response.custom_tool_call_input.done" => {
+            update_responses_custom_tool_input(
+                tool_calls_accumulator,
+                payload,
+                StreamToolFieldMode::Snapshot,
+            );
+        }
         "response.function_call_arguments.delta" => {
             update_responses_tool_call_arguments(tool_calls_accumulator, payload);
             if let Some(preview_delta) = sync_visible_final_response_tool_delta(
@@ -3376,6 +3396,62 @@ mod tests {
         assert_eq!(
             finalized[0]["function"]["arguments"],
             "{\"path\":\"notes.txt\"}"
+        );
+    }
+
+    #[tokio::test]
+    async fn process_sse_event_block_collects_custom_tool_call_input_deltas() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let mut on_delta = |_content: String, _reasoning: String| async { Ok(()) };
+
+        // custom 工具（freeform）的输入不走 function_call_arguments，而是
+        // item.added + custom_tool_call_input.delta + output_item.done 三段。
+        let done = process_sse_event_block(
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"custom_tool_call\",\"id\":\"ctc_1\",\"call_id\":\"call_1\",\"name\":\"apply_patch\",\"input\":\"\"}}",
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect("process custom item added");
+        assert!(!done);
+
+        let done = process_sse_event_block(
+            "data: {\"type\":\"response.custom_tool_call_input.delta\",\"item_id\":\"ctc_1\",\"call_id\":\"call_1\",\"delta\":\"*** Begin Patch\\n*** Add File: notes.txt\\n+hello\\n\"}",
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect("process custom input delta");
+        assert!(!done);
+
+        let done = process_sse_event_block(
+            "data: {\"type\":\"response.custom_tool_call_input.delta\",\"item_id\":\"ctc_1\",\"call_id\":\"call_1\",\"delta\":\"*** End Patch\"}",
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect("process custom input trailer");
+        assert!(!done);
+
+        let finalized = finalize_stream_tool_calls(&tool_calls).expect("tool calls should exist");
+        assert_eq!(finalized.as_array().map(Vec::len), Some(1));
+        assert_eq!(finalized[0]["id"], "call_1");
+        assert_eq!(finalized[0]["function"]["name"], "apply_patch");
+        assert_eq!(
+            finalized[0]["function"]["arguments"],
+            "{\"input\":\"*** Begin Patch\\n*** Add File: notes.txt\\n+hello\\n*** End Patch\"}"
         );
     }
 

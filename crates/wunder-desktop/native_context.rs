@@ -47,10 +47,11 @@ impl super::NativeDesktop {
         slot: i32,
         tag: &str,
         name: &str,
+        count: i64,
     ) -> Option<String> {
         self.state()
             .workspace
-            .context_text(self.user_id(), session, slot, tag, name)
+            .context_text(self.user_id(), session, slot, tag, name, count)
     }
 
     /// What the thread's last request was made of. The context card is opened

@@ -18,30 +18,46 @@ pub(crate) fn freeform_tool_format(name: &str) -> Option<Value> {
     }))
 }
 
-pub(crate) fn build_responses_freeform_tool(
+pub(crate) fn build_freeform_tool(
     tool_name: &str,
     description: &str,
     model_tool_name: &str,
+    responses_api: bool,
 ) -> Option<Value> {
     let format = freeform_tool_format(tool_name)?;
+    if responses_api {
+        return Some(json!({
+            "type": "custom",
+            "name": model_tool_name,
+            "description": description,
+            "format": format,
+        }));
+    }
+    // ChatCompletions 没有 custom/grammar 工具类型：同一个语法工具退化成只带一个
+    // 字符串参数的普通函数，输入依旧是补丁正文本身。
     Some(json!({
-        "type": "custom",
-        "name": model_tool_name,
-        "description": description,
-        "format": format,
+        "type": "function",
+        "function": {
+            "name": model_tool_name,
+            "description": format!(
+                "{description}\n\nThe `input` argument is the raw patch body (from `*** Begin Patch` to `*** End Patch`), not a JSON-encoded patch description."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "input": {
+                        "type": "string",
+                        "description": "Raw patch body, `*** Begin Patch` ... `*** End Patch`."
+                    }
+                },
+                "required": ["input"],
+                "additionalProperties": false
+            }
+        }
     }))
 }
 
-pub(crate) fn render_prompt_tool_spec(spec: &ToolSpec, freeform_mode: bool) -> Value {
-    if freeform_mode {
-        if let Some(format) = freeform_tool_format(&spec.name) {
-            return json!({
-                "name": spec.name,
-                "description": spec.description,
-                "format": format,
-            });
-        }
-    }
+pub(crate) fn render_prompt_tool_spec(spec: &ToolSpec) -> Value {
     json!({
         "name": spec.name,
         "description": spec.description,
@@ -85,15 +101,26 @@ mod tests {
     fn merged_text_edit_keeps_json_parameters_even_in_freeform_mode() {
         for name in ["文本编辑", "edit", "编辑", "str_replace_editor"] {
             assert!(!is_freeform_tool_name(name));
-            assert!(build_responses_freeform_tool(name, "edit", "edit").is_none());
+            assert!(build_freeform_tool(name, "edit", "edit", true).is_none());
+            assert!(build_freeform_tool(name, "edit", "edit", false).is_none());
         }
-        let spec = super::super::catalog::builtin_tool_specs_with_language("en-US")
-            .into_iter()
-            .find(|spec| spec.name == "文本编辑")
-            .unwrap();
-        let rendered = render_prompt_tool_spec(&spec, true);
-        assert_eq!(rendered["arguments"], spec.input_schema);
-        assert!(rendered.get("format").is_none());
+    }
+
+    #[test]
+    fn freeform_tool_degrades_to_input_function_on_chat_completions() {
+        let tool = build_freeform_tool("apply_patch", "patch tool", "apply_patch", false)
+            .expect("chat freeform tool");
+        assert_eq!(tool["type"], "function");
+        assert_eq!(tool["function"]["name"], "apply_patch");
+        assert_eq!(
+            tool["function"]["parameters"]["required"],
+            json!(["input"])
+        );
+        assert_eq!(
+            tool["function"]["parameters"]["properties"]["input"]["type"],
+            "string"
+        );
+        assert!(tool["function"]["parameters"]["additionalProperties"] == json!(false));
     }
 
     #[test]

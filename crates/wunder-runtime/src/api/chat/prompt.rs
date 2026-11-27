@@ -400,6 +400,15 @@ fn build_prompt_tooling_preview_payload(
             )
         })
         .collect::<HashMap<String, String>>();
+    let responses_api = resolve_chat_model_name(&user_context.config, agent_record)
+        .and_then(|name| user_context.config.llm.models.get(&name).cloned())
+        .map(|model| {
+            matches!(
+                crate::llm::resolve_openai_api_mode(&model),
+                crate::llm::OpenAiApiMode::Responses
+            )
+        })
+        .unwrap_or(false);
     let tooling = state.kernel.orchestrator.build_function_tooling(
         &user_context.config,
         &user_context.skills,
@@ -409,6 +418,7 @@ fn build_prompt_tooling_preview_payload(
         user_id,
         agent_record.map(|record| record.agent_id.as_str()),
         user_id,
+        responses_api,
     );
     let llm_tools = tooling
         .as_ref()

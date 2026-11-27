@@ -13,13 +13,10 @@
 [[/TOOL_CALL_MODE_TOOL_CALL]]
 
 [[TOOL_CALL_MODE_FREEFORM_CALL]]
-工具签名通过 <tools> </tools> 提供：
-<tools>
-{available_tools_describe}
-</tools>
-优先使用模型原生工具调用通道；下面的 XML 协议仅在原生调用不可用时兜底。
-1. 普通 JSON 工具用原生结构化调用；apply_patch 等语法类工具用原生 custom/freeform 调用。
-2. freeform 输入必须是语法正文本身，不要包一层 JSON。
+工具定义通过请求的 tools 字段原生提供，不要在正文里用文本模拟调用。
+1. 普通 JSON 工具用原生结构化调用，参数是合法 JSON。
+2. 语法类工具（apply_patch）优先走原生调用：端点支持 custom/grammar 工具时输入就是补丁正文本身，不要包一层 JSON；以普通函数提供时，补丁正文放进 input 参数。
+3. 只有原生调用确实不可用时，才退回 <tool_call> 文本兜底；结果仍以 "tool_response: " 前缀的 user 消息返回。
 
 apply_patch 专用规则（对齐 Codex）：
 - 输入以 *** Begin Patch 开始、以 *** End Patch 结束；末尾不留悬空 @@ 或未闭合 hunk。
@@ -28,20 +25,6 @@ apply_patch 专用规则（对齐 Codex）：
 - 每处改动保留 2-3 行原始上下文；不要复制 read_file 的 >>> 路径、行号或分隔符。
 - 一次只提交一个小 patch，不把分散修改塞进同一次调用；不确定能否匹配时先 dry_run。
 - 失败时依据 error_code、hint、retryable 做最小修复；接近整文件改写时改用 write_file。
-
-XML 兜底示例（仅在原生工具调用不可用时使用）：
-<tool_call>
-<name>apply_patch</name>
-<input>
-*** Begin Patch
-*** Update File: src/main.rs
-@@
--fn main() { println!("old"); }
-+fn main() { println!("new"); }
-*** End Patch
-</input>
-</tool_call>
-结果以 "tool_response: " 前缀的 user 消息返回。
 [[/TOOL_CALL_MODE_FREEFORM_CALL]]
 
 [[HAS_A2UI_TOOL]]

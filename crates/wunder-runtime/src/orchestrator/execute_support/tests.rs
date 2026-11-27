@@ -977,61 +977,12 @@ fn resolve_cached_memory_recall_result_respects_revision() {
 }
 
 #[test]
-fn uses_native_tool_api_supports_freeform_only_on_responses_api() {
-    let base_config = || LlmModelConfig {
-        enable: None,
-        provider: None,
-        api_mode: None,
-        base_url: None,
-        api_key: None,
-        model: None,
-        temperature: None,
-        timeout_s: None,
-        max_rounds: None,
-        max_context: None,
-        max_output: None,
-        thinking_token_budget: None,
-        support_vision: None,
-        support_hearing: None,
-        stream: None,
-        stream_include_usage: None,
-        history_compaction_ratio: None,
-        tool_call_mode: None,
-        reasoning_effort: None,
-        model_type: None,
-        stop: None,
-        mock_if_unconfigured: None,
-        ..Default::default()
-    };
-    let mut function_call_config = base_config();
-    function_call_config.tool_call_mode = Some("function_call".to_string());
-
-    let mut freeform_responses_config = base_config();
-    freeform_responses_config.provider = Some("openai".to_string());
-    freeform_responses_config.model = Some("gpt-5.2".to_string());
-    freeform_responses_config.tool_call_mode = Some("freeform_call".to_string());
-
-    let mut freeform_chat_config = base_config();
-    freeform_chat_config.provider = Some("openai_compatible".to_string());
-    freeform_chat_config.model = Some("gpt-5.2".to_string());
-    freeform_chat_config.tool_call_mode = Some("freeform_call".to_string());
-
-    assert!(uses_native_tool_api(
-        ToolCallMode::FunctionCall,
-        &function_call_config,
-    ));
-    assert!(!uses_native_tool_api(
-        ToolCallMode::ToolCall,
-        &function_call_config
-    ));
-    assert!(uses_native_tool_api(
-        ToolCallMode::FreeformCall,
-        &freeform_responses_config,
-    ));
-    assert!(!uses_native_tool_api(
-        ToolCallMode::FreeformCall,
-        &freeform_chat_config,
-    ));
+fn uses_native_tool_api_except_for_text_protocol() {
+    assert!(uses_native_tool_api(ToolCallMode::FunctionCall));
+    assert!(!uses_native_tool_api(ToolCallMode::ToolCall));
+    // freeform 只改语法工具的输入形态，工具定义本身必须挂在请求的 tools 字段上，
+    // 否则模型拿不到任何可调用工具，tool call 也不会进入工作过程。
+    assert!(uses_native_tool_api(ToolCallMode::FreeformCall));
 }
 
 #[test]

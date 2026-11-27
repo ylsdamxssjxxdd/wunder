@@ -647,7 +647,7 @@ impl Orchestrator {
             let virtual_model = crate::services::virtual_llm::is_virtual_replay_provider(
                 llm_config.provider.as_deref(),
             );
-            let function_tooling = if (uses_native_tool_api(tool_call_mode, &llm_config)
+            let function_tooling = if (uses_native_tool_api(tool_call_mode)
                 || virtual_model)
                 && !prepared.skip_tool_calls
             {
@@ -660,6 +660,10 @@ impl Orchestrator {
                     &user_id,
                     prepared.agent_id.as_deref(),
                     &prepared.workspace_id,
+                    matches!(
+                        crate::llm::resolve_openai_api_mode(&llm_config),
+                        crate::llm::OpenAiApiMode::Responses
+                    ),
                 )
             } else {
                 None

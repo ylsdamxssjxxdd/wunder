@@ -14,6 +14,7 @@ ENTRIES = [
     ("cx_more_items", "另外 {} 项", "{} more", ["count"]),
     ("cx_item_prompt", "agent 提示词", "Agent prompt"),
     ("cx_item_reminder", "系统提醒", "System reminders"),
+    ("cx_item_tool", "工具定义", "Tool definition"),
     ("cx_image", "图片 ×{}", "Images ×{}", ["count"]),
     ("cx_turn", "第 {} 轮", "Turn {}", ["count"]),
     ("cx_item_other", "内容", "Content"),
@@ -25,8 +26,6 @@ ENTRIES = [
     ("cx_contents", "内容", "Contents"),
     ("cx_all", "全部", "All"),
     ("cx_nothing", "这里没有内容", "Nothing here"),
-    ("cx_show_all", "显示全部 {}", "Show all {}", ["count"]),
-    ("cx_show_less", "收起", "Show fewer"),
     (
         "cx_no_request",
         "本线程还没有发出请求；第一次发送后，这里显示它实际占用的构成。",

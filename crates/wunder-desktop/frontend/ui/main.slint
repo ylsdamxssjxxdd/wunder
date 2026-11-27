@@ -1141,12 +1141,10 @@ export component MainWindow inherits Window {
     in-out property <string> context-counts;
     // ---- 上下文窗口卡片 ----
     // 数据来自引擎在请求发出前记下的构成；这里只承接投影结果。卡片由输入区
-    // 模型浮层里的「上下文」一行打开，折叠、视图和页签都只是视图状态。
+    // 模型浮层里的「上下文」一行打开，视图和页签都只是视图状态。
     in-out property <bool> context-window-open: false;
-    in-out property <bool> context-window-folded: false;
     in-out property <bool> context-look-map: true;
     in-out property <int> context-tab: 0;
-    in-out property <bool> context-show-all: false;
     in-out property <[ContextPartRow]> context-parts: [];
     in-out property <[ContextItemRow]> context-items: [];
     in-out property <[ContextTile]> context-tiles: [];
@@ -1159,7 +1157,6 @@ export component MainWindow inherits Window {
     in-out property <bool> context-measured: false;
     in-out property <bool> context-has-data: false;
     in-out property <string> context-model-label;
-    in-out property <int> context-hidden-count: 0;
     // 方块/格子的悬停提示卡；文字由 Rust 按选中的条目填。
     in-out property <bool> context-tip-open: false;
     in-out property <string> context-tip-kind;
@@ -1182,6 +1179,8 @@ export component MainWindow inherits Window {
     in-out property <string> context-detail-pct;
     in-out property <string> context-detail-text;
     in-out property <[ContextItemRow]> context-detail-rows: [];
+    in-out property <int> context-detail-row-open: -1;
+    in-out property <string> context-detail-row-text;
     callback load-context-window();
     callback context-filter-changed();
     callback context-tile-hover(int);
@@ -1190,9 +1189,10 @@ export component MainWindow inherits Window {
     callback context-cell-hover(int);
     callback context-cell-leave();
     callback context-cell-open(int);
-    callback context-row-open(int, string, string);
+    callback context-row-open(int, string, string, int);
     callback context-legend-open(int);
     callback context-map-resized(length, length);
+    callback context-detail-row-toggle(int, int, string, string, int);
     callback context-detail-dismissed();
     in-out property <string> reasoning-effort: "default";
     callback stop-generation();
@@ -2514,10 +2514,7 @@ export component MainWindow inherits Window {
         has-data: root.context-has-data;
         model-label: root.context-model-label;
         tab: root.context-tab;
-        show-all: root.context-show-all;
         look-map: root.context-look-map;
-        folded: root.context-window-folded;
-        hidden-count: root.context-hidden-count;
         tip-open: root.context-tip-open;
         tip-kind: root.context-tip-kind;
         tip-slot: root.context-tip-slot;
@@ -2538,8 +2535,9 @@ export component MainWindow inherits Window {
         detail-pct: root.context-detail-pct;
         detail-text: root.context-detail-text;
         detail-rows: root.context-detail-rows;
+        detail-row-open: root.context-detail-row-open;
+        detail-row-text: root.context-detail-row-text;
         dismissed => { root.context-window-open = false; }
-        toggle-fold => { root.context-window-folded = !root.context-window-folded; }
         toggle-look => { root.context-look-map = !root.context-look-map; }
         tile-hover(index) => { root.context-tile-hover(index); }
         tile-leave => { root.context-tile-leave(); }
@@ -2547,17 +2545,13 @@ export component MainWindow inherits Window {
         cell-hover(index) => { root.context-cell-hover(index); }
         cell-leave => { root.context-cell-leave(); }
         cell-open(index) => { root.context-cell-open(index); }
-        row-open(slot, tag, name) => { root.context-row-open(slot, tag, name); }
+        row-open(slot, tag, name, count) => { root.context-row-open(slot, tag, name, count); }
         legend-open(slot) => { root.context-legend-open(slot); }
         map-resized(width, height) => { root.context-map-resized(width, height); }
+        detail-row-toggle(index, slot, tag, name, count) => { root.context-detail-row-toggle(index, slot, tag, name, count); }
         detail-dismissed => { root.context-detail-dismissed(); }
         set-tab(slot) => {
             root.context-tab = slot;
-            root.context-show-all = false;
-            root.context-filter-changed();
-        }
-        toggle-show-all => {
-            root.context-show-all = !root.context-show-all;
             root.context-filter-changed();
         }
     }

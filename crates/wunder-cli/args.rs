@@ -108,6 +108,7 @@ pub struct GlobalArgs {
 pub enum ToolCallModeArg {
     ToolCall,
     FunctionCall,
+    FreeformCall,
 }
 
 impl ToolCallModeArg {
@@ -115,6 +116,7 @@ impl ToolCallModeArg {
         match self {
             Self::ToolCall => "tool_call",
             Self::FunctionCall => "function_call",
+            Self::FreeformCall => "freeform_call",
         }
     }
 }

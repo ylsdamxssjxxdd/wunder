@@ -2162,9 +2162,10 @@ impl WorkspaceManager {
         slot: i32,
         tag: &str,
         name: &str,
+        count: i64,
     ) -> Option<String> {
         self.context_texts
-            .text(user_id, session_id, slot, tag, name)
+            .text(user_id, session_id, slot, tag, name, count)
     }
 
     pub fn forget_context_texts(&self, user_id: &str, session_id: &str) {

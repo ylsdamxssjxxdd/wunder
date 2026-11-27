@@ -1999,6 +1999,11 @@
   "en": "System reminders"
  },
  {
+  "key": "cx_item_tool",
+  "zh": "工具定义",
+  "en": "Tool definition"
+ },
+ {
   "key": "cx_image",
   "zh": "图片 ×{}",
   "en": "Images ×{}",
@@ -2058,19 +2063,6 @@
   "key": "cx_nothing",
   "zh": "这里没有内容",
   "en": "Nothing here"
- },
- {
-  "key": "cx_show_all",
-  "zh": "显示全部 {}",
-  "en": "Show all {}",
-  "params": [
-   "count"
-  ]
- },
- {
-  "key": "cx_show_less",
-  "zh": "收起",
-  "en": "Show fewer"
  },
  {
   "key": "cx_no_request",
