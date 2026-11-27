@@ -14,7 +14,7 @@ import {
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { appendQueuePriorityAction } from "./monitor-queue.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20261016-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20261127-01";
 import { openTrajectoryPage } from "./trajectory-view.js?v=20261118-01";
 import { filterRemovedSwarmTools } from "../shared/deprecated-tools.js";
 
@@ -39,6 +39,13 @@ let userDashboardLoading = false;
 let monitorPollMode = "full";
 let monitorPollIntervalMs = APP_CONFIG.monitorPollIntervalMs;
 let monitorLoadPromise = null;
+// 容器内存是后加的监控字段，直接取 DOM，避免所有模块都升级 elements.js 的缓存版本。
+const monitorMemoryDom = {
+  row: document.getElementById("metricContainerMemoryRow"),
+  value: document.getElementById("metricContainerMemory"),
+  detail: document.getElementById("metricContainerMemoryDetail"),
+  releaseButton: document.getElementById("monitorMemoryReleaseBtn"),
+};
 // 工具热力图按总调用次数渐变配色（10/20/30/40 次为蓝/绿/黄/红）
 const TOOL_HEATMAP_ZERO_RGB = [230, 233, 240];
 const TOOL_HEATMAP_MAX_VALUE = 40;
@@ -1253,6 +1260,41 @@ const renderToolHeatmap = (toolStats) => {
   restoreHorizontalScrollState(elements.toolHeatmapWrap, scrollSnapshot);
 };
 
+// 渲染容器/ cgroup 内存；桌面版没有 cgroup 时隐藏该行与释放按钮。
+const renderContainerMemory = (cgroup) => {
+  const row = monitorMemoryDom.row;
+  const button = monitorMemoryDom.releaseButton;
+  if (!cgroup?.available) {
+    if (row) {
+      row.hidden = true;
+    }
+    if (button) {
+      button.hidden = true;
+    }
+    return;
+  }
+  if (row) {
+    row.hidden = false;
+  }
+  if (button) {
+    button.hidden = false;
+  }
+  const current = Number(cgroup.current_bytes) || 0;
+  const limit = Number(cgroup.limit_bytes) || 0;
+  if (monitorMemoryDom.value) {
+    monitorMemoryDom.value.textContent = limit
+      ? `${formatBytes(current)} / ${formatBytes(limit)}`
+      : formatBytes(current);
+  }
+  if (monitorMemoryDom.detail) {
+    monitorMemoryDom.detail.textContent = t("monitor.metric.cgroup.detail", {
+      anon: formatBytes(Number(cgroup.anon_bytes) || 0),
+      cache: formatBytes(Number(cgroup.file_bytes) || 0),
+      reclaimable: formatBytes(Number(cgroup.inactive_file_bytes) || 0),
+    });
+  }
+};
+
 // 渲染系统监视指标
 const renderMonitorMetrics = (system) => {
   if (!system) {
@@ -1269,6 +1311,7 @@ const renderMonitorMetrics = (system) => {
       elements.metricLogUsageDetail.textContent = "";
     }
     elements.metricWorkspaceUsage.textContent = "-";
+    renderContainerMemory(null);
     return;
   }
   elements.metricCpu.textContent = `${system.cpu_percent.toFixed(1)}%`;
@@ -1279,6 +1322,7 @@ const renderMonitorMetrics = (system) => {
   });
   elements.metricProcessMemory.textContent = formatBytes(system.process_rss);
   elements.metricProcessCpu.textContent = `${system.process_cpu_percent.toFixed(1)}%`;
+  renderContainerMemory(system.cgroup);
   elements.metricUptime.textContent = formatDurationLong(system.uptime_s);
   const hasDisk = Number.isFinite(system.disk_total) && system.disk_total > 0;
   elements.metricDisk.textContent =
@@ -1300,6 +1344,45 @@ const renderMonitorMetrics = (system) => {
     });
   }
   elements.metricWorkspaceUsage.textContent = formatBytes(system.workspace_used);
+};
+
+const releaseMonitorMemory = async () => {
+  if (!window.confirm(t("monitor.memory.releaseConfirm"))) {
+    return;
+  }
+  const button = monitorMemoryDom.releaseButton;
+  if (button) {
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+  }
+  try {
+    const response = await fetch(`${getWunderBase()}/admin/memory/release`, {
+      method: "POST",
+    });
+    if (!response.ok) {
+      throw new Error(t("common.requestFailed", { status: response.status }));
+    }
+    const result = await response.json();
+    const before = Number(result.before?.process?.vm_rss_bytes) || 0;
+    const after = Number(result.after?.process?.vm_rss_bytes) || 0;
+    notify(
+      t("monitor.memory.released", {
+        before: formatBytes(before),
+        after: formatBytes(after),
+      }),
+      "success"
+    );
+    await loadMonitorData();
+  } catch (error) {
+    const message = t("monitor.memory.releaseFailed", { message: error.message });
+    notify(message, "error");
+    appendLog(message);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+    }
+  }
 };
 
 const toDatetimeLocalValue = (date) => {
@@ -4406,6 +4489,9 @@ export const initMonitorPanel = () => {
       appendLog(t("monitor.refreshFailed", { message: error.message }));
       notify(t("monitor.refreshFailed", { message: error.message }), "error");
     }
+  });
+  monitorMemoryDom.releaseButton?.addEventListener("click", () => {
+    void releaseMonitorMemory();
   });
   if (elements.monitorDetailExport) {
     elements.monitorDetailExport.addEventListener("click", exportMonitorDetailLogs);

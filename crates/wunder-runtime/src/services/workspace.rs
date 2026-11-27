@@ -3065,8 +3065,111 @@ impl WorkspaceManager {
             .unwrap_or(0)
     }
 
+    /// Diagnostics only: live cache occupancy, never file contents.
+    pub fn memory_stats(&self) -> Value {
+        let tree_entries;
+        let tree_bytes;
+        let tree_dirty;
+        {
+            let cache = self.tree_cache.lock();
+            tree_entries = cache.cache.len();
+            tree_bytes = cache.cache.values().map(|entry| entry.tree.len()).sum::<usize>();
+            tree_dirty = cache.dirty.len();
+        }
+        let search_users;
+        let search_items;
+        let search_bytes;
+        {
+            let cache = self.search_cache.lock();
+            search_users = cache.len();
+            search_items = cache.values().map(|index| index.entries.len()).sum::<usize>();
+            search_bytes = cache
+                .values()
+                .flat_map(|index| index.entries.iter())
+                .map(|entry| {
+                    entry.entry.name.len()
+                        + entry.entry.path.len()
+                        + entry.entry.entry_type.len()
+                        + entry.entry.updated_time.len()
+                        + entry.name_lower.len()
+                        + 64
+                })
+                .sum::<usize>();
+        }
+        let usage_entries;
+        {
+            let cache = self.usage_stats_cache.lock();
+            usage_entries = cache.entries.len();
+        }
+        let user_usage_users;
+        {
+            let cache = self.user_usage_cache.lock();
+            user_usage_users = cache.data.len();
+        }
+        let (context_entries, context_bytes, context_budget) = self.context_texts.memory_stats();
+        json!({
+            "tree_cache": {
+                "entries": tree_entries,
+                "bytes": tree_bytes,
+                "dirty_entries": tree_dirty,
+                "max_users": self.tree_cache_max_users,
+            },
+            "search_cache": {
+                "users": search_users,
+                "items": search_items,
+                "bytes_estimate": search_bytes,
+                "max_users": SEARCH_CACHE_MAX_USERS,
+                "max_items_per_index": SEARCH_INDEX_MAX_ITEMS,
+            },
+            "usage_stats_cache_entries": usage_entries,
+            "user_usage_cache_users": user_usage_users,
+            "versions_entries": self.versions.len(),
+            "context_text_cache": {
+                "entries": context_entries,
+                "bytes": context_bytes,
+                "budget_bytes": context_budget,
+            },
+        })
+    }
+
     pub fn bump_version(&self, user_id: &str) {
         self.mark_tree_dirty(user_id);
+    }
+
+    /// Admin-only memory release: drop regenerable workspace caches. File
+    /// contents and versions are untouched; the next request rebuilds on demand.
+    pub fn release_memory_caches(&self) -> Value {
+        let (tree_entries, search_users, usage_entries, user_usage_users, context_entries);
+        {
+            let mut cache = self.tree_cache.lock();
+            tree_entries = cache.cache.len();
+            cache.cache.clear();
+            cache.dirty.clear();
+        }
+        {
+            let mut cache = self.search_cache.lock();
+            search_users = cache.len();
+            cache.clear();
+        }
+        {
+            let mut cache = self.usage_stats_cache.lock();
+            usage_entries = cache.entries.len();
+            cache.entries.clear();
+        }
+        {
+            let mut cache = self.user_usage_cache.lock();
+            user_usage_users = cache.data.len();
+            cache.data.clear();
+            cache.updated_ts = 0.0;
+        }
+        context_entries = self.context_texts.clear();
+        json!({
+            "tree_entries": tree_entries,
+            "search_users": search_users,
+            "usage_stats_entries": usage_entries,
+            "user_usage_users": user_usage_users,
+            "context_text_entries": context_entries,
+        })
     }
 
     fn increment_version(&self, safe_id: &str) {

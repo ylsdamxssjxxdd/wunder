@@ -567,6 +567,11 @@ h1 {
   justify-content: flex-end;
 }
 
+.monitor-header-actions .monitor-memory-release-btn[hidden],
+.monitor-system-table tr[hidden] {
+  display: none !important;
+}
+
 .monitor-time-filter {
   display: inline-flex;
   align-items: center;

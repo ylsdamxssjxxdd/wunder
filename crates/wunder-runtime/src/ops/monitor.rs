@@ -330,6 +330,13 @@ impl SessionRecord {
             self.active_elapsed_s = Some(self.active_elapsed_s.unwrap_or(0.0) + span);
         }
         self.status = status.to_string();
+        // 终态会话不会再产生事件，管理端详情也从线程日志读取；保留 event
+        // 队列只会让每个已完成会话继续占住最多 500×8KB。清空后 mark_status
+        // 追加的终态事件仍保留一条，足够列表/排障查看最后状态。
+        if !MonitorState::is_active_status(status) {
+            self.events.clear();
+            self.summary_cache = None;
+        }
     }
 
     fn elapsed_s_at(&self, at: f64) -> Option<f64> {
@@ -840,6 +847,8 @@ pub struct SystemSnapshot {
     pub memory_available: u64,
     pub process_rss: u64,
     pub process_cpu_percent: f32,
+    /// Docker/cgroup view; the host memory above is not the container limit.
+    pub cgroup: crate::core::memory::CgroupMemory,
     pub load_avg_1: f64,
     pub load_avg_5: f64,
     pub load_avg_15: f64,
@@ -864,6 +873,7 @@ impl Default for SystemSnapshot {
             memory_available: 0,
             process_rss: 0,
             process_cpu_percent: 0.0,
+            cgroup: crate::core::memory::CgroupMemory::default(),
             load_avg_1: 0.0,
             load_avg_5: 0.0,
             load_avg_15: 0.0,
@@ -1888,6 +1898,79 @@ impl MonitorState {
         )
     }
 
+    /// Diagnostics only: how much session/event state this process keeps without
+    /// serialising a single event. `event_bytes_upper_bound` multiplies the live
+    /// event count by the per-event projection cap, so it is a ceiling rather
+    /// than a measurement.
+    pub fn memory_stats(&self) -> Value {
+        let sessions = self.sessions.lock();
+        let mut by_status: BTreeMap<String, usize> = BTreeMap::new();
+        let mut events = 0usize;
+        let mut max_events_per_session = 0usize;
+        let mut question_bytes = 0usize;
+        let mut summary_bytes = 0usize;
+        let mut summary_cache_entries = 0usize;
+        let mut summary_cache_bytes = 0usize;
+        let mut active_sessions = 0usize;
+        for record in sessions.values() {
+            *by_status.entry(record.status.clone()).or_insert(0) += 1;
+            if Self::is_active_status(&record.status) {
+                active_sessions += 1;
+            }
+            events += record.events.len();
+            max_events_per_session = max_events_per_session.max(record.events.len());
+            question_bytes += record.question.len();
+            summary_bytes += record.summary.len();
+            if let Some(cache) = record.summary_cache.as_ref() {
+                summary_cache_entries += 1;
+                summary_cache_bytes += serde_json::to_vec(&cache.value)
+                    .map(|bytes| bytes.len())
+                    .unwrap_or(0);
+            }
+        }
+        json!({
+            "sessions": sessions.len(),
+            "active_sessions": active_sessions,
+            "sessions_by_status": by_status,
+            "events": events,
+            "max_events_per_session": max_events_per_session,
+            "event_limit_per_session": MONITOR_SESSION_EVENT_LIMIT,
+            "event_bytes_upper_bound": events.saturating_mul(event_projection::MAX_EVENT_BYTES),
+            "event_projection_max_bytes": event_projection::MAX_EVENT_BYTES,
+            "question_bytes": question_bytes,
+            "summary_bytes": summary_bytes,
+            "summary_cache_entries": summary_cache_entries,
+            "summary_cache_bytes": summary_cache_bytes,
+            "history_ready": self.history_ready.load(Ordering::SeqCst),
+        })
+    }
+
+    /// Admin-only memory release: terminal sessions keep their listing fields
+    /// but no longer hold event or projection payloads. Active sessions are not
+    /// touched because their events feed the live view.
+    pub fn release_memory_caches(&self) -> Value {
+        let mut sessions = self.sessions.lock();
+        let mut terminal_sessions = 0usize;
+        let mut cleared_events = 0usize;
+        let mut cleared_summary_caches = 0usize;
+        for record in sessions.values_mut() {
+            if Self::is_active_status(&record.status) {
+                continue;
+            }
+            terminal_sessions += 1;
+            cleared_events += record.events.len();
+            record.events.clear();
+            if record.summary_cache.take().is_some() {
+                cleared_summary_caches += 1;
+            }
+        }
+        json!({
+            "terminal_sessions": terminal_sessions,
+            "cleared_events": cleared_events,
+            "cleared_summary_caches": cleared_summary_caches,
+        })
+    }
+
     pub fn list_sessions(&self, active_only: bool) -> Vec<Value> {
         self.run_guarded("monitor.list_sessions", Vec::new, || {
             let mut sessions = self.sessions.lock();
@@ -2515,6 +2598,7 @@ impl MonitorState {
             memory_available: host.memory_available,
             process_rss: host.process_rss,
             process_cpu_percent: host.process_cpu_percent,
+            cgroup: crate::core::memory::cgroup_memory(),
             load_avg_1: host.load_avg_1,
             load_avg_5: host.load_avg_5,
             load_avg_15: host.load_avg_15,
@@ -4044,6 +4128,34 @@ mod tests {
             Some(50.0),
             "waiting for user input is not execution time"
         );
+    }
+
+    /// 终态会话不再产生事件，事件尾部必须立即释放，否则每个已完成会话
+    /// 会继续常驻最多 500 条 × 8KB 的诊断数据。
+    #[test]
+    fn terminal_status_releases_event_tail() {
+        let mut record = SessionRecord::new(
+            SessionRecordInit {
+                session_id: "sample-thread".to_string(),
+                user_id: "sample-owner".to_string(),
+                agent_id: "sample-agent".to_string(),
+                question: "sample input".to_string(),
+                is_admin: false,
+                trace_id: "sample-trace".to_string(),
+            },
+            100.0,
+        );
+        for event_id in 1..=10 {
+            record.events.push_back(MonitorEvent {
+                event_id,
+                timestamp: 100.0 + event_id as f64,
+                event_type: "progress".to_string(),
+                data: json!({"summary": "sample"}),
+            });
+        }
+        assert_eq!(record.events.len(), 10);
+        record.set_status_at(MonitorState::STATUS_FINISHED, 200.0);
+        assert!(record.events.is_empty());
     }
 
     #[test]

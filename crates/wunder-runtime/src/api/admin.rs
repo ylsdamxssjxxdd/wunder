@@ -26,6 +26,7 @@ mod gateway_admin;
 mod identity_admin;
 mod integration_admin;
 mod knowledge_admin;
+mod memory_admin;
 mod monitor_admin;
 mod queue_admin;
 mod resource_admin;
@@ -51,6 +52,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(channel_admin::router())
         .merge(gateway_admin::router())
         .merge(monitor_admin::router())
+        .merge(memory_admin::router())
         .merge(throughput_admin::router())
         .merge(queue_admin::router())
         .merge(knowledge_admin::router())

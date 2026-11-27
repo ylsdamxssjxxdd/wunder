@@ -58,6 +58,45 @@ fn cached_field_is_fresh(field: Option<&CachedThreadField>, ttl: std::time::Dura
     field.is_some_and(|(_, fetched_at)| fetched_at.elapsed() < ttl)
 }
 
+/// Diagnostics only: the admin monitor's title/question cache is the largest
+/// admin-side map that survives between polls.
+pub(super) fn thread_meta_cache_stats() -> Value {
+    let cache = lock_thread_meta_cache();
+    let mut title_bytes = 0usize;
+    let mut question_bytes = 0usize;
+    let mut titles = 0usize;
+    let mut questions = 0usize;
+    for meta in cache.values() {
+        if let Some((Some(text), _)) = &meta.title {
+            titles += 1;
+            title_bytes += text.len();
+        }
+        if let Some((Some(text), _)) = &meta.question {
+            questions += 1;
+            question_bytes += text.len();
+        }
+    }
+    json!({
+        "entries": cache.len(),
+        "title_entries": titles,
+        "question_entries": questions,
+        "title_bytes": title_bytes,
+        "question_bytes": question_bytes,
+        "bytes_estimate": title_bytes + question_bytes + cache.len() * 64,
+        "max_entries": THREAD_META_CACHE_MAX_ENTRIES,
+        "title_ttl_secs": THREAD_TITLE_CACHE_TTL.as_secs(),
+        "question_ttl_secs": THREAD_QUESTION_CACHE_TTL.as_secs(),
+    })
+}
+
+/// Admin-only memory release: title/question projections reload from storage.
+pub(super) fn clear_thread_meta_cache() -> usize {
+    let mut cache = lock_thread_meta_cache();
+    let entries = cache.len();
+    cache.clear();
+    entries
+}
+
 #[cfg(test)]
 #[path = "session_catalog_tests.rs"]
 mod session_catalog_tests;

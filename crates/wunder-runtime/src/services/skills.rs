@@ -41,6 +41,22 @@ impl SkillRegistry {
         self.specs.clone()
     }
 
+    /// Diagnostics only: spec count and a string-only byte estimate.
+    pub fn memory_stats(&self) -> (usize, usize) {
+        let bytes = self
+            .specs
+            .iter()
+            .map(|spec| {
+                spec.name.len()
+                    + spec.description.len()
+                    + spec.path.len()
+                    + spec.frontmatter.len()
+                    + 96
+            })
+            .sum();
+        (self.specs.len(), bytes)
+    }
+
     pub fn get(&self, name: &str) -> Option<SkillSpec> {
         self.specs.iter().find(|spec| spec.name == name).cloned()
     }

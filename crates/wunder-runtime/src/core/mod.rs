@@ -19,6 +19,7 @@ pub mod local_assets;
 pub mod local_bootstrap;
 pub mod logging;
 pub mod long_task;
+pub mod memory;
 pub mod onlyoffice_config;
 pub mod path_utils;
 pub mod process_file_lock;

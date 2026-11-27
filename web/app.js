@@ -41,7 +41,7 @@ import {
   loadMonitorData,
   refreshMonitorPanelLayout,
   toggleMonitorPolling,
-} from "./modules/monitor.js?v=20261027-01";
+} from "./modules/monitor.js?v=20261127-01";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260215-01";
 import { initInterlinkFleet } from "./modules/interlink-fleet.js?v=20261016-01";
 import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20261016-01";

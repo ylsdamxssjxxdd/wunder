@@ -21,7 +21,7 @@
       rel="stylesheet"
       href="./third/fontawesome-free-6.7.2-web/css/solid.min.css"
     />
-    <link rel="stylesheet" href="./app.css?v=20261017-04" />
+    <link rel="stylesheet" href="./app.css?v=20261127-01" />
     <link rel="stylesheet" href="./styles/throughput.css?v=20261012-01" />
     <link rel="stylesheet" href="styles/interlink-fleet.css?v=20261016-01" />
     <link rel="stylesheet" href="./styles/wunder-model-viewer.css?v=20261018-08" />
@@ -191,6 +191,10 @@
                 <i class="fa-solid fa-arrows-rotate"></i>
                 <span data-i18n="common.refresh">刷新</span>
               </button>
+              <button id="monitorMemoryReleaseBtn" class="secondary btn-with-icon monitor-memory-release-btn" type="button" hidden>
+                <i class="fa-solid fa-broom"></i>
+                <span data-i18n="monitor.memory.release">释放内存</span>
+              </button>
             </div>
           </div>
           <div class="tips" data-i18n="monitor.tip">展示系统资源占用与服务运行状态。</div>
@@ -250,6 +254,13 @@
                               <div class="monitor-subtext" data-i18n="monitor.metric.process.detail">
                                 内存 / CPU
                               </div>
+                            </td>
+                          </tr>
+                          <tr id="metricContainerMemoryRow" hidden>
+                            <th data-i18n="monitor.metric.cgroup">容器内存</th>
+                            <td class="monitor-tooltip-host">
+                              <strong id="metricContainerMemory">-</strong>
+                              <div id="metricContainerMemoryDetail" class="monitor-subtext"></div>
                             </td>
                           </tr>
                         </tbody>
@@ -4879,6 +4890,6 @@
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20261113-01"></script>
+    <script type="module" src="./app.js?v=20261127-01"></script>
   </body>
 </html>

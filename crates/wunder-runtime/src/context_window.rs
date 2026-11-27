@@ -395,6 +395,21 @@ impl ContextTextCache {
             state.bytes = state.bytes.saturating_sub(old.bytes);
         }
     }
+
+    /// Diagnostics only: live entry count and text bytes against the hard budget.
+    pub fn memory_stats(&self) -> (usize, usize, usize) {
+        let state = self.inner.lock();
+        (state.entries.len(), state.bytes, MAX_TEXT_CACHE_BYTES)
+    }
+
+    /// Release the last-request text cache; the next request repopulates it.
+    pub fn clear(&self) -> usize {
+        let mut state = self.inner.lock();
+        let entries = state.entries.len();
+        state.entries.clear();
+        state.bytes = 0;
+        entries
+    }
 }
 
 fn text_cache_key(user_id: &str, session_id: &str) -> String {

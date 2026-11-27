@@ -175,6 +175,14 @@ impl UserToolStore {
         })
     }
 
+    /// Admin-only memory release: drop parsed user tool configs; next read reloads them.
+    pub fn clear_config_cache(&self) -> usize {
+        let mut cache = self.cache.lock().unwrap_or_else(|err| err.into_inner());
+        let entries = cache.len();
+        cache.clear();
+        entries
+    }
+
     /// 构造统一的别名格式：user_id@tool_name。
     pub fn build_alias_name(&self, owner_id: &str, tool_name: &str) -> String {
         format!("{}@{}", owner_id, tool_name)
@@ -608,6 +616,86 @@ impl UserToolManager {
 
     pub fn store(&self) -> &UserToolStore {
         self.store.as_ref()
+    }
+
+    /// Diagnostics only: cached skill specs/registries and per-user tool configs.
+    pub fn memory_stats(&self) -> Value {
+        let cache = self
+            .skill_cache
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let spec_entries = cache.spec_cache.len();
+        let spec_items = cache
+            .spec_cache
+            .values()
+            .map(|entry| entry.specs.len())
+            .sum::<usize>();
+        let registry_entries = cache.registry_cache.len();
+        let mut registry_items = 0usize;
+        let mut spec_bytes = 0usize;
+        for entry in cache.spec_cache.values() {
+            spec_bytes += entry
+                .specs
+                .iter()
+                .map(|spec| {
+                    spec.name.len()
+                        + spec.description.len()
+                        + spec.path.len()
+                        + spec.frontmatter.len()
+                        + 96
+                })
+                .sum::<usize>();
+        }
+        for entry in cache.registry_cache.values() {
+            let (count, bytes) = entry.registry.memory_stats();
+            registry_items += count;
+            spec_bytes += bytes;
+        }
+        let order_entries = cache.order.len();
+        let skill_cache_max = self.skill_cache_max;
+        drop(cache);
+        let store_cache = self
+            .store
+            .cache
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let user_config_entries = store_cache.len();
+        json!({
+            "skill_cache": {
+                "spec_entries": spec_entries,
+                "spec_items": spec_items,
+                "registry_entries": registry_entries,
+                "registry_items": registry_items,
+                "order_entries": order_entries,
+                "spec_bytes_estimate": spec_bytes,
+                "max_entries": skill_cache_max,
+            },
+            "user_config_cache_entries": user_config_entries,
+        })
+    }
+
+    /// Admin-only memory release: drop caches that are rebuilt from user config
+    /// files on the next request. Active tool calls keep their already built specs.
+    pub fn release_memory_caches(&self) -> Value {
+        let (spec_entries, registry_entries, order_entries) = {
+            let cache = self
+                .skill_cache
+                .lock()
+                .unwrap_or_else(|err| err.into_inner());
+            (
+                cache.spec_cache.len(),
+                cache.registry_cache.len(),
+                cache.order.len(),
+            )
+        };
+        self.clear_skill_cache(None);
+        let user_config_entries = self.store.clear_config_cache();
+        json!({
+            "skill_spec_entries": spec_entries,
+            "skill_registry_entries": registry_entries,
+            "skill_order_entries": order_entries,
+            "user_config_entries": user_config_entries,
+        })
     }
 
     /// 清理用户技能缓存，确保读取到最新内容。

@@ -154,6 +154,60 @@ fn store() -> &'static KnowledgeStore {
     STORE.get_or_init(KnowledgeStore::default)
 }
 
+/// Diagnostics only: knowledge caches are unbounded by design, so report the
+/// live section/byte totals before deciding whether a budget is needed.
+pub async fn memory_stats() -> Value {
+    let Some(store) = STORE.get() else {
+        return json!({
+            "initialized": false,
+            "bases": 0,
+            "sections": 0,
+            "content_bytes": 0,
+            "locks": 0,
+        });
+    };
+    let locks = store.locks.lock().await.len();
+    let bases;
+    let mut sections = 0usize;
+    let mut content_bytes = 0usize;
+    {
+        let cache = store.cache.lock().await;
+        bases = cache.len();
+        for entry in cache.values() {
+            sections += entry.sections.len();
+            for section in &entry.sections {
+                content_bytes += section.document.len()
+                    + section.content.len()
+                    + section.code.len()
+                    + section
+                        .section_path
+                        .iter()
+                        .map(|part| part.len() + 24)
+                        .sum::<usize>();
+            }
+        }
+    }
+    json!({
+        "initialized": true,
+        "bases": bases,
+        "sections": sections,
+        "content_bytes": content_bytes,
+        "locks": locks,
+    })
+}
+
+/// Admin-only memory release: drop parsed knowledge sections. The next query
+/// reloads the base from disk; in-flight callers already hold their section clone.
+pub async fn clear_cache() -> usize {
+    let Some(store) = STORE.get() else {
+        return 0;
+    };
+    let mut cache = store.cache.lock().await;
+    let bases = cache.len();
+    cache.clear();
+    bases
+}
+
 pub fn resolve_llm_config(config: &Config, model_name: Option<&str>) -> Option<LlmModelConfig> {
     let name = model_name
         .filter(|value| !value.trim().is_empty())
