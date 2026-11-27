@@ -259,6 +259,8 @@ impl Orchestrator {
         let mut tools = Vec::new();
         let mut name_map = build_prompt_tool_name_map(config, allowed_tool_names);
         let mut display_map = HashMap::new();
+        let mut has_text_edit_spec = false;
+        let text_edit_canonical = resolve_tool_name("文本编辑");
         // Replace the generic {user_id} placeholder in builtin tool descriptions
         // with the actual scoped workspace id so the model produces correct paths.
         let ws_placeholder = "/workspaces/{user_id}/";
@@ -296,6 +298,9 @@ impl Orchestrator {
             } else {
                 spec.description
             };
+            if resolve_tool_name(&spec.name) == text_edit_canonical {
+                has_text_edit_spec = true;
+            }
             // 语法工具（custom + grammar）只有 Responses API 认识；ChatCompletions
             // 里把它降级成带 `input` 字段的普通函数，缺了这一步 chat 端点上的
             // freeform 会把一个没有参数的工具发出去，模型根本调不动。
@@ -320,6 +325,32 @@ impl Orchestrator {
                     "parameters": parameters,
                 }
             }));
+        }
+        // freeform 模式下，合并编辑器通常以 `edit` 暴露并保留完整 JSON schema。
+        // 再额外挂一个专用的 `apply_patch` 语法工具（复用同一个运行时 handler），
+        // 这样模型既能做结构化编辑，也能按 codex 的方式用补丁正文。
+        if tool_call_mode == ToolCallMode::FreeformCall
+            && has_text_edit_spec
+            && !used_names.contains("apply_patch")
+        {
+            let text_edit_enabled = allowed_tool_names.contains(&text_edit_canonical)
+                || allowed_tool_names.contains("文本编辑")
+                || allowed_tool_names
+                    .iter()
+                    .any(|name| resolve_tool_name(name) == text_edit_canonical);
+            if text_edit_enabled {
+                if let Some(tool) = build_freeform_tool(
+                    "apply_patch",
+                    "Apply a unified diff patch to workspace files. `input` is the raw patch body from `*** Begin Patch` to `*** End Patch`; use structured edit tools when a single explicit replacement is enough.",
+                    "apply_patch",
+                    responses_api,
+                ) {
+                    tools.push(tool);
+                    used_names.insert("apply_patch".to_string());
+                    name_map.insert("apply_patch".to_string(), text_edit_canonical.clone());
+                    display_map.insert("apply_patch".to_string(), "文本编辑".to_string());
+                }
+            }
         }
         // `collect_prompt_tool_specs_with_language` sorts canonical runtime IDs;
         // preserve that order so equivalent permission sets keep a stable API

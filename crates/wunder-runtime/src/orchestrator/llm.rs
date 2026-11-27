@@ -17,6 +17,9 @@ struct OutputTiming {
     first_reasoning_at: Option<Instant>,
     last_reasoning_at: Option<Instant>,
     output_chunk_count: u64,
+    /// 可见正文的 chunk 数。只有一个 chunk 时没有可测量的解码区间：
+    /// `last_content_at - first_content_at` 只是事件处理耗时，不能当成生成耗时。
+    content_chunk_count: u64,
     content_delta_chars: usize,
     reasoning_delta_chars: usize,
     max_chunk_gap_s: f64,
@@ -31,6 +34,9 @@ struct ChatMessageRepairReport {
 enum LlmFailureKind {
     Other,
     ContextWindow,
+    /// provider 明确无法读取图片输入。不是临时故障，重试同样的带图请求毫无
+    /// 意义；执行器会改用纯文本降级版本再发一次。
+    ImageUnsupported,
     Unavailable,
     Permanent,
 }
@@ -38,6 +44,9 @@ enum LlmFailureKind {
 const LLM_UNAVAILABLE_MIN_RETRIES: u32 = 5;
 const LLM_UNAVAILABLE_RETRY_DELAYS_MS: [u64; 5] = [1_200, 3_000, 6_000, 12_000, 20_000];
 const DEFAULT_LLM_MAX_ATTEMPTS: u32 = 2;
+/// 可见正文的可测量解码窗口下限。低于 20ms 的跨度多半来自网关把整段响应
+/// 缓冲后一次性分片下发，按它计算 t/s 会得到数量级失真的速度。
+const MIN_DECODE_MEASURE_S: f64 = 0.02;
 /// Synthetic-fault retry policy for the virtual (simulated) provider. Kept short
 /// so a simulated hiccup resolves quickly while a persistent fault still
 /// surfaces as `llm_unavailable` after the final attempt.
@@ -49,6 +58,7 @@ impl OutputTiming {
         if content_delta_len > 0 {
             self.first_content_at.get_or_insert(now);
             self.last_content_at = Some(now);
+            self.content_chunk_count = self.content_chunk_count.saturating_add(1);
         }
         if content_delta_len == 0 && reasoning_delta_len == 0 {
             return;
@@ -73,10 +83,26 @@ impl OutputTiming {
             .saturating_add(reasoning_delta_len);
     }
 
+    /// 可见正文的可测量解码区间。
+    ///
+    /// 只有单个 content chunk 时，`last - first` 只是事件到达的瞬时差（实测
+    /// 约 0.3ms），用它算 t/s 会得到十万级假速度；宁可返回 None 让界面不显示，
+    /// 也不能把事件处理耗时当成模型生成耗时。两个 chunk 但间隔过短（网关把
+    /// 整段响应一次性缓冲后分片下发）同样视为不可测量。
+    fn measured_content_decode(&self) -> Option<Duration> {
+        if self.content_chunk_count < 2 {
+            return None;
+        }
+        let first = self.first_content_at?;
+        let last = self.last_content_at?;
+        let span = last.saturating_duration_since(first);
+        (span.as_secs_f64() >= MIN_DECODE_MEASURE_S).then_some(span)
+    }
+
     fn durations(
         &self,
         request_start: Instant,
-        response_end: Instant,
+        _response_end: Instant,
     ) -> (Option<f64>, Option<f64>) {
         let Some(first_output_at) = self.first_output_at else {
             return (None, None);
@@ -86,20 +112,9 @@ impl OutputTiming {
             .as_secs_f64();
         // Match the visible output token numerator with the answer stream only.
         // Reasoning and tool-only chunks must not define its decode interval.
-        let decode = self.first_content_at.map(|first| {
-            // Providers may deliver the complete visible answer in one chunk.
-            // In that case first and last content timestamps are identical;
-            // measure until response completion instead of reporting 0s and
-            // losing the persisted bubble speed.
-            let last = self.last_content_at.unwrap_or(response_end);
-            let duration = last.saturating_duration_since(first);
-            let duration = if duration.is_zero() {
-                response_end.saturating_duration_since(first)
-            } else {
-                duration
-            };
-            duration.as_secs_f64()
-        });
+        let decode = self
+            .measured_content_decode()
+            .map(|duration| duration.as_secs_f64());
         (Some(prefill), decode)
     }
 
@@ -116,16 +131,9 @@ impl OutputTiming {
         let decode_ms = last_output_at
             .saturating_duration_since(first_output_at)
             .as_millis() as u64;
-        let content_decode_ms = self.first_content_at.map(|first| {
-            let last = self.last_content_at.unwrap_or(response_end);
-            let duration = last.saturating_duration_since(first);
-            let duration = if duration.is_zero() {
-                response_end.saturating_duration_since(first)
-            } else {
-                duration
-            };
-            duration.as_millis() as u64
-        });
+        let content_decode_ms = self
+            .measured_content_decode()
+            .map(|duration| duration.as_millis() as u64);
         // A provider may deliver the whole thought in one chunk, so a zero span
         // is measured up to the response boundary instead of reporting 0ms.
         let reasoning_ms = self.first_reasoning_at.map(|first| {
@@ -1465,10 +1473,10 @@ impl Orchestrator {
         let elapsed_ms = call_started_at.elapsed().as_millis() as u64;
         let last_detail = last_err.to_string();
         let failure_kind = classify_llm_error(&last_err);
-        let message_key = if matches!(failure_kind, LlmFailureKind::Unavailable) {
-            "error.llm_unavailable"
-        } else {
-            "error.llm_call_failed"
+        let message_key = match failure_kind {
+            LlmFailureKind::Unavailable => "error.llm_unavailable",
+            LlmFailureKind::ImageUnsupported => "error.llm_image_unsupported",
+            _ => "error.llm_call_failed",
         };
         // A provider outage that survived the in-request retry budget is a
         // different user situation from a single rejected call; say how many
@@ -1512,6 +1520,11 @@ impl Orchestrator {
                 message,
                 Some(error_detail),
             )),
+            LlmFailureKind::ImageUnsupported => Err(OrchestratorError::new(
+                "LLM_IMAGE_UNSUPPORTED",
+                message,
+                Some(error_detail),
+            )),
             LlmFailureKind::Unavailable => Err(OrchestratorError::new(
                 "LLM_UNAVAILABLE",
                 message,
@@ -1533,6 +1546,9 @@ impl Orchestrator {
 
 #[cfg(test)]
 fn classify_llm_failure(message: &str) -> LlmFailureKind {
+    if is_image_input_unsupported_error_text(message) {
+        return LlmFailureKind::ImageUnsupported;
+    }
     if is_context_window_error_text(message) {
         return LlmFailureKind::ContextWindow;
     }
@@ -1547,6 +1563,9 @@ fn classify_llm_error(error: &anyhow::Error) -> LlmFailureKind {
         .chain()
         .find_map(|source| source.downcast_ref::<crate::llm::LlmHttpError>())
     {
+        if is_image_input_unsupported_error_text(&failure.to_string()) {
+            return LlmFailureKind::ImageUnsupported;
+        }
         if matches!(failure.status, 400 | 413 | 422)
             && (failure.kind == Some(crate::llm::ProviderFailureKind::ContextWindow)
                 || (matches!(
@@ -1566,6 +1585,9 @@ fn classify_llm_error(error: &anyhow::Error) -> LlmFailureKind {
         .chain()
         .find_map(|source| source.downcast_ref::<crate::llm::LlmPayloadError>())
     {
+        if is_image_input_unsupported_error_text(&failure.to_string()) {
+            return LlmFailureKind::ImageUnsupported;
+        }
         match failure.kind {
             Some(crate::llm::ProviderFailureKind::InvalidRequest)
                 if is_context_window_error_text(&failure.to_string()) =>
@@ -1589,6 +1611,9 @@ fn classify_llm_error(error: &anyhow::Error) -> LlmFailureKind {
         return LlmFailureKind::Permanent;
     }
     let message = error.to_string();
+    if is_image_input_unsupported_error_text(&message) {
+        return LlmFailureKind::ImageUnsupported;
+    }
     if is_context_window_error_text(&message) {
         return LlmFailureKind::ContextWindow;
     }
@@ -1596,6 +1621,39 @@ fn classify_llm_error(error: &anyhow::Error) -> LlmFailureKind {
         return LlmFailureKind::Unavailable;
     }
     LlmFailureKind::Other
+}
+
+/// provider 明确表示“这个模型看不到图片”。常见于文本模型配上视觉工具后，
+/// 网关尝试用另一个模型代述图片却失败。这个错误是稳定能力问题，重试同一份
+/// 带图请求只会持续失败，执行器会降级为纯文本后继续。
+fn is_image_input_unsupported_error_text(message: &str) -> bool {
+    let normalized = message.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    [
+        "can't see images",
+        "cannot see images",
+        "can not see images",
+        "can't see the image",
+        "cannot see the image",
+        "does not support image",
+        "doesn't support image",
+        "not support image input",
+        "image input is not supported",
+        "image inputs are not supported",
+        "image input not supported",
+        "unsupported image input",
+        "no vision capability",
+        "does not have vision",
+        "不支持图片",
+        "不支持图像",
+        "无法识图",
+        "无法识别图片",
+        "不支持视觉",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
 }
 
 fn is_llm_request_transport_error(error: &anyhow::Error) -> bool {
@@ -1667,7 +1725,9 @@ fn is_llm_unavailable_error_text(message: &str) -> bool {
 fn resolve_llm_max_attempts(failure_kind: LlmFailureKind) -> u32 {
     if matches!(
         failure_kind,
-        LlmFailureKind::Permanent | LlmFailureKind::ContextWindow
+        LlmFailureKind::Permanent
+            | LlmFailureKind::ContextWindow
+            | LlmFailureKind::ImageUnsupported
     ) {
         1
     } else if matches!(failure_kind, LlmFailureKind::Unavailable) {
@@ -1693,6 +1753,7 @@ fn resolve_llm_retry_delay(attempt: u32, failure_kind: LlmFailureKind) -> Durati
 fn llm_retry_reason(failure_kind: LlmFailureKind) -> &'static str {
     match failure_kind {
         LlmFailureKind::ContextWindow => "context_window",
+        LlmFailureKind::ImageUnsupported => "image_unsupported",
         LlmFailureKind::Unavailable => "llm_unavailable",
         LlmFailureKind::Other => "provider_error",
         LlmFailureKind::Permanent => "request_rejected",
@@ -1814,9 +1875,10 @@ fn parse_context_limit_number(raw: &str) -> Option<i64> {
 mod tests {
     use super::{
         build_context_cache_probe, classify_llm_failure, extract_context_window_limit_hint,
-        is_context_window_error_text, is_llm_unavailable_error_text, llm_retry_reason,
-        resolve_llm_max_attempts, resolve_llm_retry_delay, LlmFailureKind,
-        DEFAULT_LLM_MAX_ATTEMPTS, LLM_UNAVAILABLE_MIN_RETRIES,
+        is_context_window_error_text, is_image_input_unsupported_error_text,
+        is_llm_unavailable_error_text, llm_retry_reason, resolve_llm_max_attempts,
+        resolve_llm_retry_delay, LlmFailureKind, DEFAULT_LLM_MAX_ATTEMPTS,
+        LLM_UNAVAILABLE_MIN_RETRIES,
     };
     use crate::core::config::LlmModelConfig;
     use crate::llm::ChatMessage;
@@ -1935,18 +1997,54 @@ mod tests {
     }
 
     #[test]
-    fn output_timing_measures_single_visible_chunk_until_response_end() {
+    fn output_timing_never_fabricates_a_decode_span_for_single_visible_chunk() {
         let start = Instant::now();
         let content = start + Duration::from_secs(1);
         let end = content + Duration::from_secs(2);
         let mut timing = super::OutputTiming::default();
         timing.mark_output(content, 64, 0);
 
-        assert_eq!(timing.durations(start, end), (Some(1.0), Some(2.0)));
+        // 单 chunk 响应没有可测量的生成区间：不能拿响应边界凑时长，
+        // 否则 35 tokens / 0.3ms 会显示成十万级 t/s。
+        assert_eq!(timing.durations(start, end), (Some(1.0), None));
         let payload = timing
             .stream_timing_payload(start, end)
             .expect("stream timing payload");
-        assert_eq!(payload["content_decode_ms"], json!(2000));
+        assert!(payload["content_decode_ms"].is_null());
+    }
+
+    #[test]
+    fn output_timing_ignores_buffered_bursts_shorter_than_the_measure_floor() {
+        let start = Instant::now();
+        let first = start + Duration::from_secs(1);
+        let second = first + Duration::from_millis(1);
+        let end = second + Duration::from_secs(2);
+        let mut timing = super::OutputTiming::default();
+        timing.mark_output(first, 32, 0);
+        timing.mark_output(second, 32, 0);
+
+        assert_eq!(timing.durations(start, end), (Some(1.0), None));
+        let payload = timing
+            .stream_timing_payload(start, end)
+            .expect("stream timing payload");
+        assert!(payload["content_decode_ms"].is_null());
+    }
+
+    #[test]
+    fn detects_image_input_unsupported_errors() {
+        let text = r#"LLM request failed: HTTP 502 {"error":{"message":"model \"doubaowork/person-deepseek-v4-1-flash\" can't see images, and \"vision-model\" couldn't describe the image for it."}}"#;
+        assert!(is_image_input_unsupported_error_text(text));
+        assert_eq!(classify_llm_failure(text), LlmFailureKind::ImageUnsupported);
+        assert_eq!(
+            resolve_llm_max_attempts(LlmFailureKind::ImageUnsupported),
+            1
+        );
+        assert!(!is_image_input_unsupported_error_text(
+            "LLM request failed: HTTP 502 Bad Gateway"
+        ));
+        assert!(is_image_input_unsupported_error_text(
+            "当前模型不支持图片输入"
+        ));
     }
 
     #[test]

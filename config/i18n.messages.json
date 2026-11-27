@@ -251,6 +251,10 @@
     "en-US": "LLM request failed.",
     "zh-CN": "LLM 请求失败。"
   },
+  "error.llm_image_unsupported": {
+    "en-US": "The selected model cannot read images: {detail}",
+    "zh-CN": "当前模型无法读取图片：{detail}"
+  },
   "error.llm_stream_interrupted": {
     "en-US": "LLM streaming response was interrupted.",
     "zh-CN": "LLM 流式响应中断。"

@@ -2443,6 +2443,47 @@ impl WorkspaceManager {
             .and_then(|raw| raw.trim().parse::<usize>().ok())
     }
 
+    /// 该会话当前记录“模型拒绝图片输入”的模型名。值不匹配当前模型时自动
+    /// 失效，因此换到支持读图的模型不需要额外清理。
+    pub fn load_session_image_input_unsupported(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Option<String> {
+        let key = format!(
+            "{}:image_input_unsupported",
+            self.session_sent_prefix_key(user_id, session_id)
+        );
+        self.storage
+            .get_meta(&key)
+            .ok()
+            .flatten()
+            .map(|raw| raw.trim().to_string())
+            .filter(|value| !value.is_empty())
+    }
+
+    /// 记录 provider 明确拒绝图片输入的事实（值为模型名），避免同一会话
+    /// 每轮都先发一次注定失败的带图请求。`None` 表示清除记录。
+    pub fn save_session_image_input_unsupported(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        model: Option<&str>,
+    ) {
+        let key = format!(
+            "{}:image_input_unsupported",
+            self.session_sent_prefix_key(user_id, session_id)
+        );
+        match model.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(model) => {
+                let _ = self.storage.set_meta(&key, model);
+            }
+            None => {
+                let _ = self.storage.delete_meta_prefix(&key);
+            }
+        }
+    }
+
     /// 记录该前缀属于哪个用户轮次，供跨轮分歧事件标注 `previous_turn`。
     pub fn save_session_sent_prefix_turn(&self, user_id: &str, session_id: &str, turn: u64) {
         let key = format!("{}:turn", self.session_sent_prefix_key(user_id, session_id));

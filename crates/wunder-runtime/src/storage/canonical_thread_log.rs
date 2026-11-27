@@ -1280,6 +1280,17 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
                 page.has_more = items.more;
             }
             for item in items.items {
+                let payload = &item["payload"];
+                // The `/compact` assistant marker is a chat reply, not a model
+                // step: its stats cover the whole compaction request and would
+                // become a single outsized histogram bar. The compaction event
+                // row already describes the same operation.
+                if super::thread_view_projection::is_manual_compaction_marker(
+                    item["kind"].as_str().unwrap_or(""),
+                    payload,
+                ) {
+                    continue;
+                }
                 let id = item["item_id"].as_str().unwrap_or("");
                 let turn = item["turn_id"].as_str().unwrap_or("");
                 let root = item["root_turn_id"].as_str().unwrap_or(turn);
@@ -1290,7 +1301,7 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
                     .unwrap_or(0);
                 page.trajectory
                     .push(super::thread_view_projection::trajectory(
-                        &item["payload"],
+                        payload,
                         id,
                         turn,
                         root,

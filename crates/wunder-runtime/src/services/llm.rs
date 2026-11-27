@@ -1947,7 +1947,7 @@ impl LlmClient {
         let openai_top_level_schema_guard =
             should_strip_openai_tool_schema(self.config.provider.as_deref());
         let temperature = round_f32(self.config.temperature.unwrap_or(0.7));
-        let input = build_responses_input(messages);
+        let input = build_responses_input(messages, tools);
         let mut payload = json!({
             "model": self.config.model.clone().unwrap_or_else(|| "gpt-4".to_string()),
             "input": input,
@@ -4570,6 +4570,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn stream_release_probe() {
         use axum::Router;

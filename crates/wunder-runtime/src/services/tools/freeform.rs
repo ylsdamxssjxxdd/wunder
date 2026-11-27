@@ -48,6 +48,10 @@ pub(crate) fn build_freeform_tool(
                     "input": {
                         "type": "string",
                         "description": "Raw patch body, `*** Begin Patch` ... `*** End Patch`."
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "Preview the patch without writing files."
                     }
                 },
                 "required": ["input"],
@@ -71,10 +75,9 @@ pub(crate) fn extract_freeform_tool_input(arguments: &str) -> Option<String> {
         return None;
     }
     match serde_json::from_str::<Value>(trimmed) {
-        Ok(Value::Object(map)) => map
-            .get("input")
-            .or_else(|| map.get("raw"))
-            .and_then(Value::as_str)
+        Ok(Value::Object(map)) => ["input", "raw", "patch", "content", "value"]
+            .iter()
+            .find_map(|key| map.get(*key).and_then(Value::as_str))
             .map(|value| value.to_string()),
         Ok(Value::String(text)) => Some(text),
         _ => Some(trimmed.to_string()),
@@ -120,6 +123,10 @@ mod tests {
             tool["function"]["parameters"]["properties"]["input"]["type"],
             "string"
         );
+        assert_eq!(
+            tool["function"]["parameters"]["properties"]["dry_run"]["type"],
+            "boolean"
+        );
         assert!(tool["function"]["parameters"]["additionalProperties"] == json!(false));
     }
 
@@ -133,5 +140,22 @@ mod tests {
     fn extract_freeform_tool_input_falls_back_to_raw_field() {
         let input = extract_freeform_tool_input(r#"{"raw":"patch body"}"#);
         assert_eq!(input, Some("patch body".to_string()));
+    }
+
+    #[test]
+    fn extract_freeform_tool_input_accepts_patch_content_and_value_fields() {
+        for key in ["patch", "content", "value"] {
+            let mut object = serde_json::Map::new();
+            object.insert(
+                key.to_string(),
+                Value::String("*** Begin Patch\n*** End Patch".to_string()),
+            );
+            let payload = Value::Object(object).to_string();
+            assert_eq!(
+                extract_freeform_tool_input(&payload),
+                Some("*** Begin Patch\n*** End Patch".to_string()),
+                "key={key}"
+            );
+        }
     }
 }

@@ -54,6 +54,9 @@ struct ItemRecord {
     name: String,
     count: i64,
     tokens: i64,
+    /// Message-stream position written by the engine; 0 means an older
+    /// snapshot that predates this ordering field.
+    order: i64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -369,6 +372,7 @@ impl Record {
                         name: item.name.clone(),
                         count: item.count,
                         tokens: item.tokens,
+                        order: item.order,
                     })
                     .collect(),
             });
@@ -467,26 +471,52 @@ fn project_rows(app: &MainWindow, record: &Record) {
     app.set_context_items(ModelRc::new(VecModel::from(projected)));
 }
 
-/// The rows shown by the contents list, in request order. `rank` is the item's
-/// position in the size-sorted view used by the map and grid, so hovering a row
-/// still lights the same tile.
+/// The rows shown by the contents list. The non-conversation parts keep the
+/// part order; tool results and turns are interleaved by the message position
+/// the engine recorded, so a result stays after the turn that called it rather
+/// than jumping ahead of every turn. `rank` is the item's position in the
+/// size-sorted view used by the map and grid.
 fn list_rows<'a>(record: &'a Record, tab: i32) -> Vec<(i32, usize, &'a ItemRecord)> {
-    record
-        .parts
-        .iter()
-        .filter(|part| tab == 0 || part.slot == tab)
-        .flat_map(|part| {
-            let sorted = sorted_items(part);
-            listed_items(part)
-                .into_iter()
-                .map(move |item| {
-                    let rank = sorted
-                        .iter()
-                        .position(|candidate| std::ptr::eq(*candidate, item))
-                        .unwrap_or(0);
-                    (part.slot, rank, item)
-                })
-                .collect::<Vec<_>>()
+    if tab != 0 {
+        return record
+            .parts
+            .iter()
+            .filter(|part| part.slot == tab)
+            .flat_map(rows_of_part)
+            .collect();
+    }
+    let mut head = Vec::new();
+    let mut talk = Vec::new();
+    for part in &record.parts {
+        let rows = rows_of_part(part);
+        if part.slot == 4 || part.slot == 5 {
+            talk.extend(rows);
+        } else {
+            head.extend(rows);
+        }
+    }
+    // Older snapshots have no message position (all zero). Keep turns together
+    // but place results after them, so a stale snapshot cannot show a tool
+    // result ahead of every turn.
+    if talk.iter().any(|(_, _, item)| item.order > 0) {
+        talk.sort_by_key(|(_, _, item)| item.order);
+    } else {
+        talk.sort_by_key(|(slot, _, _)| i32::from(*slot == 4));
+    }
+    head.extend(talk);
+    head
+}
+
+fn rows_of_part<'a>(part: &'a PartRecord) -> Vec<(i32, usize, &'a ItemRecord)> {
+    let sorted = sorted_items(part);
+    listed_items(part)
+        .into_iter()
+        .map(|item| {
+            let rank = sorted
+                .iter()
+                .position(|candidate| std::ptr::eq(*candidate, item))
+                .unwrap_or(0);
+            (part.slot, rank, item)
         })
         .collect()
 }
@@ -989,6 +1019,21 @@ fn part_tip(record: &Record, part: &PartRecord, item: i32, rows: usize) -> Tip {
             }
         }
     }
+    // A new turn is often far smaller than the older turns; keep the latest
+    // turn in the grid tip even when it did not make the size-ranked top rows.
+    if part.slot == 5 && rows > 0 {
+        let listed = listed_items(part);
+        if let Some(latest) = listed.last() {
+            if let Some(at) = sorted
+                .iter()
+                .position(|candidate| std::ptr::eq(*candidate, *latest))
+            {
+                if !picked.contains(&at) {
+                    picked[rows - 1] = at;
+                }
+            }
+        }
+    }
     for rank in &picked {
         if let Some(it) = sorted.get(*rank) {
             tip.rows.push(TipRow {
@@ -1089,7 +1134,10 @@ fn open_detail_text(app: &MainWindow, body: String) {
 }
 
 /// The grid look: the window as 400 cells, one per quarter of a percent, each
-/// carrying the part and the item its middle falls in (magpie's cellsOf).
+/// carrying the part and the item its middle falls in. The chat part additionally
+/// keeps one cell per turn so a newly arrived turn is visible instead of being
+/// swallowed by the part's minimum cell. Tool results and turns are laid out
+/// by message position after the fixed system/tool/files head.
 fn cells(record: &Record) -> Vec<ContextCell> {
     let mut out = vec![ContextCell { slot: 0, item: -1 }; CELLS];
     if !record.has_data() {
@@ -1112,9 +1160,18 @@ fn cells(record: &Record) -> Vec<ContextCell> {
         .iter()
         .map(|part| (part.tokens as f64 / sum) * used as f64)
         .collect();
+    // Conversation turns get one cell each even when the whole chat part is
+    // smaller than one window cell; otherwise a fresh turn can disappear into
+    // the part's minimum cell and the grid looks unchanged.
+    let mut minimum = vec![1usize; parts.len()];
+    if let Some(chat) = parts.iter().position(|part| part.slot == 5) {
+        let room = used.saturating_sub(parts.len().saturating_sub(1)).max(1);
+        minimum[chat] = parts[chat].items.len().max(1).min(room);
+    }
     let mut got: Vec<usize> = want
         .iter()
-        .map(|value| value.floor().max(1.0) as usize)
+        .zip(minimum.iter())
+        .map(|(value, floor)| (*value as usize).max(*floor))
         .collect();
     let mut left = used as i64 - got.iter().sum::<usize>() as i64;
     let mut order: Vec<(f64, usize)> = want
@@ -1132,39 +1189,123 @@ fn cells(record: &Record) -> Vec<ContextCell> {
     let mut from_end = got.len();
     while left < 0 && from_end > 0 {
         from_end -= 1;
-        while left < 0 && got[from_end] > 1 {
+        while left < 0 && got[from_end] > minimum[from_end] {
             got[from_end] -= 1;
             left += 1;
         }
     }
-    let mut fill = 0;
+    let mut head = Vec::new();
+    let mut talk = Vec::new();
     for (part_index, part) in parts.iter().enumerate() {
         let sorted = sorted_items(part);
-        let isum: f64 = sorted
+        let target = if part.slot == 4 || part.slot == 5 {
+            &mut talk
+        } else {
+            &mut head
+        };
+        for item in cell_items(part, &sorted, got[part_index]) {
+            target.push(ContextCell { slot: part.slot, item });
+        }
+    }
+    // Old snapshots have no message position: keep turns before results so a
+    // result cannot jump ahead of every turn. New snapshots interleave both by
+    // the recorded order.
+    talk.sort_by_cached_key(|cell| {
+        let order = record
+            .parts
             .iter()
-            .map(|item| item.tokens as f64)
-            .sum::<f64>()
-            .max(1.0);
-        let mut item_at = 0;
-        let mut acc = 0.0;
-        for cell in 0..got[part_index] {
-            let middle = ((cell as f64 + 0.5) / got[part_index] as f64) * isum;
-            while item_at + 1 < sorted.len() && (acc + sorted[item_at].tokens as f64) < middle {
-                acc += sorted[item_at].tokens as f64;
-                item_at += 1;
+            .find(|part| part.slot == cell.slot)
+            .and_then(|part| {
+                sorted_items(part)
+                    .get(cell.item.max(0) as usize)
+                    .map(|item| item.order)
+            })
+            .unwrap_or(0);
+        if order > 0 {
+            (0, order, cell.slot)
+        } else {
+            (1, if cell.slot == 4 { 1 } else { 0 }, 0)
+        }
+    });
+    let mut fill = 0;
+    for cell in head.into_iter().chain(talk) {
+        if fill < out.len() {
+            out[fill] = cell;
+            fill += 1;
+        }
+    }
+    out
+}
+
+/// Split a part's cells between its items. Ordinary parts keep the proportional
+/// midpoint split; the chat part gives every turn a cell and hands any extra
+/// cells to the larger turns, in chronological cell order.
+fn cell_items(part: &PartRecord, sorted: &[&ItemRecord], cells: usize) -> Vec<i32> {
+    if cells == 0 {
+        return Vec::new();
+    }
+    if sorted.is_empty() {
+        return vec![-1; cells];
+    }
+    if part.slot == 5 && cells >= part.items.len() && !part.items.is_empty() {
+        let listed = listed_items(part);
+        let n = listed.len();
+        let extra = cells - n;
+        let sum: f64 = listed
+            .iter()
+            .map(|item| item.tokens.max(0) as f64)
+            .sum::<f64>();
+        let mut bonus = vec![0usize; n];
+        if extra > 0 && sum > 0.0 {
+            let mut remainders = Vec::with_capacity(n);
+            for (index, item) in listed.iter().enumerate() {
+                let exact = (item.tokens.max(0) as f64 / sum) * extra as f64;
+                bonus[index] = exact.floor() as usize;
+                remainders.push((exact - exact.floor(), index));
             }
-            if fill < out.len() {
-                out[fill] = ContextCell {
-                    slot: part.slot,
-                    item: if sorted.is_empty() {
-                        -1
-                    } else {
-                        item_at as i32
-                    },
-                };
-                fill += 1;
+            let mut assigned: usize = bonus.iter().sum();
+            remainders.sort_by(|a, b| {
+                b.0.partial_cmp(&a.0)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then(b.1.cmp(&a.1))
+            });
+            let mut at = 0;
+            while assigned < extra && !remainders.is_empty() {
+                bonus[remainders[at % remainders.len()].1] += 1;
+                assigned += 1;
+                at += 1;
+            }
+        } else if extra > 0 {
+            // No token weight to go by: let the newest turn carry the extras.
+            bonus[n - 1] = extra;
+        }
+        let mut out = Vec::with_capacity(cells);
+        for (index, item) in listed.iter().enumerate() {
+            let rank = sorted
+                .iter()
+                .position(|candidate| std::ptr::eq(*candidate, *item))
+                .unwrap_or(0) as i32;
+            for _ in 0..1 + bonus[index] {
+                out.push(rank);
             }
         }
+        return out;
+    }
+    let isum: f64 = sorted
+        .iter()
+        .map(|item| item.tokens as f64)
+        .sum::<f64>()
+        .max(1.0);
+    let mut item_at = 0;
+    let mut acc = 0.0;
+    let mut out = Vec::with_capacity(cells);
+    for cell in 0..cells {
+        let middle = ((cell as f64 + 0.5) / cells as f64) * isum;
+        while item_at + 1 < sorted.len() && (acc + sorted[item_at].tokens as f64) < middle {
+            acc += sorted[item_at].tokens as f64;
+            item_at += 1;
+        }
+        out.push(item_at as i32);
     }
     out
 }
@@ -1229,6 +1370,7 @@ mod tests {
                         name: String::new(),
                         count: 1,
                         tokens: 3_422,
+                        order: 0,
                     }],
                 },
                 PartRecord {
@@ -1241,6 +1383,7 @@ mod tests {
                             count: 1,
                             // The later turns must not be broken up by these.
                             tokens: 263,
+                            order: 0,
                         })
                         .collect(),
                 },
@@ -1253,12 +1396,14 @@ mod tests {
                             name: String::new(),
                             count: 1,
                             tokens: 188,
+                            order: 0,
                         },
                         ItemRecord {
                             tag: "turn".into(),
                             name: String::new(),
                             count: 2,
                             tokens: 8,
+                            order: 0,
                         },
                     ],
                 },
@@ -1281,6 +1426,159 @@ mod tests {
         let chat_only = list_rows(&record, 5);
         assert_eq!(chat_only[0].2.count, 1);
         assert_eq!(chat_only[1].2.count, 2);
+    }
+
+    #[test]
+    fn tool_results_follow_the_message_order_between_turns() {
+        let record = Record {
+            window: 8_000,
+            tokens: 400,
+            parts: vec![
+                PartRecord {
+                    slot: 1,
+                    tokens: 150,
+                    items: vec![ItemRecord {
+                        tag: "prompt".into(),
+                        name: String::new(),
+                        count: 1,
+                        tokens: 150,
+                        order: 0,
+                    }],
+                },
+                PartRecord {
+                    slot: 4,
+                    tokens: 40,
+                    items: vec![ItemRecord {
+                        tag: "result".into(),
+                        name: "read_file".into(),
+                        count: 1,
+                        tokens: 40,
+                        order: 2,
+                    }],
+                },
+                PartRecord {
+                    slot: 5,
+                    tokens: 200,
+                    items: vec![
+                        ItemRecord {
+                            tag: "turn".into(),
+                            name: String::new(),
+                            count: 1,
+                            tokens: 110,
+                            order: 1,
+                        },
+                        ItemRecord {
+                            tag: "turn".into(),
+                            name: String::new(),
+                            count: 2,
+                            tokens: 90,
+                            order: 3,
+                        },
+                    ],
+                },
+            ],
+            ..Default::default()
+        };
+        let rows = list_rows(&record, 0);
+        let conversation: Vec<_> = rows
+            .iter()
+            .filter(|(slot, _, _)| *slot == 4 || *slot == 5)
+            .map(|(slot, _, item)| (*slot, item.tag.as_str(), item.count))
+            .collect();
+        assert_eq!(
+            conversation,
+            vec![(5, "turn", 1), (4, "result", 1), (5, "turn", 2)]
+        );
+    }
+
+    #[test]
+    fn grid_gives_every_turn_its_own_cell_at_the_end() {
+        let record = Record {
+            window: 262_144,
+            tokens: 8_968,
+            parts: vec![
+                PartRecord {
+                    slot: 1,
+                    tokens: 3_402,
+                    items: vec![ItemRecord {
+                        tag: "prompt".into(),
+                        name: String::new(),
+                        count: 1,
+                        tokens: 3_402,
+                        order: 0,
+                    }],
+                },
+                PartRecord {
+                    slot: 2,
+                    tokens: 4_974,
+                    items: vec![ItemRecord {
+                        tag: "tool".into(),
+                        name: "read_file".into(),
+                        count: 1,
+                        tokens: 4_974,
+                        order: 0,
+                    }],
+                },
+                PartRecord {
+                    slot: 4,
+                    tokens: 60,
+                    items: vec![ItemRecord {
+                        tag: "result".into(),
+                        name: "list_files".into(),
+                        count: 1,
+                        tokens: 60,
+                        order: 2,
+                    }],
+                },
+                PartRecord {
+                    slot: 5,
+                    tokens: 532,
+                    items: vec![
+                        ItemRecord {
+                            tag: "turn".into(),
+                            name: String::new(),
+                            count: 1,
+                            tokens: 187,
+                            order: 1,
+                        },
+                        ItemRecord {
+                            tag: "turn".into(),
+                            name: String::new(),
+                            count: 2,
+                            tokens: 92,
+                            order: 3,
+                        },
+                        ItemRecord {
+                            tag: "turn".into(),
+                            name: String::new(),
+                            count: 3,
+                            tokens: 94,
+                            order: 5,
+                        },
+                        ItemRecord {
+                            tag: "turn".into(),
+                            name: String::new(),
+                            count: 4,
+                            tokens: 159,
+                            order: 7,
+                        },
+                    ],
+                },
+            ],
+            ..Default::default()
+        };
+        let cells = cells(&record);
+        let chat: Vec<_> = cells.iter().filter(|cell| cell.slot == 5).collect();
+        assert!(chat.len() >= 4, "every turn keeps a cell");
+        for rank in 0..4 {
+            assert!(chat.iter().any(|cell| cell.item == rank));
+        }
+        // The result sits between the turns that surround it, not before all
+        // of them, and the newest turn remains at the end of the grid.
+        let result_at = cells.iter().position(|cell| cell.slot == 4).unwrap();
+        let last_chat = cells.iter().rposition(|cell| cell.slot == 5).unwrap();
+        assert!(result_at < last_chat);
+        assert_eq!(chat.last().map(|cell| cell.item), Some(1));
     }
 
     #[test]
@@ -1374,6 +1672,7 @@ mod tests {
                         name: String::new(),
                         count: 1,
                         tokens: 3_100,
+                        order: 0,
                     }],
                 },
                 PartRecord {
@@ -1390,6 +1689,7 @@ mod tests {
                         name: format!("tool{i}"),
                         count: 1,
                         tokens: *tokens,
+                        order: 0,
                     })
                     .collect(),
                 },
@@ -1401,6 +1701,7 @@ mod tests {
                         name: String::new(),
                         count: 1,
                         tokens: 748,
+                        order: 0,
                     }],
                 },
             ],

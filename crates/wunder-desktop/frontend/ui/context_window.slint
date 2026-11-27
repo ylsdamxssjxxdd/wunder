@@ -306,18 +306,24 @@ export component ContextWindowPanel inherits Rectangle {
                             width: 24px; height: 16px; border-radius: 5px;
                             background: root.look-map ? Theme.surface : transparent;
                             border-width: root.look-map ? 1px : 0px; border-color: Theme.border;
-                            Rectangle { x: 5px; y: 3px; width: 4px; height: 10px; border-radius: 1px; background: root.look-map ? Theme.text : Theme.muted; }
-                            Rectangle { x: 10px; y: 6px; width: 9px; height: 7px; border-radius: 1px; background: root.look-map ? Theme.text : Theme.muted; }
+                            Image {
+                                x: 5px; y: 1px; width: 14px; height: 14px;
+                                source: @image-url("../assets/icons/context-bars.svg");
+                                colorize: root.look-map ? Theme.text : Theme.muted;
+                                image-fit: contain;
+                            }
                             TouchArea { mouse-cursor: pointer; clicked => { root.toggle-look(); } }
                         }
                         Rectangle {
                             width: 24px; height: 16px; border-radius: 5px;
                             background: root.look-map ? transparent : Theme.surface;
                             border-width: root.look-map ? 0px : 1px; border-color: Theme.border;
-                            Rectangle { x: 4px; y: 4px; width: 6px; height: 6px; border-radius: 1px; background: root.look-map ? Theme.muted : Theme.text; }
-                            Rectangle { x: 13px; y: 4px; width: 6px; height: 6px; border-radius: 1px; background: root.look-map ? Theme.muted : Theme.text; }
-                            Rectangle { x: 4px; y: 12px; width: 6px; height: 6px; border-radius: 1px; background: root.look-map ? Theme.muted : Theme.text; }
-                            Rectangle { x: 13px; y: 12px; width: 6px; height: 6px; border-radius: 1px; background: root.look-map ? Theme.muted : Theme.text; }
+                            Image {
+                                x: 5px; y: 1px; width: 14px; height: 14px;
+                                source: @image-url("../assets/icons/context-grid.svg");
+                                colorize: root.look-map ? Theme.muted : Theme.text;
+                                image-fit: contain;
+                            }
                             TouchArea { mouse-cursor: pointer; clicked => { root.toggle-look(); } }
                         }
                     }
@@ -511,7 +517,10 @@ export component ContextWindowPanel inherits Rectangle {
                     }
                     grid-hit := TouchArea {
                         mouse-cursor: pointer;
-                        moved => {
+                        // `moved` is only delivered while the pointer is held
+                        // down, so hover needs pointer-event; otherwise the
+                        // grid stays silent until a click.
+                        pointer-event(event) => {
                             root.hovered-cell = Math.max(0, Math.min(399,
                                 Math.floor((self.mouse-y - grid.pad-y) / (grid.side + 2px)) * root.columns
                                 + Math.floor((self.mouse-x - grid.pad-x) / (grid.side + 2px))));

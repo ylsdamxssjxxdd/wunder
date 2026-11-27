@@ -71,7 +71,11 @@ pub(crate) fn speed_totals_from_assistant_preview(preview: &str) -> Option<Threa
                 &["decode_duration_s", "visible_decode_duration_s"],
             )
         })
-        .or_else(|| number(timing, &["content_decode_ms", "decode_ms"]).map(|ms| ms / 1000.0))
+        // 只认可见正文的解码区间；`decode_ms` 从首个 reasoning chunk 起算，
+        // 混入思考时间会算出偏低的假速度。单 chunk 响应没有可测区间，
+        // 历史记录里的零点几毫秒也按未测量处理。
+        .or_else(|| number(timing, &["content_decode_ms"]).map(|ms| ms / 1000.0))
+        .filter(|value| *value >= wunder_core::llm_speed::MIN_DECODE_DURATION_S)
         .unwrap_or(0.0);
 
     if prefill_duration_s <= 0.0 && decode_duration_s <= 0.0 {
@@ -120,13 +124,29 @@ mod tests {
                 "kind": "assistant_message",
                 "prefill_duration_s": 0.5,
                 "decode_output_tokens": 20,
-                "stream_timing": {"decode_ms": 2000}
+                "stream_timing": {"content_decode_ms": 2000}
             }
         });
         let totals = speed_totals_from_assistant_preview(&preview.to_string()).unwrap();
         assert_eq!(totals.prefill_tokens, 0);
         assert_eq!(totals.decode_tokens, 20);
         assert!((totals.decode_duration_s - 2.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn ignores_sub_millisecond_decode_spans() {
+        let preview = json!({
+            "payload": {
+                "kind": "assistant_message",
+                "prefill_duration_s": 7.9,
+                "decode_output_tokens": 35,
+                "decode_duration_s": 0.0003061,
+                "stream_timing": {"content_decode_ms": 0, "decode_ms": 0}
+            }
+        });
+        let totals = speed_totals_from_assistant_preview(&preview.to_string()).unwrap();
+        assert_eq!(totals.decode_tokens, 35);
+        assert_eq!(totals.decode_duration_s, 0.0);
     }
 
     #[test]

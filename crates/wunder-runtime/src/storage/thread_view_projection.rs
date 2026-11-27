@@ -358,6 +358,26 @@ pub(crate) fn is_compaction_system_message(kind: &str, item: &Value) -> bool {
         .is_some_and(|value| !value.is_empty())
 }
 
+/// `/compact` materializes its result as a synthetic assistant bubble so the
+/// command has a durable chat reply. That bubble is not an agent turn: its
+/// stats describe the whole compaction request, it duplicates the compaction
+/// event row, and treating it as a model step makes one histogram bar dwarf
+/// every normal round. Keep it out of the presentation trajectory; chat owns it.
+pub(crate) fn is_manual_compaction_marker(kind: &str, item: &Value) -> bool {
+    if !matches!(kind, "assistant_message" | "assistant") {
+        return false;
+    }
+    let meta = item.get("meta").and_then(Value::as_object);
+    matches!(
+        meta.and_then(|value| value.get("type"))
+            .and_then(Value::as_str),
+        Some("manual_compaction_marker")
+    ) || meta
+        .and_then(|value| value.get("manual_compaction"))
+        .and_then(Value::as_bool)
+        == Some(true)
+}
+
 pub(crate) fn is_failed(status: &str) -> i64 {
     i64::from(matches!(status, "failed" | "rejected"))
 }
@@ -1398,6 +1418,24 @@ mod tests {
         assert!(!is_compaction_system_message("system_message", &prompt));
         redact_internal_context(&mut prompt);
         assert!(prompt.get("content").is_none());
+    }
+
+    #[test]
+    fn manual_compaction_markers_are_not_model_steps() {
+        let marker = json!({
+            "content":"Fixture compacted summary.",
+            "meta":{"type":"manual_compaction_marker","manual_compaction":true,"status":"done"}
+        });
+        assert!(is_manual_compaction_marker("assistant_message", &marker));
+        assert!(is_manual_compaction_marker("assistant", &marker));
+        assert!(!is_manual_compaction_marker(
+            "assistant_message",
+            &json!({"content":"Fixture answer","meta":{"type":"tool_call"}})
+        ));
+        assert!(!is_manual_compaction_marker(
+            "system_message",
+            &json!({"meta":{"type":"compaction_summary","compaction_id":"cmp-fixture"}})
+        ));
     }
 
     #[test]

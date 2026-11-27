@@ -75,6 +75,9 @@ pub struct ImageBudgetReport {
     pub duplicate_images_removed: usize,
     pub superseded_images_removed: usize,
     pub budget_images_removed: usize,
+    /// Provider 明确拒绝图片输入时降级的图片数。单独计数是为了让调用方
+    /// 能把“模型不支持读图”与预算淘汰区分开。
+    pub capability_images_removed: usize,
 }
 
 impl ImageBudgetReport {
@@ -82,6 +85,7 @@ impl ImageBudgetReport {
         self.duplicate_images_removed > 0
             || self.superseded_images_removed > 0
             || self.budget_images_removed > 0
+            || self.capability_images_removed > 0
     }
 
     pub fn to_payload(&self) -> Value {
@@ -93,6 +97,7 @@ impl ImageBudgetReport {
             "duplicate_images_removed": self.duplicate_images_removed,
             "superseded_images_removed": self.superseded_images_removed,
             "budget_images_removed": self.budget_images_removed,
+            "capability_images_removed": self.capability_images_removed,
         })
     }
 }
@@ -242,6 +247,43 @@ pub fn inline_image_stats(messages: &[Value]) -> (usize, usize) {
         .fold((0, 0), |(count, bytes), part| {
             (count + 1, bytes.saturating_add(part.url_len))
         })
+}
+
+/// 把当前请求里所有内联图降级为占位文本，保留原图路径。
+///
+/// 用于 provider 明确返回“模型看不到图片”之后的自愈：这一轮不中断，模型
+/// 仍能从路径提示知道截图在哪；后续轮次也不再重复上传它无法解析的像素。
+/// 占位文案与预算淘汰完全一致，避免同一张图在不同路径上生成不同文本、
+/// 破坏跨轮前缀缓存。
+pub fn omit_all_inline_images(messages: &mut [Value]) -> ImageBudgetReport {
+    let parts = collect_image_parts(messages);
+    let total_bytes: usize = parts.iter().map(|part| part.url_len).sum();
+    let mut report = ImageBudgetReport {
+        images_before: parts.len(),
+        bytes_before: total_bytes,
+        images_after: parts.len(),
+        bytes_after: total_bytes,
+        ..Default::default()
+    };
+    for part in &parts {
+        let note = image_omitted_note(part.path.as_deref());
+        let replaced = messages
+            .get_mut(part.message_index)
+            .and_then(|message| message.get_mut("content"))
+            .and_then(Value::as_array_mut)
+            .and_then(|content| content.get_mut(part.part_index))
+            .map(|slot| {
+                *slot = json!({ "type": "text", "text": note });
+            })
+            .is_some();
+        if replaced {
+            report.capability_images_removed =
+                report.capability_images_removed.saturating_add(1);
+            report.images_after = report.images_after.saturating_sub(1);
+            report.bytes_after = report.bytes_after.saturating_sub(part.url_len);
+        }
+    }
+    report
 }
 
 /// Serialized bytes of the exact message/tool payload the provider receives,
@@ -653,6 +695,25 @@ mod tests {
 
     fn message(content: Vec<Value>) -> Value {
         serde_json::json!({ "role": "user", "content": content })
+    }
+
+    #[test]
+    fn omitting_all_images_keeps_path_placeholders() {
+        let mut messages = vec![
+            followup("/tmp/shot.png", "data:image/png;base64,AAAA"),
+            message(vec![
+                serde_json::json!({ "type": "text", "text": "继续" }),
+                image("data:image/png;base64,BBBB"),
+            ]),
+        ];
+        let report = omit_all_inline_images(&mut messages);
+        assert_eq!(report.images_before, 2);
+        assert_eq!(report.capability_images_removed, 2);
+        assert_eq!(report.images_after, 0);
+        assert_eq!(inline_image_stats(&messages), (0, 0));
+        let text = messages[0]["content"][1]["text"].as_str().unwrap();
+        assert!(text.contains("[image_omitted_path:/tmp/shot.png]"));
+        assert!(report.changed());
     }
 
     #[test]

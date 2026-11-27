@@ -2,6 +2,7 @@ use super::payload::normalize_tool_arguments_json;
 use super::{ChatMessage, extract_stream_text};
 use crate::core::json_schema::normalize_tool_input_schema;
 use crate::core::tool_args::sanitize_tool_call_payload;
+use crate::tools::is_freeform_tool_name;
 use serde_json::{Value, json};
 
 pub(super) fn build_anthropic_messages(messages: &[ChatMessage]) -> (Option<String>, Vec<Value>) {
@@ -505,6 +506,10 @@ fn response_tool_call_to_openai(item: &Value, fallback_index: usize) -> Option<V
     if name.is_empty() {
         return None;
     }
+    let is_custom_item = map
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.eq_ignore_ascii_case("custom_tool_call"));
     let arguments = map
         .get("arguments")
         .and_then(Value::as_str)
@@ -529,29 +534,63 @@ fn response_tool_call_to_openai(item: &Value, fallback_index: usize) -> Option<V
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| format!("call_{}", fallback_index + 1));
-    Some(json!({
+    let mut call = json!({
         "type": "function",
         "id": call_id,
         "function": {
             "name": name,
             "arguments": arguments,
         }
-    }))
+    });
+    if is_custom_item {
+        call["input_kind"] = Value::String("text".to_string());
+    }
+    Some(call)
 }
 
 pub(super) fn extract_tool_calls(message: &Value) -> Option<Value> {
     let Value::Object(map) = message else {
         return None;
     };
-    let payload = map
+    let mut payload = map
         .get("tool_calls")
         .or_else(|| map.get("tool_call"))
         .or_else(|| map.get("function_call"))
         .or_else(|| map.get("functionCall"))
         .map(sanitize_tool_call_payload)?;
+    mark_freeform_tool_calls(&mut payload);
     match &payload {
         Value::Array(items) if items.is_empty() => None,
         _ => Some(payload),
+    }
+}
+
+/// ChatCompletions 的响应没有 custom 类型，只能按工具名补回内部标记；
+/// 回放时会再按当前请求的工具声明校正，不会仅凭名字决定协议类型。
+fn mark_freeform_tool_calls(payload: &mut Value) {
+    match payload {
+        Value::Array(items) => {
+            for item in items {
+                mark_freeform_tool_call(item);
+            }
+        }
+        other => mark_freeform_tool_call(other),
+    }
+}
+
+fn mark_freeform_tool_call(item: &mut Value) {
+    let Some(map) = item.as_object_mut() else {
+        return;
+    };
+    let name = map
+        .get("function")
+        .and_then(|value| value.get("name"))
+        .and_then(Value::as_str)
+        .or_else(|| map.get("name").and_then(Value::as_str))
+        .unwrap_or("")
+        .trim();
+    if is_freeform_tool_name(name) {
+        map.insert("input_kind".to_string(), Value::String("text".to_string()));
     }
 }
 

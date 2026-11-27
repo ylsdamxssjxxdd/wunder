@@ -680,6 +680,12 @@ impl PostgresThreadLog<'_> {
             for row in rows.into_iter().take(limit) {
                 let ordinal = row.get(0);
                 let item = wire(&row.get::<_, String>(1), ordinal)?;
+                if p::is_manual_compaction_marker(
+                    item["kind"].as_str().unwrap_or(""),
+                    &item["payload"],
+                ) {
+                    continue;
+                }
                 page.trajectory.push(trajectory(&item, ordinal, row.get(2)));
             }
             page.trajectory.sort_by_key(|r| r.item_index);

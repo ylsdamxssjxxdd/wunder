@@ -174,6 +174,7 @@ fn maximum(stats: &Value, keys: &[&str]) -> Option<f64> {
 }
 
 fn speed(stats: &Value) -> Option<f64> {
+    const MIN_DECODE_DURATION_S: f64 = 0.02;
     let positive = |keys: &[&str]| number(stats, keys).filter(|value| *value > 0.0);
     if positive(&["avg_model_round_speed_rounds", "avgModelRoundSpeedRounds"]).is_some() {
         if let Some(value) = positive(&[
@@ -182,7 +183,12 @@ fn speed(stats: &Value) -> Option<f64> {
             "avgModelRoundSpeedTps",
             "avgModelRoundDecodeSpeedTps",
         ]) {
-            return Some(value);
+            // 旧记录可能带着单 chunk 响应算出的十万级速度；累计解码时长
+            // 低于可测量下限时按“未测量”处理，不再展示这个数。
+            let total_duration = number(stats, &["decode_duration_total_s"]);
+            if total_duration.is_some_and(|duration| duration >= MIN_DECODE_DURATION_S) {
+                return Some(value);
+            }
         }
     }
     let measured = stats
@@ -191,11 +197,17 @@ fn speed(stats: &Value) -> Option<f64> {
         .and_then(Value::as_bool);
     if measured != Some(false) {
         if let Some(value) = positive(&["visible_decode_speed_tps", "visibleDecodeSpeedTps"]) {
-            return Some(value);
+            let duration = number(stats, &["visible_decode_duration_s", "visibleDecodeDurationS"]);
+            if duration.is_some_and(|duration| duration >= MIN_DECODE_DURATION_S) {
+                return Some(value);
+            }
         }
     }
     if let Some(value) = positive(&["decode_speed_tps", "decodeSpeedTps"]) {
-        return Some(value);
+        let duration = number(stats, &["decode_duration_s", "decodeDurationS"]);
+        if duration.is_some_and(|duration| duration >= MIN_DECODE_DURATION_S) {
+            return Some(value);
+        }
     }
     let timing = &stats["stream_timing"];
     let visible_chars = number(timing, &["content_delta_chars", "contentDeltaChars"]);
@@ -239,11 +251,13 @@ fn speed(stats: &Value) -> Option<f64> {
             .flatten()
     })
     .or_else(|| {
-        number(timing, &["content_decode_ms", "decode_ms"])
+        number(timing, &["content_decode_ms"])
             .filter(|value| *value > 0.0)
             .map(|value| value / 1000.0)
     })?;
-    Some(tokens / duration).filter(|value| value.is_finite() && *value > 0.0)
+    (duration >= MIN_DECODE_DURATION_S)
+        .then(|| tokens / duration)
+        .filter(|value| value.is_finite() && *value > 0.0)
 }
 
 #[cfg(test)]
@@ -255,6 +269,7 @@ mod tests {
     fn turn_aggregate_and_request_count_win_over_last_round_and_account_exemption() {
         let stats = NativeMessageStats::from_payload(&json!({
             "avg_model_round_speed_rounds": 2, "avg_model_round_speed_tps": 42.75,
+            "decode_duration_total_s": 2.0,
             "visible_decode_speed_tps": 90, "model_request_count": 4,
             "account_credits_consumed": 0, "context_occupancy_tokens": 0, "toolCalls": 0
         }));
@@ -276,5 +291,24 @@ mod tests {
             &json!({"decode_output_tokens": 60, "stream_timing": {"content_decode_ms": 2000}}),
         );
         assert_eq!(stats.speed_tps, Some(30.0));
+    }
+
+    #[test]
+    fn single_chunk_speed_is_not_projected_from_sub_millisecond_duration() {
+        let stats = NativeMessageStats::from_payload(&json!({
+            "decode_output_tokens": 35,
+            "decode_duration_s": 0.0003061,
+            "decode_speed_tps": 114341.7,
+            "visible_decode_tokens": 35,
+            "visible_decode_duration_s": 0.0003061,
+            "visible_decode_speed_tps": 114341.7,
+            "visible_decode_measured": true,
+            "avg_model_round_speed_tps": 114341.7,
+            "avg_model_round_speed_rounds": 1,
+            "decode_duration_total_s": 0.0003061,
+            "stream_timing": {"chunk_count": 1, "content_decode_ms": 0}
+        }));
+        assert_eq!(stats.speed_tps, None);
+        assert_eq!(stats.duration_s, Some(0.0003061));
     }
 }

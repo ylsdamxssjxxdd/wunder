@@ -1948,8 +1948,8 @@
  },
  {
   "key": "cx_used",
-  "zh": "已用上下文",
-  "en": "Used context"
+  "zh": "已用",
+  "en": "Used"
  },
  {
   "key": "cx_health_ok",
@@ -1977,8 +1977,8 @@
  },
  {
   "key": "cx_free",
-  "zh": "剩余空间",
-  "en": "Free space"
+  "zh": "剩余",
+  "en": "Free"
  },
  {
   "key": "cx_more_items",
@@ -1990,13 +1990,13 @@
  },
  {
   "key": "cx_item_prompt",
-  "zh": "agent 提示词",
-  "en": "Agent prompt"
+  "zh": "提示词",
+  "en": "Prompt"
  },
  {
   "key": "cx_item_reminder",
-  "zh": "系统提醒",
-  "en": "System reminders"
+  "zh": "提醒",
+  "en": "Reminders"
  },
  {
   "key": "cx_item_tool",
@@ -2026,8 +2026,8 @@
  },
  {
   "key": "cx_part_system",
-  "zh": "系统提示词",
-  "en": "System prompt"
+  "zh": "系统",
+  "en": "System"
  },
  {
   "key": "cx_part_tools",
@@ -2041,12 +2041,12 @@
  },
  {
   "key": "cx_part_results",
-  "zh": "工具结果",
+  "zh": "结果",
   "en": "Results"
  },
  {
   "key": "cx_part_chat",
-  "zh": "会话内容",
+  "zh": "会话",
   "en": "Chat"
  },
  {

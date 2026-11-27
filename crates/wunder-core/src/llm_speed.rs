@@ -5,6 +5,9 @@ use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 
 const MIN_PREFILL_DURATION_S: f64 = 0.05;
+/// 可用的解码时长下限。单 chunk 响应或网关缓冲后一次性下发时，跨度可能只有
+/// 零点几毫秒；按它算 t/s 会得到十万级假速度，必须当成“未测量”。
+pub const MIN_DECODE_DURATION_S: f64 = 0.02;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LlmSpeedSummary {
@@ -59,7 +62,7 @@ impl TurnDecodeSpeedAccumulator {
             self.has_prefill_duration = true;
         }
         let decode_tokens = summary.decode_tokens.filter(|value| *value > 0);
-        let decode_duration_s = normalize_duration(summary.decode_duration_s);
+        let decode_duration_s = normalize_decode_duration(summary.decode_duration_s);
         // Missing timing on the last response must not expose a previous tool round's speed.
         self.last_decode_tokens = decode_tokens.map(|tokens| tokens as u64);
         self.last_decode_duration_s = decode_duration_s;
@@ -130,7 +133,7 @@ impl LlmSpeedSummary {
         decode_duration_s: Option<f64>,
     ) -> Self {
         let prefill_duration_s = normalize_prefill_duration(prefill_duration_s);
-        let decode_duration_s = normalize_duration(decode_duration_s);
+        let decode_duration_s = normalize_decode_duration(decode_duration_s);
         let prefill_tokens = input_tokens
             .filter(|value| *value > 0)
             .map(|value| value.min(i64::MAX as u64) as i64);
@@ -166,7 +169,7 @@ impl LlmSpeedSummary {
         let prefill_duration_s =
             normalize_prefill_duration(parse_f64_value(session.get("prefill_duration_s")));
         let decode_duration_s =
-            normalize_duration(parse_f64_value(session.get("decode_duration_s")));
+            normalize_decode_duration(parse_f64_value(session.get("decode_duration_s")));
         let ttft_ms = parse_u64_value(session.get("ttft_ms"))
             .or_else(|| parse_u64_value(session.get("first_token_latency_ms")))
             .or_else(|| ttft_ms_from_duration(prefill_duration_s));
@@ -465,12 +468,12 @@ pub fn build_llm_speed_summary(events: &[LlmSpeedEvent<'_>]) -> LlmSpeedSummary 
                 None => last_output_ts,
             });
         }
-        let duration = normalize_duration(metrics.decode_duration_s).or_else(|| {
+        let duration = normalize_decode_duration(metrics.decode_duration_s).or_else(|| {
             if metrics.explicit_decode_timing {
                 return None;
             }
             let duration = metrics.last_content_ts? - metrics.first_content_ts?;
-            (duration > 0.0).then_some(duration)
+            (duration >= MIN_DECODE_DURATION_S).then_some(duration)
         });
         if let Some(tokens) = metrics.output_tokens.filter(|value| *value > 0) {
             output_tokens_total = output_tokens_total.saturating_add(tokens);
@@ -630,6 +633,13 @@ fn normalize_duration(value: Option<f64>) -> Option<f64> {
     Some(value)
 }
 
+/// 解码时长必须达到可测量的下限：单 chunk 响应或网关缓冲下发的跨度只有
+/// 零点几毫秒，不能当成真实生成耗时参与 t/s 计算。
+fn normalize_decode_duration(value: Option<f64>) -> Option<f64> {
+    let value = normalize_duration(value)?;
+    (value >= MIN_DECODE_DURATION_S).then_some(value)
+}
+
 fn normalize_prefill_duration(value: Option<f64>) -> Option<f64> {
     let value = normalize_duration(value)?;
     if value < MIN_PREFILL_DURATION_S {
@@ -700,6 +710,20 @@ mod tests {
         TurnDecodeSpeedAccumulator,
     };
     use serde_json::{json, Map, Value};
+
+    #[test]
+    fn tiny_decode_span_is_reported_as_unmeasured() {
+        let summary = LlmSpeedSummary::from_usage_and_durations(
+            Some(3355),
+            Some(35),
+            Some(7.9781),
+            Some(0.0003061),
+        );
+        // 单 chunk 响应：35 tokens / 0.3ms 曾显示成 114341.7 t/s。
+        assert_eq!(summary.decode_duration_s, None);
+        assert_eq!(summary.decode_speed_tps, None);
+        assert_eq!(summary.decode_tokens, Some(35));
+    }
 
     #[test]
     fn build_summary_prefers_decode_output_tokens() {
@@ -813,8 +837,8 @@ mod tests {
                 "usage":{"input_tokens":100,"output_tokens":100}, "decode_duration_s":2}}),
             json!({"type":"llm_output_delta", "timestamp":5, "data":{"model_round":2,"reasoning_delta":"a"}}),
             json!({"type":"llm_output_delta", "timestamp":15, "data":{"model_round":2,"delta":"b"}}),
-            json!({"type":"llm_output_delta", "timestamp":25, "data":{"model_round":2,"delta":"c"}}),
-            json!({"type":"llm_output", "timestamp":30, "data":{"model_round":2,
+            json!({"type":"llm_output_delta", "timestamp":18, "data":{"model_round":2,"delta":"c"}}),
+            json!({"type":"llm_output", "timestamp":18.2, "data":{"model_round":2,
                 "usage":{"input_tokens":100,"output_tokens":400}, "decode_duration_s":null}}),
         ];
         let result = super::build_llm_speed_summary_from_value_events(&events);
@@ -824,13 +848,15 @@ mod tests {
                 result.decode_duration_s,
                 result.decode_speed_tps
             ),
-            (Some(500), Some(12.0), Some(500.0 / 12.0))
+            (Some(500), Some(5.0), Some(100.0))
         );
         let usage = crate::schemas::TokenUsage {
             input: 100,
             output: 0,
             total: 140,
             reasoning: Some(40),
+            cache_read: 0,
+            cache_write: 0,
             estimated: false,
         };
         assert_eq!(

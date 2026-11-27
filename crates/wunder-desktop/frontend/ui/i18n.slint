@@ -386,24 +386,24 @@ export global I18n {
     out property <string> cx_title: zh ? "上下文窗口" : "Context window";
     out property <string> cx_estimate: zh ? "估算" : "Estimated";
     out property <string> cx_measured: zh ? "已计量" : "Measured";
-    out property <string> cx_used: zh ? "已用上下文" : "Used context";
+    out property <string> cx_used: zh ? "已用" : "Used";
     out property <string> cx_health_ok: zh ? "健康" : "Healthy";
     out property <string> cx_health_warn: zh ? "接近上限" : "Filling up";
     out property <string> cx_health_bad: zh ? "即将占满" : "Near full";
     public pure function cx_summary(pct: string, free: string) -> string { return zh ? "已用 " + pct + " · 剩余 " + free + "" : "" + pct + " used · " + free + " free"; }
-    out property <string> cx_free: zh ? "剩余空间" : "Free space";
+    out property <string> cx_free: zh ? "剩余" : "Free";
     public pure function cx_more_items(count: string) -> string { return zh ? "另外 " + count + " 项" : "" + count + " more"; }
-    out property <string> cx_item_prompt: zh ? "agent 提示词" : "Agent prompt";
-    out property <string> cx_item_reminder: zh ? "系统提醒" : "System reminders";
+    out property <string> cx_item_prompt: zh ? "提示词" : "Prompt";
+    out property <string> cx_item_reminder: zh ? "提醒" : "Reminders";
     out property <string> cx_item_tool: zh ? "工具定义" : "Tool definition";
     public pure function cx_image(count: string) -> string { return zh ? "图片 ×" + count + "" : "Images ×" + count + ""; }
     public pure function cx_turn(count: string) -> string { return zh ? "第 " + count + " 轮" : "Turn " + count + ""; }
     out property <string> cx_item_other: zh ? "内容" : "Content";
-    out property <string> cx_part_system: zh ? "系统提示词" : "System prompt";
+    out property <string> cx_part_system: zh ? "系统" : "System";
     out property <string> cx_part_tools: zh ? "工具" : "Tools";
     out property <string> cx_part_files: zh ? "图片" : "Images";
-    out property <string> cx_part_results: zh ? "工具结果" : "Results";
-    out property <string> cx_part_chat: zh ? "会话内容" : "Chat";
+    out property <string> cx_part_results: zh ? "结果" : "Results";
+    out property <string> cx_part_chat: zh ? "会话" : "Chat";
     out property <string> cx_contents: zh ? "内容" : "Contents";
     out property <string> cx_all: zh ? "全部" : "All";
     out property <string> cx_nothing: zh ? "这里没有内容" : "Nothing here";

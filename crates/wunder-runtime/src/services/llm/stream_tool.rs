@@ -585,20 +585,37 @@ pub(super) fn resolve_stream_tool_call_name(call: &StreamToolCall) -> Option<Str
 
 pub(super) fn resolve_stream_tool_call_arguments(call: &StreamToolCall) -> String {
     if call.raw_arguments {
-        if call.arguments_snapshot.as_deref() == Some("{}") && !call.arguments_delta.is_empty() {
-            return format!(
-                "{}{}",
-                call.arguments_snapshot.as_deref().unwrap_or("{}"),
-                call.arguments_delta
-            );
-        }
-        return call
+        let snapshot = call
             .arguments_snapshot
             .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .or_else(|| (!call.arguments_delta.is_empty()).then_some(call.arguments_delta.as_str()))
-            .unwrap_or("{}")
-            .to_string();
+            .map(str::trim)
+            // `{}` 是函数参数的初始空对象，不是 custom 补丁正文；不能把它
+            // 拼到 delta 前面，否则补丁会以 `{}*** Begin Patch` 开头。
+            .filter(|value| !value.is_empty() && *value != "{}");
+        let delta =
+            (!call.arguments_delta.trim().is_empty()).then_some(call.arguments_delta.as_str());
+        return match (snapshot, delta) {
+            (Some(snapshot), Some(delta)) => {
+                if snapshot == delta {
+                    snapshot.to_string()
+                } else if snapshot.starts_with(delta) {
+                    // snapshot 是包含 delta 的完整输入
+                    snapshot.to_string()
+                } else if delta.starts_with(snapshot) {
+                    // delta 是累积输入，snapshot 只是早期片段
+                    delta.to_string()
+                } else if snapshot.ends_with("*** End Patch") {
+                    // 已经拿到完整补丁，优先使用最终快照
+                    snapshot.to_string()
+                } else {
+                    // 两段互补的片段：追加而不是丢弃
+                    format!("{snapshot}{delta}")
+                }
+            }
+            (Some(snapshot), None) => snapshot.to_string(),
+            (None, Some(delta)) => delta.to_string(),
+            (None, None) => "{}".to_string(),
+        };
     }
     if call.arguments_snapshot.as_deref() == Some("{}")
         && serde_json::from_str::<Value>(&call.arguments_delta)
@@ -640,8 +657,16 @@ pub(super) fn finalize_stream_tool_calls(acc: &[StreamToolCall]) -> Option<Value
         // 是裸文本；要和 `response_tool_call_to_openai` 的非流式结果保持同一种
         // 形态（`{"input": body}`），补丁工具才认得出参数。
         let arguments = if is_freeform_tool_name(&name) && call.raw_arguments {
-            let input = extract_freeform_tool_input(&raw_arguments).unwrap_or(raw_arguments.clone());
-            serde_json::to_string(&json!({ "input": input })).unwrap_or_else(|_| "{}".to_string())
+            let parsed = serde_json::from_str::<Value>(&raw_arguments);
+            if parsed.is_ok_and(|value| value.is_object()) {
+                // ChatCompletions 侧可能带 `dry_run` 等普通参数，保留完整对象；
+                // Responses 回放时只取其中的补丁正文。
+                raw_arguments
+            } else {
+                let input = extract_freeform_tool_input(&raw_arguments).unwrap_or(raw_arguments.clone());
+                serde_json::to_string(&json!({ "input": input }))
+                    .unwrap_or_else(|_| "{}".to_string())
+            }
         } else {
             raw_arguments
         };
@@ -652,6 +677,14 @@ pub(super) fn finalize_stream_tool_calls(acc: &[StreamToolCall]) -> Option<Value
                 "arguments": arguments,
             }
         });
+        if is_freeform_tool_name(&name) && call.raw_arguments {
+            if let Value::Object(ref mut map) = payload {
+                map.insert(
+                    "input_kind".to_string(),
+                    Value::String("text".to_string()),
+                );
+            }
+        }
         if let Some(id) = call.id.as_ref().or(call.source_id.as_ref()) {
             if let Value::Object(ref mut map) = payload {
                 map.insert("id".to_string(), Value::String(id.clone()));

@@ -700,6 +700,14 @@ impl Orchestrator {
             let context_manager = ContextManager;
             let image_policy =
                 crate::services::image_context::ImageContextPolicy::from_config(&llm_config);
+            let model_name = llm_config.model.clone().unwrap_or_default();
+            // 该会话此前已确认这个模型读不了图。记录带模型名，换到别的模型
+            // 时自动失效；命中时不再还原占位，避免每一轮都先发一次注定失败的
+            // 带图请求，再把整轮打断在“图片请求”上。
+            let mut provider_rejects_images = self
+                .workspace
+                .load_session_image_input_unsupported(&user_id, &session_id)
+                .is_some_and(|model| model == model_name);
             let mut messages = vec![json!({ "role": "system", "content": system_prompt })];
             // Ensure the previous turn's async history writes are visible before deriving
             // this turn's model input. Otherwise fast follow-up user messages can miss the
@@ -722,6 +730,9 @@ impl Orchestrator {
                 .load_session_inline_image_count(&user_id, &session_id)
             {
                 restore_policy.max_images = previous.min(image_policy.max_images);
+            }
+            if provider_rejects_images {
+                restore_policy.max_images = 0;
             }
             let restore_report = crate::services::chat_media::restore_omitted_inline_images(
                 &mut messages,
@@ -848,6 +859,21 @@ impl Orchestrator {
                     ),
                 );
                 messages = context_manager.normalize_messages(messages);
+                if provider_rejects_images {
+                    let omission =
+                        crate::services::image_context::omit_all_inline_images(&mut messages);
+                    if omission.changed() {
+                        let mut payload = omission.to_payload();
+                        if let Value::Object(ref mut map) = payload {
+                            map.insert(
+                                "reason".to_string(),
+                                json!("model_cannot_read_images"),
+                            );
+                            round_info.insert_into(map);
+                        }
+                        emitter.emit("context_image_budget", payload).await;
+                    }
+                }
                 // Finalize image placeholders before the compaction summary is
                 // constructed so the summary and the live request replay the same prefix.
                 let image_report = match crate::services::image_context::enforce_request_limits(
@@ -1222,6 +1248,38 @@ impl Orchestrator {
                                 round_info.insert_into(map);
                             }
                             emitter.emit("compaction", compaction_payload).await;
+                        }
+                        Err(err)
+                            if err.code() == "LLM_IMAGE_UNSUPPORTED"
+                                && crate::services::image_context::inline_image_stats(&messages).0
+                                    > 0 =>
+                        {
+                            // provider 明确读不了图：不重试同一份带图请求，改为
+                            // 纯文本降级后立刻重发。路径提示仍在，模型知道截图
+                            // 在哪里；这一轮和后续轮次都不会再被图片卡死。
+                            provider_rejects_images = true;
+                            self.workspace.save_session_image_input_unsupported(
+                                &user_id,
+                                &session_id,
+                                Some(model_name.as_str()),
+                             );
+                            self.workspace.save_session_inline_image_count(
+                                &user_id,
+                                &session_id,
+                                0,
+                            );
+                            let omission =
+                                crate::services::image_context::omit_all_inline_images(&mut messages);
+                            let mut payload = omission.to_payload();
+                            if let Value::Object(ref mut map) = payload {
+                                map.insert(
+                                    "reason".to_string(),
+                                    json!("model_cannot_read_images"),
+                                );
+                                round_info.insert_into(map);
+                            }
+                            emitter.emit("context_image_budget", payload).await;
+                            continue;
                         }
                         Err(err) => {
                             if should_recover_from_context_overflow(&err) {

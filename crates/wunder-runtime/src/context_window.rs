@@ -82,6 +82,11 @@ pub struct ContextItem {
     pub count: i64,
     #[serde(default)]
     pub tokens: i64,
+    /// Position of the item in the request's message stream. Tool results and
+    /// turns use this to stay in conversation order even though they live in
+    /// different parts; tool definitions and attachments keep 0.
+    #[serde(default)]
+    pub order: i64,
     /// The item's own text for the detail view, kept whole. Memory only: the
     /// persisted snapshot deliberately skips it, so the card still describes
     /// the request after a restart while the text can be released with the
@@ -132,6 +137,7 @@ impl ContextWindowSnapshot {
                     name: tool_name(tool),
                     count: 1,
                     tokens: json_tokens(tool),
+                    order: 0,
                     text: serde_json::to_string_pretty(tool).unwrap_or_default(),
                 });
             }
@@ -141,7 +147,9 @@ impl ContextWindowSnapshot {
         // card reads "web_run ×20" rather than twenty anonymous observations.
         let call_names = tool_call_names(messages);
         let mut turn = 0_i64;
+        let mut order = 0_i64;
         for message in messages {
+            order += 1;
             let role = message.role.as_str();
             // `ChatMessage` is what leaves the room; estimating its serialized
             // shape keeps the card in step with the wire format.
@@ -166,6 +174,7 @@ impl ContextWindowSnapshot {
                         name: String::new(),
                         count: 1,
                         tokens,
+                        order,
                         text: message_content_text(&message.content).unwrap_or_default(),
                     });
                 }
@@ -175,21 +184,21 @@ impl ContextWindowSnapshot {
                         .as_deref()
                         .and_then(|id| call_names.get(id).cloned())
                         .unwrap_or_default();
-                    merge_item(&mut results.items, "result", &name, tokens, &body);
+                    merge_item(&mut results.items, "result", &name, tokens, &body, order);
                 }
                 "user" => {
                     turn += 1;
-                    merge_item_counted(&mut chat.items, "turn", "", turn, tokens, &body);
+                    merge_item_counted(&mut chat.items, "turn", "", turn, tokens, &body, order);
                 }
                 "assistant" => {
                     // A turn's request and its answer are one row: the card
                     // reads "Turn 3", not a second anonymous row per reply.
-                    merge_item_counted(&mut chat.items, "turn", "", turn.max(1), tokens, &body);
+                    merge_item_counted(&mut chat.items, "turn", "", turn.max(1), tokens, &body, order);
                 }
                 _ => {
                     // An observation encoded as a user message and any unknown
                     // role still belongs to the conversation it was sent in.
-                    merge_item_counted(&mut chat.items, "turn", "", turn.max(1), tokens, &body);
+                    merge_item_counted(&mut chat.items, "turn", "", turn.max(1), tokens, &body, order);
                 }
             }
         }
@@ -200,6 +209,7 @@ impl ContextWindowSnapshot {
                 name: String::new(),
                 count: images,
                 tokens: images * IMAGE_TOKEN_ESTIMATE,
+                order: 0,
                 text: String::new(),
             });
         }
@@ -434,13 +444,23 @@ fn message_value(message: &ChatMessage) -> Value {
 }
 
 /// Gather one result into a row per tool name.
-fn merge_item(items: &mut Vec<ContextItem>, tag: &str, name: &str, tokens: i64, text: &str) {
+fn merge_item(
+    items: &mut Vec<ContextItem>,
+    tag: &str,
+    name: &str,
+    tokens: i64,
+    text: &str,
+    order: i64,
+) {
     if let Some(item) = items
         .iter_mut()
         .find(|item| item.tag == tag && item.name == name)
     {
         item.count += 1;
         item.tokens += tokens;
+        // The row stands for every call of this tool; keep it after the
+        // latest result so it cannot drift ahead of later turns.
+        item.order = item.order.max(order);
         append_text(item, text);
         return;
     }
@@ -449,6 +469,7 @@ fn merge_item(items: &mut Vec<ContextItem>, tag: &str, name: &str, tokens: i64, 
         name: name.into(),
         count: 1,
         tokens,
+        order,
         text: text.to_string(),
     });
 }
@@ -461,6 +482,7 @@ fn merge_item_counted(
     count: i64,
     tokens: i64,
     text: &str,
+    order: i64,
 ) {
     if let Some(item) = items
         .iter_mut()
@@ -475,6 +497,7 @@ fn merge_item_counted(
         name: name.into(),
         count,
         tokens,
+        order,
         text: text.to_string(),
     });
 }
@@ -582,6 +605,11 @@ mod tests {
         let chat = snapshot.part("chat").expect("chat part");
         assert!(chat.items.iter().any(|i| i.tag == "turn" && i.count == 2));
         assert_eq!(snapshot.turns, 2);
+        // The result came after the first two turns in the message stream and
+        // must stay there rather than being listed ahead of every turn.
+        assert_eq!(chat.items[0].order, 2);
+        assert_eq!(chat.items[1].order, 4);
+        assert_eq!(results.items[0].order, 6);
     }
 
     #[test]

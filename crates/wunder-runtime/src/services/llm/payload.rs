@@ -6,7 +6,10 @@ use crate::core::tool_args::normalize_tool_arguments_json as normalize_tool_argu
 use crate::services::chat_attachments::parse_image_data_url;
 use crate::tools::{extract_freeform_tool_input, is_freeform_tool_name};
 use serde_json::{Value, json};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+
+const CUSTOM_INPUT_KIND: &str = "input_kind";
+const CUSTOM_INPUT_KIND_TEXT: &str = "text";
 
 pub(super) fn normalize_chat_tool_definition(
     tool: &Value,
@@ -146,9 +149,11 @@ pub(super) fn normalize_responses_tool_definition(
     })
 }
 
-pub(super) fn build_responses_input(messages: &[ChatMessage]) -> Value {
+pub(super) fn build_responses_input(messages: &[ChatMessage], tools: Option<&[Value]>) -> Value {
+    let declared_tools = declared_tool_kinds(tools);
     let mut input: Vec<Value> = Vec::new();
     let mut custom_tool_call_ids = HashSet::new();
+    let mut fallback_call_index = 0usize;
     for message in messages {
         let role = message.role.trim();
         if role.eq_ignore_ascii_case("tool") {
@@ -182,8 +187,10 @@ pub(super) fn build_responses_input(messages: &[ChatMessage]) -> Value {
 
         if let Some(tool_calls) = message.tool_calls.as_ref() {
             let calls = extract_tool_calls_list(tool_calls);
-            for (idx, call) in calls.iter().enumerate() {
-                if let Some(item) = tool_call_to_responses_item(call, idx) {
+            for call in calls.iter() {
+                let index = fallback_call_index;
+                fallback_call_index = fallback_call_index.saturating_add(1);
+                if let Some(item) = tool_call_to_responses_item(call, index, &declared_tools) {
                     if item["type"] == "custom_tool_call" {
                         if let Some(call_id) = item.get("call_id").and_then(Value::as_str) {
                             custom_tool_call_ids.insert(call_id.to_string());
@@ -195,6 +202,32 @@ pub(super) fn build_responses_input(messages: &[ChatMessage]) -> Value {
         }
     }
     Value::Array(input)
+}
+
+fn declared_tool_kinds(tools: Option<&[Value]>) -> HashMap<String, bool> {
+    let mut kinds = HashMap::new();
+    for tool in tools.unwrap_or(&[]) {
+        let name = tool
+            .get("name")
+            .and_then(Value::as_str)
+            .or_else(|| tool.pointer("/function/name").and_then(Value::as_str))
+            .unwrap_or("")
+            .trim();
+        if name.is_empty() {
+            continue;
+        }
+        let custom = tool
+            .get("type")
+            .and_then(Value::as_str)
+            .map(|kind| kind.eq_ignore_ascii_case("custom"))
+            .unwrap_or(false);
+        kinds.insert(name.to_string(), custom);
+    }
+    kinds
+}
+
+fn declared_tool_kind(name: &str, kinds: &HashMap<String, bool>) -> Option<bool> {
+    kinds.get(name).copied()
 }
 
 fn normalize_responses_role(role: &str) -> &'static str {
@@ -310,7 +343,11 @@ pub(super) fn normalize_tool_arguments_json(arguments: &str) -> String {
     normalize_tool_arguments_json_lossy(arguments)
 }
 
-fn tool_call_to_responses_item(call: &Value, fallback_index: usize) -> Option<Value> {
+fn tool_call_to_responses_item(
+    call: &Value,
+    fallback_index: usize,
+    declared_tools: &HashMap<String, bool>,
+) -> Option<Value> {
     let Value::Object(map) = call else {
         return None;
     };
@@ -325,13 +362,23 @@ fn tool_call_to_responses_item(call: &Value, fallback_index: usize) -> Option<Va
     if name.is_empty() {
         return None;
     }
-    let arguments = map
-        .get("function")
-        .and_then(|value| value.get("arguments"))
+    let raw_arguments = map
+        .get("custom_input")
         .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            map.get("function")
+                .and_then(|value| value.get("arguments"))
+                .and_then(Value::as_str)
+        })
         .or_else(|| map.get("arguments").and_then(Value::as_str))
-        .map(normalize_tool_arguments_json)
-        .unwrap_or_else(|| "{}".to_string());
+        .or_else(|| map.get("input").and_then(Value::as_str))
+        .unwrap_or("{}")
+        .to_string();
+    let custom = match declared_tool_kind(&name, declared_tools) {
+        Some(custom) => custom,
+        None => has_custom_input_marker(map) || is_freeform_tool_name(&name),
+    };
     let call_id = map
         .get("id")
         .or_else(|| map.get("call_id"))
@@ -341,8 +388,16 @@ fn tool_call_to_responses_item(call: &Value, fallback_index: usize) -> Option<Va
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| format!("call_{}", fallback_index + 1));
-    if is_freeform_tool_name(&name) {
-        let input = extract_freeform_tool_input(&arguments).unwrap_or(arguments);
+    if custom {
+        // custom 工具的输入是补丁正文本身，不能再经过 JSON 参数修复；
+        // 否则合法的 JSON 字符串会被包装成 `{"value": ...}`。
+        let input = map
+            .get("custom_input")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .or_else(|| extract_freeform_tool_input(&raw_arguments))
+            .unwrap_or(raw_arguments);
         return Some(json!({
             "type": "custom_tool_call",
             "call_id": call_id,
@@ -354,8 +409,14 @@ fn tool_call_to_responses_item(call: &Value, fallback_index: usize) -> Option<Va
         "type": "function_call",
         "call_id": call_id,
         "name": name,
-        "arguments": arguments,
+        "arguments": normalize_tool_arguments_json(&raw_arguments),
     }))
+}
+
+fn has_custom_input_marker(map: &serde_json::Map<String, Value>) -> bool {
+    map.get(CUSTOM_INPUT_KIND)
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.eq_ignore_ascii_case(CUSTOM_INPUT_KIND_TEXT))
 }
 
 pub(super) fn sanitize_chat_messages(messages: &[ChatMessage]) -> Vec<ChatMessage> {
@@ -366,10 +427,130 @@ pub(super) fn sanitize_chat_messages(messages: &[ChatMessage]) -> Vec<ChatMessag
             content: sanitize_message_content(&message.content),
             reasoning_content: message.reasoning_content.clone(),
             anthropic_thinking_blocks: message.anthropic_thinking_blocks.clone(),
-            tool_calls: message.tool_calls.clone(),
+            tool_calls: message
+                .tool_calls
+                .as_ref()
+                .map(strip_internal_tool_call_fields),
             tool_call_id: message.tool_call_id.clone(),
         })
         .collect()
+}
+
+/// ChatCompletions 只认识 `type:"function"`。内部为了保留 custom 语义而附加的
+/// `input_kind`/`custom_input` 必须在这里剥掉；如果将来直接存 `custom_tool_call`
+/// 形状，也在这里降级成 `{"input": raw}` 的普通函数调用。
+fn strip_internal_tool_call_fields(value: &Value) -> Value {
+    match value {
+        Value::Array(items) => {
+            Value::Array(items.iter().map(strip_internal_tool_call_fields).collect())
+        }
+        Value::Object(map) => {
+            let custom_marker = has_custom_input_marker(&map);
+            let mut map = map.clone();
+            map.remove(CUSTOM_INPUT_KIND);
+            map.remove("custom_input");
+            let item_type = map
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if item_type == "custom_tool_call" {
+                let name = map
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let input = map
+                    .get("input")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let arguments = serde_json::to_string(&json!({ "input": input }))
+                    .unwrap_or_else(|_| "{}".to_string());
+                let mut call = json!({
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": arguments,
+                    }
+                });
+                if let Some(id) = map
+                    .get("id")
+                    .or_else(|| map.get("call_id"))
+                    .and_then(Value::as_str)
+                {
+                    call["id"] = Value::String(id.to_string());
+                }
+                return call;
+            }
+            if item_type == "function_call" {
+                let name = map
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let arguments = map
+                    .get("arguments")
+                    .and_then(Value::as_str)
+                    .unwrap_or("{}")
+                    .to_string();
+                let arguments = if is_freeform_tool_name(&name) {
+                    chat_arguments_with_custom_input(&arguments)
+                } else {
+                    arguments
+                };
+                let mut call = json!({
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": arguments,
+                    }
+                });
+                if let Some(id) = map
+                    .get("id")
+                    .or_else(|| map.get("call_id"))
+                    .and_then(Value::as_str)
+                {
+                    call["id"] = Value::String(id.to_string());
+                }
+                return call;
+            }
+            if item_type == "function" || item_type.is_empty() {
+                if let Some(function) = map.get_mut("function").and_then(Value::as_object_mut) {
+                    let name = function
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    let arguments = function
+                        .get("arguments")
+                        .and_then(Value::as_str)
+                        .unwrap_or("{}")
+                        .to_string();
+                    if custom_marker || is_freeform_tool_name(&name) {
+                        let arguments = chat_arguments_with_custom_input(&arguments);
+                        function.insert("arguments".to_string(), Value::String(arguments));
+                    }
+                }
+            }
+            Value::Object(map)
+        }
+        other => other.clone(),
+    }
+}
+
+/// Responses 侧的 custom 工具把补丁正文放在 `arguments` 里，降级到
+/// ChatCompletions 时必须重新包装成 `{"input": raw}`，否则 Chat 端点会收到
+/// 一段不是 JSON 的 arguments。
+fn chat_arguments_with_custom_input(arguments: &str) -> String {
+    match serde_json::from_str::<Value>(arguments) {
+        Ok(Value::Object(_)) => arguments.to_string(),
+        Ok(Value::String(raw)) => json!({ "input": raw }).to_string(),
+        _ => json!({ "input": arguments }).to_string(),
+    }
 }
 
 fn sanitize_message_content(content: &Value) -> Value {
@@ -420,6 +601,7 @@ mod tests {
     };
     use crate::services::llm::ChatMessage;
     use serde_json::{Value, json};
+    use std::collections::HashMap;
 
     #[test]
     fn sanitize_chat_messages_drops_invalid_image_parts_from_history() {
@@ -460,6 +642,7 @@ mod tests {
                 }
             }),
             0,
+            &HashMap::new(),
         )
         .expect("responses item");
 
@@ -481,6 +664,7 @@ mod tests {
                     "id":"call_edit", "function":{"name":name, "arguments":args.to_string()}
                 }),
                 0,
+                &HashMap::new(),
             )
             .unwrap();
             assert_eq!(item["type"], "function_call");
@@ -502,12 +686,175 @@ mod tests {
                 }
             }),
             0,
+            &HashMap::new(),
         )
         .expect("responses item");
 
         assert_eq!(item["type"], "custom_tool_call");
         assert_eq!(item["call_id"], "call_patch");
         assert_eq!(item["input"], "*** Begin Patch\n*** End Patch");
+    }
+
+    #[test]
+    fn apply_patch_call_stays_function_when_tools_declare_it_as_function() {
+        let mut declared = HashMap::new();
+        declared.insert("apply_patch".to_string(), false);
+        let item = tool_call_to_responses_item(
+            &json!({
+                "id": "call_patch",
+                "function": {
+                    "name": "apply_patch",
+                    "arguments": "{\"input\":\"*** Begin Patch\\n*** End Patch\"}"
+                }
+            }),
+            0,
+            &declared,
+        )
+        .expect("responses item");
+
+        assert_eq!(item["type"], "function_call");
+        assert_eq!(
+            serde_json::from_str::<Value>(item["arguments"].as_str().unwrap()).unwrap(),
+            json!({ "input": "*** Begin Patch\n*** End Patch" })
+        );
+    }
+
+    #[test]
+    fn custom_tool_call_keeps_json_string_patch_as_raw_input() {
+        let mut declared = HashMap::new();
+        declared.insert("apply_patch".to_string(), true);
+        let arguments = serde_json::to_string("*** Begin Patch\n*** End Patch").unwrap();
+        let item = tool_call_to_responses_item(
+            &json!({
+                "id": "call_patch",
+                "function": {
+                    "name": "apply_patch",
+                    "arguments": arguments,
+                }
+            }),
+            0,
+            &declared,
+        )
+        .expect("responses item");
+
+        assert_eq!(item["type"], "custom_tool_call");
+        assert_eq!(item["input"], "*** Begin Patch\n*** End Patch");
+    }
+
+    #[test]
+    fn custom_input_marker_bypasses_json_argument_repair() {
+        let item = tool_call_to_responses_item(
+            &json!({
+                "id": "call_patch",
+                "input_kind": "text",
+                "function": {
+                    "name": "apply_patch",
+                    "arguments": "*** Begin Patch\n*** End Patch",
+                }
+            }),
+            0,
+            &HashMap::new(),
+        )
+        .expect("responses item");
+
+        assert_eq!(item["type"], "custom_tool_call");
+        assert_eq!(item["input"], "*** Begin Patch\n*** End Patch");
+    }
+
+    #[test]
+    fn sanitize_chat_messages_strips_internal_custom_marker() {
+        let messages = vec![ChatMessage {
+            role: "assistant".to_string(),
+            content: json!(""),
+            reasoning_content: None,
+            anthropic_thinking_blocks: None,
+            tool_calls: Some(json!([{
+                "id": "call_patch",
+                "type": "function",
+                "input_kind": "text",
+                "function": {
+                    "name": "apply_patch",
+                    "arguments": "{\"input\":\"*** Begin Patch\\n*** End Patch\"}"
+                }
+            }])),
+            tool_call_id: None,
+        }];
+
+        let sanitized = sanitize_chat_messages(&messages);
+        let call = &sanitized[0]
+            .tool_calls
+            .as_ref()
+            .unwrap()
+            .as_array()
+            .unwrap()[0];
+        assert!(call.get("input_kind").is_none());
+        assert_eq!(call["type"], "function");
+    }
+
+    #[test]
+    fn sanitize_chat_messages_wraps_raw_custom_arguments_for_chat() {
+        let messages = vec![ChatMessage {
+            role: "assistant".to_string(),
+            content: json!(""),
+            reasoning_content: None,
+            anthropic_thinking_blocks: None,
+            tool_calls: Some(json!([{
+                "id": "call_patch",
+                "type": "function",
+                "input_kind": "text",
+                "function": {
+                    "name": "apply_patch",
+                    "arguments": "*** Begin Patch\n*** End Patch"
+                }
+            }])),
+            tool_call_id: None,
+        }];
+
+        let sanitized = sanitize_chat_messages(&messages);
+        let call = &sanitized[0]
+            .tool_calls
+            .as_ref()
+            .unwrap()
+            .as_array()
+            .unwrap()[0];
+        let arguments = call["function"]["arguments"].as_str().unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(arguments).unwrap(),
+            json!({ "input": "*** Begin Patch\n*** End Patch" })
+        );
+    }
+
+    #[test]
+    fn sanitize_chat_messages_converts_function_call_shape() {
+        let messages = vec![ChatMessage {
+            role: "assistant".to_string(),
+            content: json!(""),
+            reasoning_content: None,
+            anthropic_thinking_blocks: None,
+            tool_calls: Some(json!([{
+                "type": "function_call",
+                "call_id": "call_edit",
+                "name": "edit",
+                "arguments": "{\"file_path\":\"a.txt\"}"
+            }])),
+            tool_call_id: None,
+        }];
+
+        let sanitized = sanitize_chat_messages(&messages);
+        let call = &sanitized[0]
+            .tool_calls
+            .as_ref()
+            .unwrap()
+            .as_array()
+            .unwrap()[0];
+        assert_eq!(call["type"], "function");
+        assert_eq!(call["id"], "call_edit");
+        assert_eq!(call["function"]["name"], "edit");
+        assert_eq!(
+            serde_json::from_str::<Value>(call["function"]["arguments"].as_str().unwrap())
+                .unwrap()["file_path"],
+            "a.txt"
+        );
     }
 
     #[test]
@@ -538,7 +885,7 @@ mod tests {
             },
         ];
 
-        let input = build_responses_input(&messages);
+        let input = build_responses_input(&messages, None);
         let items = input.as_array().expect("responses input array");
 
         assert_eq!(items[1]["type"], "custom_tool_call");

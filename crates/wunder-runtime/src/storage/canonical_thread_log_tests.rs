@@ -104,6 +104,58 @@ fn read_body(db: &dyn StorageBackend, body_id: &str) -> String {
 }
 
 #[test]
+fn manual_compaction_marker_is_hidden_from_trajectory_rows() {
+    let root = tempfile::tempdir().unwrap();
+    let db = SqliteStorage::new(
+        root.path()
+            .join("state_1.sqlite")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    db.ensure_initialized().unwrap();
+    let admitted = db
+        .accept_thread_turn(USER, THREAD, &json!({"content":"/compact"}))
+        .unwrap();
+    let turn = admitted["turn_id"].as_str().unwrap().to_string();
+    super::test_support::freeze_thread(root.path(), USER, THREAD);
+    super::test_support::begin_turn(root.path(), USER, THREAD, &turn);
+    db.append_thread_item(
+        USER,
+        &json!({
+            "session_id":THREAD,"turn_id":turn.as_str(),
+            "item_id":format!("{turn}:text-1"),"kind":"assistant_message","role":"assistant",
+            "model_round":1,"content":"Fixture compacted summary.","status":"completed",
+            "meta":{"type":"manual_compaction_marker","manual_compaction":true,"status":"done"},
+            "message_stats":{"usage":{"input_tokens":120000,"output_tokens":300}}
+        }),
+    )
+    .unwrap();
+    db.append_thread_item(
+        USER,
+        &json!({
+            "session_id":THREAD,"turn_id":turn.as_str(),
+            "item_id":format!("{turn}:text-2"),"kind":"assistant_message","role":"assistant",
+            "model_round":2,"content":"Fixture answer.","status":"completed",
+            "message_stats":{"usage":{"input_tokens":4000,"output_tokens":200}}
+        }),
+    )
+    .unwrap();
+    let page = db
+        .thread_view_trajectory_page(USER, THREAD, None, Some(turn.as_str()), 20)
+        .unwrap();
+    assert!(
+        page.trajectory
+            .iter()
+            .all(|row| row.item_id != format!("{turn}:text-1")),
+        "the /compact assistant marker must not become a model-step row"
+    );
+    assert!(page
+        .trajectory
+        .iter()
+        .any(|row| row.item_id == format!("{turn}:text-2")));
+}
+
+#[test]
 fn initial_chat_cursor_replays_a_commit_racing_the_page_read() {
     use super::MetaStore;
     use std::sync::atomic::{AtomicBool, Ordering};
