@@ -2152,8 +2152,10 @@ export function createTrajectoryView(host, options = {}) {
     scheduleRender();
     requestOlderTurns();
   }, { passive: true });
+  // 横向/纵向滚动条属于滚动容器本身，按在滚动条上时事件目标是 `ledgerEl`，
+  // 不能据此收起详情；只有点中表格之外的空白画布才算“点空白处关闭”。
   ledgerEl.addEventListener("pointerdown", (event) => {
-    if (event.target === ledgerEl) clearSelection();
+    if (event.target === ledgerCanvas || event.target === emptyEl) clearSelection();
   });
 
   resizeHandle.addEventListener("pointerdown", (event) => {

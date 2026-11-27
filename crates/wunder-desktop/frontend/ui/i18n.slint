@@ -386,10 +386,6 @@ export global I18n {
     out property <string> cx_title: zh ? "上下文窗口" : "Context window";
     out property <string> cx_estimate: zh ? "估算" : "Estimated";
     out property <string> cx_measured: zh ? "已计量" : "Measured";
-    out property <string> cx_used: zh ? "已用" : "Used";
-    out property <string> cx_health_ok: zh ? "健康" : "Healthy";
-    out property <string> cx_health_warn: zh ? "接近上限" : "Filling up";
-    out property <string> cx_health_bad: zh ? "即将占满" : "Near full";
     public pure function cx_summary(pct: string, free: string) -> string { return zh ? "已用 " + pct + " · 剩余 " + free + "" : "" + pct + " used · " + free + " free"; }
     out property <string> cx_free: zh ? "剩余" : "Free";
     public pure function cx_more_items(count: string) -> string { return zh ? "另外 " + count + " 项" : "" + count + " more"; }

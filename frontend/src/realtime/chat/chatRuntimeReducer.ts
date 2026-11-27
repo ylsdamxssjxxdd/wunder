@@ -28,6 +28,9 @@ const VIOLATION_LIMIT = 100;
 const PENDING_SEQUENTIAL_EVENT_LIMIT = 200;
 const SMALL_SEQUENTIAL_GAP_LIMIT = 4;
 const SEQUENTIAL_GAP_REPLAY_DEADLINE_MS = 800;
+// 单 chunk / 网关缓冲响应的解码跨度常只有 1ms，不能据此计算 t/s。
+const MIN_DECODE_MEASUREMENT_MS = 20;
+const MAX_PLAUSIBLE_DECODE_SPEED_TPS = 10_000;
 
 const BUSY_STATUSES = new Set<ChatSessionRuntimeStatus>([
   'queued',
@@ -5485,8 +5488,13 @@ const applyProjectedTimingStats = (
   );
   if (decodeTokens !== null && timingMs !== null) {
     stats.decode_tokens = decodeTokens;
-    stats.decode_duration_s = timingMs / 1000;
-    stats.decode_speed_tps = decodeTokens / (timingMs / 1000);
+    if (timingMs >= MIN_DECODE_MEASUREMENT_MS) {
+      stats.decode_duration_s = timingMs / 1000;
+      stats.decode_speed_tps = decodeTokens / (timingMs / 1000);
+    } else {
+      stats.decode_duration_s = null;
+      stats.decode_speed_tps = null;
+    }
   }
   const bodyTokens = parsePositiveInt(
     source.visible_decode_tokens ?? source.visibleDecodeTokens ??
@@ -5497,8 +5505,14 @@ const applyProjectedTimingStats = (
   );
   if (bodyTokens !== null && timingMs !== null) {
     stats.visible_decode_tokens = bodyTokens;
-    stats.visible_decode_duration_s = timingMs / 1000;
-    stats.visible_decode_speed_tps = bodyTokens / (timingMs / 1000);
+    if (timingMs >= MIN_DECODE_MEASUREMENT_MS) {
+      stats.visible_decode_duration_s = timingMs / 1000;
+      stats.visible_decode_speed_tps = bodyTokens / (timingMs / 1000);
+    } else {
+      stats.visible_decode_duration_s = null;
+      stats.visible_decode_speed_tps = null;
+      stats.visible_decode_measured = false;
+    }
   }
   copyProjectedPositiveNumber(
     stats,
@@ -5563,6 +5577,30 @@ const applyProjectedTimingStats = (
   );
   if (duration !== null) {
     stats.interaction_duration_s = duration;
+  }
+  // Last line of defence for every projected stats path, including persisted
+  // snapshots and legacy payloads that carry a precomputed speed field.
+  const decodeDurationS = parsePositiveNumber(stats.decode_duration_s);
+  const visibleDecodeDurationS = parsePositiveNumber(stats.visible_decode_duration_s);
+  const measuredDecodeMs = timingMs ?? (
+    decodeDurationS !== null
+      ? decodeDurationS * 1000
+      : visibleDecodeDurationS !== null
+        ? visibleDecodeDurationS * 1000
+        : null
+  );
+  const decodeSpeed = parsePositiveNumber(stats.decode_speed_tps);
+  const visibleDecodeSpeed = parsePositiveNumber(stats.visible_decode_speed_tps);
+  if (
+    (measuredDecodeMs !== null && measuredDecodeMs < MIN_DECODE_MEASUREMENT_MS) ||
+    (decodeSpeed !== null && decodeSpeed > MAX_PLAUSIBLE_DECODE_SPEED_TPS) ||
+    (visibleDecodeSpeed !== null && visibleDecodeSpeed > MAX_PLAUSIBLE_DECODE_SPEED_TPS)
+  ) {
+    stats.decode_duration_s = null;
+    stats.decode_speed_tps = null;
+    stats.visible_decode_duration_s = null;
+    stats.visible_decode_speed_tps = null;
+    stats.visible_decode_measured = false;
   }
 };
 

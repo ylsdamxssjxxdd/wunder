@@ -128,8 +128,12 @@ const resolveQueueAheadCount = (item: WorkflowItemLike | null | undefined): numb
 
 const normalizeSpeed = (speed: number): number | null => {
   if (!Number.isFinite(speed) || speed <= 0) return null;
+  // 10k t/s 已经超过任何可解释的单流式解码速度；超过一律视为网关把整段
+  // 响应缓冲后一次性下发造成的伪测量。
+  if (speed > 10_000) return null;
   return speed;
 };
+const MIN_DECODE_MEASUREMENT_SECONDS = 0.02;
 
 const parsePositiveInteger = (value: unknown): number | null => {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -357,7 +361,19 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
       stats?.avgModelRoundSpeedTps ??
       stats?.avgModelRoundDecodeSpeedTps
   ));
-  if (aggregateSpeed !== null && Number.isFinite(aggregateRounds) && aggregateRounds > 0) {
+  const aggregateDuration = normalizeDurationSeconds(
+    stats?.decode_duration_total_s ??
+      stats?.decodeDurationTotalS ??
+      stats?.decode_duration_s ??
+      stats?.visible_decode_duration_s
+  );
+  if (
+    aggregateSpeed !== null &&
+    Number.isFinite(aggregateRounds) &&
+    aggregateRounds > 0 &&
+    aggregateDuration !== null &&
+    aggregateDuration >= MIN_DECODE_MEASUREMENT_SECONDS
+  ) {
     return aggregateSpeed;
   }
 
@@ -368,11 +384,30 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
   const visibleSpeed = normalizeSpeed(Number(
     stats?.visible_decode_speed_tps ?? stats?.visibleDecodeSpeedTps
   ));
-  if (visibleSpeed !== null && visibleMeasured !== false) return visibleSpeed;
+  const visibleDuration = normalizeDurationSeconds(
+    stats?.visible_decode_duration_s ?? stats?.visibleDecodeDurationS
+  );
+  if (
+    visibleSpeed !== null &&
+    visibleMeasured !== false &&
+    visibleDuration !== null &&
+    visibleDuration >= MIN_DECODE_MEASUREMENT_SECONDS
+  ) {
+    return visibleSpeed;
+  }
   const decodeSpeed = normalizeSpeed(Number(
     stats?.decode_speed_tps ?? stats?.decodeSpeedTps
   ));
-  if (decodeSpeed !== null) return decodeSpeed;
+  const decodeDuration = normalizeDurationSeconds(
+    stats?.decode_duration_s ?? stats?.decodeDurationS
+  );
+  if (
+    decodeSpeed !== null &&
+    decodeDuration !== null &&
+    decodeDuration >= MIN_DECODE_MEASUREMENT_SECONDS
+  ) {
+    return decodeSpeed;
+  }
   // `decode_output_tokens` may include reasoning/tool output. It is safe as a
   // fallback only when stream timing confirms visible body characters.
   const timing = stats?.stream_timing && typeof stats.stream_timing === 'object'
@@ -407,6 +442,7 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
     ? durationSeconds * 1000
     : timingMs;
   if (Number.isFinite(tokens) && tokens > 0 && Number.isFinite(durationMs) && durationMs > 0) {
+    if (durationMs < MIN_DECODE_MEASUREMENT_SECONDS * 1000) return null;
     return normalizeSpeed(tokens / (durationMs / 1000));
   }
   return null;

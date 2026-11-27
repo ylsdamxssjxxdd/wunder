@@ -8163,7 +8163,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "wunder-core"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8177,7 +8177,7 @@ dependencies = [
 
 [[package]]
 name = "wunder-desktop"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -8205,7 +8205,7 @@ dependencies = [
 
 [[package]]
 name = "wunder-frontend-slint"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -8248,7 +8248,7 @@ dependencies = [
 
 [[package]]
 name = "wunder-runtime"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "aes",
  "anyhow",

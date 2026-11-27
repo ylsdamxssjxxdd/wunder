@@ -889,6 +889,18 @@ fn merge_persisted_transcript_metrics(
                 .filter(|number| number.is_finite() && *number > 0.0)
         })
     };
+    const MIN_DECODE_DURATION_S: f64 = wunder_core::llm_speed::MIN_DECODE_DURATION_S;
+    let measured_duration = |stats: &serde_json::Map<String, Value>| -> Option<f64> {
+        metric(
+            stats,
+            &[
+                "decode_duration_total_s",
+                "decode_duration_s",
+                "visible_decode_duration_s",
+            ],
+        )
+        .filter(|duration| *duration >= MIN_DECODE_DURATION_S)
+    };
     let persisted_stats = transcript.iter().rev().find_map(|message| {
         if message.get("role").and_then(Value::as_str) != Some("assistant") {
             return None;
@@ -902,17 +914,11 @@ fn merge_persisted_transcript_metrics(
                 "avg_model_round_speed_tps",
                 "avg_model_round_decode_speed_tps",
             ],
-        );
+        )
+        .filter(|_| measured_duration(stats).is_some());
         let derived_speed = metric(stats, &["visible_decode_tokens", "decode_tokens"])
-            .zip(metric(
-                stats,
-                &[
-                    "visible_decode_duration_s",
-                    "decode_duration_s",
-                    "decode_duration_total_s",
-                ],
-            ))
-            .filter(|(_, duration)| *duration > 0.0);
+            .zip(measured_duration(stats))
+            .filter(|(_, duration)| *duration >= MIN_DECODE_DURATION_S);
         (direct_speed.is_some() || derived_speed.is_some()).then_some(stats)
     });
     let Some(stats) = persisted_stats else {
@@ -926,18 +932,12 @@ fn merge_persisted_transcript_metrics(
             "avg_model_round_speed_tps",
             "avg_model_round_decode_speed_tps",
         ],
-    );
+    )
+    .filter(|_| measured_duration(stats).is_some());
     let decode_speed = decode_speed.or_else(|| {
         let tokens = metric(stats, &["visible_decode_tokens", "decode_tokens"])?;
-        let duration = metric(
-            stats,
-            &[
-                "visible_decode_duration_s",
-                "decode_duration_s",
-                "decode_duration_total_s",
-            ],
-        )?;
-        (duration > 0.0).then_some(tokens / duration)
+        let duration = measured_duration(stats)?;
+        (duration >= MIN_DECODE_DURATION_S).then_some(tokens / duration)
     });
     let Some(decode_speed) = decode_speed.filter(|value| value.is_finite() && *value > 0.0) else {
         return overview;
@@ -962,14 +962,7 @@ fn merge_persisted_transcript_metrics(
         map.insert("decode_speed_tps".to_string(), json!(decode_speed));
     }
     if map.get("decode_duration_s").is_none_or(Value::is_null) {
-        if let Some(duration) = metric(
-            stats,
-            &[
-                "visible_decode_duration_s",
-                "decode_duration_s",
-                "decode_duration_total_s",
-            ],
-        ) {
+        if let Some(duration) = measured_duration(stats) {
             map.insert("decode_duration_s".to_string(), json!(duration));
         }
     }

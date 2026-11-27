@@ -2042,7 +2042,11 @@ function decodeThroughput(cell: TrajCell): number | null {
   const decode = decodeSeconds(cell)
   const tokens = cell.usage?.output
   if (decode === null || decode <= 0 || tokens === undefined || tokens <= 0) return null
-  return tokens / decode
+  // 网关可能把整段响应缓冲后一次性下发，1ms 级窗口不能当作生成耗时。
+  if (decode < 0.02) return null
+  const speed = tokens / decode
+  if (!Number.isFinite(speed) || speed > 10_000) return null
+  return speed
 }
 
 function toggleTimestampMode(): void {

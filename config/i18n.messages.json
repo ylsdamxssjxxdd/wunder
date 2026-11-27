@@ -255,6 +255,10 @@
     "en-US": "The selected model cannot read images: {detail}",
     "zh-CN": "当前模型无法读取图片：{detail}"
   },
+  "error.llm_tool_protocol": {
+    "en-US": "The model did not return a complete, valid tool call: {detail}",
+    "zh-CN": "模型未返回完整且符合要求的工具调用：{detail}"
+  },
   "error.llm_stream_interrupted": {
     "en-US": "LLM streaming response was interrupted.",
     "zh-CN": "LLM 流式响应中断。"

@@ -550,13 +550,40 @@ fn extract_persisted_message_stats(item: &Value) -> Option<Value> {
             .get("visible_decode_duration_s")
             .and_then(Value::as_f64);
         if let (Some(tokens), Some(duration)) = (tokens, duration) {
-            if tokens > 0.0 && duration > 0.0 {
+            if tokens > 0.0 && duration >= wunder_core::llm_speed::MIN_DECODE_DURATION_S {
                 stats.insert("visible_decode_speed_tps".into(), json!(tokens / duration));
                 stats.insert("visible_decode_measured".into(), json!(true));
             }
         }
     }
+    sanitize_transcript_decode_speed(&mut stats);
     (!stats.is_empty()).then_some(Value::Object(stats))
+}
+
+fn sanitize_transcript_decode_speed(stats: &mut serde_json::Map<String, Value>) {
+    const MAX_PLAUSIBLE_DECODE_SPEED_TPS: f64 = 10_000.0;
+    let min_s = wunder_core::llm_speed::MIN_DECODE_DURATION_S;
+    let decode_duration = stats.get("decode_duration_s").and_then(Value::as_f64);
+    let decode_speed = stats.get("decode_speed_tps").and_then(Value::as_f64);
+    let visible_duration = stats
+        .get("visible_decode_duration_s")
+        .and_then(Value::as_f64);
+    let visible_speed = stats
+        .get("visible_decode_speed_tps")
+        .and_then(Value::as_f64);
+    let measured = |duration: Option<f64>, speed: Option<f64>| {
+        duration.is_some_and(|value| value >= min_s)
+            && speed.is_none_or(|value| value <= MAX_PLAUSIBLE_DECODE_SPEED_TPS)
+    };
+    if !measured(decode_duration, decode_speed) {
+        stats.insert("decode_duration_s".into(), Value::Null);
+        stats.insert("decode_speed_tps".into(), Value::Null);
+    }
+    if !measured(visible_duration, visible_speed) {
+        stats.insert("visible_decode_duration_s".into(), Value::Null);
+        stats.insert("visible_decode_speed_tps".into(), Value::Null);
+        stats.insert("visible_decode_measured".into(), Value::Bool(false));
+    }
 }
 
 fn resolve_message_id(session_id: &str, role: &str, turn_index: i64) -> String {

@@ -219,7 +219,6 @@ export component ContextWindowPanel inherits Rectangle {
     private property <float> fill: root.capacity-tokens > 0
         ? min(1.0, max(0.0, root.used-tokens * 1.0 / (root.capacity-tokens * 1.0)))
         : 0.0;
-    private property <int> tone: root.fill >= 0.9 ? 2 : root.fill >= 0.75 ? 1 : 0;
     // 卡片实际宽度：参考实现按卡片宽度切 520 / 420 两档，而不是窗口。
     private property <length> card-w: min(920px, root.width - 24px);
     // 50 columns on a wide card, 25 on a narrow one; 400 cells cover both.
@@ -343,34 +342,9 @@ export component ContextWindowPanel inherits Rectangle {
                 }
             }
 
-            // ---- occupancy: the number, its health, what is left ----
+            // ---- occupancy: the number and what is left ----
             if root.has-data : VerticalLayout {
                 spacing: 2px;
-                HorizontalLayout {
-                    height: 18px;
-                    spacing: 8px;
-                    // 不加 alignment 时 HorizontalLayout 会把余量均摊给可拉伸的
-                    // 子元素，药丸会被推到卡片最右边。
-                    alignment: start;
-                    Text {
-                        text: I18n.cx_used;
-                        color: Theme.text-secondary; font-size: Theme.font-xs; font-weight: 600;
-                        vertical-alignment: center;
-                    }
-                    Rectangle {
-                        height: 17px;
-                        width: health-text.preferred-width + 16px;
-                        border-radius: 9px;
-                        background: root.tone == 0 ? #E7F7EE : root.tone == 1 ? #FEF3C7 : #FEE2E2;
-                        health-text := Text {
-                            x: 8px; width: self.preferred-width;
-                            text: root.tone == 0 ? I18n.cx_health_ok : root.tone == 1 ? I18n.cx_health_warn : I18n.cx_health_bad;
-                            color: root.tone == 0 ? #15803D : root.tone == 1 ? #B45309 : #B91C1C;
-                            font-size: Theme.font-2xs; font-weight: 600;
-                            vertical-alignment: center;
-                        }
-                    }
-                }
                 HorizontalLayout {
                     height: 34px;
                     spacing: 6px;

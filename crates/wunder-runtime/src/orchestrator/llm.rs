@@ -37,6 +37,9 @@ enum LlmFailureKind {
     /// provider 明确无法读取图片输入。不是临时故障，重试同样的带图请求毫无
     /// 意义；执行器会改用纯文本降级版本再发一次。
     ImageUnsupported,
+    /// 模型/网关没有产出完整、可解析的工具调用。重试同一份请求通常仍会失败，
+    /// 而且会让用户等满整段退避时间；按不可重试的协议错误直接落地。
+    ToolProtocol,
     Unavailable,
     Permanent,
 }
@@ -1476,6 +1479,7 @@ impl Orchestrator {
         let message_key = match failure_kind {
             LlmFailureKind::Unavailable => "error.llm_unavailable",
             LlmFailureKind::ImageUnsupported => "error.llm_image_unsupported",
+            LlmFailureKind::ToolProtocol => "error.llm_tool_protocol",
             _ => "error.llm_call_failed",
         };
         // A provider outage that survived the in-request retry budget is a
@@ -1525,6 +1529,11 @@ impl Orchestrator {
                 message,
                 Some(error_detail),
             )),
+            LlmFailureKind::ToolProtocol => Err(OrchestratorError::new(
+                "LLM_TOOL_PROTOCOL",
+                message,
+                Some(error_detail),
+            )),
             LlmFailureKind::Unavailable => Err(OrchestratorError::new(
                 "LLM_UNAVAILABLE",
                 message,
@@ -1549,6 +1558,9 @@ fn classify_llm_failure(message: &str) -> LlmFailureKind {
     if is_image_input_unsupported_error_text(message) {
         return LlmFailureKind::ImageUnsupported;
     }
+    if is_tool_protocol_error_text(message) {
+        return LlmFailureKind::ToolProtocol;
+    }
     if is_context_window_error_text(message) {
         return LlmFailureKind::ContextWindow;
     }
@@ -1565,6 +1577,9 @@ fn classify_llm_error(error: &anyhow::Error) -> LlmFailureKind {
     {
         if is_image_input_unsupported_error_text(&failure.to_string()) {
             return LlmFailureKind::ImageUnsupported;
+        }
+        if is_tool_protocol_error_text(&failure.to_string()) {
+            return LlmFailureKind::ToolProtocol;
         }
         if matches!(failure.status, 400 | 413 | 422)
             && (failure.kind == Some(crate::llm::ProviderFailureKind::ContextWindow)
@@ -1613,6 +1628,9 @@ fn classify_llm_error(error: &anyhow::Error) -> LlmFailureKind {
     let message = error.to_string();
     if is_image_input_unsupported_error_text(&message) {
         return LlmFailureKind::ImageUnsupported;
+    }
+    if is_tool_protocol_error_text(&message) {
+        return LlmFailureKind::ToolProtocol;
     }
     if is_context_window_error_text(&message) {
         return LlmFailureKind::ContextWindow;
@@ -1722,12 +1740,38 @@ fn is_llm_unavailable_error_text(message: &str) -> bool {
     .any(|needle| normalized.contains(needle))
 }
 
+fn is_tool_protocol_error_text(message: &str) -> bool {
+    let normalized = message.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    let mentions_tool = normalized.contains("工具") || normalized.contains("tool");
+    if mentions_tool && normalized.contains("未返回完整") {
+        return true;
+    }
+    if normalized.contains("符合工具选择要求") || normalized.contains("工具选择要求") {
+        return true;
+    }
+    mentions_tool
+        && [
+            "did not return a complete",
+            "did not return a valid",
+            "incomplete tool call",
+            "invalid tool call",
+            "tool call is incomplete",
+            "tool call was not completed",
+        ]
+        .iter()
+        .any(|needle| normalized.contains(needle))
+}
+
 fn resolve_llm_max_attempts(failure_kind: LlmFailureKind) -> u32 {
     if matches!(
         failure_kind,
         LlmFailureKind::Permanent
             | LlmFailureKind::ContextWindow
             | LlmFailureKind::ImageUnsupported
+            | LlmFailureKind::ToolProtocol
     ) {
         1
     } else if matches!(failure_kind, LlmFailureKind::Unavailable) {
@@ -1754,6 +1798,7 @@ fn llm_retry_reason(failure_kind: LlmFailureKind) -> &'static str {
     match failure_kind {
         LlmFailureKind::ContextWindow => "context_window",
         LlmFailureKind::ImageUnsupported => "image_unsupported",
+        LlmFailureKind::ToolProtocol => "tool_protocol",
         LlmFailureKind::Unavailable => "llm_unavailable",
         LlmFailureKind::Other => "provider_error",
         LlmFailureKind::Permanent => "request_rejected",

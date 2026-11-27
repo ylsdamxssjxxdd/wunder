@@ -26,6 +26,36 @@ fn should_backpressure_online_stream_event(event_type: &str) -> bool {
     )
 }
 
+/// 任何 stats 出口都必须执行这条最后防线：网关缓冲后一次性下发的分片可能只有
+/// 1ms 跨度，直接算 t/s 会得到十万级假速度。这里不依赖上游是否已经归一化，
+/// 也不信任客户端是否实现了同样的门槛。
+fn sanitize_decode_speed_stats(stats: &mut serde_json::Map<String, Value>) {
+    const MAX_PLAUSIBLE_DECODE_SPEED_TPS: f64 = 10_000.0;
+    let min_s = wunder_core::llm_speed::MIN_DECODE_DURATION_S;
+
+    let measured = |duration: Option<f64>, speed: Option<f64>| {
+        duration.is_some_and(|value| value >= min_s)
+            && speed.is_none_or(|value| value <= MAX_PLAUSIBLE_DECODE_SPEED_TPS)
+    };
+    let decode_duration = stats.get("decode_duration_s").and_then(Value::as_f64);
+    let decode_speed = stats.get("decode_speed_tps").and_then(Value::as_f64);
+    if !measured(decode_duration, decode_speed) {
+        stats.insert("decode_duration_s".into(), Value::Null);
+        stats.insert("decode_speed_tps".into(), Value::Null);
+    }
+    let visible_duration = stats
+        .get("visible_decode_duration_s")
+        .and_then(Value::as_f64);
+    let visible_speed = stats
+        .get("visible_decode_speed_tps")
+        .and_then(Value::as_f64);
+    if !measured(visible_duration, visible_speed) {
+        stats.insert("visible_decode_duration_s".into(), Value::Null);
+        stats.insert("visible_decode_speed_tps".into(), Value::Null);
+        stats.insert("visible_decode_measured".into(), Value::Bool(false));
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct EventEmitter {
     session_id: String,
@@ -484,6 +514,7 @@ impl EventEmitter {
                 stats.insert(key.into(), value.clone());
             }
         }
+        sanitize_decode_speed_stats(&mut stats);
         // The footer's stopwatch is the whole user round, and `llm_output` is
         // the event the durable assistant item is committed from — a reopened
         // bubble is rebuilt from exactly this object. The provider's
