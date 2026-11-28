@@ -1,0 +1,53 @@
+/* 山地（mountain）：浅灰底主题。
+ *
+ * base.css 的 mountain 块负责 <body> 与传送到 body 的全局兜底；工作台的
+ * .messenger-view 会在 messenger-shell.css 里重新铺白色 --mz 中性面，所以
+ * 这里必须最后再覆盖一次，页面底色、卡片、侧栏、弹层才会整体落成石灰色。
+ * 线程轨迹页是独立 .tt-root，也在本文件补齐灰底令牌。
+ */
+
+:root[data-user-accent='mountain'] .messenger-view {
+  --mz-bg: #f1f3f4;
+  --mz-surface: #fafbfc;
+  --mz-surface-soft: #f5f6f7;
+  --mz-sidebar: #eceeef;
+  --mz-hover: #e8eaec;
+  --mz-selected: #dfe3e5;
+  --mz-border: #dde0e3;
+  --mz-border-strong: #c9ced2;
+  --mz-text: #23272a;
+  --mz-text-secondary: #4f565c;
+  --mz-text-muted: #7a8288;
+  --mz-success: #1a8a5c;
+  --mz-success-bg: #eaf7f0;
+  --mz-danger: #d04a43;
+  --mz-danger-bg: #fdecec;
+  --mz-warning: #c98a2b;
+  --mz-warning-bg: #fbeae5;
+
+  --mz-timeline-bubble: #eceff1;
+  --mz-timeline-line: #dde1e4;
+  --mz-timeline-hover: #e8eaec;
+  --mz-timeline-entry-soft: #7a8288;
+}
+
+:root[data-user-accent='mountain'] .tt-root {
+  --tt-brand: #5a6469;
+  --tt-brand-dim: rgba(90, 100, 105, 0.55);
+  --tt-brand-faint: rgba(90, 100, 105, 0.1);
+  --tt-occupy: #5a6469;
+  --tt-text: #23272a;
+  --tt-text-2: #4f565c;
+  --tt-text-3: #7a8288;
+  --tt-caption: #8b9298;
+  --tt-bg: #f1f3f4;
+  --tt-bg-module: #fafbfc;
+  --tt-bg-code: #f6f8f9;
+  --tt-hover: rgba(90, 100, 105, 0.06);
+  --tt-active: rgba(90, 100, 105, 0.1);
+  --tt-border: rgba(0, 0, 0, 0.05);
+  --tt-border-2: rgba(0, 0, 0, 0.11);
+  --tt-border-4: rgba(0, 0, 0, 0.18);
+  --thin-scrollbar-thumb: rgba(35, 39, 42, 0.18);
+  --thin-scrollbar-thumb-hover: rgba(35, 39, 42, 0.32);
+}

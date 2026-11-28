@@ -6,8 +6,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.KeyEvent;
-import android.view.View;
-import android.view.Window;
 import android.window.OnBackInvokedCallback;
 import android.window.OnBackInvokedDispatcher;
 
@@ -96,28 +94,13 @@ public class WunderActivity extends NativeActivity {
     }
 
     /**
-     * The app paints its own light surface edge-to-edge, so the system bars
-     * need dark icons. Setting the appearance explicitly also keeps the clock
-     * and status icons readable when the platform / OEM theme does not infer
-     * it from the (light) activity theme.
+     * The app paints its own surface edge-to-edge, so the system bars follow
+     * the active palette (dark icons on the light workbench, light icons on
+     * deep-sea). The appearance itself lives in {@link UiBridge} because the
+     * shell can change the palette at runtime.
      */
     private void applyLightSystemBars() {
-        Window window = getWindow();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            android.view.WindowInsetsController controller = window.getInsetsController();
-            if (controller != null) {
-                int lightBars = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
-                        | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
-                controller.setSystemBarsAppearance(lightBars, lightBars);
-            }
-            return;
-        }
-        View decor = window.getDecorView();
-        int flags = decor.getSystemUiVisibility() | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            flags |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
-        }
-        decor.setSystemUiVisibility(flags);
+        UiBridge.applySystemBarAppearance(this);
     }
 
     private void registerBackCallback() {

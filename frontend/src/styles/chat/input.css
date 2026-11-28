@@ -243,10 +243,10 @@
 .chat-shell .inquiry-panel {
   margin: 10px 0 12px;
   padding: 14px 18px 12px;
-  border: 1px solid rgba(15, 23, 42, 0.1);
+  border: 1px solid var(--mz-border);
   border-radius: 14px;
-  background: #ffffff;
-  color: #1f2937;
+  background: var(--mz-surface);
+  color: var(--mz-text);
   box-shadow: 0 6px 18px rgba(15, 23, 42, 0.07);
   /* 展开态会把所有题目堆在一张卡里，限高后自身滚动，不挤压输入区。 */
   max-height: min(52vh, 520px);
@@ -387,9 +387,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1.5px solid #d1d5db;
+  border: 1.5px solid var(--mz-border-strong);
   border-radius: 5px;
-  background: #ffffff;
+  background: var(--mz-surface);
   color: transparent;
   transition: border-color 0.15s ease, background 0.15s ease;
 }
@@ -407,7 +407,7 @@
 .chat-shell .inquiry-other.is-active .inquiry-mark {
   border-color: var(--ui-accent-ink);
   background: var(--ui-accent-ink);
-  color: #ffffff;
+  color: var(--ui-accent-contrast, #ffffff);
 }
 
 .chat-shell .inquiry-mark svg {
@@ -512,9 +512,9 @@
   bottom: calc(100% + 6px);
   min-width: 132px;
   padding: 4px;
-  border: 1px solid rgba(15, 23, 42, 0.1);
+  border: 1px solid var(--mz-border);
   border-radius: 10px;
-  background: #ffffff;
+  background: var(--mz-surface);
   box-shadow: 0 10px 26px rgba(15, 23, 42, 0.14);
   z-index: 8;
 }

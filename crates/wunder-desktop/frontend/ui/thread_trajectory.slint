@@ -24,31 +24,33 @@ component TrajTextInput inherits TextInput {
 }
 
 export global TrajTokens {
-    out property <color> brand: #4176E6;
+    out property <color> brand: Theme.dark ? #5FA8CF : #4176E6;
     // Matches the browser's translucent badge fills composited over white.
-    out property <color> brand-soft: #4176E61A;
-    out property <color> green: #22C55E;
-    out property <color> green-mix: #36A762;
-    out property <color> green-soft: #E6FAED;
-    out property <color> amber: #DD8629;
-    out property <color> amber-soft: #FEF5E7;
+    out property <color> brand-soft: Theme.dark ? #5FA8CF1F : #4176E61A;
+    out property <color> green: Theme.dark ? #4FD9AE : #22C55E;
+    out property <color> green-mix: Theme.dark ? #5FD9A6 : #36A762;
+    out property <color> green-soft: Theme.dark ? #0E2B26 : #E6FAED;
+    out property <color> amber: Theme.dark ? #E7B96A : #DD8629;
+    out property <color> amber-soft: Theme.dark ? #2B2114 : #FEF5E7;
     // 消耗柱底（上下文占用）用实心品牌蓝，与命中率的琥珀内柱区分。
-    out property <color> occupy: #4176E6;
-    out property <color> red: #EC1313;
-    out property <color> red-soft: #FDE8E8;
-    out property <color> violet: #886BAE;
-    out property <color> violet-soft: #886BAE26;
-    out property <color> text: #0F1115;
-    out property <color> text-2: #61666B;
-    out property <color> text-3: #81858C;
-    out property <color> caption: #ADB2B8;
-    out property <color> module: #F5F6F7;
-    out property <color> code-bg: #F9FAFB;
-    out property <color> hover: #2631480F;
-    out property <color> active: #2631481A;
-    out property <color> border-1: #0000000A;
-    out property <color> border-2: #0000001A;
-    out property <color> border-3: #00000029;
+    out property <color> occupy: Theme.dark ? #5FA8CF : #4176E6;
+    out property <color> red: Theme.dark ? #F28C86 : #EC1313;
+    out property <color> red-soft: Theme.dark ? #2E1619 : #FDE8E8;
+    out property <color> violet: Theme.dark ? #B9A1E6 : #886BAE;
+    out property <color> violet-soft: Theme.dark ? #241C33 : #886BAE26;
+    out property <color> text: Theme.text;
+    out property <color> text-2: Theme.dark ? #C9D6E1 : #61666B;
+    out property <color> text-3: Theme.dark ? #8FA1B2 : #81858C;
+    out property <color> caption: Theme.dark ? #9AAABA : #ADB2B8;
+    out property <color> module: Theme.dark ? #17222C : #F5F6F7;
+    out property <color> code-bg: Theme.dark ? #0C1319 : #F9FAFB;
+    out property <color> surface: Theme.dark ? #121A22 : #FFFFFF;
+    out property <color> canvas: Theme.dark ? #10161C : #FFFFFF;
+    out property <color> hover: Theme.dark ? #FFFFFF0F : #2631480F;
+    out property <color> active: Theme.dark ? #FFFFFF1A : #2631481A;
+    out property <color> border-1: Theme.dark ? #FFFFFF0F : #0000000A;
+    out property <color> border-2: Theme.dark ? #FFFFFF1A : #0000001A;
+    out property <color> border-3: Theme.dark ? #FFFFFF2E : #00000029;
 
     public pure function kind-color(kind: int) -> color {
         kind == 1 ? root.brand :
@@ -266,7 +268,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
         root.hover-position(root.view-start + mouse-x / track.width * root.view-width);
     }
 
-    background: white;
+    background: TrajTokens.canvas;
     border-width: 0px;
     // A painted background does not consume pointer events in Slint: hit
     // testing only stops at a TouchArea. Without this blocker the gaps in the
@@ -324,7 +326,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                 // insets and a 12px icon. A native LineEdit cannot provide its
                 // own border/padding consistently across desktop platforms.
                 width: 164px; height: 22px; y: 5px;
-                background: white;
+                background: TrajTokens.surface;
                 border-radius: 4px;
                 border-width: 0.5px;
                 border-color: traj-search-input.has-focus ? TrajTokens.brand : TrajTokens.border-3;
@@ -591,7 +593,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                         x: max(0px, parent.width - 1px);
                         width: 1px;
                         height: parent.height;
-                        background: #FFFFFF6B;
+                        background: TrajTokens.border-3;
                     }
                     // The browser shows these rings on hover. The selected
                     // span keeps the ring so the focused entry stays visible
@@ -625,7 +627,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                     x: max(0px, (root.selection-start - root.view-start) / root.view-width * track.width);
                     width: max(1px, (min(root.selection-end, root.view-start + root.view-width) - max(root.selection-start, root.view-start)) / root.view-width * track.width);
                     y: 0px; height: parent.height;
-                    background: #4176E61F;
+                    background: TrajTokens.brand-soft;
                     border-width: 0px;
                     Rectangle { x: 0px; y: 0px; width: 3px; height: parent.height; background: TrajTokens.brand; }
                     Rectangle { x: parent.width - 3px; y: 0px; width: 3px; height: parent.height; background: TrajTokens.brand; }
@@ -856,7 +858,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                         x: (parent.width - self.width) / 2;
                                         y: (parent.height - self.height) / 2;
                                         border-radius: self.width / 2;
-                                        background: white;
+                                        background: TrajTokens.surface;
                                     }
                                     Rectangle {
                                         width: 5px; height: 5px;
@@ -872,7 +874,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                         border-radius: 2px;
                                         border-width: 0.5px;
                                         border-color: TrajTokens.border-3;
-                                        background: white;
+                                        background: TrajTokens.surface;
                                         request-label := TrajText {
                                             x: 4px; height: parent.height;
                                             text: row.badge;
@@ -1042,8 +1044,8 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                 if root.rows.length > 0 : Rectangle {
                     x: 0px; y: 0px;
                     width: parent.width; height: 26px;
-                    background: #F7FAFF;
-                    Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: #4176E638; }
+                    background: TrajTokens.module;
+                    Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: TrajTokens.brand-soft; }
                     TrajText {
                         x: 12px; height: parent.height; width: parent.width - 24px;
                         text: root.history-hint;
@@ -1095,7 +1097,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                 y: 0px;
                 height: parent.height;
                 min-width: 0px;
-                background: white;
+                background: TrajTokens.surface;
                 clip: true;
                 VerticalLayout {
                     x: 0.5px; width: parent.width - 0.5px;
@@ -1221,7 +1223,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                 private property <bool> code: root.detail-tab == 2 || root.detail-tab == 3 || root.detail-tab == 4;
                                 private property <bool> show-heading: root.detail-tab == 0;
                                 height: (self.show-heading ? 24.5px : 0px) + (self.expanded ? section-scroll.height : 0px);
-                                background: white;
+                                background: TrajTokens.canvas;
                                 if section-card.show-heading : Rectangle {
                                     x: 0px; y: 0px; width: parent.width; height: 1px;
                                     background: TrajTokens.border-1;
@@ -1389,7 +1391,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
         y: clamp(32px + root.hover-my + 12px, 0px, root.height - self.height);
         width: min(320px, tooltip-lines.preferred-width + 16px);
         height: tooltip-lines.preferred-height + 10px;
-        background: white;
+        background: TrajTokens.surface;
         border-radius: 4px;
         border-width: 0.5px; border-color: TrajTokens.border-3;
         drop-shadow-blur: 16px; drop-shadow-offset-y: 4px; drop-shadow-color: #0F11151F;
@@ -1409,7 +1411,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
         y: clamp(root.bar-tip-y + 12px, 0px, root.height - self.height);
         width: min(320px, bar-tooltip-lines.preferred-width + 16px);
         height: bar-tooltip-lines.preferred-height + 10px;
-        background: white;
+        background: TrajTokens.surface;
         border-radius: 4px;
         border-width: 0.5px; border-color: TrajTokens.border-3;
         drop-shadow-blur: 16px; drop-shadow-offset-y: 4px; drop-shadow-color: #0F11151F;
@@ -1423,3 +1425,4 @@ export component ThreadTrajectoryDialog inherits Rectangle {
         }
     }
 }
+

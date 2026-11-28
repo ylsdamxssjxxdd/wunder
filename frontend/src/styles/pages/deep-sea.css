@@ -1,0 +1,710 @@
+/*
+ * 深海（deep-sea）：云端版唯一的暗色主题。
+ *
+ * 参考 rcho 的暗色蓝调界面：大面积低彩度深底、1px 冷色描边、只留一束
+ * 冷钢蓝作为品牌色；在云端版的 --ui-accent / --mz-* / --hula-* 三层令牌
+ * 上落地，与桌面版 design_tokens.slint 的 deep-sea 同值。导入顺序必须排在
+ * messenger-shell.css 之后，才能覆盖同一元素上的 --mz-* 浅色默认值。
+ */
+
+:root[data-user-accent='deep-sea'] {
+  color-scheme: dark;
+  --mz-bg: #0d1116;
+  --mz-surface: #121a22;
+  --mz-surface-soft: #17222c;
+  --mz-panel: #121a22;
+  --mz-sidebar: #090d12;
+  --mz-hover: #18222b;
+  --mz-selected: #18304a;
+  --mz-border: #293641;
+  --mz-border-strong: #3a4652;
+  --mz-text: #e7edf2;
+  --mz-text-secondary: #c9d6e1;
+  --mz-text-muted: #8fa1b2;
+  --mz-success: #4fd9ae;
+  --mz-success-bg: #0e2b26;
+  --mz-danger: #f28c86;
+  --mz-danger-bg: #2e1619;
+  --mz-warning: #e7b96a;
+  --mz-warning-bg: #2b2114;
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view {
+  /* ---- §11.1 neutrals ---- */
+  --mz-bg: #0d1116;
+  --mz-surface: #121a22;
+  --mz-surface-soft: #17222c;
+  --mz-panel: #121a22;
+  --mz-sidebar: #090d12;
+  --mz-hover: #18222b;
+  --mz-selected: #18304a;
+  --mz-border: #293641;
+  --mz-border-strong: #3a4652;
+  --mz-text: #e7edf2;
+  --mz-text-secondary: #c9d6e1;
+  --mz-text-muted: #8fa1b2;
+  --mz-success: #4fd9ae;
+  --mz-success-bg: #0e2b26;
+  --mz-danger: #f28c86;
+  --mz-danger-bg: #2e1619;
+  --mz-warning: #e7b96a;
+  --mz-warning-bg: #2b2114;
+
+  /* ---- §7 timeline ---- */
+  --mz-timeline-bubble: #17222c;
+  --mz-timeline-line: #293641;
+  --mz-timeline-hover: #18222b;
+  --mz-thought: #7fc6e6;
+  --mz-timeline-entry-soft: #8fa1b2;
+
+  /* ---- messenger surfaces ---- */
+  --hula-left-bg: #090d12;
+  --hula-left-bg-deep: #070b0f;
+  --hula-main-bg: #0d1116;
+  --hula-center-bg: #10161c;
+  --hula-card: #121a22;
+  --hula-list-hover: rgba(95, 168, 207, 0.1);
+  --hula-border: rgba(143, 205, 234, 0.18);
+  --hula-muted: #8fa1b2;
+  --hula-text: #e7edf2;
+  --hula-text-secondary: #c9d6e1;
+  --hula-accent: #8fcdea;
+  --hula-accent-soft: #122b3b;
+  --hula-danger: #f28c86;
+  --messenger-middle-pane-bg: linear-gradient(180deg, #10161c 0%, #090d12 100%);
+  --messenger-chat-bg:
+    radial-gradient(circle at 0% 0%, rgba(95, 168, 207, 0.1), transparent 32%),
+    radial-gradient(circle at 96% 8%, rgba(183, 216, 234, 0.06), transparent 30%),
+    linear-gradient(180deg, #10161c 0%, #0d1116 100%);
+  --messenger-right-dock-bg: linear-gradient(180deg, #10161c 0%, #090d12 100%);
+  --messenger-search-bg: rgba(95, 168, 207, 0.08);
+  --messenger-search-border: rgba(143, 205, 234, 0.12);
+  --messenger-control-bg: #121a22;
+  --messenger-control-border: #3a4652;
+  --messenger-control-text: #c9d6e1;
+  --messenger-composer-surface-bg: linear-gradient(180deg, #10161c 0%, #0d1116 100%);
+  --messenger-composer-box-bg: rgba(18, 26, 34, 0.92);
+  --messenger-composer-panel-bg: #10161c;
+  --messenger-composer-subtle-bg: #17222c;
+  --messenger-composer-border: rgba(143, 205, 234, 0.16);
+  --messenger-panel-border: rgba(143, 205, 234, 0.12);
+  --messenger-panel-bg: #10161c;
+  --messenger-section-title-color: #e7edf2;
+  --messenger-section-divider: rgba(143, 205, 234, 0.1);
+  --messenger-skill-border: rgba(143, 205, 234, 0.1);
+  --messenger-skill-bg: rgba(18, 26, 34, 0.75);
+  --messenger-divider-color: rgba(143, 205, 234, 0.1);
+  --messenger-list-bg: #121a22;
+  --messenger-hover-lift: 0px;
+  background: var(--hula-main-bg);
+  color: var(--hula-text);
+}
+
+/* ---- literal light surfaces that predate the token pass ---- */
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-chat,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-chat-empty-state,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-chat-footer,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-world-composer,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-composer-scope.chat-shell .input-box,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-message.mine .messenger-message-bubble {
+  background: var(--mz-surface);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-chat-footer {
+  border-top: 1px solid var(--mz-border);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-message.mine .messenger-message-bubble {
+  background: var(--hula-accent-soft);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-message-bubble,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-message-content,
+:root[data-user-accent='deep-sea'] .messenger-view .markdown-body {
+  color: var(--mz-text);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-list-item.active {
+  background: var(--mz-selected);
+  border-color: var(--mz-border-strong);
+  color: var(--mz-text);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-list-item.active .messenger-list-time,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-list-item.active .messenger-list-preview {
+  color: var(--mz-text-muted);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-list-item.active .messenger-list-avatar {
+  background: var(--hula-accent-soft);
+  color: var(--hula-accent);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-list-item.active.is-running .messenger-list-avatar {
+  background: var(--hula-accent-soft);
+  color: var(--hula-accent);
+}
+
+/* Composer + dialogs keep their own white fills in places; repaint them from
+   the same tokens so a dark base never shows a light card. */
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-composer-surface,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-composer-box,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-composer-panel,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-composer-subtle,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-control,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-search,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-panel,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-skill-chip,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-img-preview,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-action-blocker-card {
+  background: var(--mz-surface);
+  border-color: var(--mz-border);
+  color: var(--mz-text);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-action-blocker {
+  background: rgba(13, 17, 22, 0.72);
+}
+
+/* Semantic tinted chips (danger / info / warning / success) keep their meaning
+   but drop to a dark translucent fill; the light literals would glow. */
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-header-action-text--danger,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-inline-btn.danger,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-settings-btn.danger,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-settings-action.danger,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-middle-logout-btn,
+:root[data-user-accent='deep-sea'] .workspace-context-menu .workspace-menu-btn.danger:focus-visible,
+:root[data-user-accent='deep-sea'] .messenger-files-menu-btn.danger:focus-visible {
+  background: var(--mz-danger-bg);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-header-action-text--danger:hover,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-middle-logout-btn:hover:not(:disabled) {
+  background: rgba(242, 140, 134, 0.18);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-unit-all-btn:hover,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-unit-tree-row:hover {
+  background: rgba(119, 182, 255, 0.1);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-unit-all-btn.active,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-unit-tree-row.active {
+  background: rgba(119, 182, 255, 0.18);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-timeline-archive-btn:hover {
+  background: rgba(231, 185, 106, 0.12);
+  border-color: rgba(231, 185, 106, 0.4);
+  color: var(--mz-warning);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-list-avatar,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-message-avatar,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-group-member-avatar {
+  background: var(--mz-surface-soft);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-settings-range::-webkit-slider-runnable-track,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-settings-range::-moz-range-track {
+  background: var(--mz-border-strong);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-group-create-item:hover {
+  background: rgba(95, 168, 207, 0.1);
+}
+
+/* Table zebra and tooltip chips */
+:root[data-user-accent='deep-sea'] .messenger-view .markdown-body .ai-rich-table tbody tr:nth-child(2n) td {
+  background: var(--mz-surface-soft);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-ability-tooltip-popper .ability-tooltip .ability-count,
+:root[data-user-accent='deep-sea'] .messenger-ability-tooltip-popper .ability-tooltip .ability-item.tool {
+  background: rgba(119, 182, 255, 0.14);
+}
+
+
+/* ------------------------------------------------------------------
+   Messenger polish layer: it stacks translucent white glass panels on top
+   of every surface, so it needs its own dark glass recipe.
+   ------------------------------------------------------------------ */
+:root[data-user-accent='deep-sea'] .messenger-view {
+  --messenger-polish-panel-bg:
+    linear-gradient(180deg, rgba(18, 26, 34, 0.94), rgba(16, 22, 28, 0.8));
+  --messenger-polish-panel-bg-soft:
+    linear-gradient(180deg, rgba(23, 34, 44, 0.82), rgba(9, 13, 18, 0.66));
+  --messenger-polish-panel-outline: rgba(143, 205, 234, 0.12);
+  --messenger-polish-panel-highlight: rgba(143, 205, 234, 0.05);
+  --messenger-polish-panel-shadow: 0 18px 36px rgba(0, 0, 0, 0.45);
+  --messenger-polish-floating-shadow: 0 24px 48px rgba(0, 0, 0, 0.55);
+  --messenger-polish-edge-shadow: 10px 0 28px rgba(0, 0, 0, 0.28);
+  --messenger-polish-shell-overlay:
+    linear-gradient(180deg, rgba(95, 168, 207, 0.06), rgba(13, 17, 22, 0.02));
+  --messenger-polish-inner-surface:
+    linear-gradient(180deg, rgba(23, 34, 44, 0.72), rgba(9, 13, 18, 0.82));
+  --messenger-polish-hover-surface: rgba(95, 168, 207, 0.1);
+  --messenger-polish-muted: rgba(201, 214, 225, 0.86);
+  --messenger-polish-subtle-muted: rgba(143, 161, 178, 0.78);
+  --messenger-polish-chip-bg: rgba(18, 26, 34, 0.72);
+  --messenger-polish-chip-outline: rgba(143, 205, 234, 0.14);
+  --messenger-polish-accent-soft: rgba(95, 168, 207, 0.14);
+  --messenger-polish-accent-strong: rgba(95, 168, 207, 0.22);
+  --messenger-polish-secondary-soft: rgba(183, 216, 234, 0.12);
+  --messenger-polish-divider: rgba(143, 205, 234, 0.1);
+  --messenger-polish-chat-surface: #0d1116;
+  --messenger-polish-composer-surface: rgba(16, 22, 28, 0.98);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-header-btn {
+  color: var(--mz-text-secondary);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-header-btn:hover,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-header-action-text:hover {
+  background: rgba(95, 168, 207, 0.1);
+  color: var(--hula-accent);
+}
+
+/* Syntax highlighting: the light code palette is too dim on the abyss. */
+:root[data-user-accent='deep-sea'] .messenger-view .ai-code-block code .token-comment {
+  color: #8fa1b2;
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .ai-code-block code .token-string {
+  color: #7ee6c4;
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .ai-code-block code .token-number {
+  color: #e7b96a;
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .ai-code-block code .token-keyword {
+  color: #79c4ff;
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .ai-code-block code .token-function {
+  color: #c4b5fd;
+}
+
+/* Element Plus popovers, selects and messages are teleported to <body>; scope
+   them to the accent attribute so the dark palette covers those layers too. */
+:root[data-user-accent='deep-sea'] .el-popover.el-popper,
+:root[data-user-accent='deep-sea'] .el-select__popper,
+:root[data-user-accent='deep-sea'] .el-dropdown__popper,
+:root[data-user-accent='deep-sea'] .el-message-box,
+:root[data-user-accent='deep-sea'] .el-dialog {
+  background: #121a22;
+  border-color: #3a4652;
+  color: #e7edf2;
+}
+
+:root[data-user-accent='deep-sea'] .el-popper__arrow::before {
+  background: #121a22;
+  border-color: #3a4652;
+}
+
+:root[data-user-accent='deep-sea'] .el-message-box__title,
+:root[data-user-accent='deep-sea'] .el-dialog__title {
+  color: #e7edf2;
+}
+
+:root[data-user-accent='deep-sea'] .el-input__wrapper,
+:root[data-user-accent='deep-sea'] .el-textarea__inner,
+:root[data-user-accent='deep-sea'] .el-select__wrapper {
+  background: #121a22;
+  box-shadow: 0 0 0 1px #3a4652 inset;
+  color: #e7edf2;
+}
+
+/* 钢蓝实心按钮上的文字翻成深墨，否则白字会糊在发光底上。 */
+:root[data-user-accent='deep-sea'] .el-button--primary {
+  color: var(--ui-accent-contrast);
+}
+
+:root[data-user-accent='deep-sea'] .el-select-dropdown__item {
+  color: var(--mz-text-secondary);
+}
+
+:root[data-user-accent='deep-sea'] .el-select-dropdown__item.is-hovering {
+  background: var(--mz-hover);
+  color: var(--mz-text);
+}
+
+:root[data-user-accent='deep-sea'] .el-select-dropdown__item.is-selected {
+  color: var(--hula-accent);
+}
+
+:root[data-user-accent='deep-sea'] .el-message {
+  background: #121a22;
+  border-color: #3a4652;
+  color: #e7edf2;
+}
+
+:root[data-user-accent='deep-sea'] .el-switch__label {
+  color: var(--mz-text-secondary);
+}
+
+:root[data-user-accent='deep-sea'] .el-checkbox__label,
+:root[data-user-accent='deep-sea'] .el-radio__label {
+  color: var(--mz-text-secondary);
+}
+
+/* 线程轨迹页是独立全屏页（.tt-root），不继承 .messenger-view 的令牌。 */
+:root[data-user-accent='deep-sea'] .tt-root {
+  --tt-brand: #5fa8cf;
+  --tt-brand-dim: rgba(95, 168, 207, 0.55);
+  --tt-brand-faint: rgba(95, 168, 207, 0.12);
+  --tt-occupy: #5fa8cf;
+  --tt-green: #4fd9ae;
+  --tt-green-mix: #3fbf97;
+  --tt-green-100: #0e2b26;
+  --tt-amber: #e7b96a;
+  --tt-amber-100: #2b2114;
+  --tt-red: #f28c86;
+  --tt-red-soft: #f4aaa4;
+  --tt-violet: #b7a6e0;
+  --tt-violet-dim: rgba(183, 166, 224, 0.72);
+  --tt-text: #e7edf2;
+  --tt-text-2: #c9d6e1;
+  --tt-text-3: #8fa1b2;
+  --tt-caption: #8fa1b2;
+  --tt-bg: #0d1116;
+  --tt-bg-module: #10161c;
+  --tt-bg-code: #121a22;
+  --tt-hover: rgba(95, 168, 207, 0.08);
+  --tt-active: rgba(95, 168, 207, 0.14);
+  --tt-border: rgba(143, 205, 234, 0.1);
+  --tt-border-2: rgba(143, 205, 234, 0.16);
+  --tt-border-4: rgba(143, 205, 234, 0.24);
+  --thin-scrollbar-thumb: rgba(143, 205, 234, 0.2);
+  --thin-scrollbar-thumb-hover: rgba(143, 205, 234, 0.34);
+}
+
+/* 轨迹页 JSON 语法色是按浅底选的，暗底上整体提亮。 */
+:root[data-user-accent='deep-sea'] .tt-root .tt-json-punct,
+:root[data-user-accent='deep-sea'] .tt-root .tt-json-close {
+  color: var(--tt-text);
+}
+
+:root[data-user-accent='deep-sea'] .tt-root .tt-json-toggle {
+  color: var(--tt-text-2);
+}
+
+:root[data-user-accent='deep-sea'] .tt-root .tt-json-label {
+  color: #c4b5fd;
+}
+
+:root[data-user-accent='deep-sea'] .tt-root .tt-json-string {
+  color: #7ee6c4;
+}
+
+/* Settings is a floating workbench, not another flat chat surface: dim the
+   workbench behind it, then give the window, nav, content and cards distinct
+   elevation steps. */
+:root[data-user-accent='deep-sea'] .messenger-settings-overlay {
+  background: rgba(2, 6, 10, 0.62);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-settings-window {
+  border-color: #34434f;
+  background: #10171e;
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(183, 216, 234, 0.05);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-settings-window-head {
+  border-bottom-color: #24313b;
+  background: #0a1016;
+}
+
+:root[data-user-accent='deep-sea'] .messenger-settings-window-body {
+  background: #0d1116;
+}
+
+:root[data-user-accent='deep-sea'] .messenger-settings-frame-nav {
+  border-right-color: #24313b;
+  background: #090e13;
+}
+
+:root[data-user-accent='deep-sea'] .messenger-settings-frame-content-body {
+  background: #0d1116;
+}
+
+:root[data-user-accent='deep-sea'] .messenger-settings-card {
+  border-color: #2c3a46;
+  background: #141d25;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
+}
+
+@media (max-width: 1023px) {
+  :root[data-user-accent='deep-sea'] .messenger-settings-window {
+    border: 0;
+    box-shadow: none;
+  }
+}
+
+
+/* ------------------------------------------------------------------
+   Chat primitives
+   messenger.css pins a light --chat-* / --code-* recipe on .chat-shell
+   and on dialog roots. Message cards, citations, code blocks and workflow
+   panels all read those tokens, so deep-sea must restate the dark recipe
+   at the same layer; messenger-view carries it for the message stream,
+   chat-shell overrides the composer's directly-declared light recipe.
+   ------------------------------------------------------------------ */
+:root[data-user-accent='deep-sea'] .messenger-view,
+:root[data-user-accent='deep-sea'] .chat-shell,
+:root[data-user-accent='deep-sea'] .workspace-dialog,
+:root[data-user-accent='deep-sea'] .workflow-dialog,
+:root[data-user-accent='deep-sea'] .session-tools-dialog,
+:root[data-user-accent='deep-sea'] .system-prompt-dialog,
+:root[data-user-accent='deep-sea'] .image-preview-dialog {
+  --chat-bg: #0d1116;
+  --chat-panel: #121a22;
+  --chat-card: #17222c;
+  --chat-border: var(--mz-border, #293641);
+  --chat-text: #e7edf2;
+  --chat-muted: #8fa1b2;
+  --chat-muted-rgb: 143, 161, 178;
+  --chat-text-muted: #8fa1b2;
+  --chat-primary: var(--ui-accent-ink, #8fcdea);
+  --chat-accent: var(--ui-accent-secondary, #b7d8ea);
+  --chat-primary-rgb: 143, 205, 234;
+  --chat-accent-rgb: 183, 216, 234;
+  --code-bg: #0c1319;
+  --code-header: #101a23;
+  --code-border: #24313c;
+  --code-text: #e7edf2;
+  --code-muted: #8fa1b2;
+  --code-comment: #94a3b8;
+  --code-keyword: #7dd3fc;
+  --code-number: #facc15;
+  --code-string: #86efac;
+  color-scheme: dark;
+}
+
+:root[data-user-accent='deep-sea'] .workspace-dialog,
+:root[data-user-accent='deep-sea'] .workflow-dialog,
+:root[data-user-accent='deep-sea'] .session-tools-dialog,
+:root[data-user-accent='deep-sea'] .system-prompt-dialog,
+:root[data-user-accent='deep-sea'] .image-preview-dialog {
+  --el-dialog-bg-color: #121a22;
+  --el-bg-color: #121a22;
+  --el-bg-color-overlay: #121a22;
+  --el-fill-color-blank: #121a22;
+  --el-fill-color-light: #17222c;
+  --el-text-color-primary: #e7edf2;
+  --el-text-color-regular: #c9d6e1;
+  --el-text-color-secondary: #8fa1b2;
+  --el-text-color-placeholder: #8fa1b2;
+  --el-border-color: #293641;
+  --el-border-color-light: #293641;
+}
+
+:root[data-user-accent='deep-sea'] .message-knowledge-citation-dialog.message-knowledge-citation-dialog {
+  --message-knowledge-citation-dialog-bg: #121a22;
+  --message-knowledge-citation-dialog-surface: #17222c;
+  --message-knowledge-citation-dialog-border: #293641;
+  --message-knowledge-citation-dialog-text: #e7edf2;
+  --message-knowledge-citation-dialog-muted: #8fa1b2;
+  --el-dialog-bg-color: #121a22;
+  --el-bg-color: #121a22;
+  --el-text-color-primary: #e7edf2;
+  --el-text-color-regular: #c9d6e1;
+  --el-text-color-secondary: #8fa1b2;
+  --el-border-color: #293641;
+}
+
+:root[data-user-accent='deep-sea'] .message-knowledge-citation-dialog.el-dialog.message-knowledge-citation-dialog {
+  background: #121a22;
+  border-color: #293641;
+  color: #e7edf2;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.42);
+}
+
+/* ---- chat inline cards with literal light fills ---- */
+:root[data-user-accent='deep-sea'] .messenger-chat-body.is-agent .messenger-message:not(.mine) .messenger-message-bubble {
+  border-color: var(--mz-border);
+  background: linear-gradient(180deg, var(--mz-surface-soft), var(--mz-surface));
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.18);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .goal-bar {
+  background: rgba(220, 96, 148, 0.12);
+  border-color: rgba(220, 96, 148, 0.3);
+  color: #f4a6c2;
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .goal-bar-icon {
+  color: #f07aa8;
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .goal-bar-time {
+  color: #e58bb1;
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .goal-bar-objective {
+  color: #f2c1d6;
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .goal-bar-action:not(.is-primary) {
+  background: var(--mz-surface);
+  border-color: rgba(220, 96, 148, 0.3);
+  color: #f4a6c2;
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .goal-bar-action:not(.is-primary):hover:not(:disabled) {
+  background: rgba(220, 96, 148, 0.18);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .message-tool-workflow .tool-workflow-banner-stage {
+  background: rgba(143, 205, 234, 0.1);
+  border-color: var(--mz-border);
+  color: var(--mz-text-secondary);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .message-tool-workflow .tool-workflow-banner-usage {
+  background: rgba(23, 34, 44, 0.72);
+  border-color: var(--mz-border);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .message-tool-workflow .tool-workflow-banner-usage.is-success {
+  background: rgba(79, 217, 174, 0.1);
+  border-color: rgba(79, 217, 174, 0.24);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .message-tool-workflow .tool-workflow-banner-usage.is-warning {
+  background: rgba(231, 185, 106, 0.1);
+  border-color: rgba(231, 185, 106, 0.24);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .message-tool-workflow .tool-workflow-banner-usage.is-danger {
+  background: rgba(242, 140, 134, 0.1);
+  border-color: rgba(242, 140, 134, 0.24);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .message-tool-workflow .tool-workflow-banner-failure {
+  background: rgba(242, 140, 134, 0.1);
+  border-color: rgba(242, 140, 134, 0.28);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .message-tool-workflow .tool-workflow-banner-failure-title,
+:root[data-user-accent='deep-sea'] .messenger-view .message-tool-workflow .tool-workflow-banner-failure-description {
+  color: #f4aaa4;
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .message-tool-workflow .tool-workflow-banner-failure-chip {
+  background: rgba(242, 140, 134, 0.12);
+  border-color: rgba(242, 140, 134, 0.32);
+  color: #f4aaa4;
+}
+
+/* ---- small messenger chips and list affordances ---- */
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-message-stat.is-status {
+  background: var(--mz-surface-soft);
+  border-color: var(--mz-border);
+  color: var(--mz-text-secondary);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-message-stat.is-status.is-running {
+  background: rgba(143, 205, 234, 0.12);
+  border-color: rgba(143, 205, 234, 0.28);
+  color: #8fcdea;
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-message-stat.is-status.is-warning {
+  background: rgba(231, 185, 106, 0.12);
+  border-color: rgba(231, 185, 106, 0.3);
+  color: #e7b96a;
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-message-stat.is-status.is-success {
+  background: rgba(79, 217, 174, 0.1);
+  border-color: rgba(79, 217, 174, 0.26);
+  color: #4fd9ae;
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-message-stat.is-status.is-error {
+  background: rgba(242, 140, 134, 0.12);
+  border-color: rgba(242, 140, 134, 0.3);
+  color: #f4aaa4;
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-inline-btn:not(.danger) {
+  background: rgba(18, 26, 34, 0.86);
+  border-color: var(--mz-border);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-inline-btn:not(.danger):hover {
+  background: var(--mz-surface);
+  border-color: rgba(143, 205, 234, 0.36);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-list-item-action:hover {
+  background: rgba(242, 140, 134, 0.14);
+  border-color: rgba(242, 140, 134, 0.34);
+  color: #f4aaa4;
+}
+
+/* ---- polish-layer glass surfaces inside the chat page ---- */
+:root[data-user-accent='deep-sea'] .messenger-view .chat-shell .workspace-search {
+  background: rgba(18, 26, 34, 0.86);
+  box-shadow: inset 0 0 0 1px var(--mz-border);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-composer-scope.chat-shell .upload-preview,
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-composer-scope.chat-shell .upload-preview-item {
+  background: rgba(18, 26, 34, 0.9);
+  border-color: var(--mz-border);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .chat-shell .workspace-item:hover {
+  background: rgba(23, 34, 44, 0.9);
+  box-shadow: inset 0 0 0 1px var(--mz-border);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-workflow-scope.chat-shell .workflow-content {
+  background: rgba(18, 26, 34, 0.72);
+  border-color: var(--mz-border);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-workflow-scope.chat-shell .workflow-item:hover {
+  background: rgba(23, 34, 44, 0.9);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-timeline-item {
+  background: rgba(23, 34, 44, 0.72);
+  border-color: var(--mz-border);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-list-empty {
+  background: rgba(18, 26, 34, 0.55);
+  box-shadow: inset 0 0 0 1px var(--mz-border);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-skill-item {
+  background: rgba(18, 26, 34, 0.72);
+  box-shadow: inset 0 0 0 1px var(--mz-border);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-group-member-item {
+  background: rgba(18, 26, 34, 0.72);
+  box-shadow: inset 0 0 0 1px var(--mz-border);
+}
+
+:root[data-user-accent='deep-sea'] .messenger-view .messenger-group-announcement-input {
+  background: rgba(18, 26, 34, 0.72);
+  box-shadow: inset 0 0 0 1px var(--mz-border);
+}
+
+/* composer stop button hover is a pale red literal; keep it dark-tinted. */
+:root[data-user-accent='deep-sea'] .messenger-view .composer-task-stop:hover {
+  background: rgba(242, 140, 134, 0.14);
+  color: #f4aaa4;
+}
+
+

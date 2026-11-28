@@ -133,7 +133,7 @@ const statusIconClass = computed(() => {
   border-radius: inherit;
   overflow: hidden;
   display: block;
-  background: #ffffff;
+  background: var(--mz-surface);
   position: relative;
 }
 
@@ -192,7 +192,7 @@ const statusIconClass = computed(() => {
   min-height: 16px;
   max-height: 20px;
   border-radius: 999px;
-  border: 2px solid #ffffff;
+  border: 2px solid var(--mz-surface);
   background: var(--agent-avatar-status-bg) !important;
   color: var(--agent-avatar-status-color) !important;
   position: absolute;

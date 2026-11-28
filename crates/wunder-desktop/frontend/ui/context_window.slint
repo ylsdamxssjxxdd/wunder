@@ -483,7 +483,7 @@ export component ContextWindowPanel inherits Rectangle {
                         width: grid.side;
                         height: grid.side;
                         border-radius: 2px;
-                        background: cell.slot == 0 ? #EFF1F4 : ContextColors.ink(cell.slot);
+                        background: cell.slot == 0 ? Theme.selected : ContextColors.ink(cell.slot);
                         opacity: root.focus-slot == 0 ? 1.0
                             : cell.slot == 0 ? (root.focus-slot == -1 ? 1.0 : 0.16)
                             : cell.slot == root.focus-slot ? (root.focus-item < 0 || cell.item == root.focus-item ? 1.0 : 0.16)
@@ -572,7 +572,7 @@ export component ContextWindowPanel inherits Rectangle {
                             Rectangle {
                                 width: 6px; height: 6px; border-radius: 3px;
                                 y: (parent.height - self.height) / 2;
-                                background: root.tip-kind == "free" ? #8B8B92 : ContextColors.ink(root.tip-slot);
+                                background: root.tip-kind == "free" ? Theme.muted : ContextColors.ink(root.tip-slot);
                             }
                             Text {
                                 text: root.tip-title;
@@ -681,7 +681,7 @@ export component ContextWindowPanel inherits Rectangle {
                             Rectangle {
                                 width: 6px; height: 6px; border-radius: 3px;
                                 y: (parent.height - self.height) / 2;
-                                background: #C9CDD3;
+                                background: Theme.border-strong;
                             }
                             Text {
                                 text: I18n.cx_free;
@@ -812,7 +812,7 @@ export component ContextWindowPanel inherits Rectangle {
                         if root.card-w >= 420px : Rectangle {
                             x: parent.width - 150px; y: (parent.height - 4px) / 2;
                             width: 72px; height: 4px; border-radius: 2px;
-                            background: #ECEFF2;
+                            background: Theme.selected;
                             Rectangle {
                                 x: 0px; y: 0px;
                                 width: max(2px, parent.width * item.ratio);
@@ -908,7 +908,7 @@ export component ContextWindowPanel inherits Rectangle {
                     Rectangle {
                         width: root.detail-text-width;
                         border-radius: 6px;
-                        background: #F6F7F9;
+                        background: Theme.hover;
                         VerticalLayout {
                             padding-left: 10px;
                             padding-right: 10px;
@@ -987,7 +987,7 @@ export component ContextWindowPanel inherits Rectangle {
                             Rectangle {
                                 x: parent.width - 150px; y: (parent.height - 4px) / 2;
                                 width: 72px; height: 4px; border-radius: 2px;
-                                background: #ECEFF2;
+                                background: Theme.selected;
                                 Rectangle {
                                     x: 0px; y: 0px;
                                     width: max(2px, parent.width * row.ratio);
@@ -1011,7 +1011,7 @@ export component ContextWindowPanel inherits Rectangle {
                         if root.detail-row-open == row.item : Rectangle {
                             width: 100%;
                             border-radius: 6px;
-                            background: #F6F7F9;
+                            background: Theme.hover;
                             VerticalLayout {
                                 padding-left: 10px;
                                 padding-right: 10px;

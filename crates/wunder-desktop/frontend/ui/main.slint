@@ -1472,13 +1472,16 @@ export component MainWindow inherits Window {
                 : root.model-catalogue-count;
             model-saving: root.saving;
             context-usage: root.context-usage;
-            context-known: root.context-known;
             context-compacted: root.context-compacted;
             open-drawer => {
                 root.sidebar-collapsed = false;
                 root.sidebar-peek = true;
             }
             open-model => { root.model-sheet-open = true; }
+            open-context => {
+                root.context-window-open = true;
+                root.load-context-window();
+            }
             new-thread => { root.new-thread(); root.focus-input(); }
         }
         // 主区整行：停靠时让出侧栏宽度，收起或窄窗浮层时铺满整行。
@@ -1631,7 +1634,7 @@ export component MainWindow inherits Window {
                                     editor-max-height: root.narrow ? min(160px, root.height * 0.3) : 200px;
                                 launch-cli => { root.launch-cli(); }
                                 send-key: root.runtime-send-key;
-                                context-usage: root.context-usage; context-known: root.context-known; context-counts: root.context-counts; context-compacted: root.context-compacted;
+                                context-usage: root.context-usage; context-compacted: root.context-compacted;
                                 models: root.cloud-chat-active ? root.cloud-thread-models : root.composer-models;
                                 // The local built-in agent owns the saved quick prompts; a
                                 // cloud thread keeps its service-side composer scope.
@@ -2032,10 +2035,6 @@ export component MainWindow inherits Window {
         // 只传线程钉住的 key：空串表示「跟随默认模型」，面板据此把对勾落在
         // 默认模型上；`selected-agent-model` 是展示名，不是 key，不能拿来做匹配。
         current-key: root.selected-model-key;
-        context-usage: root.context-usage;
-        context-known: root.context-known;
-        context-counts: root.context-counts;
-        context-compacted: root.context-compacted;
         cloud-ready: root.cloud-logged-in && !root.cloud-expired;
         // 后台任务与子智能体：宽窗挂在输入区的悬停浮层上，窄窗收进这张面板。
         tasks: root.running-tasks;
@@ -2048,11 +2047,6 @@ export component MainWindow inherits Window {
         select-model(index, key) => {
             root.model-sheet-open = false;
             root.select-thread-model(key);
-        }
-        open-context => {
-            root.model-sheet-open = false;
-            root.context-window-open = true;
-            root.load-context-window();
         }
         open-settings => {
             root.model-sheet-open = false;
@@ -2759,7 +2753,7 @@ export component MainWindow inherits Window {
                 }
                 Text { text: I18n.pm_preview_hint; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
                 if root.prompt-preview-loading : Text { height: 40px; text: I18n.common_loading; color: Theme.muted; font-size: Theme.font-sm; horizontal-alignment: center; vertical-alignment: center; }
-                TextEditBase { vertical-stretch: 1; text: root.prompt-preview; read-only: true; wrap: word-wrap; foreground: Theme.text; font-size: Theme.font-xs; background: Theme.panel; border-width: 1px; border-color: Theme.border; border-radius: Theme.radius-sm; scroll-view-padding: 8px; selection-background-color: Theme.accent-ink; selection-foreground-color: white; }
+                TextEditBase { vertical-stretch: 1; text: root.prompt-preview; read-only: true; wrap: word-wrap; foreground: Theme.text; font-size: Theme.font-xs; background: Theme.panel; border-width: 1px; border-color: Theme.border; border-radius: Theme.radius-sm; scroll-view-padding: 8px; selection-background-color: Theme.accent-ink; selection-foreground-color: Theme.accent-contrast; }
             }
         }
     }

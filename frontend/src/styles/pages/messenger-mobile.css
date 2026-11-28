@@ -52,6 +52,32 @@
     opacity: 0.45;
   }
 
+  /* 顶部大脑：独立上下文入口，固定方形热区，不随模型胶囊挤压变形。 */
+  .messenger-mobile-head-context {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    margin: 0 2px;
+    padding: 0;
+    border: 0;
+    border-radius: 18px;
+    background: transparent;
+    color: var(--mz-text);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .messenger-mobile-head-context:active:not(:disabled) {
+    background: var(--mz-hover);
+  }
+
+  .messenger-mobile-head-context-icon {
+    font-size: 16px;
+  }
+
   /* 顶部模型胶囊：点击呼出模型面板（安卓版同名交互），不再显示线程标题。 */
   .messenger-mobile-head-model {
     display: inline-flex;
@@ -78,10 +104,6 @@
   .messenger-mobile-head-model:disabled {
     opacity: 0.45;
     cursor: default;
-  }
-
-  .messenger-mobile-head-model-usage {
-    font-size: 15px;
   }
 
   .messenger-mobile-head-model-label {

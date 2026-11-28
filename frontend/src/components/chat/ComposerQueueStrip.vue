@@ -196,9 +196,9 @@ const handleRemove = (item: QueuedTurn) => {
 
 <style scoped>
 .composer-queue {
-  border: 1px solid var(--wunder-border-soft, #ececec);
+  border: 1px solid var(--mz-border, #ececec);
   border-radius: 12px;
-  background: #fff;
+  background: var(--mz-surface);
   padding: 6px 8px;
   margin-bottom: 8px;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);

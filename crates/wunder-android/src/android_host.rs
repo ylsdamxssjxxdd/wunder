@@ -115,6 +115,26 @@ pub fn hide_keyboard() {
     }
 }
 
+/// Match the system-bar icons to the palette. `light` is true for the light
+/// workbench (dark icons), false for the deep-sea dark base (light icons).
+pub fn set_light_system_bars(light: bool) {
+    let Some(host) = HOST.get() else {
+        return;
+    };
+    let Ok(mut env) = host.vm.attach_current_thread() else {
+        return;
+    };
+    let result = env.call_static_method(
+        &host.ui_bridge,
+        "setLightSystemBars",
+        "(Z)V",
+        &[JValue::Bool(u8::from(light))],
+    );
+    if result.is_err() {
+        clear_java_exception(&mut env);
+    }
+}
+
 pub fn set_input_overlay_open(open: bool) {
     let Some(host) = HOST.get() else {
         return;

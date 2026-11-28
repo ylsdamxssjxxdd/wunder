@@ -106,8 +106,10 @@ pub struct DesktopSettings {
     #[serde(default)]
     pub language: String,
     /// UI accent palette: "terracotta" (the 云端版 default; stored legacy names
-    /// like "light" render as it), "hula-green", "forest", "honey", "minimal"
-    /// or "tech-blue". The settings card offers the first four.
+    /// like "light" render as it), "forest" (mint green), "mountain" (light
+    /// grey), "deep-sea", "minimal" or "tech-blue". deep-sea is the only dark
+    /// palette and mountain the only light-grey neutral base. The settings
+    /// card offers terracotta, forest, mountain and deep-sea.
     #[serde(default = "default_theme")]
     pub theme: String,
     /// Composer send key: "enter" (default), "ctrl_enter" or "none" (button only).

@@ -1,9 +1,9 @@
 import { Button } from "std-widgets.slint";
+import { Theme } from "design_tokens.slint";
 import { TextFieldActivation, TextFieldMenu } from "text_field.slint";
 
-// Help browser controls follow the classic light desktop help face reused from
-// the reference workbench: flat buttons, hairline separators and a compact
-// single-line input.
+// Help browser controls: flat buttons, hairline separators and a compact
+// single-line input, painted from the same Theme tokens as the main window.
 
 export component HelpInput inherits Rectangle {
     in-out property <string> text <=> editor.text;
@@ -13,8 +13,8 @@ export component HelpInput inherits Rectangle {
     callback edited(string);
     public function select-all() { editor.select-all(); }
     min-width: 1px;
-    background: root.enabled ? #ffffff : #f3f3f3;
-    border-color: editor.has-focus ? #d1842a : #a9a9a9;
+    background: root.enabled ? Theme.input-bg : Theme.hover;
+    border-color: editor.has-focus ? Theme.accent : Theme.input-border;
     border-width: 1px;
     border-radius: 2px;
     clip: true;
@@ -37,7 +37,7 @@ export component HelpInput inherits Rectangle {
             width: parent.width - 12px;
             height: parent.height;
             text: root.text == "" && editor.preedit-text == "" ? root.placeholder-text : "";
-            color: #8a8a8a;
+            color: Theme.muted;
             vertical-alignment: center;
             overflow: elide;
             accessible-role: none;
@@ -60,10 +60,10 @@ export component HelpInput inherits Rectangle {
                 height: parent.height;
                 enabled: root.enabled;
                 single-line: true;
-                color: root.enabled ? #202020 : #777777;
+                color: root.enabled ? Theme.text : Theme.muted;
                 vertical-alignment: center;
-                selection-background-color: #2c76b855;
-                selection-foreground-color: #202020;
+                selection-background-color: Theme.accent-soft;
+                selection-foreground-color: Theme.text;
                 cursor-position-changed(cursor-position) => {
                     if cursor-position.x + self.computed-x < 6px {
                         self.computed-x = -cursor-position.x + 6px;
@@ -92,12 +92,12 @@ export component HelpButton inherits Rectangle {
     min-width: 0px;
     min-height: 0px;
     background: root.tab
-        ? (root.active ? #ffffff : @linear-gradient(180deg, #f8f8f8, #dedede))
-        : hover.has-hover || button.has-focus ? @linear-gradient(180deg, #ffffff, #d9ecfb) : transparent;
+        ? (root.active ? Theme.panel : Theme.hover)
+        : hover.has-hover || button.has-focus ? Theme.selected : transparent;
     border-width: 1px;
     border-color: root.tab
-        ? #b6b6b6
-        : root.enabled && (hover.has-hover || button.has-focus) ? #8bb7df : transparent;
+        ? Theme.border-strong
+        : root.enabled && (hover.has-hover || button.has-focus) ? Theme.accent : transparent;
     border-radius: root.tab ? 3px : 2px;
     accessible-role: AccessibleRole.button;
     accessible-label: root.label;
@@ -111,14 +111,14 @@ export component HelpButton inherits Rectangle {
         viewbox-height: 24;
         commands: root.icon;
         fill: transparent;
-        stroke: root.enabled ? #242424 : #9a9a9a;
+        stroke: root.enabled ? Theme.text : Theme.muted;
         stroke-width: 1.3px;
         stroke-line-cap: round;
         stroke-line-join: round;
     }
     if root.icon == "" : Text {
         text: root.label;
-        color: #323232;
+        color: Theme.text;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -140,13 +140,13 @@ export component HelpButton inherits Rectangle {
         y: parent.height - 2px;
         width: parent.width - 2px;
         height: 2px;
-        background: #ffffff;
+        background: Theme.panel;
     }
 }
 
 export component HelpSeparator inherits Rectangle {
     width: 1px;
     height: 22px;
-    background: #bdbdbd;
-    Rectangle { x: 1px; width: 1px; height: parent.height; background: #ffffff; }
+    background: Theme.border;
+    Rectangle { x: 1px; width: 1px; height: parent.height; background: Theme.panel; }
 }

@@ -249,6 +249,11 @@ services:
     volumes:
       - ./:/workspace
       - ./node_modules-linux-x86:/workspace/node_modules
+      # Docker Desktop 会把 Windows 绑定源的真实路径落到 /mnt/host/...，
+      # Node 从该真实路径解析同级包时找不到 node_modules 目录（目录名是
+      # node_modules-linux-x86）。把同一份依赖再挂到它自己的 node_modules
+      # 子路径下，让 ESM/CJS 与 Rollup 的解析都能正常回退，不污染宿主机。
+      - ./node_modules-linux-x86:/workspace/node_modules/node_modules
     # Default build-only mode: keep the dev frontend internal and let nginx expose the static site.
     # To debug the Vite frontend directly, uncomment the mapping below.
     # ports:

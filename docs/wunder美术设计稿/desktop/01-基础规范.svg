@@ -44,11 +44,11 @@
     <rect x="1272" y="272" width="240" height="86" rx="8" fill="#E07A12"/><text x="1290" y="324" font-size="16" font-weight="700" fill="#FFF">accent-deep</text><text x="1272" y="380" class="mono tok">#E07A12</text>
     <rect x="1012" y="404" width="240" height="58" rx="8" fill="#FFC98A"/><text x="1030" y="439" class="ui12">accent-secondary</text><text x="1012" y="484" class="mono tok">#FFC98A</text>
     <rect x="1272" y="404" width="240" height="58" rx="8" fill="#FDF0DE" stroke="#EFDFC4"/><text x="1290" y="439" class="ui12">accent-soft / mine</text><text x="1272" y="484" class="mono tok">#FDF0DE</text>
-    <text x="1012" y="526" class="card-t">可切换色族</text><text x="1012" y="548" class="tiny">设置页展示 forest / mint / honey / terracotta 四张卡；minimal、tech-blue 为保留项</text>
-    <g><rect x="1012" y="566" width="72" height="34" rx="6" fill="#F58A24"/><rect x="1096" y="566" width="72" height="34" rx="6" fill="#16AD8D"/><rect x="1180" y="566" width="72" height="34" rx="6" fill="#2F7A5C"/><rect x="1264" y="566" width="72" height="34" rx="6" fill="#C08A2A"/><rect x="1348" y="566" width="72" height="34" rx="6" fill="#8F9AAD"/><rect x="1432" y="566" width="80" height="34" rx="6" fill="#38BDF8"/></g>
-    <text x="1012" y="622" class="mono tiny">terracotta</text><text x="1096" y="622" class="mono tiny">hula-green</text><text x="1180" y="622" class="mono tiny">forest</text><text x="1264" y="622" class="mono tiny">honey</text><text x="1348" y="622" class="mono tiny">minimal</text><text x="1432" y="622" class="mono tiny">tech-blue</text>
-    <text x="1012" y="640" class="mono hex">#F58A24</text><text x="1096" y="640" class="mono hex">#107D66</text><text x="1180" y="640" class="mono hex">#2F7A5C</text><text x="1264" y="640" class="mono hex">#8E661F</text><text x="1348" y="640" class="mono hex">#637087</text><text x="1432" y="640" class="mono hex">#0B77A7</text><text x="1512" y="640" text-anchor="end" class="mono tiny">ink</text>
-    <text x="1012" y="660" class="note">主按钮 accent，悬停 accent-deep；accent 底上的文字用白。</text>
+    <text x="1012" y="526" class="card-t">可切换色族</text><text x="1012" y="548" class="tiny">设置页展示 forest / mountain / deep-sea / terracotta 四张卡；minimal、tech-blue 为保留项</text>
+    <g><rect x="1012" y="566" width="72" height="34" rx="6" fill="#F58A24"/><rect x="1096" y="566" width="72" height="34" rx="6" fill="#16AD8D"/><rect x="1180" y="566" width="72" height="34" rx="6" fill="#7C878C"/><rect x="1264" y="566" width="72" height="34" rx="6" fill="#5FA8CF"/><rect x="1348" y="566" width="72" height="34" rx="6" fill="#8F9AAD"/><rect x="1432" y="566" width="80" height="34" rx="6" fill="#38BDF8"/></g>
+    <text x="1012" y="622" class="mono tiny">terracotta</text><text x="1096" y="622" class="mono tiny">forest</text><text x="1180" y="622" class="mono tiny">mountain</text><text x="1264" y="622" class="mono tiny">deep-sea</text><text x="1348" y="622" class="mono tiny">minimal</text><text x="1432" y="622" class="mono tiny">tech-blue</text>
+    <text x="1012" y="640" class="mono hex">#F58A24</text><text x="1096" y="640" class="mono hex">#107D66</text><text x="1180" y="640" class="mono hex">#5A6469</text><text x="1264" y="640" class="mono hex">#8FCDEA</text><text x="1348" y="640" class="mono hex">#637087</text><text x="1432" y="640" class="mono hex">#0B77A7</text><text x="1512" y="640" text-anchor="end" class="mono tiny">ink</text>
+    <text x="1012" y="660" class="note">主按钮 accent，悬停 accent-deep；浅色主题 accent 底上用白字，深海用深墨字。</text>
     <text x="1012" y="682" class="tiny">浅底强调文字/图标用 accent-ink（AA 前景档，与云端版 base.css 同步）；焦点 1px 无外发光。</text>
   </g>
 
@@ -108,3 +108,5 @@
   </g>
   <g id="footer"><line x1="64" y1="1730" x2="1536" y2="1730" stroke="#D8D5D0"/><text x="64" y="1750" class="tiny">唯一变量来源：crates/wunder-desktop/frontend/ui/design_tokens.slint；稿面底色 #F5F3EF 仅用于文档，不是产品 token。</text><text x="1536" y="1750" text-anchor="end" class="mono tiny">01 / 09 · 2026-11-13</text></g>
 </svg>
+
+

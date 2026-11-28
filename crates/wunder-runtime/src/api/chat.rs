@@ -34,6 +34,7 @@ const CHAT_SESSION_STATUS_ACTIVE: &str = "active";
 const CHAT_SESSION_STATUS_ARCHIVED: &str = "archived";
 
 mod activity;
+mod context_window;
 mod events;
 mod media;
 mod prompt;
@@ -48,6 +49,7 @@ use sessions::{has_active_queue_task, is_session_stream_active_or_queued};
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .merge(activity::router())
+        .merge(context_window::router())
         .merge(events::router())
         .merge(media::router())
         .merge(prompt::router())

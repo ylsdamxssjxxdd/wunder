@@ -158,6 +158,52 @@ public final class UiBridge {
     }
 
     /**
+     * System-bar icon appearance. The shell paints edge to edge, so the clock
+     * and gesture bar must contrast with the current palette: dark icons on the
+     * light workbench, light icons on the deep-sea dark base.
+     */
+    private static volatile boolean lightSystemBars = true;
+
+    /** Called from Rust whenever the saved palette changes. */
+    public static void setLightSystemBars(boolean light) {
+        lightSystemBars = light;
+        Activity current = activity.get();
+        if (current == null) {
+            return;
+        }
+        current.runOnUiThread(() -> applySystemBarAppearance(current));
+    }
+
+    /** Re-apply the current appearance; safe from the activity lifecycle. */
+    public static void applySystemBarAppearance(Activity current) {
+        if (current == null) {
+            return;
+        }
+        android.view.Window window = current.getWindow();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            android.view.WindowInsetsController controller = window.getInsetsController();
+            if (controller != null) {
+                int mask = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                        | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+                controller.setSystemBarsAppearance(lightSystemBars ? mask : 0, mask);
+            }
+            return;
+        }
+        View decor = window.getDecorView();
+        int flags = decor.getSystemUiVisibility() | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            flags |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+        }
+        if (!lightSystemBars) {
+            flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                flags &= ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+            }
+        }
+        decor.setSystemUiVisibility(flags);
+    }
+
+    /**
      * Record one Back press for the Rust shell. Called from the activity's
      * key and OnBackInvoked paths; a single physical press can arrive through
      * both on some ROMs, so presses within 40 ms collapse into one.

@@ -352,7 +352,7 @@
 .user-tools-dialog .user-tools-footer-btn.primary {
   background: linear-gradient(135deg, rgba(77, 216, 255, 0.75), rgba(155, 140, 254, 0.75));
   border: none;
-  color: #0a0d19;
+  color: var(--mz-text);
 }
 
 .user-tools-dialog .user-tools-form {
@@ -1637,35 +1637,35 @@
 }
 
 .user-tools-dialog.el-dialog {
-  background: #ffffff;
-  border: 1px solid #dfe3ea;
+  background: var(--mz-surface);
+  border: 1px solid var(--mz-border);
   border-radius: 12px;
   box-shadow: var(--user-tools-shadow);
 }
 
 .user-tools-dialog .el-dialog__header {
-  border-bottom: 1px solid #ececec;
-  background: #ffffff;
+  border-bottom: 1px solid var(--mz-border);
+  background: var(--mz-surface);
 }
 
 .user-tools-dialog .el-dialog__body {
-  color: #202020;
+  color: var(--mz-text);
 }
 
 .user-tools-dialog .el-dialog__footer {
-  border-top: 1px solid #ececec;
+  border-top: 1px solid var(--mz-border);
 }
 
 .user-tools-dialog .user-tools-sidebar {
-  background: #f7f7f7;
-  border-color: #e3e3e3;
+  background: var(--mz-surface-soft);
+  border-color: var(--mz-border);
   box-shadow: none;
 }
 
 .user-tools-dialog .user-tools-tab {
-  background: #ffffff;
-  border-color: #e3e3e3;
-  color: #202020;
+  background: var(--mz-surface);
+  border-color: var(--mz-border);
+  color: var(--mz-text);
 }
 
 .user-tools-dialog .user-tools-tab:hover {
@@ -1683,10 +1683,10 @@
 .user-tools-dialog .icon-btn {
   width: 30px;
   height: 30px;
-  border: 1px solid #d7d7d7;
+  border: 1px solid var(--mz-border-strong);
   border-radius: 8px;
-  background: #f7f7f7;
-  color: #6b6b6b;
+  background: var(--mz-surface-soft);
+  color: var(--mz-text-muted);
 }
 
 .user-tools-dialog .icon-btn:hover {
@@ -1697,8 +1697,8 @@
 .user-tools-dialog .el-input__wrapper,
 .user-tools-dialog .el-textarea__inner,
 .user-tools-dialog .el-select__wrapper {
-  background: #ffffff;
-  border: 1px solid #dcdcdc;
+  background: var(--mz-surface);
+  border: 1px solid var(--mz-border-strong);
   box-shadow: none;
 }
 
@@ -1721,8 +1721,8 @@
 .user-tools-dialog .knowledge-editor-wrapper,
 .user-tools-dialog .knowledge-doc-content,
 .user-tools-dialog .knowledge-doc-modal-content {
-  background: #ffffff;
-  border-color: #e3e3e3;
+  background: var(--mz-surface);
+  border-color: var(--mz-border);
   box-shadow: none;
 }
 
@@ -1733,9 +1733,9 @@
 .user-tools-dialog .knowledge-doc-item,
 .user-tools-dialog .knowledge-doc-chunk-item,
 .user-tools-dialog .knowledge-test-result-item {
-  background: #ffffff;
-  border-color: #e7e7e7;
-  color: #202020;
+  background: var(--mz-surface);
+  border-color: var(--mz-border);
+  color: var(--mz-text);
   box-shadow: none;
 }
 
@@ -1745,8 +1745,8 @@
 .user-tools-dialog .knowledge-file-item:hover,
 .user-tools-dialog .knowledge-doc-item:hover,
 .user-tools-dialog .knowledge-doc-chunk-item:hover {
-  background: #f4f7fb;
-  border-color: #d9dee6;
+  background: var(--mz-hover);
+  border-color: var(--mz-border-strong);
 }
 
 .user-tools-dialog .list-item.active,
@@ -1766,15 +1766,15 @@
 }
 
 .user-tools-dialog .user-tools-btn.secondary {
-  border-color: #d8d8d8;
-  background: #f7f7f7;
-  color: #4b4b4b;
+  border-color: var(--mz-border-strong);
+  background: var(--mz-surface-soft);
+  color: var(--mz-text-secondary);
 }
 
 .user-tools-dialog .user-tools-btn.danger {
-  border-color: #f2c8ce;
-  background: #fbeff1;
-  color: #c14053;
+  border-color: var(--mz-danger-bg);
+  background: var(--mz-danger-bg);
+  color: var(--mz-danger);
 }
 
 .user-tools-dialog .user-tools-btn:hover:not(:disabled) {
@@ -1791,7 +1791,7 @@
 .user-tools-dialog .knowledge-test-result-content,
 .user-tools-dialog .detail-line .label,
 .user-tools-dialog .user-tools-status {
-  color: #808080;
+  color: var(--mz-text-muted);
 }
 
 .user-tools-dialog .skill-editor-body,
@@ -1799,8 +1799,8 @@
 .user-tools-dialog .knowledge-editor-wrapper,
 .user-tools-dialog .knowledge-doc-content,
 .user-tools-dialog .knowledge-doc-modal-content {
-  background: #f7f7f7;
-  border-color: #dcdcdc;
+  background: var(--mz-surface-soft);
+  border-color: var(--mz-border);
 }
 
 .user-tools-dialog .skills-section-title {
@@ -1811,18 +1811,19 @@
 
 .user-tools-dialog .knowledge-doc-content mark,
 .user-tools-dialog .knowledge-doc-modal-content mark {
-  background: #ffe7a8;
+  background: rgba(240, 194, 94, 0.32);
+  color: var(--mz-text);
 }
 
 .user-tools-dialog .knowledge-doc-chunk-preview,
 .user-tools-dialog .knowledge-test-result-content {
-  color: #5f5f5f;
+  color: var(--mz-text-secondary);
 }
 
 .user-tools-dialog .detail-schema {
-  background: #f7f7f7;
-  border-color: #dcdcdc;
-  color: #202020;
+  background: var(--mz-surface-soft);
+  border-color: var(--mz-border);
+  color: var(--mz-text);
 }
 
 .user-tools-dialog .user-tools-btn,
@@ -1862,9 +1863,9 @@
 }
 
 .user-tools-dialog .user-tools-btn.danger:hover:not(:disabled) {
-  border-color: #e4a7b1;
-  background: #fae8ec;
-  color: #b93449;
+  border-color: var(--mz-danger);
+  background: var(--mz-danger-bg);
+  color: var(--mz-danger);
 }
 
 .user-tools-dialog .user-skill-delete:hover:not(:disabled),

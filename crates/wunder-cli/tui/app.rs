@@ -1,6 +1,6 @@
 use super::background_task_footer::BackgroundTaskFooter;
 use super::frame_scheduler::FrameRequester;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use chrono::TimeZone;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use futures::StreamExt;
@@ -8,7 +8,7 @@ use ratatui::layout::Position;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
@@ -17,14 +17,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, error::TryRecvError};
 use unicode_width::UnicodeWidthStr;
-use wunder_server::ThreadChangeFrame;
 use wunder_server::approval::{
-    ApprovalRequest, ApprovalRequestKind, ApprovalResponse, new_channel as new_approval_channel,
+    new_channel as new_approval_channel, ApprovalRequest, ApprovalRequestKind, ApprovalResponse,
 };
 use wunder_server::interlink::client::Decision;
 use wunder_server::schemas::StreamEvent;
 use wunder_server::storage::ThreadOpenLeaseStatus;
 use wunder_server::user_tools::UserMcpServer;
+use wunder_server::ThreadChangeFrame;
 
 const LOCAL_THREAD_LEASE_TTL_S: f64 = 15.0;
 
@@ -36,9 +36,9 @@ use crate::render::FinalEvent;
 use crate::runtime::CliRuntime;
 use crate::slash_command::{self, ParsedSlashCommand, SlashCommand};
 use crate::tui::command_center::{CommandCenterState, ThreadStatusFilter};
-use crate::tui::pointer::{WheelScroll, wheel_direction};
+use crate::tui::pointer::{wheel_direction, WheelScroll};
 use crate::tui::thread_registry::ThreadRegistry;
-use crate::tui::ui::centered_picker::{BodyLine, CenteredListSpec, MAX_VISIBLE_ROWS, PickerRow};
+use crate::tui::ui::centered_picker::{BodyLine, CenteredListSpec, PickerRow, MAX_VISIBLE_ROWS};
 
 const MAX_LOG_ENTRIES: usize = super::transcript::MAX_TRANSCRIPT_CELLS;
 const MAX_LOG_TOTAL_CHARS: usize = super::transcript::MAX_TRANSCRIPT_CHARS;
@@ -81,6 +81,8 @@ const PASTE_BURST_ACTIVE_IDLE_TIMEOUT: Duration = Duration::from_millis(8);
 const PASTE_BURST_ACTIVE_IDLE_TIMEOUT: Duration = Duration::from_millis(60);
 const SUPPRESSED_CLIPBOARD_PASTE_TIMEOUT: Duration = Duration::from_millis(1200);
 mod commands;
+#[path = "context_panel.rs"]
+pub(crate) mod context_panel;
 mod input_placeholders;
 mod input_selection;
 mod plan_panel;
@@ -92,12 +94,12 @@ mod transcript_rows;
 mod transcript_search;
 mod transcript_view;
 use input_selection::MouseSelection;
-#[cfg(test)]
-use text_selection::CLIPBOARD_WRITER;
+use text_selection::build_transcript_hit_map;
 use text_selection::TranscriptHitMap;
 use text_selection::TranscriptSelection;
 use text_selection::WindowPoint;
-use text_selection::build_transcript_hit_map;
+#[cfg(test)]
+use text_selection::CLIPBOARD_WRITER;
 use thread_ui_state::ThreadUiState;
 use transcript_search::TranscriptSearch;
 
@@ -630,6 +632,10 @@ pub struct TuiApp {
     transcript_rows: transcript_rows::TranscriptRows,
     transcript_view: transcript_view::TranscriptView,
     trajectory_view: Option<trajectory::TrajectoryView>,
+    /// `/context` composition overlay; `None` when closed.
+    context_panel: Option<context_panel::ContextPanelState>,
+    /// Shell-side unobserved-after-compaction flag for the visible thread.
+    context_unobserved_after_compaction: bool,
     /// Cards the reader opened with Enter, keyed by cell identity so trimming the
     /// transcript cannot re-point an opening at an unrelated card.
     expanded_cards: std::collections::BTreeSet<u64>,
@@ -901,6 +907,8 @@ impl TuiApp {
             transcript_rows: transcript_rows::TranscriptRows::default(),
             transcript_view: Default::default(),
             trajectory_view: None,
+            context_panel: None,
+            context_unobserved_after_compaction: false,
             expanded_cards: Default::default(),
             search_expanded_cards: Default::default(),
             search_expand_revision: 0,
@@ -1149,10 +1157,7 @@ impl TuiApp {
         ))
     }
 
-    async fn try_acquire_thread_lease(
-        &self,
-        session_id: &str,
-    ) -> Result<ThreadOpenLeaseStatus> {
+    async fn try_acquire_thread_lease(&self, session_id: &str) -> Result<ThreadOpenLeaseStatus> {
         let storage = self.runtime.state.storage.clone();
         let user_id = self.runtime.user_id.clone();
         let instance_id = self.open_instance_id.clone();
@@ -1722,11 +1727,10 @@ impl TuiApp {
     fn background_task_summary(&mut self) -> Option<String> {
         let broker = &self.runtime.state.control.command_sessions;
         let user_id = &self.runtime.user_id;
-        self.background_task_footer.summary(
-            &self.session_id,
-            self.is_zh_language(),
-            || broker.background_task_count(user_id, &self.session_id),
-        )
+        self.background_task_footer
+            .summary(&self.session_id, self.is_zh_language(), || {
+                broker.background_task_count(user_id, &self.session_id)
+            })
     }
 
     /// Status-bar cloud badge (plan §6.2), cached for one second: the footer is
@@ -5537,6 +5541,11 @@ impl TuiApp {
             }
         }
 
+        if self.context_panel_open() {
+            let _ = self.handle_context_panel_key(key).await?;
+            return Ok(());
+        }
+
         if self.trajectory_view_open() {
             if let Some(action) = self.try_handle_inquiry_panel_navigation_key(key) {
                 if let Some(selection) = action {
@@ -6676,6 +6685,8 @@ impl TuiApp {
         self.resume_picker = None;
         self.active_inquiry_panel = None;
         self.inquiry_selected_index = 0;
+        self.context_panel = None;
+        self.context_unobserved_after_compaction = false;
         if let Some(request) = self.thread_registry.take_pending_approval(session_id) {
             self.active_approval = Some(request);
         }
@@ -7257,6 +7268,7 @@ impl TuiApp {
     /// through to the cards hidden underneath it.
     fn modal_surface_open(&mut self) -> bool {
         self.trajectory_view_open()
+            || self.context_panel_open()
             || self.command_center.is_some()
             || self.resume_picker.is_some()
             || self.shortcuts_visible
@@ -7649,9 +7661,7 @@ impl TuiApp {
             if is_zh {
                 format!("已排队 {position} 条：{preview} · 本轮结束后自动发送（Alt+↑ 取回）")
             } else {
-                format!(
-                    "queued #{position}: {preview} · sends when this turn ends (alt+↑ to edit)"
-                )
+                format!("queued #{position}: {preview} · sends when this turn ends (alt+↑ to edit)")
             },
         );
         self.request_redraw();
@@ -9213,6 +9223,17 @@ impl TuiApp {
                     self.session_stats.context_peak_tokens =
                         self.session_stats.context_peak_tokens.max(normalized);
                 }
+                if let Some(source) = payload.get("context_usage_source").and_then(Value::as_str) {
+                    match source {
+                        "unobserved_after_compaction" => {
+                            self.context_unobserved_after_compaction = true;
+                        }
+                        "provider_observed" | "provider_input" | "request_projection" => {
+                            self.context_unobserved_after_compaction = false;
+                        }
+                        _ => {}
+                    }
+                }
             }
             "token_usage" => {
                 let input_tokens = payload
@@ -10635,7 +10656,8 @@ fn format_busy_activity_line(
     stream_catchup_mode: bool,
     terminal_focused: bool,
     reasoning_active: bool,
-) -> String {    let elapsed = fmt_elapsed_compact(elapsed_secs);
+) -> String {
+    let elapsed = fmt_elapsed_compact(elapsed_secs);
     // The thinking text lives in the transcript card and nowhere else. The
     // status row only names the phase: echoing the last thought line here made
     // the same sentence appear twice and repaint on every reasoning token.
@@ -10753,8 +10775,8 @@ fn format_compact_tokens(tokens: i64) -> String {
 }
 
 #[cfg(test)]
-pub(crate) mod snapshot_tests;
-#[cfg(test)]
 mod queue_tests;
+#[cfg(test)]
+pub(crate) mod snapshot_tests;
 #[cfg(test)]
 mod tests;

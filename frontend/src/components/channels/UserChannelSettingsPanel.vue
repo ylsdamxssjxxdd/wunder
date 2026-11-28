@@ -2672,7 +2672,7 @@ onBeforeUnmount(() => {
   gap: 12px;
   min-height: 0;
   height: 100%;
-  color: #202020;
+  color: var(--mz-text, #202020);
 }
 
 .channel-manager-page--dialog {
@@ -2682,9 +2682,9 @@ onBeforeUnmount(() => {
 
 .channel-sidebar,
 .channel-content {
-  border: 1px solid #e3e3e3;
+  border: 1px solid var(--mz-border, #e3e3e3);
   border-radius: 12px;
-  background: #ffffff;
+  background: var(--mz-surface, #ffffff);
   min-height: 0;
 }
 
@@ -2722,10 +2722,10 @@ onBeforeUnmount(() => {
 .channel-action-btn {
   height: 30px;
   padding: 0 12px;
-  border: 1px solid #d8d8d8;
+  border: 1px solid var(--mz-border, #d8d8d8);
   border-radius: 8px;
-  background: #f7f7f7;
-  color: #4b4b4b;
+  background: var(--mz-surface-soft, #f7f7f7);
+  color: var(--mz-text-secondary, #4b4b4b);
   font-size: 12px;
   cursor: pointer;
   transition: border-color 0.18s ease, color 0.18s ease, background-color 0.18s ease;
@@ -2739,7 +2739,7 @@ onBeforeUnmount(() => {
 }
 
 .channel-refresh-btn.subtle {
-  background: #ffffff;
+  background: var(--mz-surface, #ffffff);
 }
 
 .channel-action-btn:disabled,
@@ -2749,15 +2749,15 @@ onBeforeUnmount(() => {
 }
 
 .channel-action-btn.danger {
-  border-color: #f2c8ce;
-  background: #fbeff1;
-  color: #c14053;
+  border-color: rgba(242, 140, 134, 0.34);
+  background: var(--mz-danger-bg, #fbeff1);
+  color: var(--mz-danger, #c14053);
 }
 
 .channel-create-card {
-  border: 1px solid #e3e3e3;
+  border: 1px solid var(--mz-border, #e3e3e3);
   border-radius: 10px;
-  background: #fafafa;
+  background: var(--mz-surface-soft, #fafafa);
   padding: 10px;
   display: flex;
   flex-direction: column;
@@ -2782,7 +2782,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 6px;
   font-size: 12px;
-  color: #606060;
+  color: var(--mz-text-secondary, #606060);
 }
 
 .channel-form-field-full {
@@ -2793,7 +2793,7 @@ onBeforeUnmount(() => {
   flex-direction: row;
   align-items: center;
   gap: 8px;
-  color: #444444;
+  color: var(--mz-text-secondary, #444444);
 }
 
 .channel-form-checkbox--inline {
@@ -2821,9 +2821,9 @@ onBeforeUnmount(() => {
 
 .channel-weixin-qr-panel {
   grid-column: 1 / -1;
-  border: 1px dashed #d7d7d7;
+  border: 1px dashed var(--mz-border, #d7d7d7);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--mz-surface, #ffffff);
   padding: 10px;
   display: flex;
   flex-direction: column;
@@ -2840,7 +2840,7 @@ onBeforeUnmount(() => {
 .channel-weixin-qr-image {
   width: 124px;
   height: 124px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--mz-border, #e0e0e0);
   border-radius: 6px;
   object-fit: contain;
   background: #ffffff;
@@ -2860,10 +2860,10 @@ onBeforeUnmount(() => {
 .channel-input,
 .channel-textarea {
   width: 100%;
-  border: 1px solid #dcdcdc;
+  border: 1px solid var(--mz-border, #dcdcdc);
   border-radius: 8px;
-  background: #ffffff;
-  color: #202020;
+  background: var(--mz-surface, #ffffff);
+  color: var(--mz-text, #202020);
   font-size: 13px;
   padding: 7px 10px;
   outline: none;
@@ -2882,7 +2882,7 @@ onBeforeUnmount(() => {
 
 .channel-empty {
   font-size: 12px;
-  color: #808080;
+  color: var(--mz-text-muted, #808080);
   text-align: center;
   padding: 16px 10px;
 }
@@ -2898,10 +2898,10 @@ onBeforeUnmount(() => {
 }
 
 .channel-account-card {
-  border: 1px solid #e3e3e3;
+  border: 1px solid var(--mz-border, #e3e3e3);
   border-radius: 10px;
-  background: #ffffff;
-  color: #202020;
+  background: var(--mz-surface-soft, #ffffff);
+  color: var(--mz-text, #202020);
   text-align: left;
   padding: 9px 10px;
   cursor: pointer;
@@ -2911,7 +2911,7 @@ onBeforeUnmount(() => {
 }
 
 .channel-account-card:hover {
-  background: #f4f7fb;
+  background: var(--mz-hover, #f4f7fb);
 }
 
 .channel-account-card.active {
@@ -2945,16 +2945,16 @@ onBeforeUnmount(() => {
   line-height: 1.2;
   white-space: nowrap;
   color: var(--ui-accent-ink);
-  background: #eaf4f1;
+  background: var(--ui-accent-soft, #eaf4f1);
   border: 1px solid rgba(var(--ui-accent-rgb), 0.3);
   border-radius: 999px;
   padding: 2px 7px;
 }
 
 .channel-account-status.disabled {
-  color: #8d8d8d;
-  border-color: #d6d6d6;
-  background: #f1f1f1;
+  color: var(--mz-text-muted, #8d8d8d);
+  border-color: var(--mz-border, #d6d6d6);
+  background: var(--mz-surface-soft, #f1f1f1);
 }
 
 .channel-content {
@@ -2979,9 +2979,9 @@ onBeforeUnmount(() => {
 }
 
 .channel-detail-card {
-  border: 1px solid #e7e7e7;
+  border: 1px solid var(--mz-border, #e7e7e7);
   border-radius: 10px;
-  background: #fafafa;
+  background: var(--mz-surface-soft, #fafafa);
   padding: 10px;
   display: flex;
   flex-direction: column;
@@ -3000,25 +3000,25 @@ onBeforeUnmount(() => {
 
 .channel-detail-label {
   font-size: 11px;
-  color: #868686;
+  color: var(--mz-text-muted, #868686);
 }
 
 .channel-detail-value {
   margin-top: 4px;
   font-size: 13px;
-  color: #252525;
+  color: var(--mz-text, #252525);
   word-break: break-word;
 }
 
 .channel-detail-hint {
   font-size: 11px;
-  color: #8a8a8a;
+  color: var(--mz-text-muted, #8a8a8a);
 }
 
 .channel-runtime-log-card {
-  border: 1px solid #e7e7e7;
+  border: 1px solid var(--mz-border, #e7e7e7);
   border-radius: 10px;
-  background: #fafafa;
+  background: var(--mz-surface-soft, #fafafa);
   padding: 10px;
   display: flex;
   flex-direction: column;
@@ -3035,7 +3035,7 @@ onBeforeUnmount(() => {
 .channel-runtime-log-status {
   margin-top: 4px;
   font-size: 11px;
-  color: #6f6f6f;
+  color: var(--mz-text-muted, #6f6f6f);
 }
 
 .channel-runtime-log-actions {
@@ -3054,9 +3054,9 @@ onBeforeUnmount(() => {
 }
 
 .channel-runtime-log-item {
-  border: 1px solid #e3e3e3;
+  border: 1px solid var(--mz-border, #e3e3e3);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--mz-surface, #ffffff);
   padding: 8px;
   display: flex;
   flex-direction: column;
@@ -3064,11 +3064,11 @@ onBeforeUnmount(() => {
 }
 
 .channel-runtime-log-item--warn {
-  border-color: #f0d8aa;
+  border-color: rgba(231, 185, 106, 0.34);
 }
 
 .channel-runtime-log-item--error {
-  border-color: #efc0c0;
+  border-color: rgba(242, 140, 134, 0.34);
 }
 
 .channel-runtime-log-meta {
@@ -3077,7 +3077,7 @@ onBeforeUnmount(() => {
   gap: 8px;
   flex-wrap: wrap;
   font-size: 11px;
-  color: #747474;
+  color: var(--mz-text-muted, #747474);
 }
 
 .channel-runtime-log-level {
@@ -3086,21 +3086,21 @@ onBeforeUnmount(() => {
   justify-content: center;
   padding: 1px 7px;
   border-radius: 999px;
-  border: 1px solid #d7d7d7;
-  background: #f5f5f5;
-  color: #5a5a5a;
+  border: 1px solid var(--mz-border, #d7d7d7);
+  background: var(--mz-surface-soft, #f5f5f5);
+  color: var(--mz-text-secondary, #5a5a5a);
 }
 
 .channel-runtime-log-item--warn .channel-runtime-log-level {
-  border-color: #f0d8aa;
-  background: #fff6e7;
-  color: #9a6a1c;
+  border-color: rgba(231, 185, 106, 0.34);
+  background: var(--mz-warning-bg, #fff6e7);
+  color: var(--mz-warning, #9a6a1c);
 }
 
 .channel-runtime-log-item--error .channel-runtime-log-level {
-  border-color: #efc0c0;
-  background: #ffefef;
-  color: #b43a3a;
+  border-color: rgba(242, 140, 134, 0.34);
+  background: var(--mz-danger-bg, #ffefef);
+  color: var(--mz-danger, #b43a3a);
 }
 
 .channel-runtime-log-repeat {
@@ -3116,7 +3116,7 @@ onBeforeUnmount(() => {
 
 .channel-runtime-log-message {
   font-size: 12px;
-  color: #2d2d2d;
+  color: var(--mz-text, #2d2d2d);
   line-height: 1.4;
   white-space: pre-wrap;
   word-break: break-word;
@@ -3124,7 +3124,7 @@ onBeforeUnmount(() => {
 
 .channel-runtime-log-error {
   font-size: 12px;
-  color: #b43a3a;
+  color: var(--mz-danger, #b43a3a);
 }
 
 @media (max-width: 980px) {

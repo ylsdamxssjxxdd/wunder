@@ -11,6 +11,10 @@ use ratatui::Frame;
 
 pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     let is_zh = app.is_zh_language();
+    if app.context_panel_open() {
+        context_panel::draw(frame, app);
+        return;
+    }
     if app.trajectory_view_open() {
         trajectory::draw(frame, frame.area(), app, is_zh);
         draw_blocking_choice(frame, app);
@@ -84,4 +88,8 @@ fn draw_blocking_choice(frame: &mut Frame, app: &mut TuiApp) {
 
 mod trajectory {
     pub(super) use crate::tui::app::trajectory::draw;
+}
+
+mod context_panel {
+    pub(super) use crate::tui::app::context_panel::draw;
 }

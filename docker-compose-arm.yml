@@ -249,6 +249,9 @@ services:
     volumes:
       - ./:/workspace
       - ./node_modules-linux-arm:/workspace/node_modules
+      # 同 x86：Docker Desktop 的 /mnt/host 真实路径会让 Node 找不到同级包，
+      # 依赖再挂一层 node_modules 作为解析回退。
+      - ./node_modules-linux-arm:/workspace/node_modules/node_modules
     # Default build-only mode: keep the dev frontend internal and let nginx expose the static site.
     # To debug the Vite frontend directly, uncomment the mapping below.
     # ports:

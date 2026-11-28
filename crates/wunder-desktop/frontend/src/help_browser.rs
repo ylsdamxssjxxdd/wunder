@@ -5,7 +5,7 @@
 //! 控制器读一次手册，切出主题；打开主题时用 `src/md/` 投影一次，交给
 //! `ui/help_document.slint` 的 `BlockView` 排版。选区、复制与右键菜单复用
 //! StyledText 的窗口级实现，不再自己做像素级排版。
-use crate::{HelpDocs, HelpEntry, HelpNavRow, HelpWindow, MdBlock, TextFieldActivation};
+use crate::{HelpDocs, HelpEntry, HelpNavRow, HelpWindow, MdBlock, TextFieldActivation, Theme};
 use slint::{ComponentHandle, Global, ModelRc, VecModel};
 use std::{
     cell::{Cell, RefCell},
@@ -662,6 +662,11 @@ pub fn open(app: &crate::MainWindow) {
     });
     let Some(window) = window else { return };
     sync_language(app);
+    // 帮助窗口是独立 Window，不共享主窗口的 Theme 实例；每次打开时按主窗口
+    // 当前配色设置一次，深海暗色下帮助文档同样使用暗底。
+    window
+        .global::<Theme>()
+        .set_palette(app.get_runtime_theme());
     if window.show().is_ok() {
         use slint::winit_030::WinitWindowAccessor;
         window

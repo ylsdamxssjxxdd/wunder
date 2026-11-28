@@ -75,6 +75,20 @@
           >
             <i class="fa-solid fa-bars" aria-hidden="true"></i>
           </button>
+          <!-- 大脑是独立的上下文入口：点击直接打开上下文窗口卡片，不与模型胶囊共用热区。 -->
+          <button
+            class="messenger-mobile-head-context"
+            type="button"
+            :title="phoneContextEntryTitle"
+            :aria-label="phoneContextEntryTitle"
+            @click="contextCardOpen = true"
+          >
+            <ContextUsageIcon
+              class="messenger-mobile-head-context-icon"
+              :ratio="phoneContextUsage.ratio"
+              :compacted="phoneContextUsage.compacted"
+            />
+          </button>
           <!-- 顶部标题区只保留模型（对齐安卓版）：点击呼出模型面板，线程标题不再占位。 -->
           <button
             class="messenger-mobile-head-model"
@@ -85,11 +99,6 @@
             :aria-expanded="phoneModelSheetOpen"
             @click="phoneModelSheetOpen = true"
           >
-            <ContextUsageIcon
-              class="messenger-mobile-head-model-usage"
-              :ratio="phoneContextUsage.ratio"
-              :compacted="phoneContextUsage.compacted"
-            />
             <span class="messenger-mobile-head-model-label">{{ phoneHeaderModelLabel }}</span>
             <i class="fa-solid fa-chevron-down messenger-mobile-head-model-caret" aria-hidden="true"></i>
           </button>
@@ -340,9 +349,15 @@
       v-if="isPhoneLayout && !isEmbeddedChatRoute"
       v-model:visible="phoneModelSheetOpen"
       :model-name="phoneHeaderModel"
-      :context-usage="phoneContextUsage"
       :apply-model="applyComposerModelSelection"
       :reasoning-effort="String(activeSessionRecord?.reasoning_effort || activeSessionRecord?.reasoningEffort || 'default')"
+    />
+    <ContextWindowCard
+      v-if="isPhoneLayout"
+      v-model:open="contextCardOpen"
+      :session-id="String(chatStore.activeSessionId || '')"
+      :observed="phoneContextUsage.ratio !== null"
+      :compacted="phoneContextUsage.compacted"
     />
   </div>
 </template>
@@ -369,6 +384,7 @@ import MessengerSettingsOverlay from '@/views/messenger/sections/MessengerSettin
 import MessageGoalBar from '@/components/chat/MessageGoalBar.vue';
 import ComposerStatusDock from '@/components/chat/ComposerStatusDock.vue';
 import ContextUsageIcon from '@/components/chat/ContextUsageIcon.vue';
+import ContextWindowCard from '@/components/chat/ContextWindowCard.vue';
 import PhoneModelSheet from '@/views/messenger/sections/PhoneModelSheet.vue';
 import { useSessionContextUsage } from '@/views/messenger/sessionContextUsage';
 import { readChatLiveContextUsage } from '@/realtime/chat/chatLiveContextUsage';
@@ -485,7 +501,8 @@ const phoneModelChipTitle = vueComputed(
   () => `${t('chat.composer.modelSelect')}: ${phoneHeaderModelLabel.value}`
 );
 const phoneModelSheetOpen = vueRef(false);
-// 顶部胶囊上的大脑就是上下文占用表：与输入区共用同一份 sessionContextUsage 投影。
+const contextCardOpen = vueRef(false);
+// 顶部大脑与模型胶囊共用同一份 sessionContextUsage 投影（ratio/compacted 供大脑与卡片使用）。
 const phoneContextUsage = useSessionContextUsage({
   scope: () => `${String(chatStore.activeSessionId || '')}:${phoneHeaderModel.value}`,
   messages: () =>
@@ -498,6 +515,9 @@ const phoneContextUsage = useSessionContextUsage({
   observedTotalTokens: () =>
     readChatLiveContextUsage(String(chatStore.activeSessionId || ''))?.total ?? null
 });
+const phoneContextEntryTitle = vueComputed(
+  () => `${t('chat.contextWindow.usage')} ${phoneContextUsage.value.percentText}`
+);
 const phoneNewTaskDisabled = vueComputed(
   () =>
     Boolean(controller.creatingAgentSession?.value) ||

@@ -1,42 +1,51 @@
 // Single source for the desktop visual language: palette, brushes, status
 // colors, scrims, type scale, radii, spacing and shell layout metrics.
-// The neutral base is the desktop white workbench and is not a theme option;
-// the `palette` global only selects the accent family. Slint pages and Rust
-// controllers must reference these tokens instead of repeating literals;
-// theme.slint re-exports this global together with the shared data structs.
+// The default neutral base is the white workbench; "mountain" is the light
+// grey workbench and "deep-sea" the only dark one, so pages never fork their
+// colours by theme. Slint pages and Rust controllers must reference these
+// tokens instead of repeating literals; theme.slint re-exports this global
+// together with the shared data structs.
 //
 // `palette` and `font-scale` are user preferences persisted in
 // DesktopSettings (theme / font_size) and applied by the native shell at
 // startup and on save. Every accent and font token below is a binding over
 // them, so switching either applies live without a restart.
 export global Theme {
-    // Accent palette only: "terracotta" (default; the legacy names "light" and
-    // "eva-orange" both resolve here), "hula-green", "forest", "honey",
-    // "minimal", "tech-blue". The settings card offers the first four.
+    // Accent family: "terracotta" (default; legacy "light"/"eva-orange"
+    // resolve here), "forest" (mint green), "mountain" (light grey),
+    // "deep-sea", "minimal", "tech-blue". deep-sea flips the neutral base to
+    // dark, mountain to light grey. The settings card offers terracotta,
+    // forest, mountain and deep-sea.
     in-out property <string> palette: "terracotta";
+    // True while the neutral base is dark. Components that paint their own
+    // scrims / overlays branch on this instead of sniffing the palette name.
+    out property <bool> dark: palette == "deep-sea";
+    // True while the neutral base is the light grey mountain workbench.
+    out property <bool> stone: palette == "mountain";
     // Chat content font scale: persisted font size (12..=20) divided by 14.
     in-out property <float> font-scale: 1.0;
 
-    // Neutrals: a pure-white workbench with cool-grey rules and state fills.
-    // Large surfaces stay white; grey is reserved for hover, selection and
-    // secondary content, so the shell does not read as one grey application.
-    out property <color> text: #202124;
-    out property <color> text-secondary: #4B5563;
-    out property <color> muted: #8A919B;
-    out property <color> panel: #FFFFFF;
-    out property <color> surface: #FFFFFF;
-    out property <color> border: #E5E7EB;
-    out property <color> border-strong: #D7DBE0;
+    // Neutrals. The light base is a pure-white workbench with cool-grey rules;
+    // mountain repaints the same relationships on light stone grey, and
+    // deep-sea on abyssal blue (large areas stay quiet, one accent
+    // carries the brand).
+    out property <color> text: stone ? #23272A : dark ? #E7EDF2 : #202124;
+    out property <color> text-secondary: stone ? #4F565C : dark ? #C9D6E1 : #4B5563;
+    out property <color> muted: stone ? #7A8288 : dark ? #8FA1B2 : #8A919B;
+    out property <color> panel: stone ? #F2F4F5 : dark ? #10161C : #FFFFFF;
+    out property <color> surface: stone ? #FAFBFC : dark ? #121A22 : #FFFFFF;
+    out property <color> border: stone ? #DDE0E3 : dark ? #293641 : #E5E7EB;
+    out property <color> border-strong: stone ? #C9CED2 : dark ? #3A4652 : #D7DBE0;
     // The frameless window's own outline. It has to delineate the app against
     // the desktop without a DWM shadow (Win7 has none for a borderless HWND),
     // but a full-contrast rule reads as a black hairline around the white UI.
     // This mid neutral stays visible against light and dark desktops without
     // competing with the quieter separators inside the window.
-    out property <color> window-frame: #B9BDC4;
+    out property <color> window-frame: stone ? #AEB4BA : dark ? #2C3D4A : #B9BDC4;
     // Row states for lists, trees and the sidebar.
-    out property <color> hover: #F5F6F7;
-    out property <color> selected: #EFF1F3;
-    out property <color> sidebar: #FFFFFF;
+    out property <color> hover: stone ? #E8EAEC : dark ? #18222B : #F5F6F7;
+    out property <color> selected: stone ? #DFE3E5 : dark ? #18304A : #EFF1F3;
+    out property <color> sidebar: stone ? #ECEEEF : dark ? #090D12 : #FFFFFF;
     // Form controls. An editable field paints on the white surface with the
     // stronger outline, so it never reads as inert; only a real read-only or
     // disabled field drops to the row tone, and that grey is now a signal.
@@ -50,61 +59,67 @@ export global Theme {
     // Accent: primary / hover / soft / tint family. The default is 橙汁
     // (#F58A24). 橙汁 is defined here and the 云端版 web shell follows it —
     // frontend/src/styles/base.css maps the same accent / deep / secondary /
-    // soft values, so do not restyle one side alone. The other names are
-    // deliberate alternates, and every legacy name resolves to the default.
-    out property <color> accent: palette == "hula-green" ? #16ad8d : palette == "forest" ? #2f7a5c : palette == "honey" ? #c08a2a : palette == "minimal" ? #8f9aad : palette == "tech-blue" ? #38bdf8 : #F58A24;
+    // soft values, so do not restyle one side alone. forest uses the mint
+    // family (#16AD8D); mountain is the light stone-grey accent. deep-sea is
+    // the only dark palette: its accent is a steel blue and its ink
+    // is the bright foreground step (the inverse of the light palettes,
+    // where ink is darker than the fill).
+    out property <color> accent: palette == "forest" ? #16ad8d : palette == "mountain" ? #7C878C : palette == "deep-sea" ? #5FA8CF : palette == "minimal" ? #8f9aad : palette == "tech-blue" ? #38bdf8 : #F58A24;
     // Foreground accent. 橙汁 deliberately does NOT darken: the vivid amber is
     // the product look the owner asked for, so the default branch keeps
     // #F58A24 for text, icons and filled buttons too, even though that is
     // below WCAG AA on white (2.46:1). Do not "fix" it to a darker caramel by
-    // itself. The other palettes keep their own darker ink so they stay
-    // legible; `accent-deep` still serves as the hover step for 橙汁.
+    // itself. The other light palettes keep their own darker ink so they stay
+    // legible; deep-sea keeps a bright ink so it stays legible on the abyss.
     // Mirrors --ui-accent-ink in frontend/src/styles/base.css; change both together.
-    out property <color> accent-ink: palette == "hula-green" ? #107D66 : palette == "forest" ? #2F7A5C : palette == "honey" ? #8E661F : palette == "minimal" ? #637087 : palette == "tech-blue" ? #0B77A7 : #F58A24;
-    out property <color> accent-deep: palette == "hula-green" ? #0e8d72 : palette == "forest" ? #24614a : palette == "honey" ? #9c6f1f : palette == "minimal" ? #9ba6ba : palette == "tech-blue" ? #0ea5e9 : #E07A12;
-    out property <color> accent-secondary: palette == "hula-green" ? #5dcbb0 : palette == "forest" ? #7fb39a : palette == "honey" ? #e0bd77 : palette == "minimal" ? #b5bfce : palette == "tech-blue" ? #7c9cff : #FFC98A;
-    out property <color> accent-soft: palette == "hula-green" ? #e7f7f2 : palette == "forest" ? #e9f2ee : palette == "honey" ? #f8f0dd : palette == "minimal" ? #f3f4f6 : palette == "tech-blue" ? #e7f7ff : #FDF0DE;
+    out property <color> accent-ink: palette == "forest" ? #107D66 : palette == "mountain" ? #5A6469 : palette == "deep-sea" ? #8FCDEA : palette == "minimal" ? #637087 : palette == "tech-blue" ? #0B77A7 : #F58A24;
+    out property <color> accent-deep: palette == "forest" ? #0e8d72 : palette == "mountain" ? #687276 : palette == "deep-sea" ? #3E7FA6 : palette == "minimal" ? #9ba6ba : palette == "tech-blue" ? #0ea5e9 : #E07A12;
+    out property <color> accent-secondary: palette == "forest" ? #5dcbb0 : palette == "mountain" ? #B4BDC0 : palette == "deep-sea" ? #B7D8EA : palette == "minimal" ? #b5bfce : palette == "tech-blue" ? #7c9cff : #FFC98A;
+    out property <color> accent-soft: palette == "forest" ? #e7f7f2 : palette == "mountain" ? #EEF1F2 : palette == "deep-sea" ? #122B3B : palette == "minimal" ? #f3f4f6 : palette == "tech-blue" ? #e7f7ff : #FDF0DE;
+    // Foreground for text/icons printed on a solid accent fill. Light palettes
+    // use white; deep-sea's accent is a bright steel blue, so it flips to deep ink.
+    out property <color> accent-contrast: dark ? #06131C : #FFFFFF;
     // 行内图标按钮（重命名／轨迹／归档…）的悬停底板。这些按钮压在行高亮
     // （accent-soft）上，铺中性灰会读成另一套配色、像被禁用；淡主色与行底
     // 同族，白底抽屉里同样立得住。alpha 0.18 对齐云端版的 --ui-accent-soft-2，
     // 叠加在 accent-soft 与白色侧栏上都只是一层浅染。
     out property <color> action-hover: accent.transparentize(0.82);
-    out property <color> bubble: #ffffff;
-    out property <color> mine: palette == "hula-green" ? #dbf2eb : palette == "forest" ? #dfeae4 : palette == "honey" ? #f4e8cf : palette == "minimal" ? #eceff3 : palette == "tech-blue" ? #d7eeff : #FDF0DE;
+    out property <color> bubble: stone ? #FFFFFF : dark ? #121A22 : #ffffff;
+    out property <color> mine: palette == "forest" ? #dbf2eb : palette == "mountain" ? #E4E9EB : palette == "deep-sea" ? #18384C : palette == "minimal" ? #eceff3 : palette == "tech-blue" ? #d7eeff : #FDF0DE;
     // Timeline surfaces: the user bubble, the 1px connector that runs through
     // an expanded tool group, and the monospace diff card cells.
-    out property <color> timeline-bubble: #F5F6F7;
-    out property <color> timeline-line: #E2E5E9;
+    out property <color> timeline-bubble: stone ? #ECEFF1 : dark ? #17222C : #F5F6F7;
+    out property <color> timeline-line: stone ? #DDE1E4 : dark ? #293641 : #E2E5E9;
     // The one-line outcome of a thinking or tool entry: a step softer than the
     // label, so a row reads as name first, result second.
-    out property <color> timeline-entry-soft: #9BA0A8;
+    out property <color> timeline-entry-soft: stone ? #7A8288 : dark ? #8FA1B2 : #9BA0A8;
     out property <length> workflow-height: 420px;
-    out property <color> diff-header: #F5F6F7;
-    out property <color> diff-add-bg: #EAF7F0;
-    out property <color> diff-add-text: #14532D;
-    out property <color> diff-del-bg: #FDECEC;
-    out property <color> diff-del-text: #7F1D1D;
+    out property <color> diff-header: stone ? #EEF1F2 : dark ? #15212B : #F5F6F7;
+    out property <color> diff-add-bg: dark ? #0E2C25 : #EAF7F0;
+    out property <color> diff-add-text: dark ? #7EE6C4 : #14532D;
+    out property <color> diff-del-bg: dark ? #2C1719 : #FDECEC;
+    out property <color> diff-del-text: dark ? #F4AAA4 : #7F1D1D;
     // Reasoning status dot; the completed tone doubles as the success check.
-    out property <color> thought: #3E9C7E;
+    out property <color> thought: dark ? #7FC6E6 : #3E9C7E;
 
     // Status colors: log levels, run states, badges and error text, with the
     // matching soft backgrounds for diff rows and banners.
-    out property <color> success: #1A8A5C;
-    out property <color> success-bg: #EAF7F0;
-    out property <color> warning: #C98A2B;
-    out property <color> warning-bg: #FBEAE5;
+    out property <color> success: dark ? #4FD9AE : #1A8A5C;
+    out property <color> success-bg: dark ? #0E2B26 : #EAF7F0;
+    out property <color> warning: dark ? #E7B96A : #C98A2B;
+    out property <color> warning-bg: dark ? #2B2114 : #FBEAE5;
     // The default-model star and badge use a bright golden accent instead of
     // the darker amber that read as brown on light surfaces.
-    out property <color> gold: #FFC107;
-    out property <color> gold-deep: #E0A800;
-    out property <color> gold-soft: #FFF8E1;
-    out property <color> gold-ink: #8A5A00;
-    out property <color> danger: #D04A43;
-    out property <color> danger-bg: #FDECEC;
-    out property <color> info: #3b82f6;
+    out property <color> gold: dark ? #F0C25E : #FFC107;
+    out property <color> gold-deep: dark ? #D9A43C : #E0A800;
+    out property <color> gold-soft: dark ? #2A2211 : #FFF8E1;
+    out property <color> gold-ink: dark ? #F2CE87 : #8A5A00;
+    out property <color> danger: dark ? #F28C86 : #D04A43;
+    out property <color> danger-bg: dark ? #2E1619 : #FDECEC;
+    out property <color> info: dark ? #77B6FF : #3b82f6;
 
     // Unified scrim behind modal dialogs, drawers and overlays.
-    out property <color> overlay: #00000040;
+    out property <color> overlay: dark ? #000000A6 : #00000040;
 
     // Shell surfaces. The web shell is flat, so no gradient brushes are left.
     out property <brush> middle: sidebar;
@@ -133,16 +148,16 @@ export global Theme {
     // A transcript reads as a document, so its block chrome (code fences,
     // quote rails, table rules) gets tokens of its own instead of reusing the
     // form-control palette. Values mirror the 云端版 web renderer.
-    out property <color> code-bg: #F7F8F9;
-    out property <color> code-border: #E7E9EC;
-    out property <color> code-header: #F1F3F5;
-    out property <color> quote-bg: #F7F8F9;
-    out property <color> quote-bar: #DDE1E6;
-    out property <color> table-head: #F8F9FA;
-    out property <color> table-zebra: #FBFBFC;
-    out property <color> rule: #E4E7EB;
+    out property <color> code-bg: dark ? #0C1319 : #F7F8F9;
+    out property <color> code-border: dark ? #24313C : #E7E9EC;
+    out property <color> code-header: dark ? #101A23 : #F1F3F5;
+    out property <color> quote-bg: dark ? #0D141A : #F7F8F9;
+    out property <color> quote-bar: dark ? #2E4353 : #DDE1E6;
+    out property <color> table-head: dark ? #111C24 : #F8F9FA;
+    out property <color> table-zebra: dark ? #0E181F : #FBFBFC;
+    out property <color> rule: dark ? #25333F : #E4E7EB;
     // Links take a blue that stays unmistakably "clickable" next to the accent.
-    out property <color> link: #1F6FEB;
+    out property <color> link: dark ? #79C4FF : #1F6FEB;
     // Document type scale. Deliberately larger than the UI scale: prose at the
     // 13px form size reads as a caption, not an answer.
     //
@@ -227,3 +242,4 @@ export global Theme {
     out property <length> titlebar-height: 28px;
     out property <length> dock-breakpoint: 1100px;
 }
+

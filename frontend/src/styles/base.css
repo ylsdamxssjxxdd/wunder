@@ -22,6 +22,8 @@
   --ui-accent-ink: #f58a24;
   --ui-accent-ink-rgb: 245, 138, 36;
   --ui-accent-ink-hover: #e07a12;
+  /* 实心强调按钮上的文字色。浅色色板一律白字；深海是钢蓝底，改用暗字。 */
+  --ui-accent-contrast: #ffffff;
   --user-edit-caret: var(--ui-accent-deep);
   --user-edit-selection-bg: rgba(var(--ui-accent-rgb), 0.24);
   --user-edit-cursor:
@@ -86,7 +88,38 @@
   --ui-accent-link-hover: var(--ui-accent-ink-hover);
 }
 
-:root[data-user-accent='hula-green'] {
+/* 山地：浅灰强调色 + 浅灰中性底。页面底色翻成石灰色，而不是只换强调色；
+   色值对齐桌面版 design_tokens.slint 的 mountain。 */
+:root[data-user-accent='mountain'] {
+  --dark-bg: #f1f3f4;
+  --dark-panel: #fafbfc;
+  --dark-border: #dde0e3;
+  --dark-text: #23272a;
+  --dark-muted: #7a8288;
+  --ui-accent: #7c878c;
+  --ui-accent-rgb: 124, 135, 140;
+  --ui-accent-secondary: #b4bdc0;
+  --ui-accent-secondary-rgb: 180, 189, 192;
+  --ui-accent-deep: #687276;
+  /* 前景强调色：用途与对比度说明见 :root 的 --ui-accent-ink。 */
+  --ui-accent-ink: #5a6469;
+  --ui-accent-ink-rgb: 90, 100, 105;
+  --ui-accent-ink-hover: #4d575b;
+  --ui-accent-contrast: #ffffff;
+  --ui-accent-soft: #eef1f2;
+  --ui-accent-soft-2: #e9edee;
+  --ui-accent-soft-3: #f6f8f9;
+  --ui-accent-soft-4: #e2e7e9;
+  --ui-accent-soft-5: #dce2e4;
+  --ui-accent-gradient-start: #c9d1d4;
+  --ui-accent-gradient-mid: #7c878c;
+  --ui-accent-hover: var(--ui-accent-ink-hover);
+  --ui-accent-disabled: #cbd2d5;
+  --ui-accent-link-hover: var(--ui-accent-ink-hover);
+}
+
+/* 森林：沿用薄荷绿的强调色阶，页面表面只带极浅的绿调。 */
+:root[data-user-accent='forest'] {
   --ui-accent: #16ad8d;
   --ui-accent-rgb: 22, 173, 141;
   --ui-accent-secondary: #5dcbb0;
@@ -108,49 +141,34 @@
   --ui-accent-link-hover: var(--ui-accent-ink-hover);
 }
 
-/* 森林：深绿强调色，页面表面只带极浅的绿调。 */
-:root[data-user-accent='forest'] {
-  --ui-accent: #2f7a5c;
-  --ui-accent-rgb: 47, 122, 92;
-  --ui-accent-secondary: #7fb39a;
-  --ui-accent-secondary-rgb: 127, 179, 154;
-  --ui-accent-deep: #24614a;
-  /* 前景强调色：用途与对比度说明见 :root 的 --ui-accent-ink。 */
-  --ui-accent-ink: #2f7a5c;
-  --ui-accent-ink-rgb: 47, 122, 92;
-  --ui-accent-ink-hover: #296a50;
-  --ui-accent-soft: #e9f2ee;
-  --ui-accent-soft-2: #dfeae4;
-  --ui-accent-soft-3: #f3f8f5;
-  --ui-accent-soft-4: #cfe3d8;
-  --ui-accent-soft-5: #c2dccf;
-  --ui-accent-gradient-start: #a8cdb9;
-  --ui-accent-gradient-mid: #4e9b76;
+/* 深海：唯一的暗色色板。强调色是深海钢蓝，中性底色同时翻转为
+   暗蓝黑；色值对齐桌面版 design_tokens.slint 的 deep-sea。 */
+:root[data-user-accent='deep-sea'] {
+  color-scheme: dark;
+  --dark-bg: #0d1116;
+  --dark-panel: #10161c;
+  --dark-border: #293641;
+  --dark-text: #e7edf2;
+  --dark-muted: #8fa1b2;
+  --ui-accent: #5fa8cf;
+  --ui-accent-rgb: 95, 168, 207;
+  --ui-accent-secondary: #b7d8ea;
+  --ui-accent-secondary-rgb: 183, 216, 234;
+  --ui-accent-deep: #3e7fa6;
+  /* 暗底上的前景强调色必须提亮（与浅色色板相反），否则会沉进背景。 */
+  --ui-accent-ink: #8fcdea;
+  --ui-accent-ink-rgb: 143, 205, 234;
+  --ui-accent-ink-hover: #b7d8ea;
+  --ui-accent-contrast: #06131c;
+  --ui-accent-soft: #122b3b;
+  --ui-accent-soft-2: #163447;
+  --ui-accent-soft-3: #0b1a24;
+  --ui-accent-soft-4: #1b4158;
+  --ui-accent-soft-5: #214e67;
+  --ui-accent-gradient-start: #1e4f68;
+  --ui-accent-gradient-mid: #5fa8cf;
   --ui-accent-hover: var(--ui-accent-ink-hover);
-  --ui-accent-disabled: #cfdcd5;
-  --ui-accent-link-hover: var(--ui-accent-ink-hover);
-}
-
-/* 蜜蜂：琥珀金强调色，表面带浅蜜糖底。 */
-:root[data-user-accent='honey'] {
-  --ui-accent: #c08a2a;
-  --ui-accent-rgb: 192, 138, 42;
-  --ui-accent-secondary: #e0bd77;
-  --ui-accent-secondary-rgb: 224, 189, 119;
-  --ui-accent-deep: #9c6f1f;
-  /* 前景强调色：用途与对比度说明见 :root 的 --ui-accent-ink。 */
-  --ui-accent-ink: #8e661f;
-  --ui-accent-ink-rgb: 142, 102, 31;
-  --ui-accent-ink-hover: #7c591b;
-  --ui-accent-soft: #f8f0dd;
-  --ui-accent-soft-2: #f4e8cf;
-  --ui-accent-soft-3: #fbf6ea;
-  --ui-accent-soft-4: #eeddb8;
-  --ui-accent-soft-5: #e8d1a3;
-  --ui-accent-gradient-start: #e6c489;
-  --ui-accent-gradient-mid: #cf9c3d;
-  --ui-accent-hover: var(--ui-accent-ink-hover);
-  --ui-accent-disabled: #e6d6b4;
+  --ui-accent-disabled: #324b59;
   --ui-accent-link-hover: var(--ui-accent-ink-hover);
 }
 
@@ -198,11 +216,50 @@
   --ui-accent-link-hover: var(--ui-accent-ink-hover);
 }
 
+/* 中性令牌的全局兜底：挂到 :root 后，Element Plus 传送到 body 的弹层
+   （不在 .messenger-view 内）也能解析 --mz-*；工作台内仍由
+   pages/messenger-shell.css 的同名变量覆盖。 */
+:root {
+  --mz-bg: #fbfaf8;
+  --mz-surface: #ffffff;
+  --mz-surface-soft: #f8fafc;
+  --mz-sidebar: #f6f5f3;
+  --mz-hover: #f1efec;
+  --mz-selected: #edeae6;
+  --mz-border: #e8e6e3;
+  --mz-border-strong: #d8d5d0;
+  --mz-text: #1f2329;
+  --mz-text-secondary: #3d3d3d;
+  --mz-text-muted: #8a8f99;
+  --mz-success: #1a8a5c;
+  --mz-success-bg: #eaf7f0;
+  --mz-danger: #d04a43;
+  --mz-danger-bg: #fdecec;
+  --mz-warning: #c98a2b;
+  --mz-warning-bg: #fbeae5;
+}
+
 /* 单一浅色基调：B6 移除了深浅切换（data-user-theme），把原本挂在
    `:root[data-user-theme='light']` 上的 color-scheme 显式落到 :root，
    避免深色系统偏好下出现深色滚动条/表单控件。 */
 :root {
   color-scheme: light;
+}
+
+/* 山地是浅灰底主题：把全局 --mz 兜底从白面翻成石灰色，覆盖传真到 body
+   的 Element Plus 弹层；工作台内仍由 pages/messenger.css 的同名变量覆盖。 */
+:root[data-user-accent='mountain'] {
+  --mz-bg: #f1f3f4;
+  --mz-surface: #fafbfc;
+  --mz-surface-soft: #f5f6f7;
+  --mz-sidebar: #eceeef;
+  --mz-hover: #e8eaec;
+  --mz-selected: #dfe3e5;
+  --mz-border: #dde0e3;
+  --mz-border-strong: #c9ced2;
+  --mz-text: #23272a;
+  --mz-text-secondary: #4f565c;
+  --mz-text-muted: #7a8288;
 }
 
 * {
@@ -282,3 +339,4 @@ body {
 .el-overlay-dialog {
   overflow: hidden;
 }
+

@@ -1,0 +1,683 @@
+// wunder 安卓版 — 上下文窗口卡片。
+//
+// 口径与桌面版 `crates/wunder-desktop/frontend/ui/context_window.slint` 对齐：
+// 五部位顺序、配色、读数与条目文案都不改；手机窄屏只简化布局（默认方块格、
+// 详情走整屏面板、不做悬停提示卡）。数据由 Rust 侧从引擎记录的快照投影，
+// 这里不推算 token。
+
+import { Theme } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
+import { I18n } from "../../../crates/wunder-desktop/frontend/ui/i18n.slint";
+import { Action } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
+import { ScrollView } from "std-widgets.slint";
+import { ContextDetailPanel } from "context_detail.slint";
+
+import {
+    CtxPartRow, CtxItemRow, CtxCell, CtxTile, CtxColors, CtxText,
+} from "context_common.slint";
+export { CtxPartRow, CtxItemRow, CtxCell, CtxTile }
+
+export component ContextWindowPage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <[CtxPartRow]> parts: [];
+    // 图例拆两行：窄卡单行放不下六项，过滤后的模型保证隐藏项不占位、末项不被裁。
+    in property <[CtxPartRow]> legend-a: [];
+    in property <[CtxPartRow]> legend-b: [];
+    in property <[CtxItemRow]> items: [];
+    in property <[CtxCell]> cells: [];
+    in property <[CtxTile]> tiles: [];
+    in property <bool> has-data: false;
+    in property <bool> measured: false;
+    in property <string> used-text: "—";
+    in property <string> capacity-text: "—";
+    in property <string> free-text: "—";
+    in property <string> pct-text: "";
+    in property <string> model-label: "";
+    in property <string> turns-text: "";
+    // 0 = 全部, otherwise the selected part's slot.
+    in-out property <int> tab: 0;
+    // 手机默认方块格（铺满、清晰）；两级树图是可切换的第二视图，桌面/云端默认仍为树图。
+    in-out property <bool> look-map: false;
+    // Detail panel opened from a tile, a cell or a row.
+    in property <bool> detail-open: false;
+    in property <string> detail-kind: "";
+    in property <int> detail-slot: 0;
+    in property <string> detail-tag: "";
+    in property <string> detail-name: "";
+    in property <int> detail-count: 0;
+    in property <string> detail-value: "";
+    in property <string> detail-pct: "";
+    in property <[CtxItemRow]> detail-rows: [];
+    in property <string> detail-text: "";
+    in property <int> detail-row-open: -1;
+    in property <string> detail-row-text: "";
+
+    callback back();
+    callback set-tab(int);
+    callback toggle-look();
+    callback legend-open(int);
+    callback row-open(int, string, string, int);
+    callback cell-open(int);
+    callback tile-open(int);
+    callback map-resized(length, length);
+    callback detail-row-toggle(int, int, string, string, int);
+    callback detail-dismissed();
+
+    background: Theme.panel;
+    width: 100%;
+    height: 100%;
+
+    // 卡片可用宽度：阈值分档与桌面一致（420 / 480 / 520 / 640）。
+    private property <length> card-w: root.width - 24px;
+
+    VerticalLayout {
+        spacing: 0px;
+
+        // ---- header -------------------------------------------------
+        Rectangle {
+            height: 52px + root.inset-top;
+            background: Theme.surface;
+            Rectangle {
+                y: root.inset-top;
+                height: 52px;
+                width: parent.width;
+                HorizontalLayout {
+                    padding-left: 6px;
+                    padding-right: 6px;
+                    spacing: 2px;
+                    cross-axis-alignment: center;
+                    Action {
+                        width: 34px;
+                        height: 34px;
+                        icon-size: 17px;
+                        show-label: false;
+                        focus-ring: false;
+                        tooltip: false;
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-left.svg");
+                        label: "返回";
+                        clicked => { root.back(); }
+                    }
+                    Text {
+                        width: parent.width - 134px;
+                        text: I18n.cx_title;
+                        color: Theme.text;
+                        font-size: Theme.font-md;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    // 估算 / 已计量 标记。
+                    Rectangle {
+                        height: 18px;
+                        width: 44px;
+                        border-radius: 9px;
+                        background: Theme.panel;
+                        visible: root.has-data;
+                        Text {
+                            x: 0px;
+                            width: 100%;
+                            text: root.measured ? I18n.cx_measured : I18n.cx_estimate;
+                            color: Theme.muted;
+                            font-size: Theme.font-2xs;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                    // 视图分段：与桌面头部同一行（徽章 → 树图/格子）。
+                    Rectangle {
+                        width: 52px;
+                        height: 24px;
+                        border-radius: 7px;
+                        background: Theme.panel;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        HorizontalLayout {
+                            padding-left: 2px;
+                            padding-right: 2px;
+                            padding-top: 3px;
+                            padding-bottom: 3px;
+                            spacing: 2px;
+                            Rectangle {
+                                width: 22px;
+                                height: 16px;
+                                border-radius: 5px;
+                                background: root.look-map ? Theme.surface : transparent;
+                                border-width: root.look-map ? 1px : 0px;
+                                border-color: Theme.border;
+                                Image {
+                                    x: 5px;
+                                    y: 1px;
+                                    width: 14px;
+                                    height: 14px;
+                                    source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/context-bars.svg");
+                                    colorize: root.look-map ? Theme.text : Theme.muted;
+                                    image-fit: contain;
+                                }
+                                TouchArea {
+                                    clicked => { if (!root.look-map) { root.toggle-look(); } }
+                                }
+                            }
+                            Rectangle {
+                                width: 22px;
+                                height: 16px;
+                                border-radius: 5px;
+                                background: root.look-map ? transparent : Theme.surface;
+                                border-width: root.look-map ? 0px : 1px;
+                                border-color: Theme.border;
+                                Image {
+                                    x: 5px;
+                                    y: 1px;
+                                    width: 14px;
+                                    height: 14px;
+                                    source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/context-grid.svg");
+                                    colorize: root.look-map ? Theme.muted : Theme.text;
+                                    image-fit: contain;
+                                }
+                                TouchArea {
+                                    clicked => { if (root.look-map) { root.toggle-look(); } }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        ScrollView {
+            horizontal-scrollbar-policy: always-off;
+            vertical-stretch: 1;
+            content-width: self.visible-width;
+            VerticalLayout {
+                spacing: 10px;
+                alignment: start;
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 10px;
+                padding-bottom: 12px + root.inset-bottom;
+
+                // ---- occupancy summary ---------------------------------
+                if root.has-data : VerticalLayout {
+                    spacing: 2px;
+                    HorizontalLayout {
+                        height: 34px;
+                        spacing: 6px;
+                        alignment: start;
+                        Text {
+                            text: root.used-text;
+                            color: Theme.text;
+                            font-size: 26px;
+                            font-weight: 600;
+                            vertical-alignment: bottom;
+                        }
+                        Text {
+                            text: "/ " + root.capacity-text + " token";
+                            color: Theme.muted;
+                            font-size: Theme.font-sm;
+                            vertical-alignment: bottom;
+                        }
+                    }
+                    Text {
+                        height: 16px;
+                        text: I18n.cx_summary(root.pct-text, root.free-text);
+                        color: Theme.muted;
+                        font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                    }
+                    if root.model-label != "" && root.card-w >= 480px : Text {
+                        height: 16px;
+                        text: root.model-label;
+                        color: Theme.muted;
+                        font-size: Theme.font-2xs;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    if root.turns-text != "" : Text {
+                        height: 16px;
+                        text: root.turns-text;
+                        color: Theme.muted;
+                        font-size: Theme.font-2xs;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // ---- window map / grid ----------------------------------
+                chart := Rectangle {
+                    // 窄屏 25 列 × 16 行；宽屏 50 列 × 8 行；两种都是 400 格。
+                    // 列数是单一属性，渲染与命中测试共用，禁止再硬编码。
+                    property <length> gap: 2px;
+                    property <int> columns: self.width < 520px ? 25 : 50;
+                    property <int> rows: self.columns == 50 ? 8 : 16;
+                    property <length> side: (self.width - (self.columns - 1) * self.gap) / self.columns;
+                    height: root.look-map
+                        ? min(max(self.width / 2.0, 96px), 180px)
+                        : self.rows * (self.side + self.gap) - self.gap;
+                    background: transparent;
+                    init => { root.map-resized(self.width, self.height); }
+                    changed width => { root.map-resized(self.width, self.height); }
+                    changed height => { root.map-resized(self.width, self.height); }
+
+                    // 窄卡（<480）两级块面被压成竖条、标签不可读：退化为部位级横向条带，
+                    // 部位名 + token 在条内左对齐，点条带进部位详情；条目只保留色块语义。
+                    if root.has-data && root.look-map && root.card-w < 480px : VerticalLayout {
+                        width: parent.width;
+                        height: parent.height;
+                        spacing: 3px;
+                        alignment: start;
+                        for part in root.parts : Rectangle {
+                            height: 26px;
+                            width: 100%;
+                            border-radius: 8px;
+                            background: CtxColors.fill(part.slot);
+                            border-width: 1px;
+                            border-color: CtxColors.line(part.slot);
+                            band-row := HorizontalLayout {
+                                padding-left: 10px;
+                                padding-right: 10px;
+                                spacing: 8px;
+                                alignment: start;
+                                cross-axis-alignment: center;
+                                Rectangle {
+                                    width: 8px;
+                                    height: 8px;
+                                    border-radius: 4px;
+                                    background: CtxColors.ink(part.slot);
+                                }
+                                Text {
+                                    text: CtxText.part(part.slot);
+                                    color: CtxColors.name(part.slot);
+                                    font-size: Theme.font-xs;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                    wrap: no-wrap;
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                                Text {
+                                    text: part.tokens-text;
+                                    color: Theme.text-secondary;
+                                    font-size: Theme.font-xs;
+                                    vertical-alignment: center;
+                                    wrap: no-wrap;
+                                }
+                            }
+                            TouchArea { clicked => { root.legend-open(part.slot); } }
+                        }
+                        Rectangle {
+                            height: 26px;
+                            width: 100%;
+                            border-radius: 8px;
+                            background: #FAFBFC;
+                            border-width: 1px;
+                            border-color: #E6E8EB;
+                            free-row := HorizontalLayout {
+                                padding-left: 10px;
+                                padding-right: 10px;
+                                spacing: 8px;
+                                alignment: start;
+                                cross-axis-alignment: center;
+                                Rectangle {
+                                    width: 8px;
+                                    height: 8px;
+                                    border-radius: 4px;
+                                    background: Theme.border-strong;
+                                }
+                                Text {
+                                    text: I18n.cx_free;
+                                    color: Theme.muted;
+                                    font-size: Theme.font-xs;
+                                    vertical-alignment: center;
+                                    wrap: no-wrap;
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                                Text {
+                                    text: root.free-text;
+                                    color: Theme.muted;
+                                    font-size: Theme.font-xs;
+                                    vertical-alignment: center;
+                                    wrap: no-wrap;
+                                }
+                            }
+                        }
+                    }
+                    if root.has-data && root.look-map && root.card-w >= 480px : Rectangle {
+                        width: parent.width;
+                        height: parent.height;
+                        for tile[i] in root.tiles : tile-box := Rectangle {
+                            x: tile.x * chart.width + 1.5px;
+                            y: tile.y * chart.height + 1.5px;
+                            width: max(0px, tile.w * chart.width - 3px);
+                            height: max(0px, tile.h * chart.height - 3px);
+                            border-radius: 7px;
+                            background: tile.kind == "free"
+                                ? #FAFBFC : CtxColors.fill(tile.slot);
+                            border-width: 1px;
+                            border-color: tile.kind == "free"
+                                ? #E6E8EB : CtxColors.line(tile.slot);
+                            if tile.kind == "free" : Image {
+                                width: parent.width;
+                                height: parent.height;
+                                source: @image-url("../../../crates/wunder-desktop/frontend/assets/context-hatch.svg");
+                                image-fit: ImageFit.fill;
+                            }
+                            VerticalLayout {
+                                width: tile-box.width;
+                                height: tile-box.height;
+                                padding-left: 9px;
+                                padding-right: 9px;
+                                padding-top: tile.show-value ? 7px : 5px;
+                                padding-bottom: tile.show-value ? 7px : 5px;
+                                alignment: start;
+                                spacing: 1px;
+                                if tile.show-name : Text {
+                                    width: tile-box.width - 18px;
+                                    text: tile.kind == "part" ? CtxText.part(tile.slot)
+                                        : tile.kind == "item" ? CtxText.item(tile.tag, tile.name, tile.count)
+                                        : tile.kind == "more" ? I18n.cx_more_items(tile.count)
+                                        : I18n.cx_free;
+                                    color: tile.kind == "free" ? Theme.muted
+                                        : CtxColors.name(tile.slot);
+                                    font-size: Theme.font-xs;
+                                    font-weight: 600;
+                                    wrap: no-wrap;
+                                    overflow: elide;
+                                }
+                                if tile.show-value : Text {
+                                    width: tile-box.width - 18px;
+                                    text: tile.kind == "item" || tile.kind == "more"
+                                        ? tile.tokens-text + " · " + CtxText.part(tile.slot)
+                                        : tile.kind == "free" ? tile.tokens-text
+                                        : tile.tokens-text;
+                                    color: CtxColors.value(tile.slot);
+                                    font-size: Theme.font-2xs;
+                                    wrap: no-wrap;
+                                    overflow: elide;
+                                }
+                            }
+                            TouchArea {
+                                clicked => {
+                                    if (tile.kind != "free") { root.tile-open(i); }
+                                }
+                            }
+                        }
+                    }
+                    if root.has-data && !root.look-map : grid := Rectangle {
+                        width: parent.width;
+                        height: parent.height;
+                        for cell[index] in root.cells : Rectangle {
+                            x: Math.mod(index, chart.columns) * (chart.side + chart.gap);
+                            y: Math.floor(index / chart.columns) * (chart.side + chart.gap);
+                            width: chart.side;
+                            height: chart.side;
+                            border-radius: 2px;
+                            background: cell.slot == 0 ? Theme.selected : CtxColors.ink(cell.slot);
+                        }
+                        TouchArea {
+                            clicked => {
+                                let col = Math.floor(self.mouse-x / (chart.side + chart.gap));
+                                let row = Math.floor(self.mouse-y / (chart.side + chart.gap));
+                                let at = Math.max(0, Math.min(399, row * chart.columns + col));
+                                root.cell-open(at);
+                            }
+                        }
+                    }
+                    if !root.has-data : Text {
+                        width: parent.width;
+                        height: parent.height;
+                        text: I18n.cx_no_request;
+                        color: Theme.muted;
+                        font-size: Theme.font-sm;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+
+                // ---- legend: single row, desktop metrics (dot 6, gap 6,
+                // row spacing 14, name font-xs 11); values only >=640px. --
+                if root.has-data : HorizontalLayout {
+                    height: 20px;
+                    spacing: 14px;
+                    alignment: start;
+                    HorizontalLayout {
+                        spacing: 14px;
+                        alignment: start;
+                        for part in root.parts : Rectangle {
+                            horizontal-stretch: 0;
+                            height: 20px;
+                            width: legend-row.preferred-width;
+                            border-radius: 5px;
+                            legend-row := HorizontalLayout {
+                                spacing: 6px;
+                                alignment: start;
+                                Rectangle {
+                                    width: 6px;
+                                    height: 6px;
+                                    border-radius: 3px;
+                                    y: (parent.height - self.height) / 2;
+                                    background: CtxColors.ink(part.slot);
+                                }
+                                Text {
+                                    text: CtxText.part(part.slot);
+                                    color: Theme.text-secondary;
+                                    font-size: Theme.font-xs;
+                                    vertical-alignment: center;
+                                    wrap: no-wrap;
+                                }
+                                if root.card-w >= 640px : Text {
+                                    text: part.tokens-text;
+                                    color: Theme.muted;
+                                    font-size: Theme.font-xs;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            TouchArea { clicked => { root.legend-open(part.slot); } }
+                        }
+                        Rectangle {
+                            horizontal-stretch: 0;
+                            height: 20px;
+                            width: free-legend.preferred-width;
+                            border-radius: 5px;
+                            free-legend := HorizontalLayout {
+                                spacing: 6px;
+                                alignment: start;
+                                Rectangle {
+                                    width: 6px;
+                                    height: 6px;
+                                    border-radius: 3px;
+                                    y: (parent.height - self.height) / 2;
+                                    background: Theme.border-strong;
+                                }
+                                Text {
+                                    text: I18n.cx_free;
+                                    color: Theme.text-secondary;
+                                    font-size: Theme.font-xs;
+                                    vertical-alignment: center;
+                                    wrap: no-wrap;
+                                }
+                                if root.card-w >= 640px : Text {
+                                    text: root.free-text;
+                                    color: Theme.muted;
+                                    font-size: Theme.font-xs;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ---- divider ---------------------------------------------
+                if root.has-data : Rectangle {
+                    height: 1px;
+                    background: Theme.border;
+                }
+
+                // ---- contents head + filter capsules ---------------------
+                if root.has-data : HorizontalLayout {
+                    height: 26px;
+                    spacing: 4px;
+                    alignment: space-between;
+                    Text {
+                        text: I18n.cx_contents;
+                        color: Theme.text;
+                        font-size: Theme.font-xs;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        horizontal-stretch: 0;
+                        height: 24px;
+                        width: tabs-row.preferred-width + 4px;
+                        border-radius: 12px;
+                        background: Theme.panel;
+                        tabs-row := HorizontalLayout {
+                            padding: 2px;
+                            spacing: 2px;
+                            alignment: start;
+                            Rectangle {
+                                horizontal-stretch: 0;
+                                height: 20px;
+                                width: all-label.preferred-width + 16px;
+                                border-radius: 10px;
+                                background: root.tab == 0 ? Theme.surface : transparent;
+                                border-width: root.tab == 0 ? 1px : 0px;
+                                border-color: Theme.border;
+                                all-label := Text {
+                                    x: 8px;
+                                    width: self.preferred-width;
+                                    text: I18n.cx_all;
+                                    color: root.tab == 0 ? Theme.text : Theme.muted;
+                                    font-size: Theme.font-xs;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                    wrap: no-wrap;
+                                }
+                                TouchArea { clicked => { root.set-tab(0); } }
+                            }
+                            for part in root.parts : Rectangle {
+                                horizontal-stretch: 0;
+                                height: 20px;
+                                width: chip-label.preferred-width + 16px;
+                                border-radius: 10px;
+                                background: root.tab == part.slot ? Theme.surface : transparent;
+                                border-width: root.tab == part.slot ? 1px : 0px;
+                                border-color: Theme.border;
+                                chip-label := Text {
+                                    x: 8px;
+                                    width: self.preferred-width;
+                                    text: CtxText.part(part.slot);
+                                    color: root.tab == part.slot ? Theme.text : Theme.muted;
+                                    font-size: Theme.font-xs;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                    wrap: no-wrap;
+                                }
+                                TouchArea { clicked => { root.set-tab(part.slot); } }
+                            }
+                        }
+                    }
+                }
+
+                // ---- contents list ----------------------------------------
+                if root.has-data : VerticalLayout {
+                    spacing: 0px;
+                    alignment: start;
+                    if root.items.length == 0 : Text {
+                        height: 32px;
+                        text: I18n.cx_nothing;
+                        color: Theme.muted;
+                        font-size: Theme.font-sm;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    for item in root.items : Rectangle {
+                        height: 28px;
+                        width: 100%;
+                        border-radius: 6px;
+                        Rectangle {
+                            width: 6px;
+                            height: 6px;
+                            border-radius: 3px;
+                            x: 6px;
+                            y: (parent.height - self.height) / 2;
+                            background: CtxColors.ink(item.slot);
+                        }
+                        Text {
+                            x: 18px;
+                            y: 0px;
+                            width: parent.width - (root.width >= 420px ? 190px : 82px);
+                            height: parent.height;
+                            text: CtxText.item(item.tag, item.name, item.count);
+                            color: Theme.text;
+                            font-size: Theme.font-sm;
+                            font-weight: 500;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        if item.count > 1 && (item.tag == "tool" || item.tag == "result") : Text {
+                            x: parent.width - 178px;
+                            y: 0px;
+                            height: parent.height;
+                            text: "×" + item.count;
+                            color: Theme.muted;
+                            font-size: Theme.font-xs;
+                            vertical-alignment: center;
+                        }
+                        if root.width >= 420px : Rectangle {
+                            x: parent.width - 150px;
+                            y: (parent.height - 4px) / 2;
+                            width: 72px;
+                            height: 4px;
+                            border-radius: 2px;
+                            background: Theme.selected;
+                            Rectangle {
+                                x: 0px;
+                                y: 0px;
+                                width: max(2px, parent.width * item.ratio);
+                                height: parent.height;
+                                border-radius: 2px;
+                                background: CtxColors.ink(item.slot);
+                            }
+                        }
+                        Text {
+                            x: parent.width - 72px;
+                            y: 0px;
+                            width: 72px;
+                            height: parent.height;
+                            text: item.tokens-text;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-xs;
+                            vertical-alignment: center;
+                            horizontal-alignment: right;
+                        }
+                        TouchArea {
+                            clicked => {
+                                root.row-open(item.slot, item.tag, item.name, item.count);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- detail panel: full-screen layer above the card -------------------
+    if root.detail-open : ContextDetailPanel {
+        inset-top: root.inset-top;
+        inset-bottom: root.inset-bottom;
+        detail-kind: root.detail-kind;
+        detail-slot: root.detail-slot;
+        detail-tag: root.detail-tag;
+        detail-name: root.detail-name;
+        detail-count: root.detail-count;
+        detail-value: root.detail-value;
+        detail-pct: root.detail-pct;
+        detail-rows: root.detail-rows;
+        detail-text: root.detail-text;
+        detail-row-open: root.detail-row-open;
+        detail-row-text: root.detail-row-text;
+        detail-dismissed => { root.detail-dismissed(); }
+        detail-row-toggle(index, slot, tag, name, count) => {
+            root.detail-row-toggle(index, slot, tag, name, count);
+        }
+    }
+}

@@ -283,6 +283,9 @@ async fn run_default(
         Some(prompt) => prompt,
         None => resolve_prompt_text(None, language.as_str())?,
     };
+    if maybe_print_context_window(runtime, global, &prompt).await? {
+        return Ok(());
+    }
     let outcome = Box::pin(run_agent_once(
         runtime,
         global,
@@ -304,6 +307,9 @@ async fn handle_exec(
 ) -> Result<()> {
     let language = locale::resolve_cli_language(global);
     let prompt = resolve_prompt_text(command.prompt, language.as_str())?;
+    if maybe_print_context_window(runtime, global, &prompt).await? {
+        return Ok(());
+    }
     let attachments = prepare_global_attachment_payloads(runtime, global).await?;
     let session_id = stored_exec_session(global);
     // The orchestrator future is large in debug builds; box it instead of
@@ -322,6 +328,43 @@ async fn handle_exec(
     // stream has already been flushed, so the code is the only signal left.
     apply_exec_exit_policy(&outcome, language.as_str());
     Ok(())
+}
+
+/// Non-interactive `/context`: render the recorded composition as plain text
+/// through the same projection as the TUI panel. Returns true when the prompt
+/// was a local context command; other prompts fall through to the agent loop.
+async fn maybe_print_context_window(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    prompt: &str,
+) -> Result<bool> {
+    let Some(parsed) = slash_command::parse_slash_command(prompt) else {
+        return Ok(false);
+    };
+    if parsed.command != slash_command::SlashCommand::Context {
+        return Ok(false);
+    }
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
+    let session = stored_exec_session(global);
+    let snapshot = runtime
+        .state
+        .workspace
+        .load_session_context_window_async(&runtime.user_id, &session)
+        .await;
+    let capacity = wunder_server::api::chat::native_chat_context_capacity(
+        &runtime.state,
+        &runtime.user_id,
+        &session,
+    )
+    .await
+    .ok()
+    .flatten()
+    .map(i64::from)
+    .unwrap_or(0);
+    let view = crate::tui::context_window::project(snapshot, capacity, false, is_zh);
+    println!("{}", crate::tui::context_window::plain_text(&view, is_zh));
+    Ok(true)
 }
 
 fn stored_exec_session(global: &GlobalArgs) -> String {

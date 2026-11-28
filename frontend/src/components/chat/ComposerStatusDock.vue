@@ -149,10 +149,10 @@ const closePanel = () => {
   gap: 6px;
   max-width: min(640px, calc(100vw - 48px));
   padding: 4px 14px;
-  border: 1px solid rgba(15, 23, 42, 0.1);
+  border: 1px solid var(--mz-border);
   border-radius: 999px;
-  background: #ffffff;
-  color: #4b5563;
+  background: var(--mz-surface);
+  color: var(--mz-text-secondary);
   font-size: 12px;
   line-height: 1.4;
   white-space: nowrap;
@@ -229,9 +229,9 @@ const closePanel = () => {
   display: flex;
   flex-direction: column;
   padding: 12px 16px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
+  border: 1px solid var(--mz-border);
   border-radius: 14px;
-  background: #ffffff;
+  background: var(--mz-surface);
   box-shadow: 0 14px 36px rgba(15, 23, 42, 0.16);
   z-index: 7;
 }

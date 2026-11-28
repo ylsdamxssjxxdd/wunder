@@ -262,11 +262,21 @@
         </div>
 
           <div class="composer-action-group composer-action-group--end">
-            <!-- 右组（对齐桌面 composer.slint:637-663）：模型 + 上下文占用 → 发送/停止。
-                 占用统计不再单独占一个图标位：触发器上的大脑就是占用图标（按占用率填充），
-                 数字与进度在浮层里展开。数据仍取自**唯一**一份投影 sessionContextUsage.ts。 -->
+            <!-- 右组（对齐桌面 composer.slint:637-663）：大脑上下文入口 + 模型选择 → 发送/停止。
+                 大脑独立成钮，点击打开上下文卡片；占用统计取自唯一一份投影 sessionContextUsage.ts，
+                 不在模型触发器或浮层里展示读数。 -->
             <!-- 手机把模型入口移到顶部标题区（对齐安卓版），输入区不再占模型位。 -->
             <div v-if="!phoneLayout" ref="modelMenuAnchorRef" class="composer-anchor">
+              <!-- 大脑 = 唯一上下文入口：点它直接打开上下文窗口卡片，不与模型名共用热区。 -->
+              <button
+                class="composer-context-entry"
+                type="button"
+                :title="contextEntryTitle"
+                :aria-label="contextEntryTitle"
+                @click.stop="openContextCard"
+              >
+                <ContextUsageIcon class="composer-model-usage-icon" :ratio="contextUsage.ratio" :compacted="contextUsage.compacted" />
+              </button>
               <button
                 class="composer-model-trigger"
                 type="button"
@@ -276,7 +286,6 @@
                 :aria-expanded="modelMenuVisible"
                 @click.stop="toggleModelMenu"
               >
-                <ContextUsageIcon class="composer-model-usage-icon" :ratio="contextUsage.ratio" :compacted="contextUsage.compacted" />
                 <span class="composer-model-name">{{ modelTriggerLabel }}</span>
                 <span v-if="reasoningEffortCompactLabel" class="composer-model-effort">
                   {{ reasoningEffortCompactLabel }}
@@ -288,7 +297,6 @@
                 v-if="modelMenuVisible"
                 :items="modelOptions"
                 :active-model-id="composerModelName"
-                :context-usage="contextUsage"
                 :loading="modelCatalog.loading"
                 :failed="modelCatalog.failed"
                 :busy="modelSwitching"
@@ -297,6 +305,13 @@
                 @close="closeComposerPanels"
               />
             </div>
+
+            <ContextWindowCard
+              v-model:open="contextCardOpen"
+              :session-id="targetSessionId"
+              :observed="contextUsage.ratio !== null"
+              :compacted="contextUsage.compacted"
+            />
 
             <button
               class="composer-send-btn"
@@ -323,6 +338,7 @@ import { ElMessage } from 'element-plus';
 import ComposerPresetQuestions from '@/components/chat/ComposerPresetQuestions.vue';
 import ComposerStatusBar from '@/components/chat/ComposerStatusBar.vue';
 import ContextUsageIcon from '@/components/chat/ContextUsageIcon.vue';
+import ContextWindowCard from '@/components/chat/ContextWindowCard.vue';
 import ModelPickerPopover from '@/components/chat/ModelPickerPopover.vue';
 
 import { processChatMediaAttachment } from '@/api/chat';
@@ -502,6 +518,7 @@ const fileInputRef = ref<HTMLInputElement | null>(null);
 const phonePhotoInputRef = ref<HTMLInputElement | null>(null);
 const phonePlusPage = ref(0);
 const modelMenuVisible = ref(false);
+const contextCardOpen = ref(false);
 const plusMenuVisible = ref(false);
 const modelSwitching = ref(false);
 type ReasoningEffort = 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
@@ -646,9 +663,9 @@ const modelOptions = computed<ComposerModelOption[]>(() =>
   Array.isArray(composerModelCatalog.value.items) ? composerModelCatalog.value.items : []
 );
 const modelTriggerLabel = computed(() => composerModelDisplayName.value);
-// 触发器同时承载模型与占用：悬浮给出「切换模型: <模型> · 上下文占用 12k / 128k」。
+// 模型触发器只承载模型选择；上下文入口由旁边独立的大脑按钮承担。
 const modelTriggerTitle = computed(
-  () => `${t('chat.composer.modelSelect')}: ${modelTriggerLabel.value} · ${contextUsageTitle.value}`
+  () => `${t('chat.composer.modelSelect')}: ${modelTriggerLabel.value}`
 );
 const reasoningEffortCompactLabel = computed(() => {
   if (reasoningEffort.value === 'default') return '';
@@ -673,10 +690,9 @@ const contextUsage = useSessionContextUsage({
   observedUsedTokens: () => liveContextUsage.value?.used ?? null,
   observedTotalTokens: () => liveContextUsage.value?.total ?? null
 });
-const contextUsageTitle = computed(() => {
-  const counts = String(contextUsage.value.counts || '').trim();
-  return counts ? `${t('profile.stats.contextTokens')} ${counts}` : t('profile.stats.contextTokens');
-});
+// The brain entry labels the current occupancy share; '--' means no observed
+// snapshot yet.
+const contextEntryTitle = computed(() => `${t('chat.contextWindow.usage')} ${contextUsage.value.percentText}`);
 const hasInquirySelection = computed(
   () => Array.isArray(props.inquirySelection) && props.inquirySelection.length > 0
 );
@@ -2102,6 +2118,12 @@ const toggleModelMenu = () => {
   closeOtherPanels('model');
   modelMenuVisible.value = next;
   if (next) void ensureComposerModelCatalog();
+};
+
+// 大脑入口打开上下文窗口卡片；先收起模型浮层，避免两个面板叠在一起。
+const openContextCard = () => {
+  modelMenuVisible.value = false;
+  contextCardOpen.value = true;
 };
 
 const selectModel = async (modelId: string) => {

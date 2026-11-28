@@ -16,6 +16,7 @@
   --mz-primary-tint: var(--ui-accent-soft);
   --mz-bg: #fbfaf8;
   --mz-surface: #ffffff;
+  --mz-surface-soft: #f8fafc;
   --mz-sidebar: #f6f5f3;
   --mz-hover: #f1efec;
   --mz-selected: #edeae6;
@@ -593,7 +594,7 @@ button.messenger-sidebar-workspace-row {
   padding: 4px;
   border: 1px solid var(--mz-border, #e8e6e3);
   border-radius: var(--mz-radius-card, 12px);
-  background: #ffffff;
+  background: var(--mz-surface);
   box-shadow: 0 12px 32px rgba(31, 35, 41, 0.16);
   color: var(--mz-text-muted, #8a8f99);
   font-size: var(--mz-font-sm, 12px);
@@ -672,7 +673,7 @@ button.messenger-sidebar-workspace-row {
   margin: 0 var(--mz-row-gap) 0 0;
   border: 1px solid var(--mz-border-strong);
   border-radius: 4px;
-  color: #fff;
+  color: var(--ui-accent-contrast, #fff);
   background: var(--mz-surface);
   font-size: 9px;
   line-height: 1;
@@ -768,7 +769,7 @@ button.messenger-sidebar-workspace-row {
   margin-top: 8px;
   border: 1px solid var(--mz-primary);
   border-radius: var(--mz-row-radius);
-  color: #fff;
+  color: var(--ui-accent-contrast, #fff);
   background: var(--mz-primary);
   font: inherit;
   font-size: var(--mz-font-md);
@@ -1270,7 +1271,7 @@ button.messenger-sidebar-workspace-row {
   padding: 4px;
   border: 1px solid var(--mz-border, #e8e6e3);
   border-radius: var(--mz-radius-card, 12px);
-  background: #ffffff;
+  background: var(--mz-surface);
   box-shadow: 0 12px 32px rgba(31, 35, 41, 0.16);
   color: var(--mz-text-muted, #8a8f99);
   font-size: var(--mz-font-sm, 12px);

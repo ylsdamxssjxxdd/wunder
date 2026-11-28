@@ -153,6 +153,20 @@ export const getSessionSubagents = (
   params: QueryParams = {},
   options: { signal?: AbortSignal } = {}
 ) => api.get(`/chat/sessions/${id}/subagents`, { params, ...options });
+// Read-only context window snapshot: the composition of the thread's last
+// outgoing request as recorded by the engine. The snapshot carries no item
+// text; the detail endpoint below fetches one row's memory-only body.
+export const getSessionContextWindow = (id: string, options: { signal?: AbortSignal } = {}) =>
+  api.get(`/chat/sessions/${encodeURIComponent(id)}/context_window`, options);
+export const getSessionContextWindowText = (
+  id: string,
+  params: { slot: number; tag: string; name: string; count: number },
+  options: { signal?: AbortSignal } = {}
+) =>
+  api.get(`/chat/sessions/${encodeURIComponent(id)}/context_window/text`, {
+    params: sanitizeQueryParams(params),
+    ...options
+  });
 export const deleteSession = (id: string) => api.delete(`/chat/sessions/${id}`);
 export const archiveSession = (id: string) => api.post(`/chat/sessions/${id}/archive`);
 export const restoreSession = (id: string) => api.post(`/chat/sessions/${id}/restore`);

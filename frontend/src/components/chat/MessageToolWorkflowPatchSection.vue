@@ -398,9 +398,9 @@ const startThumbDrag = (event: PointerEvent, key: string): void => {
 }
 
 .patch-diff-file {
-  border: 1px solid #e6e4e1;
+  border: 1px solid var(--mz-border);
   border-radius: 10px;
-  background: #ffffff;
+  background: var(--mz-surface);
   overflow: hidden;
   contain: paint;
 }
@@ -418,14 +418,14 @@ const startThumbDrag = (event: PointerEvent, key: string): void => {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border-bottom: 1px solid #efedea;
-  background: #fbfaf9;
+  border-bottom: 1px solid var(--mz-border);
+  background: var(--mz-surface-soft);
   min-width: 0;
 }
 
 .patch-diff-file-icon {
   flex: 0 0 auto;
-  color: #9a9a9a;
+  color: var(--mz-text-muted);
   font-size: 12px;
 }
 
@@ -435,7 +435,7 @@ const startThumbDrag = (event: PointerEvent, key: string): void => {
   padding: 0;
   border: 0;
   background: transparent;
-  color: #2f2f2f;
+  color: var(--mz-text);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
     'Courier New', monospace;
   font-size: 12.5px;
@@ -467,26 +467,26 @@ const startThumbDrag = (event: PointerEvent, key: string): void => {
 }
 
 .patch-diff-added {
-  color: #16a34a;
+  color: var(--mz-success);
 }
 
 .patch-diff-deleted {
-  color: #dc2626;
+  color: var(--mz-danger);
 }
 
 .patch-diff-pending {
   flex: 0 0 auto;
   padding: 1px 7px;
   border-radius: 999px;
-  background: #fff4e6;
-  color: #b45309;
+  background: var(--mz-warning-bg);
+  color: var(--mz-warning);
   font-size: 11px;
   font-weight: 600;
 }
 
 .patch-diff-meta {
   padding: 4px 10px 0;
-  color: #8a8a8a;
+  color: var(--mz-text-muted);
   font-size: 11.5px;
 }
 
@@ -522,23 +522,23 @@ const startThumbDrag = (event: PointerEvent, key: string): void => {
 .patch-diff-scroll-thumb {
   width: 6px;
   border-radius: 999px;
-  background: #d8d5d0;
+  background: var(--mz-border-strong);
   pointer-events: auto;
   cursor: pointer;
   transition: background 120ms ease;
 }
 
 .patch-diff-scroll-thumb:hover {
-  background: #c2beb9;
+  background: var(--mz-text-muted);
 }
 
 .patch-diff-table-head {
   padding: 5px 10px;
-  background: #f5f4f2;
-  color: #7c7c7c;
+  background: var(--mz-surface-soft);
+  color: var(--mz-text-muted);
   font-size: 11.5px;
   font-weight: 600;
-  border-bottom: 1px solid #efedea;
+  border-bottom: 1px solid var(--mz-border);
 }
 
 .patch-diff-row {
@@ -554,14 +554,14 @@ const startThumbDrag = (event: PointerEvent, key: string): void => {
 }
 
 .patch-diff-line-no {
-  color: #a3a3a3;
+  color: var(--mz-text-muted);
   text-align: right;
   user-select: none;
   font-variant-numeric: tabular-nums;
 }
 
 .patch-diff-sign {
-  color: #9a9a9a;
+  color: var(--mz-text-muted);
   text-align: center;
   user-select: none;
 }
@@ -570,33 +570,33 @@ const startThumbDrag = (event: PointerEvent, key: string): void => {
   min-width: 0;
   white-space: pre-wrap;
   word-break: break-word;
-  color: #333333;
+  color: var(--mz-text);
 }
 
 .patch-diff-row.is-add {
-  background: #eaf7f0;
+  background: var(--mz-success-bg);
 }
 
 .patch-diff-row.is-add .patch-diff-sign,
 .patch-diff-row.is-add .patch-diff-code {
-  color: #14713f;
+  color: var(--mz-success);
 }
 
 .patch-diff-row.is-delete {
-  background: #fdecec;
+  background: var(--mz-danger-bg);
 }
 
 .patch-diff-row.is-delete .patch-diff-sign,
 .patch-diff-row.is-delete .patch-diff-code {
-  color: #a32020;
+  color: var(--mz-danger);
 }
 
 .patch-diff-row.is-meta,
 .patch-diff-row.is-note {
   grid-template-columns: minmax(0, 1fr);
   padding: 3px 10px;
-  background: #f7f6f4;
-  color: #8a8a8a;
+  background: var(--mz-surface-soft);
+  color: var(--mz-text-muted);
   font-size: 11.5px;
 }
 
@@ -604,28 +604,28 @@ const startThumbDrag = (event: PointerEvent, key: string): void => {
   align-self: stretch;
   margin: 6px 10px 8px;
   padding: 4px 8px;
-  border: 1px dashed #dcd9d5;
+  border: 1px dashed var(--mz-border);
   border-radius: 8px;
   background: transparent;
-  color: #7c7c7c;
+  color: var(--mz-text-muted);
   font-size: 11.5px;
   cursor: pointer;
 }
 
 .patch-diff-more:hover {
-  border-color: #c9c5c0;
-  color: #4a4a4a;
+  border-color: var(--mz-border-strong);
+  color: var(--mz-text-secondary);
 }
 
 .patch-diff-empty,
 .patch-diff-note {
   padding: 6px 10px;
-  color: #9a9a9a;
+  color: var(--mz-text-muted);
   font-size: 11.5px;
 }
 
 .patch-diff-note {
-  border: 1px dashed #e2dfdb;
+  border: 1px dashed var(--mz-border);
   border-radius: 8px;
 }
 </style>

@@ -137,7 +137,7 @@
             <li v-for="option in themeOptions" :key="option.palette">
               <button
                 class="messenger-theme-tile"
-                :class="{ 'is-active': option.palette === themePalette }"
+                :class="{ 'is-active': option.palette === themePalette, 'is-dark': option.palette === 'deep-sea' }"
                 type="button"
                 :aria-pressed="option.palette === themePalette"
                 :data-testid="`settings-theme-${option.palette}`"
@@ -960,7 +960,7 @@ watch(
 .messenger-settings-profile-tag--level {
   background: linear-gradient(135deg, rgba(249, 115, 22, 0.14), rgba(251, 191, 36, 0.2));
   border-color: rgba(249, 115, 22, 0.18);
-  color: #c2410c;
+  color: var(--mz-warning);
   font-weight: 700;
 }
 
@@ -996,7 +996,7 @@ watch(
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  color: #6f6f6f;
+  color: var(--mz-text-muted);
   font-size: 11px;
 }
 
@@ -1004,7 +1004,7 @@ watch(
   padding: 16px 16px 14px;
   border-radius: 18px;
   border: 1px solid rgba(217, 119, 6, 0.16);
-  background: #fff8ee;
+  background: color-mix(in srgb, #d97706 9%, var(--mz-surface));
 }
 
 .messenger-profile-token-balance-main {
@@ -1021,8 +1021,8 @@ watch(
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: #f6e7b0;
-  color: #b7791f;
+  background: var(--mz-warning-bg, #f6e7b0);
+  color: var(--mz-warning);
   font-size: 18px;
 }
 
@@ -1039,7 +1039,7 @@ watch(
   font-weight: 800;
   line-height: 1;
   letter-spacing: -0.03em;
-  color: #273444;
+  color: var(--mz-text);
 }
 
 .messenger-username-dialog-body {
@@ -1054,7 +1054,7 @@ watch(
   flex-direction: column;
   align-items: stretch;
   gap: 8px;
-  color: #5f6368;
+  color: var(--mz-text-secondary);
   font-size: 12px;
 }
 
@@ -1080,13 +1080,13 @@ watch(
 }
 
 .messenger-username-dialog-section-title {
-  color: #1f2937;
+  color: var(--mz-text);
   font-size: 14px;
   font-weight: 700;
 }
 
 .messenger-username-dialog-section-hint {
-  color: #7b8794;
+  color: var(--mz-text-muted);
   font-size: 12px;
   line-height: 1.5;
 }

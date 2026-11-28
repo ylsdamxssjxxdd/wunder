@@ -22,10 +22,10 @@ export component NarrowHeader inherits Rectangle {
     in property <int> model-count: 0;
     in property <bool> model-saving: false;
     in property <float> context-usage: 0.0;
-    in property <bool> context-known: false;
     in property <bool> context-compacted: false;
     callback open-drawer();
     callback open-model();
+    callback open-context();
     callback new-thread();
 
     height: Theme.mobile-header-height;
@@ -64,10 +64,6 @@ export component NarrowHeader inherits Rectangle {
                 width: chip-width;
                 height: 36px;
                 border-radius: 18px;
-                background: chip-touch.has-hover ? Theme.hover : transparent;
-                accessible-role: button;
-                accessible-label: I18n.cp_model_pick;
-                accessible-action-default => { root.open-model(); }
 
                 // Hidden measurement so the chip elides the name, not the glyph.
                 chip-label := Text {
@@ -77,46 +73,86 @@ export component NarrowHeader inherits Rectangle {
                     font-weight: 600;
                 }
 
-                // Liquid brain gauge: muted base, accent copy rises with use.
-                Rectangle {
-                    x: 10px;
-                    y: 10px;
-                    width: 16px;
-                    height: 16px;
-                    Image {
+                // 大脑区：固定 32px 热区，点击直接打开上下文窗口卡片；液位填充
+                // 与配色照旧。图标在格子里水平居中，不被名称挤压。
+                brain-zone := Rectangle {
+                    x: 0px;
+                    y: 0px;
+                    width: 32px;
+                    height: parent.height;
+                    border-radius: 18px;
+                    background: brain-touch.has-hover ? Theme.hover : transparent;
+                    accessible-role: button;
+                    accessible-label: I18n.cx_open;
+                    accessible-action-default => { root.open-context(); }
+
+                    // Liquid brain gauge: muted base, accent copy rises with use.
+                    Rectangle {
+                        x: 8px;
+                        y: 10px;
                         width: 16px;
                         height: 16px;
-                        source: @image-url("../assets/icons/brain.svg");
-                        colorize: Theme.muted;
-                        image-fit: contain;
-                    }
-                    Rectangle {
-                        x: 0px;
-                        y: 16px - 16px * root.fill;
-                        width: 16px;
-                        height: 16px * root.fill;
-                        clip: true;
                         Image {
-                            y: -16px * (1.0 - root.fill);
                             width: 16px;
                             height: 16px;
                             source: @image-url("../assets/icons/brain.svg");
-                            colorize: root.fill-color;
+                            colorize: Theme.muted;
                             image-fit: contain;
                         }
+                        Rectangle {
+                            x: 0px;
+                            y: 16px - 16px * root.fill;
+                            width: 16px;
+                            height: 16px * root.fill;
+                            clip: true;
+                            Image {
+                                y: -16px * (1.0 - root.fill);
+                                width: 16px;
+                                height: 16px;
+                                source: @image-url("../assets/icons/brain.svg");
+                                colorize: root.fill-color;
+                                image-fit: contain;
+                            }
+                        }
+                    }
+                    brain-touch := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        mouse-cursor: pointer;
+                        clicked => { root.open-context(); }
                     }
                 }
 
-                Text {
-                    x: 32px;
-                    width: chip-width - 52px;
-                    height: 100%;
-                    text: root.label-text;
-                    color: root.model-count > 0 ? Theme.text : Theme.muted;
-                    font-size: Theme.font-md;
-                    font-weight: 600;
-                    vertical-alignment: center;
-                    overflow: elide;
+                // 模型区：芯片其余部分，点击打开模型面板。
+                model-zone := Rectangle {
+                    x: brain-zone.width;
+                    y: 0px;
+                    width: parent.width - brain-zone.width;
+                    height: parent.height;
+                    border-radius: 18px;
+                    background: model-touch.has-hover ? Theme.hover : transparent;
+                    accessible-role: button;
+                    accessible-label: I18n.cp_model_pick;
+                    accessible-action-default => { root.open-model(); }
+
+                    Text {
+                        x: 0px;
+                        width: parent.width - 20px;
+                        height: 100%;
+                        text: root.label-text;
+                        color: root.model-count > 0 ? Theme.text : Theme.muted;
+                        font-size: Theme.font-md;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    model-touch := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        mouse-cursor: pointer;
+                        clicked => { root.open-model(); }
+                    }
                 }
 
                 if root.model-saving : Rectangle {
@@ -126,13 +162,6 @@ export component NarrowHeader inherits Rectangle {
                     height: 10px;
                     border-radius: 5px;
                     background: Theme.accent;
-                }
-
-                chip-touch := TouchArea {
-                    width: parent.width;
-                    height: parent.height;
-                    mouse-cursor: pointer;
-                    clicked => { root.open-model(); }
                 }
             }
         }
@@ -159,7 +188,7 @@ export component NarrowHeader inherits Rectangle {
 
 // 面板里的活动区块（对齐安卓版）：桌面版把后台任务与子智能体挂在输入区的
 // 两个悬停浮层上，窄窗没有可靠的悬停区，因此收进点模型胶囊呼出的底部面板，
-// 紧跟上下文占用。两段都为空时高度为 0，面板保持原来的高度。
+// 排在模型列表上面。两段都为空时高度为 0，面板保持原来的高度。
 component NarrowSectionTitle inherits Rectangle {
     in property <string> title;
     in property <string> note;
@@ -429,32 +458,25 @@ component NarrowActivityBlock inherits VerticalLayout {
 export component NarrowModelSheet inherits Rectangle {
     in property <[ModelCard]> models: [];
     in property <string> current-key: "";
-    in property <float> context-usage: 0.0;
-    in property <bool> context-known: false;
-    in property <string> context-counts: "";
-    in property <bool> context-compacted: false;
     in property <bool> cloud-ready: true;
     // 后台任务与子智能体：桌面版在输入区有悬停浮层，窄窗没有可靠的悬停区，
-    // 和安卓版一样收进这张面板，排在上下文占用下面。
+    // 和安卓版一样收进这张面板，排在模型列表上面。
     in property <[CommandTask]> tasks: [];
     in property <int> task-count: 0;
     in property <[SubagentItem]> subagents: [];
     in property <int> subagent-count: 0;
     callback close();
     callback select-model(int, string);
-    callback open-context();
     callback open-settings();
     callback stop-task(string);
     callback stop-subagent(string);
 
-    private property <color> context-tint:
-        NarrowTone.usage-tint(root.context-usage, root.context-compacted);
     // 面板高度跟着条目数走：两条模型时不该留一大片空白，模型很多时封顶
-    // 460px 再让列表自己滚。190px 是标题、占用行、两条分隔线、模型配置与
-    // 取消这些固定项连同 8px 内边距、2px 间距的总高；活动区块有内容时
-    // 按它自己的高度往上长。
+    // 460px 再让列表自己滚。163px 是标题、两条分隔线、模型配置与取消这些
+    // 固定项连同 8px 内边距、2px 间距的总高；活动区块有内容时按它自己的
+    // 高度往上长。
     private property <length> content-height:
-        (root.models.length == 0 ? 300px : 190px + root.models.length * 54px)
+        (root.models.length == 0 ? 300px : 163px + root.models.length * 54px)
         + activity-block.preferred-height;
     private property <length> card-height:
         min(root.height - 24px,
@@ -518,56 +540,6 @@ export component NarrowModelSheet inherits Rectangle {
                     }
                 }
             }
-
-            Rectangle {
-                height: 26px;
-                // 这一行既是读数也是入口：点开上下文窗口（与宽窗浮层同一张卡片）。
-                border-radius: Theme.radius-sm;
-                background: context-hit.has-hover ? Theme.hover : transparent;
-                accessible-role: button;
-                accessible-label: I18n.cx_open;
-                accessible-action-default => { root.open-context(); }
-                HorizontalLayout {
-                    padding-left: 8px;
-                    padding-right: 8px;
-                    spacing: 8px;
-                    Text {
-                        text: I18n.cp_model_context;
-                        color: Theme.muted;
-                        font-size: Theme.font-xs;
-                        font-weight: 600;
-                        vertical-alignment: center;
-                    }
-                    Text {
-                        horizontal-stretch: 1;
-                        min-width: 0px;
-                        text: root.context-known
-                            ? root.context-counts + " · " + round(min(1.0, max(0.0, root.context-usage)) * 100.0) + "%"
-                            : "—";
-                        color: root.context-known ? root.context-tint : Theme.text-secondary;
-                        font-size: Theme.font-xs;
-                        horizontal-alignment: right;
-                        vertical-alignment: center;
-                        overflow: elide;
-                    }
-                    Rectangle {
-                        width: 8px; height: parent.height;
-                        Image {
-                            y: (parent.height - 8px) / 2;
-                            width: 8px; height: 8px;
-                            source: @image-url("../assets/icons/chevron-right.svg");
-                            colorize: context-hit.has-hover ? Theme.text-secondary : Theme.muted;
-                            image-fit: contain;
-                        }
-                    }
-                }
-                context-hit := TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => { root.open-context(); }
-                }
-            }
-
-            Rectangle { height: 1px; background: Theme.border; }
 
             activity-block := NarrowActivityBlock {
                 tasks: root.tasks;

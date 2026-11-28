@@ -1579,11 +1579,6 @@
   "en": "Switch model"
  },
  {
-  "key": "cp_model_context",
-  "zh": "上下文 Token",
-  "en": "Context tokens"
- },
- {
   "key": "cp_voice_input",
   "zh": "语音输入",
   "en": "Voice input"
@@ -5596,8 +5591,8 @@
  },
  {
   "key": "st_palette_note",
-  "zh": "选择界面强调色与气泡底色，即时生效",
-  "en": "Pick the accent colour and the bubble tone; applied immediately"
+  "zh": "选择界面配色；深海的暗色底、山地的浅灰底会同时生效",
+  "en": "Pick the palette; Deep Sea applies its dark base and Mountain its light grey base"
  },
  {
   "key": "st_theme_forest",
@@ -5605,14 +5600,14 @@
   "en": "Forest"
  },
  {
-  "key": "st_theme_mint",
-  "zh": "薄荷",
-  "en": "Mint"
+  "key": "st_theme_mountain",
+  "zh": "山地",
+  "en": "Mountain"
  },
  {
-  "key": "st_theme_honey",
-  "zh": "蜜蜂",
-  "en": "Honey"
+  "key": "st_theme_deepsea",
+  "zh": "深海",
+  "en": "Deep Sea"
  },
  {
   "key": "st_theme_parchment",

@@ -24,7 +24,6 @@
         variant="sheet"
         :items="modelOptions"
         :active-model-id="modelName"
-        :context-usage="contextUsage"
         :loading="modelCatalog.loading"
         :failed="modelCatalog.failed"
         :busy="switching"
@@ -47,15 +46,6 @@ import {
 } from '@/components/chat/composerModelCatalog';
 import { useI18n } from '@/i18n';
 
-type ContextUsageProp = {
-  ratio: number | null;
-  percentText: string;
-  counts: string;
-  level: '' | 'is-warning' | 'is-danger';
-  overflow: boolean;
-  compacted: boolean;
-};
-
 const props = defineProps({
   visible: {
     type: Boolean,
@@ -64,10 +54,6 @@ const props = defineProps({
   modelName: {
     type: String,
     default: ''
-  },
-  contextUsage: {
-    type: Object as () => ContextUsageProp,
-    required: true
   },
   applyModel: {
     type: Function,

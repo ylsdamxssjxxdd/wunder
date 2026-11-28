@@ -376,7 +376,7 @@ onMounted(() => {
 .messenger-archived-thread-panel-title {
   font-size: 13px;
   font-weight: 600;
-  color: #2f2f2f;
+  color: var(--mz-text);
 }
 
 .messenger-archived-thread-list {
@@ -390,9 +390,9 @@ onMounted(() => {
 
 .messenger-archived-thread-item {
   position: relative;
-  border: 1px solid #e3e4e6;
+  border: 1px solid var(--mz-border);
   border-radius: 10px;
-  background: #ffffff;
+  background: var(--mz-surface);
   padding: 10px 12px;
   cursor: pointer;
   transition: border-color 0.15s ease, background-color 0.15s ease;
@@ -401,7 +401,7 @@ onMounted(() => {
 .messenger-archived-thread-item:hover,
 .messenger-archived-thread-item:focus-within {
   border-color: rgba(var(--ui-accent-rgb), 0.4);
-  background: #f8fafb;
+  background: var(--mz-hover, #f8fafb);
 }
 
 .messenger-archived-thread-title-row {
@@ -415,7 +415,7 @@ onMounted(() => {
   min-width: 0;
   font-size: 13px;
   font-weight: 600;
-  color: #2f2f2f;
+  color: var(--mz-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -426,8 +426,8 @@ onMounted(() => {
   max-width: 40%;
   padding: 0 6px;
   border-radius: 6px;
-  background: #f1f3f5;
-  color: #5d6673;
+  background: var(--mz-surface-soft);
+  color: var(--mz-text-muted);
   font-size: 11px;
   line-height: 17px;
   white-space: nowrap;
@@ -438,13 +438,13 @@ onMounted(() => {
 .messenger-archived-thread-time {
   flex-shrink: 0;
   font-size: 11px;
-  color: #8a8a8a;
+  color: var(--mz-text-muted);
 }
 
 .messenger-archived-thread-preview {
   margin-top: 6px;
   font-size: 12px;
-  color: #6f6f6f;
+  color: var(--mz-text-muted);
   line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
@@ -473,10 +473,10 @@ onMounted(() => {
 .messenger-archived-thread-delete-btn {
   width: 24px;
   height: 24px;
-  border: 1px solid #d9dde1;
+  border: 1px solid var(--mz-border-strong);
   border-radius: 6px;
-  background: #ffffff;
-  color: #667085;
+  background: var(--mz-surface);
+  color: var(--mz-text-muted);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -490,9 +490,9 @@ onMounted(() => {
 }
 
 .messenger-archived-thread-delete-btn:hover:not(:disabled) {
-  border-color: #f0c2cb;
-  color: #c14053;
-  background: #fbf0f2;
+  border-color: rgba(242, 140, 134, 0.34);
+  color: var(--mz-danger, #c14053);
+  background: var(--mz-danger-bg, #fbf0f2);
 }
 
 .messenger-archived-thread-restore-btn:disabled,

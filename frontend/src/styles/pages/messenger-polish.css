@@ -39,16 +39,16 @@
     linear-gradient(180deg, rgba(254, 250, 244, 0.72), rgba(253, 242, 228, 0.78));
 }
 
-:root[data-user-accent='hula-green'] .messenger-view {
+:root[data-user-accent='mountain'] .messenger-view {
   --messenger-polish-panel-bg:
-    linear-gradient(180deg, rgba(251, 255, 253, 0.94), rgba(240, 250, 246, 0.8));
+    linear-gradient(180deg, rgba(250, 251, 252, 0.94), rgba(236, 238, 239, 0.8));
   --messenger-polish-panel-bg-soft:
-    linear-gradient(180deg, rgba(252, 255, 254, 0.8), rgba(239, 249, 244, 0.62));
+    linear-gradient(180deg, rgba(252, 253, 253, 0.8), rgba(233, 236, 237, 0.62));
   --messenger-polish-shell-overlay:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(244, 251, 248, 0.08));
+    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(240, 242, 243, 0.08));
   --messenger-polish-inner-surface:
-    linear-gradient(180deg, rgba(250, 254, 252, 0.74), rgba(237, 248, 243, 0.78));
-  --messenger-polish-chat-surface: #f8fcfa;
+    linear-gradient(180deg, rgba(248, 249, 250, 0.74), rgba(232, 235, 236, 0.78));
+  --messenger-polish-chat-surface: #f1f3f4;
 }
 
 :root[data-user-accent='minimal'] .messenger-view {

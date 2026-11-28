@@ -104,11 +104,13 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   // §8.2 审批模式三档已收进「+」的级联行（行上常驻触发器与 .composer-panel--approval 均已下线），
   // 相关走查放在下方「+」菜单区块里，避免在此重复打开面板。
 
-  // §8.3 模型浮层：300px、12px 圆角、锚在触发器上方、上下文占用明细 + 推理强度 + 当前模型打勾。
-  // 触发器上只剩占用图标 + 模型名，百分比读数归到浮层顶部（一处占用面，不在行上重复）。
+  // §7 入口分层：大脑是独立的上下文入口（点它开卡片），模型触发器只留模型名 + 推理强度 + 箭头；
+  // 模型浮层内不再出现任何上下文占用读数。
   const modelTrigger = page.locator('.composer-model-trigger').first();
   await expect(modelTrigger).toContainText('harness-model-a');
-  await expect(modelTrigger.locator('.context-usage-icon')).toHaveCount(1);
+  await expect(modelTrigger.locator('.context-usage-icon')).toHaveCount(0);
+  const contextEntry = page.locator('.composer-context-entry').first();
+  await expect(contextEntry.locator('.context-usage-icon')).toHaveCount(1);
   await expect(modelTrigger).not.toContainText(/%/);
   await modelTrigger.click();
   const popover = page.locator('.composer-model-popover').first();
@@ -128,14 +130,11 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   expect(popoverBox!.y + popoverBox!.height).toBeLessThanOrEqual(triggerBox!.y + 2);
   expect(Math.abs(popoverBox!.x + popoverBox!.width - (triggerBox!.x + triggerBox!.width))).toBeLessThanOrEqual(2);
   await expect(popover).toContainText(/思考等级|Reasoning effort|Default/);
-  // 上下文占用在浮层**顶部**，只有数字，没有进度条。
-  const contextBlock = popover.locator('.composer-model-context');
-  await expect(contextBlock).toBeVisible();
-  await expect(contextBlock).toHaveText(/占用|Occupancy/);
-  // 占用读数（容量 · 百分比）在浮层里，行上不重复展示；无数据时降级为占位符。
-  await expect(popover.locator('[data-testid="model-popover-usage"]')).toHaveText(/\S/);
-  expect(await popover.evaluate((el) => el.firstElementChild?.className)).toContain('composer-model-context');
+  // 浮层内不承载上下文占用：无占用行、无读数 testid、无进度条；首子节点直接是模型清单。
+  await expect(popover.locator('.composer-model-context')).toHaveCount(0);
+  await expect(popover.locator('[data-testid="model-popover-usage"]')).toHaveCount(0);
   await expect(popover.locator('.composer-model-context-track, .composer-model-context-fill')).toHaveCount(0);
+  expect(await popover.evaluate((el) => el.firstElementChild?.className)).toContain('composer-model-list');
   // 模型清单不再有搜索框，也没有「设为我的默认」（默认模型归设置页管理）。
   await expect(popover.locator('.composer-model-search-input')).toHaveCount(0);
   await expect(popover.locator('.composer-model-default-row')).toHaveCount(0);

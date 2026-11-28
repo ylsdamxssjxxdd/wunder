@@ -6,17 +6,6 @@
     :aria-label="t('chat.composer.modelSelect')"
     @click.stop
   >
-    <!-- 上下文占用：浮层顶部只给数字（进度条已下线），溢出时补一句提示。 -->
-    <div class="composer-model-context">
-      <span class="composer-model-footer-title">{{ t('profile.stats.contextTokens') }}</span>
-      <span class="composer-model-context-value" :class="contextUsage.level" data-testid="model-popover-usage">
-        {{ contextUsage.counts }} · {{ contextUsage.percentText }}
-      </span>
-    </div>
-    <div v-if="contextUsage.overflow" class="composer-model-context-hint">
-      {{ t('chat.composer.status.contextOverflow') }}
-    </div>
-
     <div class="composer-model-list" role="listbox">
       <div v-if="loading && !items.length" class="composer-model-state">
         <span class="composer-model-state-spinner" aria-hidden="true"></span>
@@ -77,14 +66,6 @@ import { computed, type PropType } from 'vue';
 import { useI18n } from '@/i18n';
 import type { ComposerModelOption } from '@/components/chat/composerModelCatalog';
 
-type ModelPickerContextUsage = {
-  ratio: number | null;
-  percentText: string;
-  counts: string;
-  level: '' | 'is-warning' | 'is-danger';
-  overflow: boolean;
-};
-
 const props = defineProps({
   items: {
     type: Array as PropType<ComposerModelOption[]>,
@@ -93,10 +74,6 @@ const props = defineProps({
   activeModelId: {
     type: String,
     default: ''
-  },
-  contextUsage: {
-    type: Object as PropType<ModelPickerContextUsage>,
-    required: true
   },
   loading: {
     type: Boolean,
@@ -389,50 +366,5 @@ const resolveModelTags = (item: ComposerModelOption): Array<{
   .composer-model-state-spinner {
     animation: none;
   }
-}
-
-.composer-model-footer-title {
-  color: var(--mz-text-muted, #8a8f99);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-/* 浮层顶部一行：标题在左、数字在右。进度条已下线，占用只用数字表达。 */
-.composer-model-context {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--mz-border, #e8e6e3);
-}
-
-.composer-model-context .composer-model-footer-title {
-  font-size: 12px;
-}
-
-.composer-model-context-value {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--mz-text-secondary, #3d3d3d);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.composer-model-context-value.is-warning {
-  color: var(--mz-warning, #c98a2b);
-}
-
-.composer-model-context-value.is-danger {
-  color: var(--mz-danger, #d04a43);
-}
-
-.composer-model-context-hint {
-  color: var(--mz-danger, #d04a43);
-  font-size: 11px;
 }
 </style>

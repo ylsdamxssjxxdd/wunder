@@ -82,6 +82,7 @@
   position: relative;
   display: inline-flex;
   align-items: center;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -171,17 +172,42 @@
   outline-offset: 1px;
 }
 
-/* 模型触发器上的大脑就是上下文占用图标（桌面 ContextUsageIcon 的填充语义）：
-   占用率越高填得越满，接近上限时颜色转红。选择器多一层，压过子组件自带的 18px 度量。 */
-.composer-model-trigger .composer-model-usage-icon {
-  width: 16px;
-  height: 16px;
-  font-size: 14px;
-  line-height: 16px;
+/* 大脑是与模型触发器并列的独立入口：固定方形热区，不随模型名挤压变形，
+   点击直接打开上下文窗口卡片。占用填充语义仍由 ContextUsageIcon 承担。 */
+.composer-context-entry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mz-text-secondary, #3d3d3d);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.composer-context-entry:hover:not(:disabled) {
+  background: var(--mz-hover, #f1efec);
+}
+
+.composer-context-entry:focus-visible {
+  outline: 2px solid var(--mz-primary);
+  outline-offset: 1px;
+}
+
+.composer-context-entry .composer-model-usage-icon {
+  width: 18px;
+  height: 18px;
+  font-size: 15px;
+  line-height: 18px;
 }
 
 /* 模型名 / 思考等级共用 18px 行盒，配合 align-items:center 保证二者中线一致；
-   触发器里不再显示占用百分比，数字与进度在模型浮层里展开。 */
+   占用读数不再出现在触发器与浮层里，只在上下文卡片中展开。 */
 .composer-model-name {
   min-width: 0;
   overflow: hidden;
@@ -352,7 +378,7 @@
   border-radius: 8px;
   background: var(--ui-accent-ink);
   box-shadow: 0 2px 6px rgba(var(--ui-accent-rgb), 0.28);
-  color: #ffffff;
+  color: var(--ui-accent-contrast, #ffffff);
   cursor: pointer;
   transition: background-color 140ms ease, opacity 140ms ease;
 }

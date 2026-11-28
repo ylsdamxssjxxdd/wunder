@@ -32,6 +32,9 @@ export { MobileCronJob, MobileCronDraft, MobileCronRun, MobileMemory, MobileMemo
 import { MobileChannelAccount, MobileChannelCatalog, MobileChannelBinding, MobileChannelLog, MobileChannelDraft } from "channel_model.slint";
 export { MobileChannelAccount, MobileChannelCatalog, MobileChannelBinding, MobileChannelLog, MobileChannelDraft }
 import { MobileActivityBlock } from "activity.slint";
+import {
+    ContextWindowPage, CtxPartRow, CtxItemRow, CtxCell, CtxTile,
+} from "context_window.slint";
 import { ListView, ScrollView } from "std-widgets.slint";
 
 // One row of the mobile thread drawer. The projection lives in Rust; this is
@@ -439,15 +442,43 @@ export component MobileWindow inherits Window {
     in property <string> model-name: "";
     in property <string> model-key: "";
     in property <bool> model-saving: false;
-    // Active-thread context gauge: the brain fills with context-usage and the
-    // model sheet spells out used/capacity. Context-known stays false until
-    // both values arrive, so an unknown gauge never looks empty.
+    // Active-thread context gauge: the header brain fills with context-usage.
     in property <float> context-usage: 0.0;
-    in property <bool> context-known: false;
-    in property <string> context-counts: "";
     // A compacted thread keeps a red brain at any occupancy: red then means
     // "this history is a summary", not "you are about to run out of room".
     in property <bool> context-compacted: false;
+
+    // ---- 上下文窗口卡片 ---------------------------------------------
+    in-out property <bool> context-window-open: false;
+    in property <[CtxPartRow]> context-window-parts: [];
+    in property <[CtxPartRow]> context-window-legend-a: [];
+    in property <[CtxPartRow]> context-window-legend-b: [];
+    in property <[CtxItemRow]> context-window-items: [];
+    in property <[CtxCell]> context-window-cells: [];
+    in property <[CtxTile]> context-window-tiles: [];
+    in property <bool> context-window-has-data: false;
+    in property <bool> context-window-measured: false;
+    in property <string> context-window-used-text: "—";
+    in property <string> context-window-capacity-text: "—";
+    in property <string> context-window-free-text: "—";
+    in property <string> context-window-pct-text: "";
+    in property <string> context-window-model-label: "";
+    in property <string> context-window-turns-text: "";
+    in-out property <int> context-window-tab: 0;
+    in-out property <bool> context-window-look-map: true;
+    // 详情面板投影。
+    in property <bool> context-detail-open: false;
+    in property <string> context-detail-kind: "";
+    in property <int> context-detail-slot: 0;
+    in property <string> context-detail-tag: "";
+    in property <string> context-detail-name: "";
+    in property <int> context-detail-count: 0;
+    in property <string> context-detail-value: "";
+    in property <string> context-detail-pct: "";
+    in property <[CtxItemRow]> context-detail-rows: [];
+    in property <string> context-detail-text: "";
+    in property <int> context-detail-row-open: -1;
+    in property <string> context-detail-row-text: "";
     private property <float> context-fill: min(1.0, max(0.0, root.context-usage));
     private property <color> context-color: root.context-compacted ? #DC2626
         : root.context-usage >= 0.92 ? #DC2626
@@ -455,7 +486,7 @@ export component MobileWindow inherits Window {
     // The top-centre model chip opens this sheet; the composer's own trigger
     // is hidden on phones.
     in-out property <bool> model-sheet-open: false;
-    // 浮层里紧跟上下文占用的两块活动投影（engine 每秒重投影，行数在 Rust 侧
+    // 浮层标题下方的两块活动投影（engine 每秒重投影，行数在 Rust 侧
     // 裁剪）：本线程仍在执行的命令任务，以及本线程的子智能体。
     in property <[CommandTask]> task-rows: [];
     in property <int> task-count: 0;
@@ -463,6 +494,16 @@ export component MobileWindow inherits Window {
     in property <int> subagent-count: 0;
     callback stop-task(string);
     callback stop-subagent(string);
+    callback open-context-window();
+    callback close-context-window();
+    callback context-filter-changed(int);
+    callback context-row-open(int, string, string, int);
+    callback context-legend-open(int);
+    callback context-cell-open(int);
+    callback context-tile-open(int);
+    callback context-map-resized(length, length);
+    callback context-detail-row-toggle(int, int, string, string, int);
+    callback context-detail-dismissed();
     // System prompt preview opened by the greeting's eye button.
     in-out property <bool> prompt-preview-open: false;
     in-out property <bool> prompt-preview-loading: false;
@@ -1105,60 +1146,84 @@ export component MobileWindow inherits Window {
                                             font-size: Theme.font-md;
                                             font-weight: 600;
                                         }
-                                        // Same liquid brain gauge as 桌面版's ModelPicker:
-                                        // the base glyph stays muted and the accent copy
-                                        // rises from the bottom as context fills.
+                                        // Brain hotspot: fixed 32px-wide zone, opens the
+                                        // context window card directly. The gauge fill and
+                                        // colours are unchanged; this zone never opens the
+                                        // model sheet.
                                         Rectangle {
-                                            x: 10px;
-                                            y: 10px;
-                                            width: 16px;
-                                            height: 16px;
-
-                                            Image {
-                                                x: 0px;
-                                                y: 0px;
-                                                width: 16px;
-                                                height: 16px;
-                                                source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/brain.svg");
-                                                colorize: Theme.muted;
-                                                image-fit: contain;
-                                            }
+                                            x: 0px;
+                                            y: 0px;
+                                            width: 32px;
+                                            height: parent.height;
+                                            accessible-role: button;
+                                            accessible-label: I18n.cp_context_usage + " "
+                                                + (root.context-window-pct-text == "" ? "--" : root.context-window-pct-text);
 
                                             Rectangle {
-                                                x: 0px;
-                                                y: 16px - 16px * root.context-fill;
+                                                x: 8px;
+                                                y: 10px;
                                                 width: 16px;
-                                                height: 16px * root.context-fill;
-                                                clip: true;
+                                                height: 16px;
 
                                                 Image {
                                                     x: 0px;
-                                                    y: -16px * (1.0 - root.context-fill);
+                                                    y: 0px;
                                                     width: 16px;
                                                     height: 16px;
                                                     source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/brain.svg");
-                                                    colorize: root.context-color;
+                                                    colorize: Theme.muted;
                                                     image-fit: contain;
                                                 }
+
+                                                Rectangle {
+                                                    x: 0px;
+                                                    y: 16px - 16px * root.context-fill;
+                                                    width: 16px;
+                                                    height: 16px * root.context-fill;
+                                                    clip: true;
+
+                                                    Image {
+                                                        x: 0px;
+                                                        y: -16px * (1.0 - root.context-fill);
+                                                        width: 16px;
+                                                        height: 16px;
+                                                        source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/brain.svg");
+                                                        colorize: root.context-color;
+                                                        image-fit: contain;
+                                                    }
+                                                }
+                                            }
+                                            TouchArea {
+                                                clicked => { root.open-context-window(); }
                                             }
                                         }
-                                        Text {
+                                        // Model name hotspot: starts to the right of the
+                                        // brain zone and only opens the model list.
+                                        Rectangle {
                                             x: 32px;
-                                            width: min(model-chip-label.preferred-width, 200px);
-                                            height: 100%;
-                                            text: root.model-catalogue-count > 0 && root.model-name != ""
-                                                ? root.model-name : "选择模型";
-                                            color: root.model-catalogue-count > 0 ? Theme.text : Theme.muted;
-                                            font-size: Theme.font-md;
-                                            font-weight: 600;
-                                            vertical-alignment: center;
-                                            overflow: elide;
-                                        }
-                                        model-chip-touch := TouchArea {
-                                            clicked => {
-                                                if root.settings-chat-target == 0 {
-                                                    root.keyboard-dismiss();
-                                                    root.model-sheet-open = true;
+                                            y: 0px;
+                                            width: parent.width - 32px;
+                                            height: parent.height;
+                                            accessible-role: button;
+                                            accessible-label: I18n.cp_model_pick;
+                                            Text {
+                                                x: 0px;
+                                                width: min(model-chip-label.preferred-width, 200px);
+                                                height: 100%;
+                                                text: root.model-catalogue-count > 0 && root.model-name != ""
+                                                    ? root.model-name : "选择模型";
+                                                color: root.model-catalogue-count > 0 ? Theme.text : Theme.muted;
+                                                font-size: Theme.font-md;
+                                                font-weight: 600;
+                                                vertical-alignment: center;
+                                                overflow: elide;
+                                            }
+                                            model-chip-touch := TouchArea {
+                                                clicked => {
+                                                    if root.settings-chat-target == 0 {
+                                                        root.keyboard-dismiss();
+                                                        root.model-sheet-open = true;
+                                                    }
                                                 }
                                             }
                                         }
@@ -2685,39 +2750,8 @@ export component MobileWindow inherits Window {
                         }
                     }
 
-                    // Same context line as 桌面版's model popover: used / capacity
-                    // plus the percentage; the brain in the header is the gauge.
-                    Rectangle {
-                        height: 28px;
-                        HorizontalLayout {
-                            padding-left: 8px;
-                            padding-right: 8px;
-                            spacing: 8px;
-                            Text {
-                                text: "上下文占用";
-                                color: Theme.muted;
-                                font-size: Theme.font-xs;
-                                font-weight: 600;
-                                vertical-alignment: center;
-                            }
-                            Text {
-                                horizontal-stretch: 1;
-                                min-width: 0px;
-                                text: root.context-known
-                                    ? root.context-counts + " · " + round(root.context-usage * 100.0) + "%"
-                                    : "—";
-                                color: !root.context-known ? Theme.text-secondary : root.context-color;
-                                font-size: Theme.font-xs;
-                                horizontal-alignment: right;
-                                vertical-alignment: center;
-                                overflow: elide;
-                            }
-                        }
-                    }
-                    Rectangle { height: 1px; background: Theme.border; }
-
                     // 后台任务与子智能体：桌面版挂在输入区的两个悬停浮层上，手机
-                    // 没有悬停，收在这里、上下文占用下面。空列表不占高度。
+                    // 没有悬停，收在模型标题下面。空列表不占高度。
                     activity-block := MobileActivityBlock {
                         tasks: root.task-rows;
                         task-count: root.task-count;
@@ -3383,6 +3417,56 @@ export component MobileWindow inherits Window {
         }
 
         // ---- trajectory page --------------------------------------------
+        // ---- 上下文窗口卡片（整屏层，盖在模型浮层之上） ------------------
+        if root.context-window-open : ContextWindowPage {
+            x: 0px;
+            y: 0px;
+            width: 100%;
+            height: root.height - root.ime-height;
+            inset-top: root.inset-top;
+            inset-bottom: root.inset-bottom;
+            parts: root.context-window-parts;
+            legend-a: root.context-window-legend-a;
+            legend-b: root.context-window-legend-b;
+            items: root.context-window-items;
+            cells: root.context-window-cells;
+            tiles: root.context-window-tiles;
+            has-data: root.context-window-has-data;
+            measured: root.context-window-measured;
+            used-text: root.context-window-used-text;
+            capacity-text: root.context-window-capacity-text;
+            free-text: root.context-window-free-text;
+            pct-text: root.context-window-pct-text;
+            model-label: root.context-window-model-label;
+            turns-text: root.context-window-turns-text;
+            tab <=> root.context-window-tab;
+            look-map <=> root.context-window-look-map;
+            detail-open: root.context-detail-open;
+            detail-kind: root.context-detail-kind;
+            detail-slot: root.context-detail-slot;
+            detail-tag: root.context-detail-tag;
+            detail-name: root.context-detail-name;
+            detail-count: root.context-detail-count;
+            detail-value: root.context-detail-value;
+            detail-pct: root.context-detail-pct;
+            detail-rows: root.context-detail-rows;
+            detail-text: root.context-detail-text;
+            detail-row-open: root.context-detail-row-open;
+            detail-row-text: root.context-detail-row-text;
+            back() => { root.close-context-window(); }
+            set-tab(slot) => { root.context-filter-changed(slot); }
+            toggle-look() => { root.context-window-look-map = !root.context-window-look-map; }
+            legend-open(slot) => { root.context-legend-open(slot); }
+            row-open(slot, tag, name, count) => { root.context-row-open(slot, tag, name, count); }
+            cell-open(index) => { root.context-cell-open(index); }
+            tile-open(index) => { root.context-tile-open(index); }
+            map-resized(w, h) => { root.context-map-resized(w, h); }
+            detail-row-toggle(index, slot, tag, name, count) => {
+                root.context-detail-row-toggle(index, slot, tag, name, count);
+            }
+            detail-dismissed() => { root.context-detail-dismissed(); }
+        }
+
         if root.trajectory-open : TrajectoryPage {
             x: 0px;
             y: 0px;

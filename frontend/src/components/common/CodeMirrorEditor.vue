@@ -8,9 +8,17 @@ import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection, pl
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { autocompletion, completionKeymap } from '@codemirror/autocomplete';
-import { bracketMatching, syntaxHighlighting, defaultHighlightStyle, indentOnInput } from '@codemirror/language';
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import {
+  HighlightStyle,
+  bracketMatching,
+  defaultHighlightStyle,
+  indentOnInput,
+  syntaxHighlighting
+} from '@codemirror/language';
+import { tags } from '@lezer/highlight';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
+import { useThemeStore } from '@/stores/theme';
 import { resolveCodeMirrorLanguageExtension } from '@/utils/codeMirrorLanguage';
 
 const props = defineProps<{
@@ -33,82 +41,154 @@ const languageCompartment = new Compartment();
 const editableCompartment = new Compartment();
 const placeholderCompartment = new Compartment();
 
+const themeStore = useThemeStore();
+const isDarkPalette = computed(
+  () => themeStore.palette === 'deep-sea' || themeStore.palette === 'tech-blue'
+);
+// `light-surface` is the caller's intent, but the deep palette must not be
+// forced back to a white editor: the surrounding shell already paints the
+// surface dark, and white text would otherwise sit on a dark background.
+const lightSurfaceActive = computed(() => Boolean(props.lightSurface) && !isDarkPalette.value);
+
+const deepSeaHighlightStyle = HighlightStyle.define([
+  {
+    tag: [
+      tags.keyword,
+      tags.controlKeyword,
+      tags.definitionKeyword,
+      tags.moduleKeyword,
+      tags.operatorKeyword
+    ],
+    color: '#7dd3fc'
+  },
+  {
+    tag: [tags.string, tags.docString, tags.attributeValue],
+    color: '#86efac'
+  },
+  {
+    tag: [tags.number, tags.bool, tags.null],
+    color: '#facc15'
+  },
+  {
+    tag: [tags.comment, tags.lineComment, tags.blockComment, tags.docComment],
+    color: '#8fa1b2',
+    fontStyle: 'italic'
+  },
+  {
+    tag: [tags.function(tags.variableName), tags.definition(tags.variableName)],
+    color: '#8fcdea'
+  },
+  {
+    tag: [tags.typeName, tags.className, tags.namespace],
+    color: '#7dd3fc'
+  },
+  {
+    tag: [tags.propertyName, tags.attributeName, tags.tagName],
+    color: '#e7b96a'
+  },
+  {
+    tag: [tags.operator, tags.punctuation],
+    color: '#c9d6e1'
+  },
+  {
+    tag: [tags.heading, tags.heading1, tags.heading2, tags.heading3, tags.heading4, tags.heading5, tags.heading6],
+    color: '#8fcdea',
+    fontWeight: '600'
+  },
+  {
+    tag: [tags.link],
+    color: '#86efac',
+    textDecoration: 'underline'
+  },
+  {
+    tag: [tags.invalid],
+    color: '#f28c86'
+  }
+]);
+
+const buildThemeExtension = () => {
+  const light = lightSurfaceActive.value;
+  return EditorView.theme({
+    '&': {
+      height: '100%',
+      minHeight: '320px',
+      fontSize: '13px',
+      backgroundColor: light ? '#ffffff' : 'var(--mz-surface, #121a22)',
+      color: light ? '#1f2937' : 'var(--mz-text, #e7edf2)'
+    },
+    '.cm-scroller': {
+      overflow: 'auto',
+      fontFamily: '"JetBrains Mono", "Fira Code", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
+      lineHeight: '1.65',
+      color: light ? '#1f2937' : 'var(--mz-text, #e7edf2)'
+    },
+    '.cm-content': {
+      padding: '12px 0 20px'
+    },
+    '.cm-line': {
+      padding: '0 12px'
+    },
+    '.cm-gutters': {
+      backgroundColor: light ? '#f8fafc' : 'var(--mz-surface-soft, #17222c)',
+      borderRight: light ? '1px solid rgba(148, 163, 184, 0.28)' : '1px solid var(--mz-border, #293641)',
+      color: light ? '#94a3b8' : 'var(--mz-text-muted, #8fa1b2)'
+    },
+    '.cm-activeLine': {
+      backgroundColor: light ? 'rgba(59, 130, 246, 0.06)' : 'rgba(95, 168, 207, 0.08)'
+    },
+    '.cm-activeLineGutter': {
+      backgroundColor: light ? 'rgba(59, 130, 246, 0.08)' : 'rgba(95, 168, 207, 0.1)'
+    },
+    '.cm-selectionBackground': {
+      backgroundColor: light ? 'rgba(59, 130, 246, 0.18) !important' : 'rgba(95, 168, 207, 0.2) !important'
+    },
+    '.cm-cursor': {
+      borderLeftColor: light ? '#2563eb' : 'var(--ui-accent-ink, #8fcdea)'
+    },
+    '.cm-placeholder': {
+      color: light ? '#94a3b8' : 'var(--mz-text-muted, #8fa1b2)'
+    },
+    '.cm-lineNumbers': {
+      color: light ? '#94a3b8' : 'var(--mz-text-muted, #8fa1b2)'
+    },
+    '.cm-content, .cm-line': {
+      color: light ? '#1f2937' : 'var(--mz-text, #e7edf2)'
+    },
+    '&.cm-focused': {
+      outline: 'none'
+    }
+  });
+};
+
+const buildBaseExtensions = () => [
+  lineNumbers(),
+  history(),
+  highlightActiveLine(),
+  drawSelection(),
+  bracketMatching(),
+  indentOnInput(),
+  syntaxHighlighting(lightSurfaceActive.value ? defaultHighlightStyle : deepSeaHighlightStyle, {
+    fallback: true
+  }),
+  highlightSelectionMatches(),
+  autocompletion(),
+  EditorView.lineWrapping,
+  buildThemeExtension(),
+  keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, ...completionKeymap]),
+  languageCompartment.of(resolveCodeMirrorLanguageExtension(props.sourcePath || '')),
+  editableCompartment.of(buildEditableExtensions(Boolean(props.readonly))),
+  placeholderCompartment.of(buildPlaceholderExtension(props.placeholder || '')),
+  EditorView.updateListener.of((update) => {
+    if (!update.docChanged || syncingFromProps) return;
+    emit('update:modelValue', update.state.doc.toString());
+  })
+];
+
 onMounted(() => {
   if (!hostRef.value) return;
-  const extensions = [
-    lineNumbers(),
-    history(),
-    drawSelection(),
-    highlightActiveLine(),
-    bracketMatching(),
-    indentOnInput(),
-    syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-    highlightSelectionMatches(),
-    autocompletion(),
-    EditorView.lineWrapping,
-    EditorView.theme({
-      '&': {
-        height: '100%',
-        minHeight: '320px',
-        fontSize: '13px',
-        backgroundColor: props.lightSurface ? '#ffffff' : 'transparent',
-        color: props.lightSurface ? '#1f2937' : 'var(--chat-text)'
-      },
-      '.cm-scroller': {
-        overflow: 'auto',
-        fontFamily: '"JetBrains Mono", "Fira Code", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
-        lineHeight: '1.65',
-        color: props.lightSurface ? '#1f2937' : 'var(--chat-text)'
-      },
-      '.cm-content': {
-        padding: '12px 0 20px'
-      },
-      '.cm-line': {
-        padding: '0 12px'
-      },
-      '.cm-gutters': {
-        backgroundColor: props.lightSurface ? '#f8fafc' : 'transparent',
-        borderRight: props.lightSurface ? '1px solid rgba(148, 163, 184, 0.28)' : '1px solid rgba(77, 216, 255, 0.12)',
-        color: props.lightSurface ? '#94a3b8' : 'var(--chat-muted)'
-      },
-      '.cm-activeLine': {
-        backgroundColor: props.lightSurface ? 'rgba(59, 130, 246, 0.06)' : 'rgba(77, 216, 255, 0.06)'
-      },
-      '.cm-activeLineGutter': {
-        backgroundColor: props.lightSurface ? 'rgba(59, 130, 246, 0.08)' : 'rgba(77, 216, 255, 0.08)'
-      },
-      '.cm-selectionBackground': {
-        backgroundColor: props.lightSurface ? 'rgba(59, 130, 246, 0.18) !important' : 'rgba(77, 216, 255, 0.22) !important'
-      },
-      '.cm-cursor': {
-        borderLeftColor: props.lightSurface ? '#2563eb' : 'var(--chat-primary)'
-      },
-      '.cm-placeholder': {
-        color: props.lightSurface ? '#94a3b8' : 'var(--chat-muted)'
-      },
-      '.cm-lineNumbers': {
-        color: props.lightSurface ? '#94a3b8' : 'var(--chat-muted)'
-      },
-      '.cm-content, .cm-line': {
-        color: props.lightSurface ? '#1f2937' : 'var(--chat-text)'
-      },
-      '&.cm-focused': {
-        outline: 'none'
-      }
-    }),
-    keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, ...completionKeymap]),
-    languageCompartment.of(resolveCodeMirrorLanguageExtension(props.sourcePath || '')),
-    editableCompartment.of(buildEditableExtensions(Boolean(props.readonly))),
-    placeholderCompartment.of(buildPlaceholderExtension(props.placeholder || '')),
-    EditorView.updateListener.of((update) => {
-      if (!update.docChanged || syncingFromProps) return;
-      emit('update:modelValue', update.state.doc.toString());
-    })
-  ];
-
   const state = EditorState.create({
     doc: props.modelValue || '',
-    extensions
+    extensions: buildBaseExtensions()
   });
 
   editorView = new EditorView({
@@ -162,92 +242,16 @@ watch(
   }
 );
 
-watch(
-  () => props.lightSurface,
-  () => {
-    if (!editorView) return;
-    const current = editorView.state.doc.toString();
-    const state = EditorState.create({
+watch(lightSurfaceActive, () => {
+  if (!editorView) return;
+  const current = editorView.state.doc.toString();
+  editorView.setState(
+    EditorState.create({
       doc: current,
-      extensions: [
-        lineNumbers(),
-        history(),
-        drawSelection(),
-        highlightActiveLine(),
-        bracketMatching(),
-        indentOnInput(),
-        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-        highlightSelectionMatches(),
-        autocompletion(),
-        EditorView.lineWrapping,
-        EditorView.theme({
-          '&': {
-            height: '100%',
-            minHeight: '320px',
-            fontSize: '13px',
-            backgroundColor: props.lightSurface ? '#ffffff' : 'transparent',
-            color: props.lightSurface ? '#1f2937' : 'var(--chat-text)'
-          },
-          '.cm-scroller': {
-            overflow: 'auto',
-            fontFamily:
-              '"JetBrains Mono", "Fira Code", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
-            lineHeight: '1.65',
-            color: props.lightSurface ? '#1f2937' : 'var(--chat-text)'
-          },
-          '.cm-content': {
-            padding: '12px 0 20px'
-          },
-          '.cm-line': {
-            padding: '0 12px'
-          },
-          '.cm-gutters': {
-            backgroundColor: props.lightSurface ? '#f8fafc' : 'transparent',
-            borderRight: props.lightSurface
-              ? '1px solid rgba(148, 163, 184, 0.28)'
-              : '1px solid rgba(77, 216, 255, 0.12)',
-            color: props.lightSurface ? '#94a3b8' : 'var(--chat-muted)'
-          },
-          '.cm-activeLine': {
-            backgroundColor: props.lightSurface ? 'rgba(59, 130, 246, 0.06)' : 'rgba(77, 216, 255, 0.06)'
-          },
-          '.cm-activeLineGutter': {
-            backgroundColor: props.lightSurface ? 'rgba(59, 130, 246, 0.08)' : 'rgba(77, 216, 255, 0.08)'
-          },
-          '.cm-selectionBackground': {
-            backgroundColor: props.lightSurface
-              ? 'rgba(59, 130, 246, 0.18) !important'
-              : 'rgba(77, 216, 255, 0.22) !important'
-          },
-          '.cm-cursor': {
-            borderLeftColor: props.lightSurface ? '#2563eb' : 'var(--chat-primary)'
-          },
-          '.cm-placeholder': {
-            color: props.lightSurface ? '#94a3b8' : 'var(--chat-muted)'
-          },
-          '.cm-lineNumbers': {
-            color: props.lightSurface ? '#94a3b8' : 'var(--chat-muted)'
-          },
-          '.cm-content, .cm-line': {
-            color: props.lightSurface ? '#1f2937' : 'var(--chat-text)'
-          },
-          '&.cm-focused': {
-            outline: 'none'
-          }
-        }),
-        keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, ...completionKeymap]),
-        languageCompartment.of(resolveCodeMirrorLanguageExtension(props.sourcePath || '')),
-        editableCompartment.of(buildEditableExtensions(Boolean(props.readonly))),
-        placeholderCompartment.of(buildPlaceholderExtension(props.placeholder || '')),
-        EditorView.updateListener.of((update) => {
-          if (!update.docChanged || syncingFromProps) return;
-          emit('update:modelValue', update.state.doc.toString());
-        })
-      ]
-    });
-    editorView.setState(state);
-  }
-);
+      extensions: buildBaseExtensions()
+    })
+  );
+});
 
 onBeforeUnmount(() => {
   editorView?.destroy();

@@ -7,10 +7,10 @@ use crate::project::{
     self, LiveTurn, RowData, STATUS_DONE, STATUS_FAILED, STATUS_RUNNING, STATUS_STOPPED,
 };
 use crate::{
-    MobileChannelDraft, MobileCronDraft, MobileCronJob, MobileCronRun, MobileKnowledgeDraft,
-    MobileMcpDraft, MobileMemory, MobileMemoryDraft, MobileSession, MobileTool, MobileToolFile,
-    MobileToolResource, MobileWorkspace, ModelCard, TrajectoryAudit, TrajectoryBar, TrajectoryItem,
-    TrajectorySegment, WorkspaceFile,
+    CtxCell, CtxItemRow, CtxPartRow, CtxTile, MobileChannelDraft, MobileCronDraft, MobileCronJob,
+    MobileCronRun, MobileKnowledgeDraft, MobileMcpDraft, MobileMemory, MobileMemoryDraft,
+    MobileSession, MobileTool, MobileToolFile, MobileToolResource, MobileWorkspace, ModelCard,
+    TrajectoryAudit, TrajectoryBar, TrajectoryItem, TrajectorySegment, WorkspaceFile,
 };
 use serde_json::Value;
 #[cfg(target_os = "android")]
@@ -46,6 +46,17 @@ pub enum Command {
     ReleaseWaiting,
     Stop,
     SelectModel(String),
+    // 上下文窗口卡片：打开/关闭、部位筛选、条目与部位详情、格子点按。
+    OpenContextWindow,
+    CloseContextWindow,
+    ContextFilterChanged(i32),
+    ContextRowOpen(i32, String, String, i64),
+    ContextLegendOpen(i32),
+    ContextCellOpen(i32),
+    ContextTileOpen(i32),
+    ContextMapResized(f64, f64),
+    ContextDetailRowToggle(i32, i32, String, String, i64),
+    ContextDetailDismissed,
     /// 目标横幅的编辑/暂停/恢复/清除，复用斜杠命令管线。
     GoalEdit(String),
     GoalResume,
@@ -1171,18 +1182,51 @@ pub struct Shared {
     /// Normalized final answer or failure message of the settled turn, shown
     /// as the companion's bubble hint.
     pub turn_hint: String,
-    /// Active-thread context gauge: the liquid brain fill and the model
-    /// picker's "used / capacity" line. `used`/`capacity` stay optional so a
-    /// missing runtime event never reads as an empty context.
+    /// Active-thread context gauge: the liquid brain fill in the header chip.
+    /// `used`/`capacity` stay optional so a missing runtime event never reads
+    /// as an empty context.
     pub context_used: Option<f64>,
     pub context_capacity: Option<f64>,
     pub context_usage: f32,
-    pub context_known: bool,
-    pub context_counts: String,
     /// True once this thread's history is a compaction summary: the brain
     /// gauge paints red from then on, so a compacted thread is obvious.
     pub context_compacted: bool,
     pub context_rev: u64,
+    // ---- 上下文窗口卡片（与桌面版同一快照口径） ----------------------
+    /// 卡片最近一次读到的快照缓存；切线程时整份丢弃，部位筛选只从它重投影。
+    pub ctx_record: Option<crate::context_window::CtxRecord>,
+    pub ctx_parts: Vec<CtxPartRow>,
+    pub ctx_items: Vec<CtxItemRow>,
+    pub ctx_cells: Vec<CtxCell>,
+    pub ctx_tiles: Vec<CtxTile>,
+    pub ctx_has_data: bool,
+    pub ctx_measured: bool,
+    pub ctx_used_text: String,
+    pub ctx_capacity_text: String,
+    pub ctx_free_text: String,
+    pub ctx_pct_text: String,
+    pub ctx_model_label: String,
+    pub ctx_turns_text: String,
+    pub ctx_tab: i32,
+    pub ctx_rev: u64,
+    // 树图盒子的最近一次像素尺寸；回传后按它重排两级树图。
+    pub ctx_map_w: f64,
+    pub ctx_map_h: f64,
+    // 条目 / 部位详情面板的投影状态。
+    pub ctx_detail_open: bool,
+    pub ctx_detail_kind: String,
+    pub ctx_detail_slot: i32,
+    pub ctx_detail_tag: String,
+    pub ctx_detail_name: String,
+    pub ctx_detail_count: i64,
+    pub ctx_detail_value: String,
+    pub ctx_detail_pct: String,
+    pub ctx_detail_rows: Vec<CtxItemRow>,
+    pub ctx_detail_text: String,
+    // 部位详情里当前原位展开的条目序号与它的正文。
+    pub ctx_detail_row_open: i32,
+    pub ctx_detail_row_text: String,
+    pub ctx_detail_rev: u64,
     pub ubuntu: UbuntuView,
     pub ubuntu_rev: u64,
     /// 用户在本进程内跳过了首装引导（仅失败态可达），避免每次刷新都重新弹出。
@@ -1579,6 +1623,46 @@ fn run(
                 export_trajectory_log(&desktop, &shared);
             }
             Command::LoadPromptPreview => load_prompt_preview(&desktop, &shared),
+            Command::OpenContextWindow => {
+                let session = shared.lock().unwrap().session_id.clone();
+                refresh_context_window(&desktop, &shared, &session);
+            }
+            Command::CloseContextWindow => {
+                if let Ok(mut state) = shared.lock() {
+                    clear_context_detail_locked(&mut state);
+                    state.ctx_detail_rev = state.ctx_detail_rev.wrapping_add(1);
+                }
+            }
+            Command::ContextFilterChanged(slot) => {
+                if let Ok(mut state) = shared.lock() {
+                    state.ctx_tab = slot;
+                    project_context_window_locked(&mut state);
+                    state.ctx_rev = state.ctx_rev.wrapping_add(1);
+                }
+            }
+            Command::ContextRowOpen(slot, tag, name, count) => {
+                open_context_item_detail(&desktop, &shared, slot, &tag, &name, count);
+            }
+            Command::ContextLegendOpen(slot) => open_context_part_detail(&shared, slot),
+            Command::ContextCellOpen(index) => open_context_cell(&desktop, &shared, index),
+            Command::ContextTileOpen(index) => open_context_tile(&desktop, &shared, index),
+            Command::ContextMapResized(w, h) => {
+                if let Ok(mut state) = shared.lock() {
+                    state.ctx_map_w = w;
+                    state.ctx_map_h = h;
+                    project_context_window_locked(&mut state);
+                    state.ctx_rev = state.ctx_rev.wrapping_add(1);
+                }
+            }
+            Command::ContextDetailRowToggle(index, slot, tag, name, count) => {
+                toggle_context_detail_row(&desktop, &shared, index, slot, &tag, &name, count);
+            }
+            Command::ContextDetailDismissed => {
+                if let Ok(mut state) = shared.lock() {
+                    clear_context_detail_locked(&mut state);
+                    state.ctx_detail_rev = state.ctx_detail_rev.wrapping_add(1);
+                }
+            }
             Command::LoadWorkspace { path } => load_workspace(&desktop, &shared, &path),
             Command::LoadMoreWorkspace { path, offset } => {
                 load_workspace_page(&desktop, &shared, &path, offset, true);
@@ -1886,6 +1970,7 @@ fn run(
                         // drop the old capacity before re-reading the gauge.
                         reset_context_usage(&shared);
                         refresh_context_usage(&desktop, &shared, &session);
+                        refresh_context_window(&desktop, &shared, &session);
                     }
                     Err(error) => notify(&shared, format!("切换模型失败：{error}")),
                 }
@@ -3635,8 +3720,6 @@ fn reset_context_usage(shared: &Arc<Mutex<Shared>>) {
         state.context_used = None;
         state.context_capacity = None;
         state.context_usage = 0.0;
-        state.context_known = false;
-        state.context_counts.clear();
         state.context_compacted = false;
         state.context_rev = state.context_rev.wrapping_add(1);
     }
@@ -3670,21 +3753,12 @@ fn apply_context_usage_locked(state: &mut Shared, usage: wunder_desktop::NativeC
     }
     let used = state.context_used.unwrap_or(0.0);
     let capacity = state.context_capacity.unwrap_or(0.0);
-    state.context_known = state.context_used.is_some() && capacity > 0.0;
-    state.context_usage = if state.context_known {
+    let known = state.context_used.is_some() && capacity > 0.0;
+    state.context_usage = if known {
         (used / capacity).clamp(0.0, 1.0) as f32
     } else {
         0.0
     };
-    let used_text = state
-        .context_used
-        .map(|value| format_tokens(value.max(0.0) as i64))
-        .unwrap_or_else(|| "—".into());
-    let capacity_text = state
-        .context_capacity
-        .map(|value| format_tokens(value.max(0.0) as i64))
-        .unwrap_or_else(|| "—".into());
-    state.context_counts = format!("{used_text} / {capacity_text} tokens");
     state.context_rev = state.context_rev.wrapping_add(1);
 }
 
@@ -3707,6 +3781,238 @@ fn refresh_context_usage(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, s
     }
 }
 
+/// 切线程时丢弃上一线程的卡片投影与详情，避免新线程先看到旧构成。
+fn reset_context_window(shared: &Arc<Mutex<Shared>>) {
+    if let Ok(mut state) = shared.lock() {
+        state.ctx_record = None;
+        state.ctx_parts.clear();
+        state.ctx_items.clear();
+        state.ctx_cells.clear();
+        state.ctx_tiles.clear();
+        state.ctx_has_data = false;
+        state.ctx_measured = false;
+        state.ctx_used_text = "—".into();
+        state.ctx_capacity_text = "—".into();
+        state.ctx_free_text = "—".into();
+        state.ctx_pct_text.clear();
+        state.ctx_model_label.clear();
+        state.ctx_turns_text.clear();
+        state.ctx_tab = 0;
+        clear_context_detail_locked(&mut state);
+        state.ctx_rev = state.ctx_rev.wrapping_add(1);
+        state.ctx_detail_rev = state.ctx_detail_rev.wrapping_add(1);
+    }
+}
+
+fn clear_context_detail_locked(state: &mut Shared) {
+    state.ctx_detail_open = false;
+    state.ctx_detail_kind.clear();
+    state.ctx_detail_slot = 0;
+    state.ctx_detail_tag.clear();
+    state.ctx_detail_name.clear();
+    state.ctx_detail_count = 0;
+    state.ctx_detail_value.clear();
+    state.ctx_detail_pct.clear();
+    state.ctx_detail_rows.clear();
+    state.ctx_detail_text.clear();
+    state.ctx_detail_row_open = -1;
+    state.ctx_detail_row_text.clear();
+}
+
+/// 把缓存快照重投影成卡片模型；部位筛选变化时从缓存重算，不回读工作区。
+fn project_context_window_locked(state: &mut Shared) {
+    let Some(record) = state.ctx_record.clone() else {
+        return;
+    };
+    let summary = crate::context_window::summary(&record);
+    state.ctx_has_data = record.has_data();
+    state.ctx_measured = record.measured();
+    state.ctx_used_text = summary.used_text;
+    state.ctx_capacity_text = summary.capacity_text;
+    state.ctx_free_text = summary.free_text;
+    state.ctx_pct_text = summary.pct_text;
+    state.ctx_model_label = summary.model_label;
+    state.ctx_turns_text = summary.turns_text;
+    if record.has_data() {
+        state.ctx_parts = crate::context_window::part_rows(&record);
+        state.ctx_items = crate::context_window::item_rows(&record, state.ctx_tab);
+        state.ctx_cells = crate::context_window::cells(&record);
+        let (map_w, map_h) = if state.ctx_map_w > 120.0 && state.ctx_map_h > 60.0 {
+            (state.ctx_map_w, state.ctx_map_h)
+        } else {
+            crate::context_window::default_map_box()
+        };
+        state.ctx_tiles = crate::context_window::tiles(&record, map_w, map_h);
+    } else {
+        // 空线程：只留容量与提示，不伪造五部位构成与方块格。
+        state.ctx_parts.clear();
+        state.ctx_items.clear();
+        state.ctx_cells.clear();
+        state.ctx_tiles.clear();
+    }
+}
+
+/// 打开卡片、回合落定或切换模型后重读一次引擎记录的构成。
+fn refresh_context_window(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, session: &str) {
+    if session.trim().is_empty() {
+        return;
+    }
+    // 流或观察器属于已经离开的线程时，不把它的构成盖到当前线程上。
+    if !shared
+        .lock()
+        .map(|state| state.session_id == session)
+        .unwrap_or(false)
+    {
+        return;
+    }
+    let native = match desktop.context_window(session) {
+        Ok(native) => native,
+        Err(error) => {
+            log::warn!("refresh context window failed: {error:#}");
+            return;
+        }
+    };
+    let record = crate::context_window::from_native(native);
+    if let Ok(mut state) = shared.lock() {
+        state.ctx_record = Some(record);
+        project_context_window_locked(&mut state);
+        state.ctx_rev = state.ctx_rev.wrapping_add(1);
+    }
+}
+
+fn open_context_item_detail(
+    desktop: &NativeDesktop,
+    shared: &Arc<Mutex<Shared>>,
+    slot: i32,
+    tag: &str,
+    name: &str,
+    count: i64,
+) {
+    let session = shared
+        .lock()
+        .map(|state| state.session_id.clone())
+        .unwrap_or_default();
+    // 正文只从引擎内存缓存读；不可用时详情照常显示读数并提示已释放。
+    let text = desktop.context_text(&session, slot, tag, name, count);
+    let Ok(mut state) = shared.lock() else {
+        return;
+    };
+    let Some(record) = state.ctx_record.clone() else {
+        return;
+    };
+    let Some(tokens) = crate::context_window::find_item(&record, slot, tag, name, count) else {
+        return;
+    };
+    clear_context_detail_locked(&mut state);
+    state.ctx_detail_open = true;
+    state.ctx_detail_kind = "item".into();
+    state.ctx_detail_slot = slot;
+    state.ctx_detail_tag = tag.into();
+    state.ctx_detail_name = name.into();
+    state.ctx_detail_count = count;
+    state.ctx_detail_value = crate::context_window::format_k(tokens);
+    state.ctx_detail_pct = crate::context_window::percent(tokens, record.total_tokens());
+    state.ctx_detail_text = text.unwrap_or_default();
+    state.ctx_detail_rev = state.ctx_detail_rev.wrapping_add(1);
+}
+
+fn open_context_part_detail(shared: &Arc<Mutex<Shared>>, slot: i32) {
+    let Ok(mut state) = shared.lock() else {
+        return;
+    };
+    let Some(record) = state.ctx_record.clone() else {
+        return;
+    };
+    let tokens = crate::context_window::part_tokens(&record, slot);
+    clear_context_detail_locked(&mut state);
+    state.ctx_detail_open = true;
+    state.ctx_detail_kind = "part".into();
+    state.ctx_detail_slot = slot;
+    state.ctx_detail_rows = crate::context_window::part_detail_rows(&record, slot);
+    state.ctx_detail_value = crate::context_window::format_k(tokens);
+    state.ctx_detail_pct = crate::context_window::percent(tokens, record.total_tokens());
+    state.ctx_detail_rev = state.ctx_detail_rev.wrapping_add(1);
+}
+
+fn open_context_cell(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, index: i32) {
+    let state = match shared.lock() {
+        Ok(state) => state,
+        Err(_) => return,
+    };
+    let Some(record) = state.ctx_record.clone() else {
+        return;
+    };
+    let Some(cell) = state.ctx_cells.get(index.max(0) as usize).cloned() else {
+        return;
+    };
+    drop(state);
+    if cell.slot == 0 {
+        return;
+    }
+    if cell.item >= 0 {
+        let Some((tag, name, count)) =
+            crate::context_window::item_at(&record, cell.slot, cell.item)
+        else {
+            return;
+        };
+        open_context_item_detail(desktop, shared, cell.slot, &tag, &name, count);
+    } else {
+        open_context_part_detail(shared, cell.slot);
+    }
+}
+
+/// 点按树图块：条目块开条目详情；部位块 / 聚合块 / 剩余空间按部位归类。
+fn open_context_tile(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, index: i32) {
+    let state = match shared.lock() {
+        Ok(state) => state,
+        Err(_) => return,
+    };
+    let Some(tile) = state.ctx_tiles.get(index.max(0) as usize).cloned() else {
+        return;
+    };
+    drop(state);
+    match tile.kind.as_str() {
+        "item" => open_context_item_detail(
+            desktop,
+            shared,
+            tile.slot,
+            &tile.tag,
+            &tile.name,
+            tile.count as i64,
+        ),
+        "part" | "more" => open_context_part_detail(shared, tile.slot),
+        _ => {}
+    }
+}
+
+/// 部位详情里原位展开 / 收起一条目；正文只从引擎内存缓存读。
+fn toggle_context_detail_row(
+    desktop: &NativeDesktop,
+    shared: &Arc<Mutex<Shared>>,
+    index: i32,
+    slot: i32,
+    tag: &str,
+    name: &str,
+    count: i64,
+) {
+    let session = shared
+        .lock()
+        .map(|state| state.session_id.clone())
+        .unwrap_or_default();
+    let Ok(mut state) = shared.lock() else {
+        return;
+    };
+    if state.ctx_detail_row_open == index {
+        state.ctx_detail_row_open = -1;
+        state.ctx_detail_row_text.clear();
+    } else {
+        let text = desktop.context_text(&session, slot, tag, name, count);
+        state.ctx_detail_row_open = index;
+        state.ctx_detail_row_text = text.unwrap_or_default();
+    }
+    state.ctx_detail_rev = state.ctx_detail_rev.wrapping_add(1);
+}
+
 fn select_session(
     desktop: &Arc<NativeDesktop>,
     shared: &Arc<Mutex<Shared>>,
@@ -3721,6 +4027,7 @@ fn select_session(
     // A switch must not reuse the previous thread's gauge while the new
     // snapshot is being read.
     reset_context_usage(shared);
+    reset_context_window(shared);
     // The Android app is single-process, so a desktop lease owned by another
     // instance id belongs to a process the system already killed. Drop it
     // instead of letting the first open wait out its 15 s TTL.
@@ -3841,6 +4148,7 @@ fn select_session(
         state.touch();
     }
     refresh_context_usage(desktop, shared, session);
+    refresh_context_window(desktop, shared, session);
     let active = shared.lock().unwrap().session_id.clone();
     refresh_sessions(desktop, shared, Some(&active));
 
@@ -7046,7 +7354,11 @@ fn upload_workspace_at(
         }
         // 缩略图要在文件被搬走前从暂存副本读取；只有挂进输入区的上传
         // 才值得解码，工作目录里的普通上传等用户真要发送时再说。
-        let preview = if attach { upload_preview(&staged) } else { None };
+        let preview = if attach {
+            upload_preview(&staged)
+        } else {
+            None
+        };
         match desktop.workspace_local_upload_to(&root, dir, &staged) {
             Ok(relative) => {
                 uploaded += 1;
@@ -7141,9 +7453,11 @@ fn remember_upload(shared: &Arc<Mutex<Shared>>, path: &str, preview: Option<Uplo
     if state.pending_uploads.len() >= PENDING_UPLOAD_LIMIT {
         state.pending_uploads.remove(0);
     }
-    state
-        .pending_uploads
-        .push(UploadedFile { name, path, preview });
+    state.pending_uploads.push(UploadedFile {
+        name,
+        path,
+        preview,
+    });
     state.uploads_rev = state.uploads_rev.wrapping_add(1);
     state.touch();
 }
@@ -7460,7 +7774,10 @@ fn finish_system_voice(shared: &Arc<Mutex<Shared>>, text: String) {
         if text.trim().is_empty() {
             state.notify("语音识别没有返回文字");
         } else {
-            state.pending_draft = Some(PendingDraft { text, from_voice: true });
+            state.pending_draft = Some(PendingDraft {
+                text,
+                from_voice: true,
+            });
             state.notify("语音已转写到输入区，可编辑后发送");
         }
         state.touch();
@@ -7504,7 +7821,10 @@ fn finish_voice(desktop: &Arc<NativeDesktop>, shared: &Arc<Mutex<Shared>>, path:
             state.voice_rev = state.voice_rev.wrapping_add(1);
             match result {
                 Ok(text) if !text.trim().is_empty() => {
-                    state.pending_draft = Some(PendingDraft { text, from_voice: true });
+                    state.pending_draft = Some(PendingDraft {
+                        text,
+                        from_voice: true,
+                    });
                     state.notify("语音已转写到输入区，可编辑后发送");
                 }
                 Ok(_) => state.notify("语音识别没有返回文字"),
@@ -8559,7 +8879,10 @@ fn withdraw_waiting(shared: &Arc<Mutex<Shared>>, queue_id: &str, refill: bool) {
     }
     let mut state = shared.lock().unwrap();
     if state.session_id == turn.session {
-        state.pending_draft = Some(PendingDraft { text: turn.text, from_voice: false });
+        state.pending_draft = Some(PendingDraft {
+            text: turn.text,
+            from_voice: false,
+        });
         state.touch();
     }
 }
@@ -8725,7 +9048,10 @@ fn start_stream_with_id(
                     state.turn_started = None;
                     state.generating = false;
                     settle_plan_spinner(&mut state);
-                    state.pending_draft = Some(PendingDraft { text, from_voice: false });
+                    state.pending_draft = Some(PendingDraft {
+                        text,
+                        from_voice: false,
+                    });
                     state.live_rev = state.live_rev.wrapping_add(1);
                     state.stream_revision = state.stream_revision.wrapping_add(1);
                     state.notify(format!("发送失败：{error}"));
@@ -8994,6 +9320,7 @@ fn start_stream_with_id(
             // 判断依然成立，用户按发送即可重发。
             release_next_waiting(&desktop, &shared, &session);
             refresh_context_usage(&desktop, &shared, &session);
+            refresh_context_window(&desktop, &shared, &session);
             let active = shared
                 .lock()
                 .map(|state| state.session_id.clone())
@@ -9450,9 +9777,7 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                         .map(str::to_owned)
                 })
                 .unwrap_or_else(|| {
-                    wunder_desktop::tool_result_display::tool_result_display(
-                        title, data, pending,
-                    )
+                    wunder_desktop::tool_result_display::tool_result_display(title, data, pending)
                 });
             let entry = NativeWorkflowEntry::from_payload(id, title, detail, state, data);
             let label = project::tool_label_for_entry(&entry);
@@ -10183,7 +10508,10 @@ mod tests {
         assert_eq!(state.waiting_turns.len(), 1);
         assert_eq!(state.waiting_turns[0].queue_id, "waiting-2");
         assert_eq!(
-            state.pending_draft.as_ref().map(|draft| draft.text.as_str()),
+            state
+                .pending_draft
+                .as_ref()
+                .map(|draft| draft.text.as_str()),
             Some("第二条")
         );
         assert_eq!(state.waiting_rev, 1);

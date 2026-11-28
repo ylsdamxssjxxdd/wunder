@@ -650,7 +650,7 @@ watch(
 }
 
 .timeline-body-block:hover {
-  background: rgba(246, 245, 243, 0.45);
+  background: var(--mz-timeline-hover, rgba(246, 245, 243, 0.45));
 }
 
 /* 轮次统计行：高 22px、间距 12px、图标 12px + 数值 11px muted（见 MessageStats 的

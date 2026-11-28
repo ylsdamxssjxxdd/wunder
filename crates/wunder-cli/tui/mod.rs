@@ -2,6 +2,7 @@ mod activity_indicator;
 mod app;
 mod background_task_footer;
 mod command_center;
+pub(crate) mod context_window;
 mod frame_scheduler;
 mod highlight;
 mod line_utils;

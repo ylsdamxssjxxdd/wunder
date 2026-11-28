@@ -64,7 +64,7 @@ export component AvatarDialog inherits Rectangle {
             width: 470px;
             height: min(640px, parent.height - 48px);
             border-radius: 14px;
-            background: white;
+            background: Theme.surface;
             border-width: 1px;
             border-color: Theme.border;
             TouchArea { } // block scrim clicks
@@ -132,7 +132,7 @@ export component AvatarDialog inherits Rectangle {
                                         width: root.cell; height: root.cell;
                                         visible: self.idx < AvatarDialogState.options.length;
                                         border-radius: 12px;
-                                        background: AvatarDialogState.selected-key == item.key ? Theme.accent-soft : white;
+                                        background: AvatarDialogState.selected-key == item.key ? Theme.accent-soft : Theme.surface;
                                         border-width: AvatarDialogState.selected-key == item.key ? 2px : 1px;
                                         border-color: AvatarDialogState.selected-key == item.key ? Theme.accent-ink : Theme.border;
                                         TouchArea { enabled: self.visible; mouse-cursor: pointer; clicked => { AvatarDialogState.select-option(item.key); } }

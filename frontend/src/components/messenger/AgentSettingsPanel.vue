@@ -1830,10 +1830,10 @@ onBeforeUnmount(() => {
 .messenger-agent-avatar-mode-tab {
   min-height: 30px;
   padding: 0 10px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
+  border: 1px solid var(--mz-border);
   border-radius: 999px;
-  background: #fff;
-  color: #475569;
+  background: var(--mz-surface);
+  color: var(--mz-text-secondary);
   font-size: 12px;
   cursor: pointer;
 }
@@ -1875,9 +1875,9 @@ onBeforeUnmount(() => {
   gap: 10px;
   align-items: center;
   padding: 8px 10px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid var(--mz-border);
   border-radius: 12px;
-  background: #fff;
+  background: var(--mz-surface);
   color: inherit;
   text-align: left;
   cursor: pointer;
@@ -1902,7 +1902,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   overflow: hidden;
   border-radius: 12px;
-  background: #f8fafc;
+  background: var(--mz-surface-soft, #f8fafc);
 }
 
 .messenger-agent-companion-option-preview :deep(.companion-sprite) {
@@ -1917,8 +1917,8 @@ onBeforeUnmount(() => {
   justify-content: center;
   border: 1px solid rgba(248, 113, 113, 0.18);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.96);
-  color: #dc2626;
+  background: var(--mz-surface, rgba(255, 255, 255, 0.96));
+  color: var(--mz-danger);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.18s ease, border-color 0.18s ease, background-color 0.18s ease;
@@ -1957,7 +1957,7 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   font-size: 13px;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--mz-text);
 }
 
 .messenger-agent-companion-option-scope {
@@ -1965,15 +1965,15 @@ onBeforeUnmount(() => {
   padding: 2px 6px;
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 999px;
-  background: rgba(248, 250, 252, 0.92);
-  color: #64748b;
+  background: var(--mz-surface-soft, rgba(248, 250, 252, 0.92));
+  color: var(--mz-text-muted);
   font-size: 11px;
   line-height: 1.2;
 }
 
 .messenger-agent-companion-option-desc {
   font-size: 12px;
-  color: #64748b;
+  color: var(--mz-text-muted);
   line-height: 1.45;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1996,13 +1996,13 @@ onBeforeUnmount(() => {
   padding: 10px 12px;
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 12px;
-  background: rgba(248, 250, 252, 0.9);
+  background: var(--mz-surface-soft, rgba(248, 250, 252, 0.9));
 }
 
 .messenger-agent-companion-display-control strong {
   display: block;
   font-size: 13px;
-  color: #0f172a;
+  color: var(--mz-text);
 }
 
 .messenger-agent-companion-scale-control {
@@ -2016,7 +2016,7 @@ onBeforeUnmount(() => {
   align-self: flex-start;
   font-size: 13px;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--mz-text);
 }
 
 .messenger-agent-companion-scale-inputs {

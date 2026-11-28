@@ -71,6 +71,42 @@ pub(crate) fn accent_text() -> Style {
     degrade(Style::default().fg(accent_color()).add_modifier(Modifier::BOLD))
 }
 
+/// The five context-window part tints, matched to the desktop card: system,
+/// tools, images, results, chat. Terminals without truecolor keep the nearest
+/// ANSI slot; `NO_COLOR` strips the hue through [`degrade`].
+const SLOT_INK_RGB: [(u8, u8, u8); 5] = [
+    (139, 92, 246),
+    (14, 165, 233),
+    (16, 185, 129),
+    (234, 88, 12),
+    (79, 70, 229),
+];
+const SLOT_INK_ANSI: [Color; 5] = [
+    Color::Magenta,
+    Color::Cyan,
+    Color::Green,
+    Color::Yellow,
+    Color::Blue,
+];
+
+pub(crate) fn slot_ink(slot: i32) -> Color {
+    let index = ((slot.clamp(1, 5) - 1) as usize).min(4);
+    if rich_color_supported() {
+        let (r, g, b) = SLOT_INK_RGB[index];
+        Color::Rgb(r, g, b)
+    } else {
+        SLOT_INK_ANSI[index]
+    }
+}
+
+pub(crate) fn slot_ink_text(slot: i32, bold: bool) -> Style {
+    let mut style = Style::default().fg(slot_ink(slot));
+    if bold {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    degrade(style)
+}
+
 /// A tool card's own name — the two-character verb in front of the target.
 /// Blue is the product's tool tint (the same blue that marks a running card's
 /// bullet), so a reader finds "读取 / 编辑 / 执行" by hue alone; the state still

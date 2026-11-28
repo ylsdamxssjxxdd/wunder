@@ -22,11 +22,11 @@
   width: 420px;
   max-width: 100%;
   max-height: 100%;
-  border: 1px solid rgba(31, 35, 41, 0.08);
+  border: 1px solid var(--mz-border);
   border-radius: 14px;
-  background: #ffffff;
+  background: var(--mz-surface);
   box-shadow: 0 24px 60px rgba(15, 23, 42, 0.22), 0 2px 8px rgba(15, 23, 42, 0.06);
-  color: #2b2f36;
+  color: var(--mz-text);
   font-size: 13px;
   animation: mz-dialog-card-in 170ms cubic-bezier(0.2, 0.8, 0.3, 1);
 }
@@ -53,13 +53,13 @@
 }
 
 .mz-dialog.is-danger .mz-dialog-badge {
-  background: #fdecec;
-  color: #d04a43;
+  background: var(--mz-danger-bg);
+  color: var(--mz-danger);
 }
 
 .mz-dialog.is-warning .mz-dialog-badge {
-  background: #fbf3e2;
-  color: #c98a2b;
+  background: var(--mz-warning-bg);
+  color: var(--mz-warning);
 }
 
 .mz-dialog-title {
@@ -67,7 +67,7 @@
   min-width: 0;
   margin: 0;
   overflow: hidden;
-  color: #23262b;
+  color: var(--mz-text);
   font-size: 15px;
   font-weight: 600;
   line-height: 1.35;
@@ -85,7 +85,7 @@
   padding: 0;
   border: 0;
   border-radius: 7px;
-  color: #9aa0a8;
+  color: var(--mz-text-muted);
   background: transparent;
   font-size: 13px;
   cursor: pointer;
@@ -93,8 +93,8 @@
 }
 
 .mz-dialog-close:hover {
-  color: #5b6068;
-  background: #f3f1ee;
+  color: var(--mz-text-secondary);
+  background: var(--mz-hover);
 }
 
 .mz-dialog-body {
@@ -104,7 +104,7 @@
 
 .mz-dialog-message {
   margin: 0;
-  color: #6b7078;
+  color: var(--mz-text-secondary);
   font-size: 13px;
   line-height: 1.65;
   white-space: pre-wrap;
@@ -118,7 +118,7 @@
 .mz-dialog-label {
   display: block;
   margin-bottom: 6px;
-  color: #8a8f99;
+  color: var(--mz-text-muted);
   font-size: 12px;
 }
 
@@ -128,10 +128,10 @@
   width: 100%;
   height: 36px;
   padding: 0 11px;
-  border: 1px solid #e2dfd9;
+  border: 1px solid var(--mz-border);
   border-radius: 10px;
-  background: #fbfaf8;
-  color: #2b2f36;
+  background: var(--mz-surface-soft);
+  color: var(--mz-text);
   font: inherit;
   font-size: 13px;
   outline: none;
@@ -147,22 +147,22 @@
 }
 
 .mz-dialog-input::placeholder {
-  color: #b3b7bd;
+  color: var(--mz-text-muted);
 }
 
 .mz-dialog-input:hover {
-  border-color: #d5d1c9;
+  border-color: var(--mz-border-strong);
 }
 
 .mz-dialog-input:focus {
   border-color: var(--ui-accent-ink);
-  background: #ffffff;
+  background: var(--mz-surface);
   box-shadow: 0 0 0 3px rgba(var(--ui-accent-rgb), 0.14);
 }
 
 .mz-dialog-error {
   margin: 6px 0 0;
-  color: #d04a43;
+  color: var(--mz-danger);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -178,10 +178,10 @@
 .mz-dialog-btn {
   height: 32px;
   padding: 0 15px;
-  border: 1px solid #e2dfd9;
+  border: 1px solid var(--mz-border);
   border-radius: 9px;
-  background: #ffffff;
-  color: #5b6068;
+  background: var(--mz-surface);
+  color: var(--mz-text-secondary);
   font: inherit;
   font-size: 13px;
   cursor: pointer;
@@ -189,31 +189,32 @@
 }
 
 .mz-dialog-btn:hover {
-  border-color: #d5d1c9;
-  background: #f6f4f1;
-  color: #2b2f36;
+  border-color: var(--mz-border-strong);
+  background: var(--mz-hover);
+  color: var(--mz-text);
 }
 
 .mz-dialog-btn.is-primary {
   border-color: var(--ui-accent-ink);
   background: var(--ui-accent-ink);
-  color: #ffffff;
+  color: var(--ui-accent-contrast, #ffffff);
 }
 
 .mz-dialog-btn.is-primary:hover {
   border-color: var(--ui-accent-hover);
   background: var(--ui-accent-hover);
-  color: #ffffff;
+  color: var(--ui-accent-contrast, #ffffff);
 }
 
 .mz-dialog-btn.is-primary.is-danger {
-  border-color: #d04a43;
-  background: #d04a43;
+  border-color: var(--mz-danger);
+  background: var(--mz-danger);
+  color: var(--ui-accent-contrast, #ffffff);
 }
 
 .mz-dialog-btn.is-primary.is-danger:hover {
-  border-color: #bb3f38;
-  background: #bb3f38;
+  border-color: color-mix(in srgb, var(--mz-danger) 84%, #000000);
+  background: color-mix(in srgb, var(--mz-danger) 84%, #000000);
 }
 
 .mz-dialog-btn:focus-visible {

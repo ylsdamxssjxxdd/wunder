@@ -397,8 +397,8 @@
 }
 
 .mst-skill-tag.is-builtin {
-  color: #8a5a13;
-  background: #fbead3;
+  color: var(--mz-warning, #8a5a13);
+  background: var(--mz-warning-bg, #fbead3);
 }
 
 .mst-skill-tag.is-custom {
@@ -407,8 +407,8 @@
 }
 
 .mst-skill-tag.is-global {
-  color: #1a6a8a;
-  background: #e0f0f7;
+  color: var(--ui-accent-ink, #1a6a8a);
+  background: var(--ui-accent-soft, #e0f0f7);
 }
 
 .mst-skill-delete {

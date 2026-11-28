@@ -1,4 +1,5 @@
 import { ListView } from "std-widgets.slint";
+import { Theme } from "design_tokens.slint";
 import { HelpDocs } from "help_models.slint";
 import { I18n } from "i18n.slint";
 import { HelpButton, HelpInput } from "help_controls.slint";
@@ -10,7 +11,7 @@ import { HelpButton, HelpInput } from "help_controls.slint";
 // 形态 / 工具 / 能力. Each block expands to its groups and topics;
 // index and search remain flat result lists.
 export component HelpSidebar inherits Rectangle {
-    background: #ffffff;
+    background: Theme.panel;
     // Local mirrors so the list reset handlers can watch changes.
     property <int> active-tab <=> HelpDocs.active-tab;
     property <string> query <=> HelpDocs.search-text;
@@ -20,8 +21,8 @@ export component HelpSidebar inherits Rectangle {
         y: 0px;
         width: parent.width;
         height: 29px;
-        background: #eeeeee;
-        Rectangle { y: 28px; width: parent.width; height: 1px; background: #a9a9a9; }
+        background: Theme.hover;
+        Rectangle { y: 28px; width: parent.width; height: 1px; background: Theme.border; }
         HorizontalLayout {
             padding-left: 4px;
             padding-right: 4px;
@@ -45,11 +46,11 @@ export component HelpSidebar inherits Rectangle {
             width: parent.width - 14px;
             height: parent.height;
             text: I18n.hp_manual_title;
-            color: #444444;
+            color: Theme.text;
             font-weight: 700;
             vertical-alignment: center;
         }
-        Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: #dddddd; }
+        Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.border; }
     }
     if root.active-tab == 2 : HelpInput {
         x: 7px;
@@ -74,9 +75,9 @@ export component HelpSidebar inherits Rectangle {
         for row in HelpDocs.nav-rows : Rectangle {
             width: nav-list.visible-width;
             height: row.kind == 0 ? 34px : row.kind == 1 ? 24px : 30px;
-            background: row.kind == 0 ? #f4f6f8
-                : row.kind == 2 && row.topic == root.selected-topic ? #2c76b8
-                : row.kind == 2 && (touch.has-hover || focus.has-focus) ? #eaf4ff
+            background: row.kind == 0 ? Theme.hover
+                : row.kind == 2 && row.topic == root.selected-topic ? Theme.accent
+                : row.kind == 2 && (touch.has-hover || focus.has-focus) ? Theme.accent-soft
                 : transparent;
             accessible-role: AccessibleRole.button;
             accessible-label: row.title;
@@ -91,7 +92,7 @@ export component HelpSidebar inherits Rectangle {
                 y: parent.height - 1px;
                 width: parent.width;
                 height: 1px;
-                background: #e2e2e2;
+                background: Theme.border;
             }
             if row.kind == 0 : Path {
                 x: 9px;
@@ -101,14 +102,14 @@ export component HelpSidebar inherits Rectangle {
                 viewbox-width: 12;
                 viewbox-height: 12;
                 commands: row.expanded ? "M 2 4 L 10 4 L 6 10 Z" : "M 4 2 L 10 6 L 4 10 Z";
-                fill: #666666;
+                fill: Theme.text-secondary;
             }
             if row.kind == 0 : Text {
                 x: 27px;
                 width: parent.width - 62px;
                 height: parent.height;
                 text: row.title;
-                color: #303030;
+                color: Theme.text;
                 font-weight: 700;
                 font-size: 13px;
                 vertical-alignment: center;
@@ -119,7 +120,7 @@ export component HelpSidebar inherits Rectangle {
                 width: 30px;
                 height: parent.height;
                 text: "\{row.count}";
-                color: #8a8a8a;
+                color: Theme.muted;
                 font-size: 11px;
                 horizontal-alignment: right;
                 vertical-alignment: center;
@@ -129,7 +130,7 @@ export component HelpSidebar inherits Rectangle {
                 width: parent.width - 20px;
                 height: parent.height;
                 text: row.title;
-                color: #6b6b6b;
+                color: Theme.text-secondary;
                 font-weight: 700;
                 font-size: 11px;
                 vertical-alignment: center;
@@ -140,7 +141,7 @@ export component HelpSidebar inherits Rectangle {
                 width: parent.width - 30px;
                 height: parent.height;
                 text: row.title;
-                color: row.topic == root.selected-topic ? #ffffff : #202020;
+                color: row.topic == root.selected-topic ? Theme.accent-contrast : Theme.text;
                 vertical-alignment: center;
                 overflow: elide;
             }
@@ -184,9 +185,9 @@ export component HelpSidebar inherits Rectangle {
         for entry in (root.active-tab == 1 ? HelpDocs.keyword-index : HelpDocs.search-results) : Rectangle {
             width: flat-list.visible-width;
             height: 54px;
-            background: entry.topic == root.selected-topic ? #2c76b8 : flat-touch.has-hover || flat-focus.has-focus ? #eaf4ff : transparent;
+            background: entry.topic == root.selected-topic ? Theme.accent : flat-touch.has-hover || flat-focus.has-focus ? Theme.accent-soft : transparent;
             border-width: 1px;
-            border-color: flat-touch.has-hover || flat-focus.has-focus ? #b8d6ef : transparent;
+            border-color: flat-touch.has-hover || flat-focus.has-focus ? Theme.accent : transparent;
             border-radius: 2px;
             accessible-role: AccessibleRole.button;
             accessible-label: entry.title;
@@ -197,7 +198,7 @@ export component HelpSidebar inherits Rectangle {
                 width: parent.width - 14px;
                 height: 21px;
                 text: entry.title;
-                color: entry.topic == root.selected-topic ? #ffffff : #202020;
+                color: entry.topic == root.selected-topic ? Theme.accent-contrast : Theme.text;
                 font-weight: 700;
                 vertical-alignment: center;
                 overflow: elide;
@@ -208,7 +209,7 @@ export component HelpSidebar inherits Rectangle {
                 width: parent.width - 14px;
                 height: 18px;
                 text: entry.detail;
-                color: entry.topic == root.selected-topic ? #e7f3ff : #666666;
+                color: entry.topic == root.selected-topic ? Theme.accent-contrast : Theme.text-secondary;
                 overflow: elide;
                 vertical-alignment: center;
             }
@@ -230,7 +231,7 @@ export component HelpSidebar inherits Rectangle {
         width: parent.width - 28px;
         height: 30px;
         text: I18n.hp_no_topics;
-        color: #777777;
+        color: Theme.muted;
     }
-    Rectangle { x: parent.width - 1px; width: 1px; height: parent.height; background: #9f9f9f; }
+    Rectangle { x: parent.width - 1px; width: 1px; height: parent.height; background: Theme.border; }
 }

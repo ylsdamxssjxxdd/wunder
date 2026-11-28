@@ -87,9 +87,10 @@ const detailText = computed(() => {
   width: 100%;
   max-height: min(46vh, 340px);
   padding: 12px 14px;
-  border: 1px solid var(--messenger-line, rgba(148, 163, 184, 0.25));
+  border: 1px solid var(--mz-border, rgba(148, 163, 184, 0.25));
   border-radius: 14px;
-  background: var(--messenger-surface, #fff);
+  background: var(--mz-surface, #fff);
+  color: var(--mz-text, #1f2329);
   overflow: hidden;
 }
 
@@ -114,15 +115,15 @@ const detailText = computed(() => {
   flex-wrap: wrap;
   gap: 10px;
   font-size: 12px;
-  color: var(--messenger-text-sub, #64748b);
+  color: var(--mz-text-muted, #64748b);
 }
 
 .tool-approval-composer__detail {
   margin: 0;
   padding: 8px 10px;
   border-radius: 10px;
-  border: 1px solid var(--messenger-line, rgba(148, 163, 184, 0.25));
-  background: var(--messenger-soft, #f8fafc);
+  border: 1px solid var(--mz-border, rgba(148, 163, 184, 0.25));
+  background: var(--mz-surface-soft, #f8fafc);
   font-size: 12px;
   line-height: 1.5;
   max-height: 140px;
@@ -139,7 +140,7 @@ const detailText = computed(() => {
   flex-wrap: wrap;
   flex-shrink: 0;
   padding-top: 2px;
-  background: var(--messenger-surface, #fff);
+  background: var(--mz-surface, #fff);
 }
 
 .tool-approval-btn {
@@ -157,17 +158,17 @@ const detailText = computed(() => {
 }
 
 .tool-approval-btn.ghost {
-  background: var(--messenger-soft, #f1f5f9);
-  color: var(--messenger-text-sub, #64748b);
+  background: var(--mz-surface-soft, #f1f5f9);
+  color: var(--mz-text-muted, #64748b);
 }
 
 .tool-approval-btn.primary {
-  background: #2563eb;
-  color: #fff;
+  background: var(--ui-accent, #2563eb);
+  color: var(--ui-accent-contrast, #fff);
 }
 
 .tool-approval-btn.success {
-  background: #16a34a;
-  color: #fff;
+  background: var(--mz-success, #16a34a);
+  color: var(--ui-accent-contrast, #fff);
 }
 </style>

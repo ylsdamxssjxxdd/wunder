@@ -241,8 +241,8 @@ const handleResume = async (): Promise<void> => {
   padding: 0;
   border: 1px solid rgba(220, 96, 148, 0.28);
   border-radius: 8px;
-  background: #ffffff;
-  color: #9d2b5c;
+  background: var(--mz-surface);
+  color: var(--mz-danger);
   font-size: 12px;
   cursor: pointer;
 }

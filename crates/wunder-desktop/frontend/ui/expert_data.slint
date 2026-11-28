@@ -28,7 +28,7 @@ export component ExpertData inherits Rectangle {
     callback open-memory(int);
     private property <bool> delete-open;
     private property <bool> clear-open;
-    background: white; border-radius: 12px;
+    background: Theme.surface; border-radius: 12px;
     VerticalLayout { padding: 12px; spacing: 16px;
         if root.error != "" : Text { text: root.error; color: Theme.danger; wrap: word-wrap; }
         HorizontalLayout { height: 36px; spacing: 8px;
@@ -54,7 +54,7 @@ export component ExpertData inherits Rectangle {
         ScrollView { horizontal-scrollbar-policy: always-off;
             VerticalLayout { alignment: start; spacing: 12px;
                 for row in Math.ceil(root.memories.length / 4) : HorizontalLayout { alignment: start; spacing: 12px;
-                    for col in 4 : Rectangle { property <int> idx: row * 4 + col; property <MemoryCard> item: root.memories[self.idx]; visible: self.idx < root.memories.length; width: (root.width - 60px) / 4; height: 128px; border-radius: 16px; border-width: 1px; border-color: Theme.border; background: #f6f6f8; clip: true;
+                    for col in 4 : Rectangle { property <int> idx: row * 4 + col; property <MemoryCard> item: root.memories[self.idx]; visible: self.idx < root.memories.length; width: (root.width - 60px) / 4; height: 128px; border-radius: 16px; border-width: 1px; border-color: Theme.border; background: Theme.hover; clip: true;
                         // Every line is width- and height-budgeted: a Text's layout
                         // minimum is its preferred width, so without `min-width: 0px`
                         // a long category or title pushed the row past the card edge.
@@ -71,13 +71,13 @@ export component ExpertData inherits Rectangle {
             }
         }
     }
-    if root.editor-open : Rectangle { background: Theme.overlay; TouchArea { scroll-event(event) => { return accept; } } Rectangle { width: min(520px, parent.width - 40px); height: min(440px, parent.height - 30px); background: white; border-radius: 14px;
+    if root.editor-open : Rectangle { background: Theme.overlay; TouchArea { scroll-event(event) => { return accept; } } Rectangle { width: min(520px, parent.width - 40px); height: min(440px, parent.height - 30px); background: Theme.surface; border-radius: 14px;
         VerticalLayout { padding: 20px; spacing: 12px;
             Text { text: root.edit-id == "" ? "新建碎片" : "编辑记忆碎片"; color: Theme.text; font-size: 16px; font-weight: 600; }
             if root.error != "" : Text { text: root.error; color: Theme.danger; wrap: word-wrap; }
             ExpertField { label: "索引标题"; text <=> root.edit-title; enabled: !root.saving; }
             ExpertField { label: "标签"; text <=> root.edit-category; enabled: !root.saving; }
-            TextEditBase { vertical-stretch: 1; text <=> root.edit-content; read-only: root.saving; wrap: word-wrap; background: white; border-width: 1px; border-color: Theme.border; foreground: Theme.text; scroll-view-padding: 10px; }
+            TextEditBase { vertical-stretch: 1; text <=> root.edit-content; read-only: root.saving; wrap: word-wrap; background: Theme.input-bg; border-width: 1px; border-color: Theme.border; foreground: Theme.text; scroll-view-padding: 10px; }
             HorizontalLayout { height: 30px; if root.edit-id != "" : ExpertButton { label: "删除"; icon: @image-url("../assets/icons/trash.svg"); enabled: !root.saving; clicked => { root.delete-open = true; } } Rectangle { horizontal-stretch: 1; } ExpertButton { label: "取消"; enabled: !root.saving; clicked => { root.editor-open = false; } } ExpertButton { label: "保存"; icon: @image-url("../assets/icons/save.svg"); enabled: !root.saving; selected: true; clicked => { root.save-memory(); } } }
         }
     } }

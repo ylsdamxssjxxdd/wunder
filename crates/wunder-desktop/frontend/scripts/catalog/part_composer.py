@@ -41,7 +41,6 @@ ENTRIES = [
     # ---- model picker (§8.3) ----
     ("cp_model", "模型", "Model"),
     ("cp_model_pick", "切换模型", "Switch model"),
-    ("cp_model_context", "上下文 Token", "Context tokens"),
     ("cp_voice_input", "语音输入", "Voice input"),
     # 触摸端按住说话：录音条上的提示与无障碍标签。
     ("cp_voice_hold", "按住说话", "Hold to talk"),

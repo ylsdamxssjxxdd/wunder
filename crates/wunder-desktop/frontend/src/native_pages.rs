@@ -1231,15 +1231,16 @@ fn to_model_card(model: wunder_desktop::ModelRecord) -> crate::ModelCard {
 }
 
 /// Map a persisted theme value onto a `Theme.palette` name. Only the accent
-/// family is selectable: the settings card offers terracotta (橙汁),
-/// hula-green (薄荷), forest (森林) and honey (蜜蜂); the legacy "light"/
-/// "eva-orange" values, and anything unrecognised, resolve to the 橙汁
-/// default. 橙汁 的色值以本文件的 design_tokens.slint 为准。
+/// family is selectable: the settings card offers forest (森林, mint green),
+/// mountain (山地, light grey), deep-sea (深海, the dark palette) and
+/// terracotta (橙汁); the legacy "light"/"eva-orange" values, and anything
+/// unrecognised, resolve to the 橙汁 default. 橙汁 的色值以本文件的
+/// design_tokens.slint 为准。
 fn normalize_palette(theme: &str) -> &'static str {
     match theme.trim() {
-        "hula-green" => "hula-green",
         "forest" => "forest",
-        "honey" => "honey",
+        "mountain" => "mountain",
+        "deep-sea" => "deep-sea",
         "minimal" => "minimal",
         "tech-blue" => "tech-blue",
         _ => "terracotta",
@@ -1508,7 +1509,7 @@ mod tests {
     /// terracotta.
     #[test]
     fn the_four_selectable_palettes_survive_a_restart() {
-        for palette in ["terracotta", "hula-green", "forest", "honey"] {
+        for palette in ["terracotta", "forest", "mountain", "deep-sea"] {
             assert_eq!(normalize_palette(palette), palette);
             assert_eq!(normalize_palette(&format!(" {palette} ")), palette);
         }

@@ -558,7 +558,7 @@ watch(
 }
 
 .timeline-body-block:hover {
-  background: rgba(246, 245, 243, 0.45);
+  background: var(--mz-timeline-hover, rgba(246, 245, 243, 0.45));
 }
 
 /* ----------------------------------------------- 工作过程折叠条

@@ -1909,7 +1909,8 @@ fn normalize_theme_palette(value: &str) -> String {
     let normalized = value.trim().to_lowercase();
     if matches!(
         normalized.as_str(),
-        "hula-green" | "eva-orange" | "claw-orange" | "forest" | "honey" | "minimal" | "tech-blue"
+        "mountain" | "eva-orange" | "claw-orange" | "forest" | "deep-sea" | "minimal"
+            | "tech-blue"
     ) {
         normalized
     } else {
@@ -2556,12 +2557,12 @@ mod tests {
     fn normalize_theme_palette_keeps_supported_palettes() {
         assert_eq!(normalize_theme_palette("eva-orange"), "eva-orange");
         assert_eq!(normalize_theme_palette("claw-orange"), "claw-orange");
-        assert_eq!(normalize_theme_palette("hula-green"), "hula-green");
+        assert_eq!(normalize_theme_palette("mountain"), "mountain");
         // The 云端版 theme card writes exactly these four ids; a palette the
         // server clamps away snaps the UI back to the default on the next
         // load, so every selectable one has to be listed here.
         assert_eq!(normalize_theme_palette("forest"), "forest");
-        assert_eq!(normalize_theme_palette("honey"), "honey");
+        assert_eq!(normalize_theme_palette("deep-sea"), "deep-sea");
         assert_eq!(normalize_theme_palette(" Forest "), "forest");
         assert_eq!(normalize_theme_palette("minimal"), "minimal");
         assert_eq!(normalize_theme_palette("tech-blue"), "tech-blue");

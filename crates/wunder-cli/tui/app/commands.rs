@@ -316,6 +316,9 @@ impl TuiApp {
             SlashCommand::Compact => {
                 self.handle_compact_slash().await?;
             }
+            SlashCommand::Context => {
+                self.open_context_panel().await?;
+            }
             SlashCommand::Mcp => {
                 self.handle_mcp_slash(command.args).await?;
             }

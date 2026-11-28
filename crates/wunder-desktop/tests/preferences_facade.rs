@@ -88,15 +88,15 @@ fn preferences_validate_and_persist() {
         "font size out of range"
     );
     let settings = runtime
-        .save_preferences("hula-green", "none", 18, "github")
+        .save_preferences("mountain", "none", 18, "github")
         .expect("save");
-    assert_eq!(settings.theme, "hula-green");
+    assert_eq!(settings.theme, "mountain");
     assert_eq!(settings.send_key, "none");
     assert_eq!(settings.font_size, 18);
     assert_eq!(settings.update_source, "github");
     // The 桌面版 theme card writes these four ids; a rejected save leaves the
     // accent applied live but lost on the next start.
-    for theme in ["terracotta", "forest", "honey"] {
+    for theme in ["terracotta", "forest", "mountain", "deep-sea"] {
         let saved = runtime
             .save_preferences(theme, "none", 18, "cloud")
             .unwrap_or_else(|error| panic!("save {theme}: {error}"));
@@ -110,7 +110,7 @@ fn preferences_validate_and_persist() {
     // Unknown values normalize to the default GitHub source instead of
     // poisoning the settings file.
     runtime
-        .save_preferences("honey", "enter", 14, "  ")
+        .save_preferences("deep-sea", "enter", 14, "  ")
         .expect("blank source save");
     assert_eq!(
         runtime

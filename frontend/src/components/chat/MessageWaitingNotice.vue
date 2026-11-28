@@ -500,27 +500,27 @@ onBeforeUnmount(() => {
   margin: 8px 0 12px;
   padding: 12px 14px;
   border-radius: 16px;
-  border: 1px solid rgba(148, 163, 184, 0.24);
+  border: 1px solid var(--mz-border);
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(248, 250, 252, 0.98));
+    linear-gradient(135deg, var(--mz-surface), var(--mz-surface-soft));
 }
 
 .message-waiting-notice.is-running {
-  border-color: rgba(59, 130, 246, 0.2);
+  border-color: rgba(var(--ui-accent-rgb), 0.32);
   background:
-    linear-gradient(135deg, rgba(239, 246, 255, 0.96), rgba(248, 250, 252, 0.98));
+    linear-gradient(135deg, var(--ui-accent-soft), var(--mz-surface));
 }
 
 .message-waiting-notice.is-warning {
-  border-color: rgba(245, 158, 11, 0.28);
+  border-color: rgba(231, 185, 106, 0.32);
   background:
-    linear-gradient(135deg, rgba(255, 247, 237, 0.96), rgba(255, 251, 235, 0.98));
+    linear-gradient(135deg, var(--mz-warning-bg), var(--mz-surface));
 }
 
 .message-waiting-notice.is-muted {
-  border-color: rgba(148, 163, 184, 0.22);
+  border-color: var(--mz-border);
   background:
-    linear-gradient(135deg, rgba(248, 250, 252, 0.96), rgba(241, 245, 249, 0.98));
+    linear-gradient(135deg, var(--mz-surface-soft), var(--mz-surface));
 }
 
 .message-waiting-main {
@@ -538,24 +538,24 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: rgba(15, 23, 42, 0.06);
-  color: rgba(30, 41, 59, 0.86);
+  background: var(--mz-surface-soft);
+  color: var(--mz-text-secondary);
   flex: 0 0 auto;
 }
 
 .message-waiting-notice.is-running .message-waiting-icon {
-  background: rgba(59, 130, 246, 0.12);
-  color: rgba(37, 99, 235, 0.92);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-ink);
 }
 
 .message-waiting-notice.is-warning .message-waiting-icon {
-  background: rgba(245, 158, 11, 0.14);
-  color: rgba(217, 119, 6, 0.94);
+  background: var(--mz-warning-bg);
+  color: var(--mz-warning);
 }
 
 .message-waiting-notice.is-muted .message-waiting-icon {
-  background: rgba(148, 163, 184, 0.12);
-  color: rgba(71, 85, 105, 0.88);
+  background: var(--mz-surface-soft);
+  color: var(--mz-text-muted);
 }
 
 .message-waiting-copy {
@@ -583,7 +583,7 @@ onBeforeUnmount(() => {
   min-height: 22px;
   padding: 0 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.8);
+  background: var(--mz-surface-soft);
   border: 1px solid rgba(148, 163, 184, 0.18);
   color: var(--chat-muted, #64748b);
   font-size: 11px;
@@ -591,14 +591,14 @@ onBeforeUnmount(() => {
 }
 
 .message-waiting-pill.is-muted {
-  background: rgba(255, 255, 255, 0.62);
+  background: var(--mz-surface);
 }
 
 .message-waiting-detail {
   margin-top: 6px;
   font-size: 12px;
   line-height: 1.65;
-  color: rgba(51, 65, 85, 0.92);
+  color: var(--mz-text-secondary);
 }
 
 .message-waiting-note {
@@ -632,9 +632,9 @@ onBeforeUnmount(() => {
 }
 
 .message-waiting-btn.is-secondary {
-  color: #0f172a;
-  background: rgba(255, 255, 255, 0.82);
-  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.28);
+  color: var(--mz-text);
+  background: var(--mz-surface);
+  box-shadow: inset 0 0 0 1px var(--mz-border);
 }
 
 .message-waiting-btn:hover {

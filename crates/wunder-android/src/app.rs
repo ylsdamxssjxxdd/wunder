@@ -9,9 +9,9 @@ use crate::engine::{self, Command, Shared};
 use crate::md::MarkdownRenderer;
 use crate::project::{self, RowData};
 use crate::{
-    CommandTask, DeviceScale, InquiryOption, InquiryQuestion, MobileBackup, MobilePermission,
-    MobileSession, MobileWindow, MobileWorkspace, ModelCard, SubagentItem, Theme, TimelineRow,
-    TurnMark, WorkspaceFile,
+    CommandTask, CtxCell, CtxItemRow, CtxPartRow, CtxTile, DeviceScale, InquiryOption,
+    InquiryQuestion, MobileBackup, MobilePermission, MobileSession, MobileWindow, MobileWorkspace,
+    ModelCard, SubagentItem, Theme, TimelineRow, TurnMark, WorkspaceFile,
 };
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
 use std::collections::HashMap;
@@ -35,7 +35,8 @@ pub fn build() -> MobileWindow {
         let weak = ui.as_weak();
         Timer::single_shot(Duration::ZERO, move || {
             if let Some(ui) = weak.upgrade() {
-                ui.global::<DeviceScale>().set_factor(ui.window().scale_factor());
+                ui.global::<DeviceScale>()
+                    .set_factor(ui.window().scale_factor());
             }
         });
     }
@@ -293,7 +294,9 @@ pub fn build_preview() -> MobileWindow {
     ui.on_save_theme(move |value| {
         if let Some(ui) = weak.upgrade() {
             ui.set_settings_theme(value.clone());
-            ui.global::<Theme>().set_palette(value);
+            ui.global::<Theme>().set_palette(value.clone());
+            #[cfg(target_os = "android")]
+            crate::android_host::set_light_system_bars(normalize_palette(&value) != "deep-sea");
         }
     });
     let weak = ui.as_weak();
@@ -1155,6 +1158,69 @@ fn wire_callbacks(
     let sender = commands.clone();
     ui.on_stop_subagent(move |id| {
         let _ = sender.send(Command::StopSubagent(id.to_string()));
+    });
+
+    // ---- 上下文窗口卡片 ------------------------------------------------
+    let sender = commands.clone();
+    let weak = ui.as_weak();
+    ui.on_open_context_window(move || {
+        if let Some(ui) = weak.upgrade() {
+            // 每次打开都回到手机默认的方块格，不沿用上一次留在树图的视图状态。
+            ui.set_context_window_look_map(false);
+            ui.set_context_window_open(true);
+        }
+        let _ = sender.send(Command::OpenContextWindow);
+    });
+    let sender = commands.clone();
+    let weak = ui.as_weak();
+    ui.on_close_context_window(move || {
+        if let Some(ui) = weak.upgrade() {
+            ui.set_context_window_open(false);
+        }
+        let _ = sender.send(Command::CloseContextWindow);
+    });
+    let sender = commands.clone();
+    ui.on_context_filter_changed(move |slot| {
+        let _ = sender.send(Command::ContextFilterChanged(slot));
+    });
+    let sender = commands.clone();
+    ui.on_context_row_open(move |slot, tag, name, count| {
+        let _ = sender.send(Command::ContextRowOpen(
+            slot,
+            tag.to_string(),
+            name.to_string(),
+            count as i64,
+        ));
+    });
+    let sender = commands.clone();
+    ui.on_context_legend_open(move |slot| {
+        let _ = sender.send(Command::ContextLegendOpen(slot));
+    });
+    let sender = commands.clone();
+    ui.on_context_cell_open(move |index| {
+        let _ = sender.send(Command::ContextCellOpen(index));
+    });
+    let sender = commands.clone();
+    ui.on_context_tile_open(move |index| {
+        let _ = sender.send(Command::ContextTileOpen(index));
+    });
+    let sender = commands.clone();
+    ui.on_context_map_resized(move |w, h| {
+        let _ = sender.send(Command::ContextMapResized(w as f64, h as f64));
+    });
+    let sender = commands.clone();
+    ui.on_context_detail_row_toggle(move |index, slot, tag, name, count| {
+        let _ = sender.send(Command::ContextDetailRowToggle(
+            index,
+            slot,
+            tag.to_string(),
+            name.to_string(),
+            count as i64,
+        ));
+    });
+    let sender = commands.clone();
+    ui.on_context_detail_dismissed(move || {
+        let _ = sender.send(Command::ContextDetailDismissed);
     });
 
     // ---- settings sheet ----------------------------------------------
@@ -2233,9 +2299,9 @@ fn visible_live_rows<'a>(state: &'a Shared) -> Vec<&'a RowData> {
 /// default accent instead of leaving the palette unset.
 fn normalize_palette(theme: &str) -> &'static str {
     match theme.trim() {
-        "hula-green" => "hula-green",
         "forest" => "forest",
-        "honey" => "honey",
+        "mountain" => "mountain",
+        "deep-sea" => "deep-sea",
         "minimal" => "minimal",
         "tech-blue" => "tech-blue",
         _ => "terracotta",
@@ -2421,6 +2487,8 @@ fn start_tick(
     let mut last_permissions = 0u64;
     let mut last_backup = u64::MAX;
     let mut last_context = u64::MAX;
+    let mut last_ctx = u64::MAX;
+    let mut last_ctx_detail = u64::MAX;
     // 模型浮层活动区块（后台任务 / 子智能体）的修订号，以及浮层的开合状态。
     let mut last_sheet_activity = u64::MAX;
     let mut last_model_sheet = false;
@@ -2497,9 +2565,7 @@ fn start_tick(
                 // 这条秒表仍在走，数字不会停在旧值上。
                 if state.generating && state.live_session == state.session_id {
                     if let Some(started) = state.turn_started {
-                        let label = project::live_duration_label(
-                            started.elapsed().as_secs_f64(),
-                        );
+                        let label = project::live_duration_label(started.elapsed().as_secs_f64());
                         if state.set_live_duration(&label) {
                             state.live_rev = state.live_rev.wrapping_add(1);
                         }
@@ -3632,7 +3698,10 @@ fn start_tick(
                 .into(),
             );
             let theme = ui.global::<Theme>();
-            theme.set_palette(normalize_palette(&state.settings.theme).into());
+            let palette = normalize_palette(&state.settings.theme);
+            theme.set_palette(palette.into());
+            #[cfg(target_os = "android")]
+            crate::android_host::set_light_system_bars(palette != "deep-sea");
             theme.set_font_scale(state.settings.font_size.clamp(12, 20) as f32 / 14.0);
             last_settings = state.settings_rev;
         }
@@ -3735,10 +3804,69 @@ fn start_tick(
 
         if state.context_rev != last_context {
             ui.set_context_usage(state.context_usage);
-            ui.set_context_known(state.context_known);
-            ui.set_context_counts(state.context_counts.as_str().into());
             ui.set_context_compacted(state.context_compacted);
             last_context = state.context_rev;
+        }
+
+        // 上下文窗口卡片：快照投影与详情面板分别按修订号写回。
+        if state.ctx_rev != last_ctx {
+            ui.set_context_window_has_data(state.ctx_has_data);
+            ui.set_context_window_measured(state.ctx_measured);
+            ui.set_context_window_used_text(state.ctx_used_text.as_str().into());
+            ui.set_context_window_capacity_text(state.ctx_capacity_text.as_str().into());
+            ui.set_context_window_free_text(state.ctx_free_text.as_str().into());
+            ui.set_context_window_pct_text(state.ctx_pct_text.as_str().into());
+            ui.set_context_window_model_label(state.ctx_model_label.as_str().into());
+            ui.set_context_window_turns_text(state.ctx_turns_text.as_str().into());
+            ui.set_context_window_parts(ModelRc::from(Rc::new(VecModel::from(
+                state
+                    .ctx_parts
+                    .iter()
+                    .filter(|part| part.tokens > 0)
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            ))));
+            let legend_a = state
+                .ctx_parts
+                .iter()
+                .filter(|part| part.slot <= 3)
+                .cloned()
+                .collect::<Vec<_>>();
+            let legend_b = state
+                .ctx_parts
+                .iter()
+                .filter(|part| part.slot >= 4)
+                .cloned()
+                .collect::<Vec<_>>();
+            ui.set_context_window_legend_a(ModelRc::from(Rc::new(VecModel::from(legend_a))));
+            ui.set_context_window_legend_b(ModelRc::from(Rc::new(VecModel::from(legend_b))));
+            ui.set_context_window_items(ModelRc::from(Rc::new(VecModel::from(
+                state.ctx_items.clone(),
+            ))));
+            ui.set_context_window_cells(ModelRc::from(Rc::new(VecModel::from(
+                state.ctx_cells.clone(),
+            ))));
+            ui.set_context_window_tiles(ModelRc::from(Rc::new(VecModel::from(
+                state.ctx_tiles.clone(),
+            ))));
+            last_ctx = state.ctx_rev;
+        }
+        if state.ctx_detail_rev != last_ctx_detail {
+            ui.set_context_detail_open(state.ctx_detail_open);
+            ui.set_context_detail_kind(state.ctx_detail_kind.as_str().into());
+            ui.set_context_detail_slot(state.ctx_detail_slot);
+            ui.set_context_detail_tag(state.ctx_detail_tag.as_str().into());
+            ui.set_context_detail_name(state.ctx_detail_name.as_str().into());
+            ui.set_context_detail_count(state.ctx_detail_count.clamp(0, i32::MAX as i64) as i32);
+            ui.set_context_detail_value(state.ctx_detail_value.as_str().into());
+            ui.set_context_detail_pct(state.ctx_detail_pct.as_str().into());
+            ui.set_context_detail_rows(ModelRc::from(Rc::new(VecModel::from(
+                state.ctx_detail_rows.clone(),
+            ))));
+            ui.set_context_detail_text(state.ctx_detail_text.as_str().into());
+            ui.set_context_detail_row_open(state.ctx_detail_row_open);
+            ui.set_context_detail_row_text(state.ctx_detail_row_text.as_str().into());
+            last_ctx_detail = state.ctx_detail_rev;
         }
 
         // 模型浮层里的后台任务 / 子智能体：引擎每秒重投影，只在内容变化时
@@ -5011,21 +5139,311 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
         }
         "model-gauge" => {
             ui.set_context_usage(0.62);
-            ui.set_context_known(true);
-            ui.set_context_counts("32.1k / 51.8k tokens".into());
         }
         "model-sheet" => {
             ui.set_context_usage(0.62);
-            ui.set_context_known(true);
-            ui.set_context_counts("32.1k / 51.8k tokens".into());
             ui.set_model_sheet_open(true);
+        }
+        // 上下文窗口卡片：预览数据只核对窄屏布局，token 口径以引擎快照为准。
+        "context" | "context-map" | "context-grid" | "context-part-detail" | "context-item-detail" => {
+            ui.set_context_window_has_data(true);
+            ui.set_context_window_measured(true);
+            ui.set_context_window_used_text("12.3K".into());
+            ui.set_context_window_capacity_text("128K".into());
+            ui.set_context_window_free_text("115.7K".into());
+            ui.set_context_window_pct_text("10%".into());
+            ui.set_context_window_model_label("openai_compatible › gpt-4o-mini".into());
+            ui.set_context_window_turns_text("承载 6 轮对话".into());
+            let seed_parts = vec![
+                CtxPartRow {
+                    slot: 1,
+                    tokens: 2100,
+                    tokens_text: "2.1K".into(),
+                    pct_text: "17%".into(),
+                },
+                CtxPartRow {
+                    slot: 2,
+                    tokens: 3400,
+                    tokens_text: "3.4K".into(),
+                    pct_text: "28%".into(),
+                },
+                CtxPartRow {
+                    slot: 3,
+                    tokens: 0,
+                    tokens_text: "0".into(),
+                    pct_text: "0%".into(),
+                },
+                CtxPartRow {
+                    slot: 4,
+                    tokens: 1800,
+                    tokens_text: "1.8K".into(),
+                    pct_text: "15%".into(),
+                },
+                CtxPartRow {
+                    slot: 5,
+                    tokens: 3800,
+                    tokens_text: "3.8K".into(),
+                    pct_text: "30%".into(),
+                },
+            ];
+            ui.set_context_window_parts(ModelRc::from(Rc::new(VecModel::from(
+                seed_parts.iter().filter(|part| part.tokens > 0).cloned().collect::<Vec<_>>(),
+            ))));
+            ui.set_context_window_legend_a(ModelRc::from(Rc::new(VecModel::from(
+                seed_parts.iter().filter(|part| part.slot <= 3).cloned().collect::<Vec<_>>(),
+            ))));
+            ui.set_context_window_legend_b(ModelRc::from(Rc::new(VecModel::from(
+                seed_parts.iter().filter(|part| part.slot >= 4).cloned().collect::<Vec<_>>(),
+            ))));
+            ui.set_context_window_items(ModelRc::from(Rc::new(VecModel::from(vec![
+                CtxItemRow {
+                    slot: 2,
+                    tag: "tool".into(),
+                    name: "搜索工具".into(),
+                    count: 0,
+                    tokens_text: "3.4K".into(),
+                    ratio: 0.9,
+                    item: 0,
+                },
+                CtxItemRow {
+                    slot: 3,
+                    tag: "file".into(),
+                    name: "设计文档.md".into(),
+                    count: 0,
+                    tokens_text: "1.2K".into(),
+                    ratio: 0.32,
+                    item: 0,
+                },
+                CtxItemRow {
+                    slot: 4,
+                    tag: "result".into(),
+                    name: "检索结果".into(),
+                    count: 12,
+                    tokens_text: "1.8K".into(),
+                    ratio: 0.47,
+                    item: 0,
+                },
+                CtxItemRow {
+                    slot: 5,
+                    tag: "turn".into(),
+                    name: "".into(),
+                    count: 6,
+                    tokens_text: "2.1K".into(),
+                    ratio: 0.55,
+                    item: 0,
+                },
+                CtxItemRow {
+                    slot: 5,
+                    tag: "turn".into(),
+                    name: "".into(),
+                    count: 5,
+                    tokens_text: "1.7K".into(),
+                    ratio: 0.44,
+                    item: 1,
+                },
+            ]))));
+            let shares: [(i32, f64); 5] = [(1, 0.17), (2, 0.28), (3, 0.10), (4, 0.15), (5, 0.30)];
+            let mut cells = Vec::with_capacity(400);
+            for (slot, share) in shares {
+                let n = (share * 400.0).round() as usize;
+                for _ in 0..n {
+                    cells.push(CtxCell { slot, item: 0 });
+                }
+            }
+            while cells.len() < 400 {
+                cells.push(CtxCell { slot: 0, item: -1 });
+            }
+            ui.set_context_window_cells(ModelRc::from(Rc::new(VecModel::from(cells))));
+            ui.set_context_window_tiles(ModelRc::from(Rc::new(VecModel::from(vec![
+                CtxTile {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 0.14,
+                    h: 1.0,
+                    slot: 1,
+                    kind: "part".into(),
+                    tag: "".into(),
+                    name: "".into(),
+                    count: 0,
+                    tokens_text: "2.1K".into(),
+                    item: -1,
+                    show_name: false,
+                    show_value: false,
+                },
+                CtxTile {
+                    x: 0.14,
+                    y: 0.015,
+                    w: 0.265,
+                    h: 0.55,
+                    slot: 2,
+                    kind: "item".into(),
+                    tag: "tool".into(),
+                    name: "搜索工具".into(),
+                    count: 0,
+                    tokens_text: "3.4K".into(),
+                    item: 0,
+                    show_name: true,
+                    show_value: true,
+                },
+                CtxTile {
+                    x: 0.14,
+                    y: 0.58,
+                    w: 0.265,
+                    h: 0.40,
+                    slot: 2,
+                    kind: "more".into(),
+                    tag: "".into(),
+                    name: "".into(),
+                    count: 3,
+                    tokens_text: "0.9K".into(),
+                    item: -2,
+                    show_name: true,
+                    show_value: true,
+                },
+                CtxTile {
+                    x: 0.42,
+                    y: 0.0,
+                    w: 0.09,
+                    h: 1.0,
+                    slot: 3,
+                    kind: "part".into(),
+                    tag: "".into(),
+                    name: "".into(),
+                    count: 0,
+                    tokens_text: "1.2K".into(),
+                    item: -1,
+                    show_name: false,
+                    show_value: false,
+                },
+                CtxTile {
+                    x: 0.51,
+                    y: 0.0,
+                    w: 0.14,
+                    h: 1.0,
+                    slot: 4,
+                    kind: "part".into(),
+                    tag: "".into(),
+                    name: "".into(),
+                    count: 0,
+                    tokens_text: "1.8K".into(),
+                    item: -1,
+                    show_name: false,
+                    show_value: false,
+                },
+                CtxTile {
+                    x: 0.65,
+                    y: 0.015,
+                    w: 0.215,
+                    h: 0.46,
+                    slot: 5,
+                    kind: "item".into(),
+                    tag: "turn".into(),
+                    name: "".into(),
+                    count: 6,
+                    tokens_text: "2.1K".into(),
+                    item: 0,
+                    show_name: true,
+                    show_value: true,
+                },
+                CtxTile {
+                    x: 0.65,
+                    y: 0.49,
+                    w: 0.215,
+                    h: 0.49,
+                    slot: 5,
+                    kind: "item".into(),
+                    tag: "turn".into(),
+                    name: "".into(),
+                    count: 5,
+                    tokens_text: "1.7K".into(),
+                    item: 1,
+                    show_name: true,
+                    show_value: true,
+                },
+                CtxTile {
+                    x: 0.88,
+                    y: 0.0,
+                    w: 0.12,
+                    h: 1.0,
+                    slot: 0,
+                    kind: "free".into(),
+                    tag: "".into(),
+                    name: "".into(),
+                    count: 0,
+                    tokens_text: "115.7K".into(),
+                    item: -3,
+                    show_name: false,
+                    show_value: false,
+                },
+            ]))));
+            // 手机默认方块格；`context` 路由显式切到树图核对第二视图。
+            ui.set_context_window_look_map(page == "context");
+            ui.set_context_window_open(true);
+            if page == "context-part-detail" {
+                ui.set_context_detail_open(true);
+                ui.set_context_detail_kind("part".into());
+                ui.set_context_detail_slot(2);
+                ui.set_context_detail_tag("".into());
+                ui.set_context_detail_name("".into());
+                ui.set_context_detail_count(0);
+                ui.set_context_detail_value("4.3K".into());
+                ui.set_context_detail_pct("34%".into());
+                ui.set_context_detail_rows(ModelRc::from(Rc::new(VecModel::from(vec![
+                    CtxItemRow {
+                        slot: 2,
+                        tag: "tool".into(),
+                        name: "搜索工具".into(),
+                        count: 0,
+                        tokens_text: "3.4K".into(),
+                        ratio: 0.9,
+                        item: 0,
+                    },
+                    CtxItemRow {
+                        slot: 2,
+                        tag: "tool".into(),
+                        name: "命令执行器".into(),
+                        count: 0,
+                        tokens_text: "0.6K".into(),
+                        ratio: 0.16,
+                        item: 1,
+                    },
+                    CtxItemRow {
+                        slot: 2,
+                        tag: "tool".into(),
+                        name: "网页抓取".into(),
+                        count: 0,
+                        tokens_text: "0.3K".into(),
+                        ratio: 0.09,
+                        item: 2,
+                    },
+                ]))));
+                ui.set_context_detail_text("".into());
+                ui.set_context_detail_row_open(0);
+                ui.set_context_detail_row_text(
+                    "fn search_tool(query: &str) -> Vec<Result> { /* ... */ }".into(),
+                );
+            }
+            if page == "context-item-detail" {
+                ui.set_context_detail_open(true);
+                ui.set_context_detail_kind("item".into());
+                ui.set_context_detail_slot(2);
+                ui.set_context_detail_tag("tool".into());
+                ui.set_context_detail_name("搜索工具".into());
+                ui.set_context_detail_count(0);
+                ui.set_context_detail_value("3.4K".into());
+                ui.set_context_detail_pct("27%".into());
+                ui.set_context_detail_rows(ModelRc::default());
+                ui.set_context_detail_text(
+                    "fn search_tool(query: &str) -> Vec<Result> {\n    // 按关键词检索本地与远程资料。\n    /* ... */\n}".into(),
+                );
+                ui.set_context_detail_row_open(-1);
+                ui.set_context_detail_row_text("".into());
+            }
         }
         // `model-activity` 在模型浮层里叠上后台任务与子智能体两段：计数故意大于
         // 行数，核对「还有 N 条未显示」的收口行。
         "model-activity" => {
             ui.set_context_usage(0.62);
-            ui.set_context_known(true);
-            ui.set_context_counts("32.1k / 51.8k tokens".into());
             ui.set_task_rows(ModelRc::from(Rc::new(VecModel::from(vec![
                 CommandTask {
                     id: "cmd-1".into(),

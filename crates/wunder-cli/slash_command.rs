@@ -24,6 +24,7 @@ pub enum SlashCommand {
     Skills,
     Rename,
     Compact,
+    Context,
     Mcp,
     Exit,
     Quit,
@@ -52,7 +53,7 @@ struct SlashCommandDoc {
     description_zh: &'static str,
 }
 
-const SLASH_COMMAND_DOCS: [SlashCommandDoc; 22] = [
+const SLASH_COMMAND_DOCS: [SlashCommandDoc; 23] = [
     SlashCommandDoc {
         command: SlashCommand::Help,
         name: "help",
@@ -162,6 +163,12 @@ const SLASH_COMMAND_DOCS: [SlashCommandDoc; 22] = [
         description_zh: "把上下文压缩成摘要",
     },
     SlashCommandDoc {
+        command: SlashCommand::Context,
+        name: "context",
+        description: "show the thread's context window composition",
+        description_zh: "查看上下文窗口构成",
+    },
+    SlashCommandDoc {
         command: SlashCommand::Rename,
         name: "rename",
         description: "rename the current thread",
@@ -206,6 +213,7 @@ impl SlashCommand {
                 | SlashCommand::Clear
                 | SlashCommand::Resume
                 | SlashCommand::Trajectory
+                | SlashCommand::Context
                 | SlashCommand::Diff
                 | SlashCommand::Mcp
                 | SlashCommand::Skills
@@ -249,6 +257,7 @@ pub fn parse_slash_command(input: &str) -> Option<ParsedSlashCommand<'_>> {
         "skills" => (SlashCommand::Skills, remaining),
         "rename" => (SlashCommand::Rename, remaining),
         "compact" => (SlashCommand::Compact, remaining),
+        "context" => (SlashCommand::Context, remaining),
         "mcp" => (SlashCommand::Mcp, remaining),
         // `/config show` is a sub-command form of `/config`, not a command of
         // its own (codex shape: one entry point, sub-verbs as arguments).
@@ -368,6 +377,7 @@ fn command_doc_by_name(name: &str) -> Option<&'static SlashCommandDoc> {
         "skills" => SlashCommand::Skills,
         "rename" => SlashCommand::Rename,
         "compact" => SlashCommand::Compact,
+        "context" => SlashCommand::Context,
         "mcp" => SlashCommand::Mcp,
         "exit" => SlashCommand::Exit,
         "quit" | "q" => SlashCommand::Quit,
@@ -548,6 +558,22 @@ mod tests {
         assert_eq!(parsed.command, SlashCommand::Trajectory);
         assert_eq!(parsed.args, "thread-fixture");
         assert!(SlashCommand::Trajectory.available_during_task());
+    }
+
+    #[test]
+    fn parse_context_command_with_args_and_unknown_subcommand() {
+        let parsed = parse_slash_command("/context").expect("command should parse");
+        assert_eq!(parsed.command, SlashCommand::Context);
+        assert_eq!(parsed.args, "");
+        assert!(SlashCommand::Context.available_during_task());
+
+        let parsed = parse_slash_command("/context detail").expect("command should parse");
+        assert_eq!(parsed.command, SlashCommand::Context);
+        assert_eq!(parsed.args, "detail");
+
+        let parsed = parse_slash_command("/context bogus").expect("command should parse");
+        assert_eq!(parsed.command, SlashCommand::Context);
+        assert_eq!(parsed.args, "bogus");
     }
 
     #[test]

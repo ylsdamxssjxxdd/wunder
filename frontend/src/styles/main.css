@@ -29,3 +29,7 @@
 @import "./pages/thread-trajectory.css";
 /* 手机浏览器（<= 720px）：顶部条 + 单栏聊天 + 近全宽抽屉 + 全屏设置。 */
 @import "./pages/messenger-mobile.css";
+/* 深海暗色主题：唯一的暗色色板，必须最后导入以覆盖 --mz-* 浅色默认值。 */
+@import "./pages/deep-sea.css";
+/* 山地浅灰主题：再覆盖一次 messenger-shell 的白色中性面。 */
+@import "./pages/mountain.css";

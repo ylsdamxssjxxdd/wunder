@@ -2679,7 +2679,7 @@ component ChannelQrSheet inherits Rectangle {
                             width: 220px;
                             height: 220px;
                             border-radius: Theme.radius-md;
-                            background: white;
+                            background: Theme.surface;
                             border-width: 1px;
                             border-color: Theme.border;
                             Image {
@@ -3188,35 +3188,35 @@ component GeneralPage inherits Rectangle {
                     HorizontalLayout {
                         spacing: 6px;
                         ThemeTile {
+                            palette: "forest";
+                            name: I18n.st_theme_forest;
+                            accent: #16ad8d;
+                            tint: #e7f7f2;
+                            active: root.theme == "forest";
+                            picked(value) => { root.save-theme(value); }
+                        }
+                        ThemeTile {
+                            palette: "mountain";
+                            name: I18n.st_theme_mountain;
+                            accent: #7c878c;
+                            tint: #eef1f2;
+                            active: root.theme == "mountain";
+                            picked(value) => { root.save-theme(value); }
+                        }
+                        ThemeTile {
+                            palette: "deep-sea";
+                            name: I18n.st_theme_deepsea;
+                            accent: #5fa8cf;
+                            tint: #122b3b;
+                            active: root.theme == "deep-sea";
+                            picked(value) => { root.save-theme(value); }
+                        }
+                        ThemeTile {
                             palette: "terracotta";
                             name: I18n.st_theme_parchment;
                             accent: #f58a24;
                             tint: #fdf0de;
                             active: root.theme == "terracotta";
-                            picked(value) => { root.save-theme(value); }
-                        }
-                        ThemeTile {
-                            palette: "hula-green";
-                            name: I18n.st_theme_mint;
-                            accent: #16ad8d;
-                            tint: #e7f7f2;
-                            active: root.theme == "hula-green";
-                            picked(value) => { root.save-theme(value); }
-                        }
-                        ThemeTile {
-                            palette: "forest";
-                            name: I18n.st_theme_forest;
-                            accent: #2f7a5c;
-                            tint: #e9f2ee;
-                            active: root.theme == "forest";
-                            picked(value) => { root.save-theme(value); }
-                        }
-                        ThemeTile {
-                            palette: "honey";
-                            name: I18n.st_theme_honey;
-                            accent: #c08a2a;
-                            tint: #f8f0dd;
-                            active: root.theme == "honey";
                             picked(value) => { root.save-theme(value); }
                         }
                     }
@@ -6233,3 +6233,4 @@ export component MobileSettings inherits Rectangle {
         canceled => { root.confirm-delete = false; }
     }
 }
+
