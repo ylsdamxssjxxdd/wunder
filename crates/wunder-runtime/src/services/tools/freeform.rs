@@ -29,7 +29,7 @@ pub(crate) fn build_freeform_tool(
         return Some(json!({
             "type": "custom",
             "name": model_tool_name,
-            "description": description,
+            "description": format!("{description} Send the patch as raw text, not JSON or a Markdown code block."),
             "format": format,
         }));
     }

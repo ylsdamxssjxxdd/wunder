@@ -190,17 +190,12 @@ pub fn resolve_openai_api_mode(config: &LlmModelConfig) -> OpenAiApiMode {
 }
 
 fn should_default_to_responses_api(config: &LlmModelConfig) -> bool {
-    let provider = normalize_provider(config.provider.as_deref());
-    if provider != "openai" {
-        return false;
-    }
-    let Some(model) = config.model.as_deref().map(str::trim) else {
-        return false;
-    };
-    if model.is_empty() {
-        return false;
-    }
-    let lowered = model.to_ascii_lowercase();
+    normalize_provider(config.provider.as_deref()) == "openai"
+        && is_openai_responses_model(config.model.as_deref())
+}
+
+pub(super) fn is_openai_responses_model(model: Option<&str>) -> bool {
+    let lowered = model.unwrap_or_default().trim().to_ascii_lowercase();
     lowered.starts_with("gpt-5")
         || lowered.starts_with("o1")
         || lowered.starts_with("o3")

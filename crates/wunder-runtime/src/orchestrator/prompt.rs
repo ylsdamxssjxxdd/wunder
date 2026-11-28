@@ -341,7 +341,7 @@ impl Orchestrator {
             if text_edit_enabled {
                 if let Some(tool) = build_freeform_tool(
                     "apply_patch",
-                    "Apply a unified diff patch to workspace files. `input` is the raw patch body from `*** Begin Patch` to `*** End Patch`; use structured edit tools when a single explicit replacement is enough.",
+                    "Edit workspace files with a patch from `*** Begin Patch` to `*** End Patch`. Use `*** Add File`, `*** Update File`, or `*** Delete File` headers. Use `edit` for a single explicit replacement.",
                     "apply_patch",
                     responses_api,
                 ) {

@@ -654,7 +654,7 @@ struct StreamOutputState {
     displayed: String,
     displayed_tail: String,
     anthropic_thinking_blocks: BTreeMap<usize, Value>,
-    responses_reasoning: responses::ReasoningItems,
+    responses_output: responses::OutputItems,
 }
 
 impl StreamOutputState {
@@ -1422,7 +1422,7 @@ impl LlmClient {
             },
             responses_reasoning: (!self.is_anthropic_provider()
                 && api_mode == OpenAiApiMode::Responses)
-                .then(|| responses::ReasoningItems::from_body(&body, self.responses_replay_scope()))
+                .then(|| responses::OutputItems::from_body(&body, self.responses_replay_scope()))
                 .flatten(),
             transport_recovery_used: false,
         })
@@ -1735,7 +1735,7 @@ impl LlmClient {
                 tool_calls,
                 anthropic_thinking_blocks,
                 responses_reasoning: final_response_preview
-                    .responses_reasoning
+                    .responses_output
                     .into_replay(self.responses_replay_scope()),
                 transport_recovery_used: false,
             }));
@@ -1949,14 +1949,13 @@ impl LlmClient {
                 payload["tool_choice"] = json!("auto");
             }
         }
-        self.apply_openai_prompt_cache_key(&mut payload);
+        if openai_top_level_schema_guard {
+            self.apply_openai_prompt_cache_key(&mut payload);
+        }
         payload
     }
 
     fn apply_openai_prompt_cache_key(&self, payload: &mut Value) {
-        if normalize_provider(self.config.provider.as_deref()) != "openai" {
-            return;
-        }
         if let Some(key) = self.prompt_cache_key.as_ref() {
             payload["prompt_cache_key"] = Value::String(key.clone());
         }
@@ -1968,9 +1967,7 @@ impl LlmClient {
         stream: bool,
         tools: Option<&[Value]>,
     ) -> Value {
-        let openai_top_level_schema_guard =
-            should_strip_openai_tool_schema(self.config.provider.as_deref());
-        let official = responses::is_official_endpoint(&self.config);
+        let openai_options = responses::uses_openai_options(&self.config);
         let effort = normalize_reasoning_effort(self.config.reasoning_effort.as_deref());
         let input = build_responses_input(messages, tools, &self.responses_replay_scope());
         let mut payload = json!({
@@ -1978,9 +1975,10 @@ impl LlmClient {
             "input": input,
             "stream": stream,
         });
-        if official {
+        if openai_options {
             payload["store"] = json!(false);
             payload["include"] = json!(["reasoning.encrypted_content"]);
+            self.apply_openai_prompt_cache_key(&mut payload);
             if let Some(temperature) = self.config.temperature.filter(|_| {
                 responses::supports_temperature(self.config.model.as_deref(), effort.as_deref())
             }) {
@@ -1994,7 +1992,7 @@ impl LlmClient {
         }
         apply_disable_thinking_controls(&mut payload, &self.config);
         payload["max_output_tokens"] = json!(resolved_max_output(&self.config));
-        if !official {
+        if !openai_options {
             apply_thinking_budget(&mut payload, &self.config);
             if let Some(stop) = self.config.stop.as_ref().filter(|stop| !stop.is_empty()) {
                 payload["stop"] = json!(stop);
@@ -2005,27 +2003,12 @@ impl LlmClient {
                 payload["tools"] = Value::Array(
                     tool_defs
                         .iter()
-                        .map(|tool| {
-                            let mut normalized = normalize_responses_tool_definition(
-                                tool,
-                                openai_top_level_schema_guard || official,
-                            );
-                            if official && normalized["type"] == "function" {
-                                normalized["strict"] = tool
-                                    .get("strict")
-                                    .or_else(|| tool.pointer("/function/strict"))
-                                    .filter(|value| value.is_boolean())
-                                    .cloned()
-                                    .unwrap_or(json!(false));
-                            }
-                            normalized
-                        })
+                        .map(|tool| normalize_responses_tool_definition(tool, openai_options))
                         .collect(),
                 );
                 payload["tool_choice"] = json!("auto");
             }
         }
-        self.apply_openai_prompt_cache_key(&mut payload);
         payload
     }
 }
@@ -2803,7 +2786,7 @@ where
         "response.output_item.done" => {
             if let Some(item) = payload.get("item") {
                 if let Some(index) = payload.get("output_index").and_then(Value::as_u64) {
-                    final_response_preview.responses_reasoning.record(index as usize, item);
+                    final_response_preview.responses_output.record(index as usize, item);
                 }
                 update_responses_tool_call_from_item(tool_calls_accumulator, item, StreamToolFieldMode::Final);
             }
@@ -2853,7 +2836,7 @@ where
                 if let Some(new_usage) = normalize_usage(response.get("usage")) {
                     *usage = Some(new_usage);
                 }
-                final_response_preview.responses_reasoning.record_response(response);
+                final_response_preview.responses_output.record_response(response);
                 let (text, reasoning, tool_calls) = extract_responses_output(response);
                 if combined.is_empty() && !text.is_empty() {
                     combined.push_str(&text);
@@ -2883,7 +2866,7 @@ where
     }
 
     if payload_type.is_empty() && payload.get("output").is_some() {
-        final_response_preview.responses_reasoning.record_response(payload);
+        final_response_preview.responses_output.record_response(payload);
         let (text, reasoning, tool_calls) = extract_responses_output(payload);
         if combined.is_empty() && !text.is_empty() {
             combined.push_str(&text);

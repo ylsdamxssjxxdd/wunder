@@ -1,3 +1,4 @@
+use super::responses::{is_replayable_reasoning, matches_output, replay_items};
 use super::{ChatMessage, extract_stream_text};
 use crate::core::json_schema::{
     normalize_tool_input_schema, normalize_tool_input_schema_for_openai,
@@ -106,29 +107,11 @@ pub(super) fn normalize_responses_tool_definition(
             "format": format,
         });
     }
-    if let Some(function) = tool.get("function").and_then(Value::as_object) {
-        let name = function
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim();
-        if name.is_empty() {
-            return tool.clone();
-        }
-        let description = function
-            .get("description")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let parameters = normalize_parameters(function.get("parameters"));
-        return json!({
-            "type": "function",
-            "name": name,
-            "description": description,
-            "parameters": parameters
-        });
-    }
-
-    let name = tool
+    let function = tool
+        .get("function")
+        .filter(|value| value.is_object())
+        .unwrap_or(tool);
+    let name = function
         .get("name")
         .and_then(Value::as_str)
         .unwrap_or("")
@@ -136,16 +119,22 @@ pub(super) fn normalize_responses_tool_definition(
     if name.is_empty() {
         return tool.clone();
     }
-    let description = tool
+    let description = function
         .get("description")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let parameters = normalize_parameters(tool.get("parameters"));
+    let parameters = normalize_parameters(function.get("parameters"));
+    let strict = tool
+        .get("strict")
+        .and_then(Value::as_bool)
+        .or_else(|| function.get("strict").and_then(Value::as_bool))
+        .unwrap_or(false);
     json!({
         "type": "function",
         "name": name,
         "description": description,
-        "parameters": parameters
+        "parameters": parameters,
+        "strict": strict
     })
 }
 
@@ -183,17 +172,7 @@ pub(super) fn build_responses_input(
         }
 
         let normalized_role = normalize_responses_role(role);
-        if normalized_role == "assistant" {
-            if let Some(replay) = &message.responses_reasoning {
-                input.extend(super::responses::replay_items(replay, replay_scope).cloned());
-            }
-        }
-        let content = convert_responses_content(&message.content);
-        input.push(json!({
-            "role": normalized_role,
-            "content": content,
-        }));
-
+        let mut projected_calls = Vec::new();
         if let Some(tool_calls) = message.tool_calls.as_ref() {
             let calls = extract_tool_calls_list(tool_calls);
             for call in calls.iter() {
@@ -205,10 +184,36 @@ pub(super) fn build_responses_input(
                             custom_tool_call_ids.insert(call_id.to_string());
                         }
                     }
-                    input.push(item);
+                    projected_calls.push(item);
                 }
             }
         }
+
+        let content = convert_responses_content(&message.content);
+        if normalized_role == "assistant" {
+            if let Some(replay) = &message.responses_reasoning {
+                let items = replay_items(replay, replay_scope);
+                if matches_output(items, &content, &projected_calls) {
+                    input.extend_from_slice(items);
+                    continue;
+                }
+                input.extend(
+                    items
+                        .iter()
+                        .filter(|item| is_replayable_reasoning(item))
+                        .cloned(),
+                );
+            }
+        }
+        let empty = match &content {
+            Value::String(text) => text.is_empty(),
+            Value::Array(parts) => parts.is_empty(),
+            _ => false,
+        };
+        if normalized_role != "assistant" || !empty {
+            input.push(json!({ "role": normalized_role, "content": content }));
+        }
+        input.extend(projected_calls);
     }
     Value::Array(input)
 }
@@ -904,9 +909,10 @@ mod tests {
         let input = build_responses_input(&messages, None, "test-scope");
         let items = input.as_array().expect("responses input array");
 
-        assert_eq!(items[1]["type"], "custom_tool_call");
-        assert_eq!(items[2]["type"], "custom_tool_call_output");
-        assert_eq!(items[2]["call_id"], "call_patch");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["type"], "custom_tool_call");
+        assert_eq!(items[1]["type"], "custom_tool_call_output");
+        assert_eq!(items[1]["call_id"], "call_patch");
     }
 
     #[test]

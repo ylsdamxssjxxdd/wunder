@@ -34,9 +34,10 @@ wunder 是一个**泛用型人工智能操作系统**（wunder = 模型 + 拘束
 - 沙盒命令流：`POST /sandboxes/execute_command_stream` 返回 NDJSON（`command_start`、`delta`、`command_exit`、`final`）；`WUNDER_SANDBOX_TIMEOUT_S` 覆盖连接、响应头与响应体读取，执行端也限制整次流的生命周期。客户端断开时取消执行并回收直接子进程与输出读取任务。
 - 沙盒重试：仅连接建立失败或命令流路由明确返回 404/405 时允许候选地址切换/非流式兼容回退；请求可能已执行后的超时、断流、非法响应或服务端错误返回 `data.error_meta.code=SANDBOX_EXECUTION_INTERRUPTED`、`retryable=false`、`outcome_unknown=true`，不自动重放。执行端总超时使用 `SANDBOX_COMMAND_TIMEOUT`。调用方应先核对工作区结果再决定是否重新执行。
 - 沙盒文件工具：存储在受控阻塞池中单次初始化，失败后短暂退避再重试；上下文按容器根、工作区根和工作区标识隔离，最多缓存 128 项，访问时回收空闲超过 300 秒的项。文件工具复用相同运行时实现，不额外启动存储写线程和 LSP 清理任务。
-- 工具清单与提示词注入复用统一的工具规格构建逻辑：`tool_call/freeform_call` 模式会注入工具协议片段，`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
+- 工具清单与提示词注入复用统一的工具规格构建逻辑：`tool_call` 将工具协议写入提示词；`function_call` 和 `freeform_call` 通过请求的 `tools` 字段下发工具。
 - 智能体线程首次解析出的 `tool_call_mode` 会随线程冻结，后续轮次不会因模型配置变更在 `function_call/tool_call/freeform_call` 之间静默切换；旧线程若已有冻结 system prompt，会先从该 prompt 推断原工具模式。`function_call` 仍尊重用户显式配置，但在本地 llama.cpp 类服务中，native `tools` 可能由服务端 chat template 注入到非消息前缀位置，调试事件的 `context_cache_probe.tool_transport= native_tools` 会标记这一缓存风险。
 - 当 `tool_call_mode=freeform_call` 且模型走 OpenAI Responses API 时，服务端会把 `apply_patch` 这类语法工具下发为原生 `type=custom` 工具（携带 `format={type:grammar,syntax:lark,definition}`），普通 JSON 工具继续走 `type=function`；工具结果会按 `custom_tool_call_output/function_call_output` 回填历史，避免仅靠 XML 提示词驱动。
+- Responses 普通函数默认发送 `strict: false`，保留可选参数；自定义语法工具不发送 `strict`。GPT 接入 Responses 兼容网关也保留线程级 `prompt_cache_key`，并请求加密推理项以便无状态续跑。同一端点和模型优先按原顺序回放输出项；网关是否实际命中缓存，以返回的 `usage.input_tokens_details.cached_tokens` 为准。
 - 配置加载：运行时只读取单一配置文件 `config/wunder.yaml`（`WUNDER_CONFIG_PATH` 可覆盖）；若不存在则自动回退 `config/wunder-example.yaml`；管理端修改会直接写回当前生效的配置文件，不再额外维护独立覆盖层。
 - 环境变量：`.env` 为可选项；docker compose 通过 `${VAR:-default}` 提供默认值，未提供 `.env` 也可直接启动。
 - compose 镜像策略：`docker-compose-x86.yml` 的 `wunder-server` / `wunder-sandbox` / `extra-mcp` 仍使用本地镜像并保留 `pull_policy: never`，已存在镜像时优先复用，不存在时再自动构建，避免首次启动时 `extra-mcp` 先拉取失败。`docker-compose-arm.yml` 改为直接引用现成的 `wunder-arm` 镜像，不再声明 `build:` / `pull_policy:`，以兼容较老的 docker-compose 解析器和 ARM 服务器上的预置镜像启动方式。
