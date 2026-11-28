@@ -3,8 +3,8 @@
 // 卡片主文件与详情覆盖层都从这里取类型，避免两个 Slint 文件互相 import 形成环。
 // 配色与文案映射和桌面版 `ContextColors` / `ContextText` 一致。
 
-import { Theme } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
-import { I18n } from "../../../crates/wunder-desktop/frontend/ui/i18n.slint";
+import { ContextColors, ContextText, ContextTile } from "../../wunder-desktop/frontend/ui/context_tile.slint";
+export { ContextColors as CtxColors, ContextText as CtxText, ContextTile }
 
 // One row of the fixed five-part legend. `slot` is the palette index 1..5.
 export struct CtxPartRow {
@@ -26,96 +26,4 @@ export struct CtxItemRow {
     ratio: float,
     // Index among the part's listed items.
     item: int,
-}
-
-// One cell of the 400-cell block grid: the part it shows and the item inside it.
-export struct CtxCell {
-    slot: int,
-    item: int,
-}
-
-// A tile of the two-level map, in fractions of the map box.
-export struct CtxTile {
-    x: float,
-    y: float,
-    w: float,
-    h: float,
-    slot: int,
-    // part / item / more / free
-    kind: string,
-    tag: string,
-    name: string,
-    count: int,
-    tokens-text: string,
-    // Index among the part's sorted items; -1 part, -2 gathered, -3 free.
-    item: int,
-    show-name: bool,
-    show-value: bool,
-}
-
-// Part palette, identical to the desktop `ContextColors` (spec §3).
-export global CtxColors {
-    public pure function ink(slot: int) -> color {
-        return slot == 1 ? #8B5CF6
-            : slot == 2 ? #0EA5E9
-            : slot == 3 ? #10B981
-            : slot == 4 ? #EA580C
-            : slot == 5 ? #4F46E5
-            : #A8AFB8;
-    }
-    public pure function fill(slot: int) -> color {
-        return slot == 1 ? #F2EDFE
-            : slot == 2 ? #E5F5FD
-            : slot == 3 ? #E5F7F1
-            : slot == 4 ? #FDEDE4
-            : slot == 5 ? #ECEBFC
-            : #F4F5F7;
-    }
-    public pure function line(slot: int) -> color {
-        return slot == 1 ? #E3D8FD
-            : slot == 2 ? #C5E9FA
-            : slot == 3 ? #C5E8D7
-            : slot == 4 ? #F6D7C5
-            : slot == 5 ? #D5D3F9
-            : #E2E5E9;
-    }
-    public pure function name(slot: int) -> color {
-        return slot == 1 ? #6D4CBD
-            : slot == 2 ? #1381B3
-            : slot == 3 ? #148F68
-            : slot == 4 ? #B14914
-            : slot == 5 ? #423CB0
-            : #6B7280;
-    }
-    public pure function value(slot: int) -> color {
-        return slot == 1 ? #8A7AC0
-            : slot == 2 ? #5699BB
-            : slot == 3 ? #57A18F
-            : slot == 4 ? #B2795E
-            : slot == 5 ? #7171B9
-            : #9AA0A8;
-    }
-}
-
-// Wording shared by the legend, the tiles and the rows; same mapping as the
-// desktop `ContextText`.
-export global CtxText {
-    public pure function part(slot: int) -> string {
-        return slot == 1 ? I18n.cx_part_system
-            : slot == 2 ? I18n.cx_part_tools
-            : slot == 3 ? I18n.cx_part_files
-            : slot == 4 ? I18n.cx_part_results
-            : slot == 5 ? I18n.cx_part_chat
-            : I18n.cx_free;
-    }
-    public pure function item(tag: string, name: string, count: int) -> string {
-        return tag == "tool" && name != "" ? name + " · " + I18n.cx_item_tool
-            : tag == "result" && name != "" ? name + " · " + I18n.cx_part_results
-            : tag == "turn" ? I18n.cx_turn(count)
-            : tag == "image" ? I18n.cx_image(count)
-            : name != "" ? name
-            : tag == "prompt" ? I18n.cx_item_prompt
-            : tag == "reminder" ? I18n.cx_item_reminder
-            : I18n.cx_item_other;
-    }
 }

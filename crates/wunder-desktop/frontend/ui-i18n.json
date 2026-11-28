@@ -1943,11 +1943,12 @@
  },
  {
   "key": "cx_summary",
-  "zh": "已用 {} · 剩余 {}",
-  "en": "{} used · {} free",
+  "zh": "已用 {} · 剩余 {} · 承载 {} 轮对话",
+  "en": "{} used · {} free · {} turns",
   "params": [
    "pct",
-   "free"
+   "free",
+   "turns"
   ]
  },
  {
@@ -2023,21 +2024,6 @@
   "key": "cx_part_chat",
   "zh": "会话",
   "en": "Chat"
- },
- {
-  "key": "cx_contents",
-  "zh": "内容",
-  "en": "Contents"
- },
- {
-  "key": "cx_all",
-  "zh": "全部",
-  "en": "All"
- },
- {
-  "key": "cx_nothing",
-  "zh": "这里没有内容",
-  "en": "Nothing here"
  },
  {
   "key": "cx_no_request",

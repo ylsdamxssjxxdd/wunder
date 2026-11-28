@@ -1,0 +1,158 @@
+import { Theme } from "design_tokens.slint";
+import { I18n } from "i18n.slint";
+
+// A tile of the window map, in fractions of the map box.
+export struct ContextTile {
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    slot: int,
+    // part / item / more / free
+    kind: string,
+    tag: string,
+    name: string,
+    count: int,
+    tokens-text: string,
+    // Index among the part's items; -1 for a part's tile, -2 for gathered
+    // small ones, -3 for free space.
+    item: int,
+    show-name: bool,
+    show-value: bool,
+}
+
+// The palette is magpie's part palette, so the same part reads as the same
+// colour across both products.
+export global ContextColors {
+    public pure function ink(slot: int) -> color {
+        return slot == 1 ? #8B5CF6
+            : slot == 2 ? #0EA5E9
+            : slot == 3 ? #10B981
+            : slot == 4 ? #EA580C
+            : slot == 5 ? #4F46E5
+            : #A8AFB8;
+    }
+    public pure function fill(slot: int) -> color {
+        return slot == 1 ? #F2EDFE
+            : slot == 2 ? #E5F5FD
+            : slot == 3 ? #E5F7F1
+            : slot == 4 ? #FDEDE4
+            : slot == 5 ? #ECEBFC
+            : #F4F5F7;
+    }
+    public pure function line(slot: int) -> color {
+        return slot == 1 ? #E3D8FD
+            : slot == 2 ? #C5E9FA
+            : slot == 3 ? #C5E8D7
+            : slot == 4 ? #F6D7C5
+            : slot == 5 ? #D5D3F9
+            : #E2E5E9;
+    }
+    // 方块上的两级文字：部位色向正文色/次要色各调一次，和参考实现一致。
+    public pure function name(slot: int) -> color {
+        return slot == 1 ? #6D4CBD
+            : slot == 2 ? #1381B3
+            : slot == 3 ? #148F68
+            : slot == 4 ? #B14914
+            : slot == 5 ? #423CB0
+            : #6B7280;
+    }
+    public pure function value(slot: int) -> color {
+        return slot == 1 ? #8A7AC0
+            : slot == 2 ? #5699BB
+            : slot == 3 ? #57A18F
+            : slot == 4 ? #B2795E
+            : slot == 5 ? #7171B9
+            : #9AA0A8;
+    }
+    // 悬浮时同色加深一档，和参考实现的 19% / 48% 混色对应。
+    public pure function hover_fill(slot: int) -> color {
+        return slot == 1 ? #E9E0FD
+            : slot == 2 ? #D1EEFB
+            : slot == 3 ? #D2F2E7
+            : slot == 4 ? #FBDDCC
+            : slot == 5 ? #DEDCFA
+            : #EEF0F3;
+    }
+    public pure function hover_line(slot: int) -> color {
+        return slot == 1 ? #BBA6F6
+            : slot == 2 ? #82D0F4
+            : slot == 3 ? #67C9A6
+            : slot == 4 ? #F2A275
+            : slot == 5 ? #918CF1
+            : #D7DBE0;
+    }
+}
+
+// Names shared by the legend, the tiles, the tabs and the rows.
+export global ContextText {
+    public pure function part(slot: int) -> string {
+        return slot == 1 ? I18n.cx_part_system
+            : slot == 2 ? I18n.cx_part_tools
+            : slot == 3 ? I18n.cx_part_files
+            : slot == 4 ? I18n.cx_part_results
+            : slot == 5 ? I18n.cx_part_chat
+            : I18n.cx_free;
+    }
+    public pure function item(tag: string, name: string, count: int) -> string {
+        // 工具定义与工具结果同名，各补一个部位后缀，免得把「定义」当成
+        // 本次请求真的调用过这个工具。
+        return tag == "tool" && name != "" ? name + " · " + I18n.cx_item_tool
+            : tag == "result" && name != "" ? name + " · " + I18n.cx_part_results
+            : tag == "turn" ? I18n.cx_turn(count)
+            : name != "" ? name
+            : tag == "prompt" ? I18n.cx_item_prompt
+            : tag == "reminder" ? I18n.cx_item_reminder
+            : tag == "image" ? I18n.cx_image(count)
+            : I18n.cx_item_other;
+    }
+}
+
+export component ContextTileView inherits Rectangle {
+    in property <ContextTile> tile;
+    in property <bool> active: false;
+
+    border-radius: 7px;
+    clip: true;
+    border-width: 1px;
+    background: root.tile.kind == "free" ? #FAFBFC
+        : root.active ? ContextColors.hover_fill(root.tile.slot) : ContextColors.fill(root.tile.slot);
+    border-color: root.tile.kind == "free" ? #E6E8EB
+        : root.active ? ContextColors.hover_line(root.tile.slot) : ContextColors.line(root.tile.slot);
+
+    if root.tile.kind == "free" : Image {
+        width: parent.width;
+        height: parent.height;
+        source: @image-url("../assets/context-hatch.svg");
+        image-fit: ImageFit.fill;
+    }
+
+    if root.tile.show-name : VerticalLayout {
+        padding-left: 9px;
+        padding-right: 9px;
+        padding-top: root.tile.show-value ? 7px : 5px;
+        padding-bottom: root.tile.show-value ? 7px : 5px;
+        alignment: start;
+        spacing: 1px;
+
+        Text {
+            text: root.tile.kind == "part" ? ContextText.part(root.tile.slot)
+                : root.tile.kind == "item" ? ContextText.item(root.tile.tag, root.tile.name, root.tile.count)
+                : root.tile.kind == "more" ? I18n.cx_more_items(root.tile.count) : I18n.cx_free;
+            color: root.tile.kind == "free" ? Theme.muted : ContextColors.name(root.tile.slot);
+            font-size: Theme.font-xs;
+            font-weight: 600;
+            wrap: no-wrap;
+            overflow: elide;
+        }
+        if root.tile.show-value : Text {
+            text: root.tile.kind == "item" || root.tile.kind == "more"
+                ? root.tile.tokens-text + " · " + ContextText.part(root.tile.slot) : root.tile.tokens-text;
+            color: ContextColors.value(root.tile.slot);
+            font-size: Theme.font-2xs;
+            wrap: no-wrap;
+            overflow: elide;
+        }
+    }
+    @children
+}

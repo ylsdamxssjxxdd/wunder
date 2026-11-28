@@ -157,6 +157,10 @@ pub(super) fn normalize_model_context_message(message: Value) -> Option<Value> {
         if let Some(tool_calls) = extract_tool_calls_payload(&Value::Object(obj.clone())) {
             normalized.insert("tool_calls".to_string(), tool_calls);
         }
+        let field = crate::llm::RESPONSES_REASONING_FIELD;
+        if let Some(replay) = obj.get(field) {
+            normalized.insert(field.to_string(), replay.clone());
+        }
         let candidate = Value::Object(normalized.clone());
         if assistant_model_context_message_is_empty(&candidate) {
             return None;

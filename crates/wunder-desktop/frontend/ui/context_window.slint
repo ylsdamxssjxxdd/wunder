@@ -1,10 +1,12 @@
 // The context window card: what the thread's last request was made of.
 //
-// 对齐 magpie 的上下文窗口：标题与计数方式、已用/余量、窗口图（树图或格子）、
-// 图例、按部位筛选的内容列表。数据来自引擎在请求发出前记下的提示词构成，
-// 这里只负责呈现，不在前端推算 token。
+// 对齐参考实现：标题与计数方式、已用/余量、树图块面、紧凑图例；点块打开
+// 部位/条目详情。数据来自引擎在请求发出前记下的提示词构成，这里只负责
+// 呈现，不在前端推算 token。
 import { Theme } from "design_tokens.slint";
 import { I18n } from "i18n.slint";
+import { ContextTile, ContextTileView, ContextColors, ContextText } from "context_tile.slint";
+export { ContextTile, ContextColors, ContextText }
 import { ModalDialog } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
@@ -33,34 +35,7 @@ export struct ContextItemRow {
     item: int,
 }
 
-// A tile of the window map, in fractions of the map box.
-export struct ContextTile {
-    x: float,
-    y: float,
-    w: float,
-    h: float,
-    slot: int,
-    // part / item / more / free
-    kind: string,
-    tag: string,
-    name: string,
-    count: int,
-    tokens-text: string,
-    // Index among the part's items; -1 for a part's tile, -2 for gathered
-    // small ones, -3 for free space.
-    item: int,
-    show-name: bool,
-    show-value: bool,
-}
-
-// One cell of the block grid: the part it shows and, when the cell is small
-// enough to stand for a single item, that item's index in the part.
-export struct ContextCell {
-    slot: int,
-    item: int,
-}
-
-// One row of a tile's or a cell's hover card.
+// One row of a tile's hover card.
 export struct ContextTipRow {
     tag: string,
     name: string,
@@ -69,99 +44,9 @@ export struct ContextTipRow {
     on: bool,
 }
 
-// The palette is magpie's part palette, so the same part reads as the same
-// colour across both products.
-export global ContextColors {
-    public pure function ink(slot: int) -> color {
-        return slot == 1 ? #8B5CF6
-            : slot == 2 ? #0EA5E9
-            : slot == 3 ? #10B981
-            : slot == 4 ? #EA580C
-            : slot == 5 ? #4F46E5
-            : #A8AFB8;
-    }
-    public pure function fill(slot: int) -> color {
-        return slot == 1 ? #F2EDFE
-            : slot == 2 ? #E5F5FD
-            : slot == 3 ? #E5F7F1
-            : slot == 4 ? #FDEDE4
-            : slot == 5 ? #ECEBFC
-            : #F4F5F7;
-    }
-    public pure function line(slot: int) -> color {
-        return slot == 1 ? #E3D8FD
-            : slot == 2 ? #C5E9FA
-            : slot == 3 ? #C5E8D7
-            : slot == 4 ? #F6D7C5
-            : slot == 5 ? #D5D3F9
-            : #E2E5E9;
-    }
-    // 方块上的两级文字：部位色向正文色/次要色各调一次，和参考实现一致。
-    public pure function name(slot: int) -> color {
-        return slot == 1 ? #6D4CBD
-            : slot == 2 ? #1381B3
-            : slot == 3 ? #148F68
-            : slot == 4 ? #B14914
-            : slot == 5 ? #423CB0
-            : #6B7280;
-    }
-    public pure function value(slot: int) -> color {
-        return slot == 1 ? #8A7AC0
-            : slot == 2 ? #5699BB
-            : slot == 3 ? #57A18F
-            : slot == 4 ? #B2795E
-            : slot == 5 ? #7171B9
-            : #9AA0A8;
-    }
-    // 悬浮时同色加深一档，和参考实现的 19% / 48% 混色对应。
-    public pure function hover_fill(slot: int) -> color {
-        return slot == 1 ? #E9E0FD
-            : slot == 2 ? #D1EEFB
-            : slot == 3 ? #D2F2E7
-            : slot == 4 ? #FBDDCC
-            : slot == 5 ? #DEDCFA
-            : #EEF0F3;
-    }
-    public pure function hover_line(slot: int) -> color {
-        return slot == 1 ? #BBA6F6
-            : slot == 2 ? #82D0F4
-            : slot == 3 ? #67C9A6
-            : slot == 4 ? #F2A275
-            : slot == 5 ? #918CF1
-            : #D7DBE0;
-    }
-}
-
-// Names shared by the legend, the tiles, the tabs and the rows.
-export global ContextText {
-    public pure function part(slot: int) -> string {
-        return slot == 1 ? I18n.cx_part_system
-            : slot == 2 ? I18n.cx_part_tools
-            : slot == 3 ? I18n.cx_part_files
-            : slot == 4 ? I18n.cx_part_results
-            : slot == 5 ? I18n.cx_part_chat
-            : I18n.cx_free;
-    }
-    public pure function item(tag: string, name: string, count: int) -> string {
-        // 工具定义与工具结果同名，各补一个部位后缀，免得把「定义」当成
-        // 本次请求真的调用过这个工具。
-        return tag == "tool" && name != "" ? name + " · " + I18n.cx_item_tool
-            : tag == "result" && name != "" ? name + " · " + I18n.cx_part_results
-            : tag == "turn" ? I18n.cx_turn(count)
-            : name != "" ? name
-            : tag == "prompt" ? I18n.cx_item_prompt
-            : tag == "reminder" ? I18n.cx_item_reminder
-            : tag == "image" ? I18n.cx_image(count)
-            : I18n.cx_item_other;
-    }
-}
-
 export component ContextWindowPanel inherits Rectangle {
     in property <[ContextPartRow]> parts: [];
-    in property <[ContextItemRow]> items: [];
     in property <[ContextTile]> tiles: [];
-    // 400 cells: the part each cell shows and the item inside it.
-    in property <[ContextCell]> cells: [];
     in property <int> used-tokens: 0;
     in property <int> capacity-tokens: 0;
     in property <string> used-text: "0";
@@ -170,10 +55,9 @@ export component ContextWindowPanel inherits Rectangle {
     in property <bool> measured: false;
     in property <bool> has-data: false;
     in property <string> model-label: "";
-    // 0 = 全部, otherwise the selected part's slot.
-    in property <int> tab: 0;
-    in property <bool> look-map: true;
-    // Hover card of a tile or a cell; the strings are raw keys the panel words.
+    // 本线程已承载的对话轮次，摘要行一并展示。
+    in property <int> turns: 0;
+    // Hover card of a tile; the strings are raw keys the panel words.
     in property <bool> tip-open: false;
     in property <string> tip-kind: "";
     in property <int> tip-slot: 0;
@@ -201,15 +85,9 @@ export component ContextWindowPanel inherits Rectangle {
     in property <int> detail-row-open: -1;
     in property <string> detail-row-text: "";
     callback dismissed();
-    callback set-tab(int);
-    callback toggle-look();
     callback tile-hover(int);
     callback tile-leave();
     callback tile-open(int);
-    callback cell-hover(int);
-    callback cell-leave();
-    callback cell-open(int);
-    callback row-open(int, string, string, int);
     callback legend-open(int);
     callback map-resized(length, length);
     callback detail-row-toggle(int, int, string, string, int);
@@ -221,9 +99,6 @@ export component ContextWindowPanel inherits Rectangle {
         : 0.0;
     // 卡片实际宽度：参考实现按卡片宽度切 520 / 420 两档，而不是窗口。
     private property <length> card-w: min(920px, root.width - 24px);
-    // 50 columns on a wide card, 25 on a narrow one; 400 cells cover both.
-    private property <int> columns: root.card-w < 520px ? 25 : 50;
-    private property <int> cell-rows: root.columns == 50 ? 8 : 16;
     // 卡片高度：最多 720px，也不超出窗口可用高度。
     private property <length> card-height: min(720px, root.height - 24px);
     // 悬停时其余方块变暗，指向的那一块（同部位的格子）保持原色。
@@ -238,7 +113,6 @@ export component ContextWindowPanel inherits Rectangle {
     in-out property <length> tip-w: 0px;
     in-out property <length> tip-h: 0px;
     private property <bool> pointer-on-map: false;
-    private property <int> hovered-cell: 0;
     private property <string> tip-title: root.tip-kind == "free" ? I18n.cx_free
         : root.tip-kind == "part" ? ContextText.part(root.tip-slot)
         : ContextText.item(root.tip-tag, root.tip-name, root.tip-count);
@@ -289,44 +163,6 @@ export component ContextWindowPanel inherits Rectangle {
                         vertical-alignment: center;
                     }
                 }
-                // 视图切换放在标题行：窄卡时图例可能挤满一行，放在图例末尾会
-                // 被推出卡片边缘。
-                Rectangle {
-                    width: 56px; height: 24px;
-                    border-radius: 7px;
-                    background: Theme.panel;
-                    border-width: 1px;
-                    border-color: Theme.border;
-                    HorizontalLayout {
-                        padding-left: 2px; padding-right: 2px;
-                        padding-top: 3px; padding-bottom: 3px;
-                        spacing: 2px;
-                        Rectangle {
-                            width: 24px; height: 16px; border-radius: 5px;
-                            background: root.look-map ? Theme.surface : transparent;
-                            border-width: root.look-map ? 1px : 0px; border-color: Theme.border;
-                            Image {
-                                x: 5px; y: 1px; width: 14px; height: 14px;
-                                source: @image-url("../assets/icons/context-bars.svg");
-                                colorize: root.look-map ? Theme.text : Theme.muted;
-                                image-fit: contain;
-                            }
-                            TouchArea { mouse-cursor: pointer; clicked => { root.toggle-look(); } }
-                        }
-                        Rectangle {
-                            width: 24px; height: 16px; border-radius: 5px;
-                            background: root.look-map ? transparent : Theme.surface;
-                            border-width: root.look-map ? 0px : 1px; border-color: Theme.border;
-                            Image {
-                                x: 5px; y: 1px; width: 14px; height: 14px;
-                                source: @image-url("../assets/icons/context-grid.svg");
-                                colorize: root.look-map ? Theme.muted : Theme.text;
-                                image-fit: contain;
-                            }
-                            TouchArea { mouse-cursor: pointer; clicked => { root.toggle-look(); } }
-                        }
-                    }
-                }
                 Rectangle {
                     width: 24px; height: 24px; border-radius: 6px;
                     background: card-close-hit.has-hover ? Theme.hover : transparent;
@@ -362,97 +198,56 @@ export component ContextWindowPanel inherits Rectangle {
                 }
                 Text {
                     height: 16px;
-                    text: I18n.cx_summary(round(root.fill * 100.0) + "%", root.free-text);
+                    text: I18n.cx_summary(
+                        round(root.fill * 100.0) + "%", root.free-text, root.turns
+                    );
                     color: Theme.muted; font-size: Theme.font-xs;
                     vertical-alignment: center;
                 }
             }
 
             chart := Rectangle {
-                // 参考实现的比例：宽卡 3.1:1，窄卡 2:1，高 132–232px 之间；
-                // 卡片本身不高时再让出空间给图例、页签与内容列表，避免被裁掉。
-                // 格子视图不占满这张地图：400 格按列宽决定格边，高度随行数
-                // 收缩，和参考实现里 waffle 的自然高度一致。
-                height: root.look-map
-                    ? clamp(
-                        min(parent.width / (parent.width <= 520px ? 2.0 : 3.1), root.card-height - 300px),
-                        96px,
-                        232px)
-                    : root.cell-rows * ((self.width - (root.columns - 1) * 2px) / root.columns)
-                        + (root.cell-rows - 1) * 2px;
+                // 地图占满卡片扣除头部/摘要/图例后的剩余空间，块面尽量大；
+                // 几何仍由投影按地图实际宽高比例换算，这里不加硬编码尺寸。
+                vertical-stretch: 1;
+                min-height: 240px;
                 background: transparent;
+                // 回传投影用的内容盒：VerticalLayout 已扣掉卡片 padding；
+                // 再扣掉瓦片两侧 1.5px 内缩（合计 3px），投影按安全区求解，
+                // 最后一行块面不会压到地图下边缘。
+                property <length> inner-w: max(0px, self.width - 3px);
+                property <length> inner-h: max(0px, self.height - 3px);
                 // 树图按地图的实际宽高重新排；窗口或卡片尺寸变了就重排一次。
-                init => { root.map-resized(self.width, self.height); }
-                changed width => { root.map-resized(self.width, self.height); }
-                changed height => { root.map-resized(self.width, self.height); }
+                init => { root.map-resized(self.inner-w, self.inner-h); }
+                changed width => { root.map-resized(self.inner-w, self.inner-h); }
+                changed height => { root.map-resized(self.inner-w, self.inner-h); }
 
-                if root.has-data && root.look-map : Rectangle {
+                if root.has-data : Rectangle {
                     // 树图：部位一块、其内条目再切一块，空余空间斜纹
-                    for tile[i] in root.tiles : Rectangle {
-                        x: tile.x * chart.width + 1.5px;
-                        y: tile.y * chart.height + 1.5px;
-                        width: max(0px, tile.w * chart.width - 3px);
-                        height: max(0px, tile.h * chart.height - 3px);
-                        border-radius: 7px;
-                        background: tile.kind == "free"
-                            ? #FAFBFC
-                            : tile-hit.has-hover ? ContextColors.hover_fill(tile.slot) : ContextColors.fill(tile.slot);
-                        border-width: 1px;
-                        border-color: tile.kind == "free"
-                            ? #E6E8EB
-                            : tile-hit.has-hover ? ContextColors.hover_line(tile.slot) : ContextColors.line(tile.slot);
+                    for tile-data[i] in root.tiles : ContextTileView {
+                        tile: tile-data;
+                        active: tile-hit.has-hover;
+                        x: tile-data.x * chart.width + 1.5px;
+                        y: tile-data.y * chart.height + 1.5px;
+                        width: max(0px, tile-data.w * chart.width - 3px);
+                        height: max(0px, tile-data.h * chart.height - 3px);
                         opacity: root.hovered-tile >= 0 ? (root.hovered-tile == i ? 1.0 : 0.32)
                             : root.focus-slot == 0 ? 1.0
-                            : tile.kind == "free" ? (root.focus-slot == -1 ? 1.0 : 0.32)
-                            : tile.slot == root.focus-slot ? (root.focus-item < 0 || tile.kind == "part" || tile.item == root.focus-item ? 1.0 : 0.32)
+                            : tile-data.kind == "free" ? (root.focus-slot == -1 ? 1.0 : 0.32)
+                            : tile-data.slot == root.focus-slot ? (root.focus-item < 0 || tile-data.kind == "part" || tile-data.item == root.focus-item ? 1.0 : 0.32)
                             : 0.32;
-                        if tile.kind == "free" : Image {
-                            width: parent.width; height: parent.height;
-                            source: @image-url("../assets/context-hatch.svg");
-                            image-fit: ImageFit.fill;
-                        }
-                        // 参考实现的留白：普通 7px 9px，矮块 5px 9px，太小的块
-                        // 不写字也不留白（否则文字会被方块边缘切掉）。
-                        if tile.show-name : VerticalLayout {
-                            padding-left: 9px;
-                            padding-right: 9px;
-                            padding-top: tile.show-value ? 7px : 5px;
-                            padding-bottom: tile.show-value ? 7px : 5px;
-                            alignment: start;
-                            spacing: 1px;
-                            Text {
-                                text: tile.kind == "part" ? ContextText.part(tile.slot)
-                                    : tile.kind == "item" ? ContextText.item(tile.tag, tile.name, tile.count)
-                                    : tile.kind == "more" ? I18n.cx_more_items(tile.count)
-                                    : I18n.cx_free;
-                                color: tile.kind == "free" ? Theme.muted : ContextColors.name(tile.slot);
-                                font-size: Theme.font-xs; font-weight: 600;
-                                wrap: no-wrap; overflow: elide;
-                            }
-                            if tile.show-value : Text {
-                                // 参考实现的副行：条目报「值 · 部位」，部位只报值。
-                                text: tile.kind == "item" || tile.kind == "more"
-                                    ? tile.tokens-text + " · " + ContextText.part(tile.slot)
-                                    : tile.kind == "free"
-                                        ? tile.tokens-text + " · " + Math.round(root.fill * 100.0) + "%"
-                                        : tile.tokens-text;
-                                color: ContextColors.value(tile.slot);
-                                font-size: Theme.font-2xs;
-                                wrap: no-wrap; overflow: elide;
-                            }
-                        }
                         tile-hit := TouchArea {
-                            mouse-cursor: tile.kind == "free" ? default : pointer;
+                            mouse-cursor: tile-data.kind == "free" ? default : pointer;
                             changed has-hover => {
                                 if (self.has-hover) {
                                     root.hovered-tile = i;
-                                    root.focus-slot = tile.kind == "free" ? -1 : tile.slot;
-                                    root.focus-item = tile.kind == "item" ? tile.item : -1;
+                                    root.focus-slot = tile-data.kind == "free" ? -1 : tile-data.slot;
+                                    root.focus-item = tile-data.kind == "item" ? tile-data.item : -1;
                                     root.pointer-on-map = true;
-                                    root.tip-x = tile.x * chart.width;
-                                    root.tip-y = tile.y * chart.height;
-                                    root.tip-w = tile.w * chart.width;
-                                    root.tip-h = tile.h * chart.height;
+                                    root.tip-x = tile-data.x * chart.width;
+                                    root.tip-y = tile-data.y * chart.height;
+                                    root.tip-w = tile-data.w * chart.width;
+                                    root.tip-h = tile-data.h * chart.height;
                                     root.tile-hover(i);
                                 } else if (root.pointer-on-map && root.hovered-tile == i) {
                                     root.pointer-on-map = false;
@@ -462,70 +257,7 @@ export component ContextWindowPanel inherits Rectangle {
                                     root.tile-leave();
                                 }
                             }
-                            clicked => { if (tile.kind != "free") { root.tile-open(i); } }
-                        }
-                    }
-                }
-
-                if root.has-data && !root.look-map : grid := Rectangle {
-                    // 格子：窗口切成 400 份，每格 0.25%，按部位着色。格子的
-                    // 边长同时受宽高约束，窄卡也不会溢出地图。
-                    width: parent.width;
-                    height: parent.height;
-                    property <length> side: min(
-                        (self.width - (root.columns - 1) * 2px) / root.columns,
-                        (self.height - (root.cell-rows - 1) * 2px) / root.cell-rows);
-                    property <length> pad-x: (self.width - (root.columns * self.side + (root.columns - 1) * 2px)) / 2;
-                    property <length> pad-y: (self.height - (root.cell-rows * self.side + (root.cell-rows - 1) * 2px)) / 2;
-                    for cell[i] in root.cells : Rectangle {
-                        x: grid.pad-x + Math.mod(i, root.columns) * (grid.side + 2px);
-                        y: grid.pad-y + Math.floor(i / root.columns) * (grid.side + 2px);
-                        width: grid.side;
-                        height: grid.side;
-                        border-radius: 2px;
-                        background: cell.slot == 0 ? Theme.selected : ContextColors.ink(cell.slot);
-                        opacity: root.focus-slot == 0 ? 1.0
-                            : cell.slot == 0 ? (root.focus-slot == -1 ? 1.0 : 0.16)
-                            : cell.slot == root.focus-slot ? (root.focus-item < 0 || cell.item == root.focus-item ? 1.0 : 0.16)
-                            : 0.16;
-                    }
-                    grid-hit := TouchArea {
-                        mouse-cursor: pointer;
-                        // `moved` is only delivered while the pointer is held
-                        // down, so hover needs pointer-event; otherwise the
-                        // grid stays silent until a click.
-                        pointer-event(event) => {
-                            root.hovered-cell = Math.max(0, Math.min(399,
-                                Math.floor((self.mouse-y - grid.pad-y) / (grid.side + 2px)) * root.columns
-                                + Math.floor((self.mouse-x - grid.pad-x) / (grid.side + 2px))));
-                            root.pointer-on-map = true;
-                            root.hovered-tile = -1;
-                            root.focus-slot = root.cells[root.hovered-cell].slot == 0
-                                ? -1
-                                : root.cells[root.hovered-cell].slot;
-                            root.focus-item = -1;
-                            root.tip-x = grid.pad-x + Math.mod(root.hovered-cell, root.columns) * (grid.side + 2px);
-                            root.tip-y = grid.pad-y + Math.floor(root.hovered-cell / root.columns) * (grid.side + 2px);
-                            root.tip-w = grid.side;
-                            root.tip-h = grid.side;
-                            root.cell-hover(root.hovered-cell);
-                        }
-                        changed has-hover => {
-                            if (!self.has-hover && root.pointer-on-map) {
-                                root.pointer-on-map = false;
-                                root.focus-slot = 0;
-                                root.focus-item = -1;
-                                root.cell-leave();
-                            }
-                        }
-                        clicked => {
-                            // 点击不一定先经过 moved（触控尤其如此）；按点击位置
-                            // 重新算格子，否则会一直落到默认的第 0 格（系统提示）。
-                            let at = Math.max(0, Math.min(399,
-                                Math.floor((self.mouse-y - grid.pad-y) / (grid.side + 2px)) * root.columns
-                                + Math.floor((self.mouse-x - grid.pad-x) / (grid.side + 2px))));
-                            root.hovered-cell = at;
-                            root.cell-open(at);
+                            clicked => { if (tile-data.kind != "free") { root.tile-open(i); } }
                         }
                     }
                 }
@@ -711,138 +443,6 @@ export component ContextWindowPanel inherits Rectangle {
                 }
             }
 
-            if root.has-data : Rectangle {
-                height: 1px; background: Theme.border;
-            }
-
-            if root.has-data : HorizontalLayout {
-                height: 26px;
-                spacing: 8px;
-                alignment: space-between;
-                Text {
-                    text: I18n.cx_contents;
-                    color: Theme.text; font-size: Theme.font-sm; font-weight: 600;
-                    vertical-alignment: center;
-                }
-                // 分段页签：全部 + 各部位，灰底一条、选中一颗白底，和参考实现一致。
-                Rectangle {
-                    height: 24px;
-                    width: tabs-row.preferred-width + 4px;
-                    border-radius: 12px;
-                    background: Theme.panel;
-                    tabs-row := HorizontalLayout {
-                        padding: 2px;
-                        spacing: 2px;
-                        alignment: start;
-                        Rectangle {
-                            height: 20px; border-radius: 10px;
-                            width: all-label.preferred-width + 16px;
-                            background: root.tab == 0 ? Theme.surface : (all-hit.has-hover ? Theme.hover : transparent);
-                            border-width: root.tab == 0 ? 1px : 0px;
-                            border-color: Theme.border;
-                            all-label := Text {
-                                x: 8px; width: self.preferred-width;
-                                text: I18n.cx_all;
-                                color: root.tab == 0 ? Theme.text : Theme.muted;
-                                font-size: Theme.font-xs; font-weight: 600;
-                                vertical-alignment: center;
-                            }
-                            all-hit := TouchArea { mouse-cursor: pointer; clicked => { root.set-tab(0); } }
-                        }
-                        for part in root.parts : Rectangle {
-                            height: 20px; border-radius: 10px;
-                            width: tab-label.preferred-width + 16px;
-                            background: root.tab == part.slot ? Theme.surface : (tab-hit.has-hover ? Theme.hover : transparent);
-                            border-width: root.tab == part.slot ? 1px : 0px;
-                            border-color: Theme.border;
-                            tab-label := Text {
-                                x: 8px; width: self.preferred-width;
-                                text: ContextText.part(part.slot);
-                                color: root.tab == part.slot ? Theme.text : Theme.muted;
-                                font-size: Theme.font-xs; font-weight: 600;
-                                vertical-alignment: center;
-                            }
-                            tab-hit := TouchArea { mouse-cursor: pointer; clicked => { root.set-tab(part.slot); } }
-                        }
-                    }
-                }
-            }
-
-            if root.has-data : ScrollView {
-                vertical-stretch: 1;
-                horizontal-scrollbar-policy: always-off;
-                VerticalLayout {
-                    spacing: 0px;
-                    alignment: start;
-                    // 给覆盖式滚动条留出右侧一条空隙，别让它压住 token 数字。
-                    padding-right: 12px;
-                    if root.items.length == 0 : Text {
-                        height: 32px;
-                        text: I18n.cx_nothing;
-                        color: Theme.muted; font-size: Theme.font-sm;
-                        horizontal-alignment: center; vertical-alignment: center;
-                    }
-                    for item in root.items : Rectangle {
-                        height: 28px;
-                        width: 100%;
-                        border-radius: 6px;
-                        background: item-hit.has-hover ? Theme.hover : transparent;
-                        Rectangle {
-                            width: 6px; height: 6px; border-radius: 3px;
-                            x: 6px; y: (parent.height - self.height) / 2;
-                            background: ContextColors.ink(item.slot);
-                        }
-                        Text {
-                            x: 18px; y: 0px;
-                            width: root.card-w < 420px ? parent.width - 82px : parent.width - 190px;
-                            height: parent.height;
-                            text: ContextText.item(item.tag, item.name, item.count);
-                            color: Theme.text; font-size: Theme.font-sm; font-weight: 500;
-                            vertical-alignment: center; overflow: elide;
-                        }
-                        // 只有可数的条目（工具、结果）标份数；轮次与图片的计数
-                        // 已经在文案里（「第 3 轮」「图片 ×4」）。
-                        if item.count > 1 && (item.tag == "tool" || item.tag == "result") : Text {
-                            x: parent.width - 178px; y: 0px; height: parent.height;
-                            text: "×" + item.count;
-                            color: Theme.muted; font-size: Theme.font-xs;
-                            vertical-alignment: center;
-                        }
-                        // 窄卡放不下迷你条：名称让出位置，值和名称仍在。
-                        if root.card-w >= 420px : Rectangle {
-                            x: parent.width - 150px; y: (parent.height - 4px) / 2;
-                            width: 72px; height: 4px; border-radius: 2px;
-                            background: Theme.selected;
-                            Rectangle {
-                                x: 0px; y: 0px;
-                                width: max(2px, parent.width * item.ratio);
-                                height: parent.height; border-radius: 2px;
-                                background: ContextColors.ink(item.slot);
-                            }
-                        }
-                        Text {
-                            x: parent.width - 72px; y: 0px; width: 72px; height: parent.height;
-                            text: item.tokens-text;
-                            color: Theme.text-secondary; font-size: Theme.font-xs;
-                            vertical-alignment: center; horizontal-alignment: right;
-                        }
-                        item-hit := TouchArea {
-                            mouse-cursor: pointer;
-                            changed has-hover => {
-                                if (self.has-hover) {
-                                    root.hovered-tile = -1;
-                                    root.focus-slot = item.slot;
-                                    root.focus-item = item.item;
-                                } else {
-                                    root.focus-slot = 0;
-                                    root.focus-item = -1;
-                                }
-                            }
-                            clicked => { root.row-open(item.slot, item.tag, item.name, item.count); }
-                        }
-                    }
-                }
-            }
         }
     }
 

@@ -20,9 +20,12 @@ use super::execute_support::*;
 /// 解释模型为什么突然“忘了”此前的上下文。
 const CONTEXT_SHRINK_ALERT_TOKENS: i64 = 1024;
 
-fn attach_anthropic_thinking(target: &mut Value, blocks: &Option<Value>) {
+fn attach_provider_reasoning(target: &mut Value, blocks: &Option<Value>, responses: &Option<Value>) {
     if let Some(blocks) = blocks {
         target["anthropic_thinking_blocks"] = blocks.clone();
+    }
+    if let Some(responses) = responses {
+        target[crate::llm::RESPONSES_REASONING_FIELD] = responses.clone();
     }
 }
 
@@ -1098,7 +1101,7 @@ impl Orchestrator {
                         turn.max(0) as u64,
                     );
                 }
-                let (mut content, reasoning, usage, mut tool_calls_payload, round_speed, output) = loop {
+                let (mut content, reasoning, usage, mut tool_calls_payload, round_speed, mut output) = loop {
                     match Box::pin(self.call_llm(
                             &apply_context_window_limit_hint(
                                 &llm_config,
@@ -1334,6 +1337,7 @@ impl Orchestrator {
                 // 必须在 observe 消费 output 之前留下。
                 let transport_recovery_used = output.transport_recovery_used;
                 let anthropic_thinking_blocks = output.anthropic_thinking_blocks.clone();
+                let responses_reasoning = output.responses_reasoning.take();
                 empty_output_guard.observe(output);
                 last_response = Some((content.clone(), reasoning.clone()));
                 turn_decode_speed.record_summary(&round_speed);
@@ -1529,9 +1533,10 @@ impl Orchestrator {
                     if !reasoning.trim().is_empty() {
                         assistant_model_message["reasoning_content"] = json!(reasoning.clone());
                     }
-                    attach_anthropic_thinking(
+                    attach_provider_reasoning(
                         &mut assistant_model_message,
                         &anthropic_thinking_blocks,
+                        &responses_reasoning,
                     );
                     messages.push(assistant_model_message.clone());
                     if self.apply_agent_messages(agent_inbox.as_ref().expect("active inbox"),
@@ -1559,9 +1564,10 @@ impl Orchestrator {
                             emitter.accumulated_tool_calls(),
                         );
                         let mut assistant_meta = json!({ "message_stats": message_stats });
-                        attach_anthropic_thinking(
+                        attach_provider_reasoning(
                             &mut assistant_meta,
                             &anthropic_thinking_blocks,
+                            &responses_reasoning,
                         );
                         self.try_append_chat(
                             &user_id,
@@ -1605,9 +1611,10 @@ impl Orchestrator {
                     if let Some(tool_calls_payload) = assistant_history.tool_calls.clone() {
                         assistant_message["tool_calls"] = tool_calls_payload;
                     }
-                    attach_anthropic_thinking(
+                    attach_provider_reasoning(
                         &mut assistant_message,
                         &anthropic_thinking_blocks,
+                        &responses_reasoning,
                     );
                     messages.push(assistant_message);
                 }
@@ -1624,7 +1631,7 @@ impl Orchestrator {
                     );
                     let mut assistant_meta =
                         json!({ "type": "tool_call", "message_stats": message_stats });
-                    attach_anthropic_thinking(&mut assistant_meta, &anthropic_thinking_blocks);
+                    attach_provider_reasoning(&mut assistant_meta, &anthropic_thinking_blocks, &responses_reasoning);
                     self.try_append_chat(
                         &user_id,
                         &session_id,

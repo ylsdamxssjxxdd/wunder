@@ -185,6 +185,7 @@ fn sanitize_chat_messages_for_request(messages: &[ChatMessage]) -> ChatMessageRe
                 content: message.content.clone(),
                 reasoning_content: message.reasoning_content.clone(),
                 anthropic_thinking_blocks: message.anthropic_thinking_blocks.clone(),
+                responses_reasoning: message.responses_reasoning.clone(),
                 tool_calls,
                 tool_call_id: message.tool_call_id.clone(),
             }
@@ -532,6 +533,10 @@ impl Orchestrator {
                     content,
                     reasoning_content,
                     anthropic_thinking_blocks,
+                    responses_reasoning: message
+                        .get(crate::llm::RESPONSES_REASONING_FIELD)
+                        .filter(|_| message["role"] == "assistant")
+                        .cloned(),
                     tool_calls,
                     tool_call_id,
                 })
@@ -742,6 +747,13 @@ impl Orchestrator {
         if crate::llm::normalize_provider(effective_config.provider.as_deref()) != "anthropic" {
             for message in &mut chat_messages.messages {
                 message.anthropic_thinking_blocks = None;
+            }
+        }
+        if crate::llm::resolve_openai_api_mode(&effective_config) != crate::llm::OpenAiApiMode::Responses
+            || crate::llm::normalize_provider(effective_config.provider.as_deref()) == "anthropic"
+        {
+            for message in &mut chat_messages.messages {
+                message.responses_reasoning = None;
             }
         }
         // The image budget in the executor keeps the request well below the
@@ -1299,6 +1311,7 @@ impl Orchestrator {
                     let transport_recovery_used = response.transport_recovery_used;
                     let finish_reason = response.finish_reason;
                     let anthropic_thinking_blocks = response.anthropic_thinking_blocks;
+                    let responses_reasoning = response.responses_reasoning;
                     let response_finished_at = Instant::now();
                     let mut content = response.content;
                     let reasoning = response.reasoning;
@@ -1375,6 +1388,7 @@ impl Orchestrator {
                         OutputDiagnostics::new(&effective_config, finish_reason, &usage);
                     output.transport_recovery_used = transport_recovery_used;
                     output.anthropic_thinking_blocks = anthropic_thinking_blocks;
+                    output.responses_reasoning = responses_reasoning;
                     if emit_events {
                         let tool_calls_snapshot = tool_calls.clone();
                         let mut output_payload = json!({
@@ -1936,6 +1950,7 @@ mod tests {
             content: json!(content),
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         }

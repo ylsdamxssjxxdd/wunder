@@ -52,10 +52,9 @@ const { t } = useI18n();
 .cx-legend {
   display: flex;
   align-items: center;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   flex: 0 0 auto;
-  gap: 0 14px;
-  height: 20px;
+  gap: 6px 14px;
   min-height: 20px;
   min-width: 0;
   overflow: hidden;

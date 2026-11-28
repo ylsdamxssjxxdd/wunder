@@ -9,7 +9,9 @@
 
 use super::{PgConn, PostgresStorage};
 use crate::storage::rollout::{ROLLOUT_MAX_APPEND_BYTES, ROLLOUT_MAX_RECORD_BYTES};
-use crate::storage::thread_store::{compact_model_context_payload, compact_replayed_model_message};
+use crate::storage::thread_store::{
+    compact_model_context_payload, compact_replayed_model_message, strip_responses_reasoning_from_chat_event,
+};
 use crate::storage::StorageLifecycle;
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
@@ -137,7 +139,7 @@ impl PostgresThreadStore {
             .as_str()
             .map(TurnId::new)
             .transpose()?;
-        let payload = sanitize_persisted_chat_payload(&annotate_chat_payload(payload));
+        let mut payload = sanitize_persisted_chat_payload(&annotate_chat_payload(payload));
         let now = Utc::now().timestamp_millis();
         let checkpoint = payload
             .pointer("/meta/replacement_history")
@@ -185,6 +187,7 @@ impl PostgresThreadStore {
                 payload: model_message,
             }));
         }
+        strip_responses_reasoning_from_chat_event(&mut payload);
         records.push(CanonicalRecord::Event(CanonicalEvent::ItemCompleted(
             CanonicalItem {
                 item_id,

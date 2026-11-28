@@ -88,6 +88,10 @@ pub(crate) fn compact_model_context_payload(payload: serde_json::Value) -> serde
         {
             compact.insert("anthropic_thinking_blocks".to_string(), thinking.clone());
         }
+        let field = crate::llm::RESPONSES_REASONING_FIELD;
+        if let Some(replay) = map.get(field) {
+            compact.insert(field.to_string(), replay.clone());
+        }
         if let Some(tool_calls) = map
             .get("tool_calls")
             .or_else(|| map.get("tool_call"))
@@ -114,6 +118,22 @@ pub(crate) fn compact_replayed_model_message(
     // semantics. Empty terminal-only assistant rows are intentionally omitted.
     let normalized = crate::services::history::build_message_from_item(&payload, true)?;
     Some(compact_model_context_payload(normalized))
+}
+
+pub(crate) fn strip_responses_reasoning_from_chat_event(payload: &mut serde_json::Value) {
+    let field = crate::llm::RESPONSES_REASONING_FIELD;
+    let Some(payload) = payload.as_object_mut() else {
+        return;
+    };
+    payload.remove(field);
+    if let Some(meta) = payload.get_mut("meta").and_then(serde_json::Value::as_object_mut) {
+        meta.remove(field);
+        if let Some(history) = meta.get_mut("replacement_history").and_then(serde_json::Value::as_array_mut) {
+            for item in history {
+                strip_responses_reasoning_from_chat_event(item);
+            }
+        }
+    }
 }
 
 struct StressRecordBatch {
@@ -886,7 +906,7 @@ impl LocalThreadStore {
             .as_str()
             .map(TurnId::new)
             .transpose()?;
-        let payload = sanitize_persisted_chat_payload(&annotate_chat_payload(payload));
+        let mut payload = sanitize_persisted_chat_payload(&annotate_chat_payload(payload));
         let now = Utc::now().timestamp_millis();
         let checkpoint = payload
             .pointer("/meta/replacement_history")
@@ -933,6 +953,7 @@ impl LocalThreadStore {
                 payload: model_message,
             }));
         }
+        strip_responses_reasoning_from_chat_event(&mut payload);
         records.push(CanonicalRecord::Event(CanonicalEvent::ItemCompleted(
             CanonicalItem {
                 item_id,

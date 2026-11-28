@@ -5,7 +5,7 @@ ENTRIES = [
     ("cx_title", "上下文窗口", "Context window"),
     ("cx_estimate", "估算", "Estimated"),
     ("cx_measured", "已计量", "Measured"),
-    ("cx_summary", "已用 {} · 剩余 {}", "{} used · {} free", ["pct", "free"]),
+    ("cx_summary", "已用 {} · 剩余 {} · 承载 {} 轮对话", "{} used · {} free · {} turns", ["pct", "free", "turns"]),
     ("cx_free", "剩余", "Free"),
     ("cx_more_items", "另外 {} 项", "{} more", ["count"]),
     ("cx_item_prompt", "提示词", "Prompt"),
@@ -19,9 +19,6 @@ ENTRIES = [
     ("cx_part_files", "图片", "Images"),
     ("cx_part_results", "结果", "Results"),
     ("cx_part_chat", "会话", "Chat"),
-    ("cx_contents", "内容", "Contents"),
-    ("cx_all", "全部", "All"),
-    ("cx_nothing", "这里没有内容", "Nothing here"),
     (
         "cx_no_request",
         "本线程还没有发出请求；第一次发送后，这里显示它实际占用的构成。",

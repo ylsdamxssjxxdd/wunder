@@ -7,7 +7,7 @@ use crate::project::{
     self, LiveTurn, RowData, STATUS_DONE, STATUS_FAILED, STATUS_RUNNING, STATUS_STOPPED,
 };
 use crate::{
-    CtxCell, CtxItemRow, CtxPartRow, CtxTile, MobileChannelDraft, MobileCronDraft, MobileCronJob,
+    ContextTile, CtxItemRow, CtxPartRow, MobileChannelDraft, MobileCronDraft, MobileCronJob,
     MobileCronRun, MobileKnowledgeDraft, MobileMcpDraft, MobileMemory, MobileMemoryDraft,
     MobileSession, MobileTool, MobileToolFile, MobileToolResource, MobileWorkspace, ModelCard,
     TrajectoryAudit, TrajectoryBar, TrajectoryItem, TrajectorySegment, WorkspaceFile,
@@ -46,14 +46,11 @@ pub enum Command {
     ReleaseWaiting,
     Stop,
     SelectModel(String),
-    // 上下文窗口卡片：打开/关闭、部位筛选、条目与部位详情、格子点按。
+    // 上下文窗口卡片：打开/关闭、部位与条目详情、地图块面点按。
     OpenContextWindow,
     CloseContextWindow,
-    ContextFilterChanged(i32),
-    ContextRowOpen(i32, String, String, i64),
     ContextLegendOpen(i32),
-    ContextCellOpen(i32),
-    ContextTileOpen(i32),
+    ContextTileOpen(i32, String, String, i64),
     ContextMapResized(f64, f64),
     ContextDetailRowToggle(i32, i32, String, String, i64),
     ContextDetailDismissed,
@@ -1194,11 +1191,9 @@ pub struct Shared {
     pub context_rev: u64,
     // ---- 上下文窗口卡片（与桌面版同一快照口径） ----------------------
     /// 卡片最近一次读到的快照缓存；切线程时整份丢弃，部位筛选只从它重投影。
-    pub ctx_record: Option<crate::context_window::CtxRecord>,
+    pub ctx_record: Option<wunder_desktop::context_map::Record>,
     pub ctx_parts: Vec<CtxPartRow>,
-    pub ctx_items: Vec<CtxItemRow>,
-    pub ctx_cells: Vec<CtxCell>,
-    pub ctx_tiles: Vec<CtxTile>,
+    pub ctx_tiles: Vec<ContextTile>,
     pub ctx_has_data: bool,
     pub ctx_measured: bool,
     pub ctx_used_text: String,
@@ -1207,8 +1202,8 @@ pub struct Shared {
     pub ctx_pct_text: String,
     pub ctx_model_label: String,
     pub ctx_turns_text: String,
-    pub ctx_tab: i32,
     pub ctx_rev: u64,
+    pub ctx_tiles_rev: u64,
     // 树图盒子的最近一次像素尺寸；回传后按它重排两级树图。
     pub ctx_map_w: f64,
     pub ctx_map_h: f64,
@@ -1633,25 +1628,19 @@ fn run(
                     state.ctx_detail_rev = state.ctx_detail_rev.wrapping_add(1);
                 }
             }
-            Command::ContextFilterChanged(slot) => {
-                if let Ok(mut state) = shared.lock() {
-                    state.ctx_tab = slot;
-                    project_context_window_locked(&mut state);
-                    state.ctx_rev = state.ctx_rev.wrapping_add(1);
-                }
-            }
-            Command::ContextRowOpen(slot, tag, name, count) => {
+            Command::ContextLegendOpen(slot) => open_context_part_detail(&shared, slot),
+            Command::ContextTileOpen(slot, tag, name, count) => {
                 open_context_item_detail(&desktop, &shared, slot, &tag, &name, count);
             }
-            Command::ContextLegendOpen(slot) => open_context_part_detail(&shared, slot),
-            Command::ContextCellOpen(index) => open_context_cell(&desktop, &shared, index),
-            Command::ContextTileOpen(index) => open_context_tile(&desktop, &shared, index),
             Command::ContextMapResized(w, h) => {
-                if let Ok(mut state) = shared.lock() {
-                    state.ctx_map_w = w;
-                    state.ctx_map_h = h;
-                    project_context_window_locked(&mut state);
-                    state.ctx_rev = state.ctx_rev.wrapping_add(1);
+                if w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 {
+                    if let Ok(mut state) = shared.lock() {
+                        if (state.ctx_map_w - w).abs() >= 0.5 || (state.ctx_map_h - h).abs() >= 0.5 {
+                            state.ctx_map_w = w;
+                            state.ctx_map_h = h;
+                            project_context_tiles_locked(&mut state);
+                        }
+                    }
                 }
             }
             Command::ContextDetailRowToggle(index, slot, tag, name, count) => {
@@ -3786,9 +3775,8 @@ fn reset_context_window(shared: &Arc<Mutex<Shared>>) {
     if let Ok(mut state) = shared.lock() {
         state.ctx_record = None;
         state.ctx_parts.clear();
-        state.ctx_items.clear();
-        state.ctx_cells.clear();
         state.ctx_tiles.clear();
+        state.ctx_tiles_rev = state.ctx_tiles_rev.wrapping_add(1);
         state.ctx_has_data = false;
         state.ctx_measured = false;
         state.ctx_used_text = "—".into();
@@ -3797,7 +3785,6 @@ fn reset_context_window(shared: &Arc<Mutex<Shared>>) {
         state.ctx_pct_text.clear();
         state.ctx_model_label.clear();
         state.ctx_turns_text.clear();
-        state.ctx_tab = 0;
         clear_context_detail_locked(&mut state);
         state.ctx_rev = state.ctx_rev.wrapping_add(1);
         state.ctx_detail_rev = state.ctx_detail_rev.wrapping_add(1);
@@ -3819,37 +3806,38 @@ fn clear_context_detail_locked(state: &mut Shared) {
     state.ctx_detail_row_text.clear();
 }
 
-/// 把缓存快照重投影成卡片模型；部位筛选变化时从缓存重算，不回读工作区。
 fn project_context_window_locked(state: &mut Shared) {
-    let Some(record) = state.ctx_record.clone() else {
+    let Some(record) = state.ctx_record.as_ref() else {
         return;
     };
-    let summary = crate::context_window::summary(&record);
+    let summary = crate::context_window::summary(record);
     state.ctx_has_data = record.has_data();
-    state.ctx_measured = record.measured();
+    state.ctx_measured = record.measured;
     state.ctx_used_text = summary.used_text;
     state.ctx_capacity_text = summary.capacity_text;
     state.ctx_free_text = summary.free_text;
     state.ctx_pct_text = summary.pct_text;
     state.ctx_model_label = summary.model_label;
     state.ctx_turns_text = summary.turns_text;
-    if record.has_data() {
-        state.ctx_parts = crate::context_window::part_rows(&record);
-        state.ctx_items = crate::context_window::item_rows(&record, state.ctx_tab);
-        state.ctx_cells = crate::context_window::cells(&record);
-        let (map_w, map_h) = if state.ctx_map_w > 120.0 && state.ctx_map_h > 60.0 {
-            (state.ctx_map_w, state.ctx_map_h)
-        } else {
-            crate::context_window::default_map_box()
-        };
-        state.ctx_tiles = crate::context_window::tiles(&record, map_w, map_h);
+    state.ctx_parts = if record.has_data() {
+        crate::context_window::part_rows(record)
     } else {
-        // 空线程：只留容量与提示，不伪造五部位构成与方块格。
-        state.ctx_parts.clear();
-        state.ctx_items.clear();
-        state.ctx_cells.clear();
-        state.ctx_tiles.clear();
-    }
+        Vec::new()
+    };
+    project_context_tiles_locked(state);
+}
+
+fn project_context_tiles_locked(state: &mut Shared) {
+    let Some(record) = state.ctx_record.as_ref() else {
+        return;
+    };
+    let (w, h) = if state.ctx_map_w > 0.0 && state.ctx_map_h > 0.0 {
+        (state.ctx_map_w, state.ctx_map_h)
+    } else {
+        crate::context_window::DEFAULT_MAP_BOX
+    };
+    state.ctx_tiles = crate::context_window::tiles(record, w, h);
+    state.ctx_tiles_rev = state.ctx_tiles_rev.wrapping_add(1);
 }
 
 /// 打开卡片、回合落定或切换模型后重读一次引擎记录的构成。
@@ -3872,8 +3860,11 @@ fn refresh_context_window(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, 
             return;
         }
     };
-    let record = crate::context_window::from_native(native);
+    let record = wunder_desktop::context_map::Record::from_native(native);
     if let Ok(mut state) = shared.lock() {
+        if state.session_id != session {
+            return;
+        }
         state.ctx_record = Some(record);
         project_context_window_locked(&mut state);
         state.ctx_rev = state.ctx_rev.wrapping_add(1);
@@ -3897,12 +3888,16 @@ fn open_context_item_detail(
     let Ok(mut state) = shared.lock() else {
         return;
     };
-    let Some(record) = state.ctx_record.clone() else {
+    let Some(record) = state.ctx_record.as_ref() else {
         return;
     };
-    let Some(tokens) = crate::context_window::find_item(&record, slot, tag, name, count) else {
+    if state.session_id != session {
+        return;
+    }
+    let Some(tokens) = crate::context_window::find_item(record, slot, tag, name, count) else {
         return;
     };
+    let pct = crate::context_window::percent(tokens, record.tokens);
     clear_context_detail_locked(&mut state);
     state.ctx_detail_open = true;
     state.ctx_detail_kind = "item".into();
@@ -3911,7 +3906,7 @@ fn open_context_item_detail(
     state.ctx_detail_name = name.into();
     state.ctx_detail_count = count;
     state.ctx_detail_value = crate::context_window::format_k(tokens);
-    state.ctx_detail_pct = crate::context_window::percent(tokens, record.total_tokens());
+    state.ctx_detail_pct = pct;
     state.ctx_detail_text = text.unwrap_or_default();
     state.ctx_detail_rev = state.ctx_detail_rev.wrapping_add(1);
 }
@@ -3920,70 +3915,25 @@ fn open_context_part_detail(shared: &Arc<Mutex<Shared>>, slot: i32) {
     let Ok(mut state) = shared.lock() else {
         return;
     };
-    let Some(record) = state.ctx_record.clone() else {
+    let Some(record) = state.ctx_record.as_ref() else {
         return;
     };
-    let tokens = crate::context_window::part_tokens(&record, slot);
+    let Some(part) = record.part(slot).filter(|part| part.tokens > 0) else {
+        return;
+    };
+    let tokens = part.tokens;
+    let rows = crate::context_window::part_detail_rows(record, slot);
+    let pct = crate::context_window::percent(tokens, record.tokens);
     clear_context_detail_locked(&mut state);
     state.ctx_detail_open = true;
     state.ctx_detail_kind = "part".into();
     state.ctx_detail_slot = slot;
-    state.ctx_detail_rows = crate::context_window::part_detail_rows(&record, slot);
+    state.ctx_detail_rows = rows;
     state.ctx_detail_value = crate::context_window::format_k(tokens);
-    state.ctx_detail_pct = crate::context_window::percent(tokens, record.total_tokens());
+    state.ctx_detail_pct = pct;
     state.ctx_detail_rev = state.ctx_detail_rev.wrapping_add(1);
 }
 
-fn open_context_cell(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, index: i32) {
-    let state = match shared.lock() {
-        Ok(state) => state,
-        Err(_) => return,
-    };
-    let Some(record) = state.ctx_record.clone() else {
-        return;
-    };
-    let Some(cell) = state.ctx_cells.get(index.max(0) as usize).cloned() else {
-        return;
-    };
-    drop(state);
-    if cell.slot == 0 {
-        return;
-    }
-    if cell.item >= 0 {
-        let Some((tag, name, count)) =
-            crate::context_window::item_at(&record, cell.slot, cell.item)
-        else {
-            return;
-        };
-        open_context_item_detail(desktop, shared, cell.slot, &tag, &name, count);
-    } else {
-        open_context_part_detail(shared, cell.slot);
-    }
-}
-
-/// 点按树图块：条目块开条目详情；部位块 / 聚合块 / 剩余空间按部位归类。
-fn open_context_tile(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, index: i32) {
-    let state = match shared.lock() {
-        Ok(state) => state,
-        Err(_) => return,
-    };
-    let Some(tile) = state.ctx_tiles.get(index.max(0) as usize).cloned() else {
-        return;
-    };
-    drop(state);
-    match tile.kind.as_str() {
-        "item" => open_context_item_detail(
-            desktop,
-            shared,
-            tile.slot,
-            &tile.tag,
-            &tile.name,
-            tile.count as i64,
-        ),
-        "part" | "more" => open_context_part_detail(shared, tile.slot),
-        _ => {}
-    }
-}
 
 /// 部位详情里原位展开 / 收起一条目；正文只从引擎内存缓存读。
 fn toggle_context_detail_row(

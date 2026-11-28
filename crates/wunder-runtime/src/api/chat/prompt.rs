@@ -480,6 +480,7 @@ fn build_system_prompt_model_request_preview(
         content: Value::String(system_prompt.to_string()),
         reasoning_content: None,
         anthropic_thinking_blocks: None,
+        responses_reasoning: None,
         tool_calls: None,
         tool_call_id: None,
     }];
@@ -489,6 +490,7 @@ fn build_system_prompt_model_request_preview(
             content: Value::String(question.to_string()),
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         });

@@ -2,19 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  cellTarget,
   contextItemLabel,
   findListedItem,
   fmtK,
-  gridCells,
-  gridLayout,
   hasContextData,
   layoutTiles,
   legendRows,
-  listRows,
   normalizeContextWindow,
   partDetailRows,
-  partTip,
   tileTarget,
   type ContextWindowRecord
 } from '../../src/components/chat/contextWindowView';
@@ -97,44 +92,6 @@ test('legend fills all five parts; missing parts read 0 instead of disappearing'
   assert.equal(tools?.tokens, 0);
 });
 
-test('contents list keeps head order and interleaves results by message position', () => {
-  const record = buildRecord(sampleParts());
-  const rows = listRows(record, 0, t);
-  const conversation = rows
-    .filter((row) => row.slot === 4 || row.slot === 5)
-    .map((row) => [row.slot, row.tag, row.count]);
-  assert.deepEqual(conversation, [
-    [5, 'turn', 1],
-    [4, 'result', 1],
-    [5, 'turn', 2]
-  ]);
-  const firstChat = rows.findIndex((row) => row.slot === 5);
-  assert.equal(rows[firstChat - 1].slot, 2, 'all tools belong before the first turn');
-  assert.ok(rows.slice(firstChat).every((row) => row.slot === 5 || row.slot === 4));
-
-  const chatOnly = listRows(record, 5, t);
-  assert.equal(chatOnly[0].count, 1);
-  assert.equal(chatOnly[1].count, 2);
-});
-
-test('mini bar normalizes against the largest row in the current list only', () => {
-  const record = buildRecord(sampleParts());
-  const all = listRows(record, 0, t);
-  const max = Math.max(...all.map((row) => row.tokens));
-  const full = all.filter((row) => row.tokens === max);
-  assert.equal(full.length, 1, 'only the global largest row fills its bar');
-  assert.equal(full[0].ratio, 1);
-  assert.ok(all.every((row) => row.tokens === max || row.ratio < 1));
-
-  // A part filter degrades to its own max, the same as the desktop projection.
-  const tools = listRows(record, 2, t);
-  const toolMax = Math.max(...tools.map((row) => row.tokens));
-  assert.equal(tools.find((row) => row.tokens === toolMax)?.ratio, 1);
-  assert.ok(
-    tools.every((row) => Math.abs(row.ratio - Math.min(1, row.tokens / toolMax)) < 1e-9)
-  );
-});
-
 test('item labels follow the desktop tag rule; turn ordinal comes from count', () => {
   assert.equal(
     contextItemLabel({ tag: 'turn', name: '', count: 3 }, t),
@@ -172,32 +129,16 @@ test('token counts read like the reference fmt_k', () => {
   assert.equal(fmtK(251_000), '251K');
 });
 
-test('grid keeps one cell per turn and places the result between surrounding turns', () => {
-  const record = buildRecord(sampleParts());
-  const cells = gridCells(record);
-  assert.equal(cells.length, 400);
-  const chat = cells.filter((cell) => cell.slot === 5);
-  assert.ok(chat.length >= 2, 'every turn keeps a cell');
-  const resultAt = cells.findIndex((cell) => cell.slot === 4);
-  const lastChat = cells.map((cell) => cell.slot).lastIndexOf(5);
-  assert.ok(resultAt >= 0 && resultAt < lastChat);
-});
-
-test('empty snapshot has no data and an empty grid', () => {
+test('empty snapshot has no data and lays out no tiles', () => {
   const record = normalizeContextWindow({ parts: [] });
   assert.equal(hasContextData(record), false);
-  const cells = gridCells(record);
-  assert.ok(cells.every((cell) => cell.slot === 0));
-});
-
-test('grid layout splits 50×8 on wide cards and 25×16 on narrow ones', () => {
-  assert.deepEqual(gridLayout(920), { columns: 50, rows: 8 });
-  assert.deepEqual(gridLayout(390), { columns: 25, rows: 16 });
+  const { tiles } = layoutTiles(record, 880, 300);
+  assert.equal(tiles.length, 0);
 });
 
 test('two-level treemap lays out part/item/more tiles and a free remainder', () => {
   const record = buildRecord(sampleParts());
-  const { tiles, tips } = layoutTiles(record, 880, 232);
+  const { tiles, tips } = layoutTiles(record, 880, 300);
   assert.ok(tiles.length >= 5);
   assert.equal(tips.length, tiles.length);
   assert.ok(tiles.some((tile) => tile.kind === 'free'));
@@ -222,7 +163,7 @@ test('two-level treemap lays out part/item/more tiles and a free remainder', () 
 
 test('part tips list at most five top items; item tips carry their own subline', () => {
   const record = buildRecord(sampleParts());
-  const { tiles, tips } = layoutTiles(record, 880, 232);
+  const { tiles, tips } = layoutTiles(record, 880, 300);
   const moreTile = tiles.find((tile) => tile.kind === 'more');
   assert.ok(moreTile);
   const moreTip = tips[tiles.indexOf(moreTile!)];
@@ -236,17 +177,11 @@ test('part tips list at most five top items; item tips carry their own subline',
   const itemTip = tips[tiles.indexOf(itemTile!)];
   assert.equal(itemTip.kind, 'item');
   assert.ok(itemTip.pct.length > 0);
-
-  const tools = record.parts.find((part) => part.slot === 2);
-  assert.ok(tools);
-  const gridTip = partTip(record, tools, 0);
-  assert.equal(gridTip.rows.length, 4);
-  assert.ok(gridTip.rows[0]?.on === true);
 });
 
-test('click targets classify tiles and cells into item, part or none', () => {
+test('click targets classify tiles into item, part or none', () => {
   const record = buildRecord(sampleParts());
-  const { tiles } = layoutTiles(record, 880, 232);
+  const { tiles } = layoutTiles(record, 880, 300);
   const freeTile = tiles.find((tile) => tile.kind === 'free');
   assert.equal(tileTarget(record, freeTile!), null);
   const itemTile = tiles.find((tile) => tile.kind === 'item');
@@ -257,14 +192,6 @@ test('click targets classify tiles and cells into item, part or none', () => {
   if (partTile) {
     assert.equal(tileTarget(record, partTile)?.kind, 'part');
   }
-
-  const cells = gridCells(record);
-  const freeCell = cells.find((cell) => cell.slot === 0);
-  assert.equal(cellTarget(record, freeCell!), null);
-  const partCell = cells.find((cell) => cell.item < 0 && cell.slot > 0);
-  if (partCell) assert.equal(cellTarget(record, partCell)?.kind, 'part');
-  const itemCell = cells.find((cell) => cell.item >= 0);
-  if (itemCell) assert.equal(cellTarget(record, itemCell)?.kind, 'item');
 });
 
 test('part detail rows keep listed order and resolve their own item', () => {

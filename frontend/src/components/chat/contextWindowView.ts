@@ -1,8 +1,8 @@
 // Pure projection of the engine's recorded context window onto the cloud
 // card. No HTTP, no store, no Vue: the snapshot shape, palette, labels,
-// legend, contents order, grid cells, two-level treemap tiles, hover tips and
-// detail rows are all functions here so they can be unit-tested against the
-// desktop reference projection (crates/wunder-desktop/frontend/src/context_window.rs).
+// legend, two-level treemap tiles, hover tips and detail rows are all
+// functions here so they can be unit-tested against the desktop reference
+// projection (crates/wunder-desktop/frontend/src/context_window.rs).
 //
 // Token numbers come straight from the engine record; this module never
 // estimates, re-derives or backfills a count.
@@ -174,85 +174,6 @@ export function contextItemLabel(
   return t('chat.contextWindow.itemOther');
 }
 
-export type ContextListRow = {
-  slot: number;
-  kind: string;
-  tag: string;
-  name: string;
-  count: number;
-  tokens: number;
-  order: number;
-  rank: number;
-  ratio: number;
-  label: string;
-  tokensText: string;
-};
-
-const sizeRanks = (items: ContextWindowItemRow[]): Map<ContextWindowItemRow, number> => {
-  const sorted = [...items].sort((a, b) => b.tokens - a.tokens);
-  const ranks = new Map<ContextWindowItemRow, number>();
-  sorted.forEach((item, index) => ranks.set(item, index));
-  return ranks;
-};
-
-const rowsOfPart = (part: ContextWindowPartRow, t: TranslateFn): ContextListRow[] => {
-  const ranks = sizeRanks(part.items);
-  return part.items.map((item) => ({
-    slot: part.slot,
-    kind: part.kind,
-    tag: item.tag,
-    name: item.name,
-    count: item.count,
-    tokens: item.tokens,
-    order: item.order,
-    rank: ranks.get(item) ?? 0,
-    // Ratio is filled once on the whole filtered list (see listRows); a part
-    // alone must not normalize its own max to full width.
-    ratio: 0,
-    label: contextItemLabel(item, t),
-    tokensText: fmtK(item.tokens)
-  }));
-};
-
-/**
- * The rows shown by the contents list. Non-conversation parts keep the head
- * order; tool results and turns interleave by the message position the engine
- * recorded, so a result stays after the turn that called it. Older snapshots
- * have order 0 everywhere: results then stay after the turns instead of
- * jumping ahead. The mini bar's share is relative to the largest row in this
- * same filtered list — not to the window.
- */
-export function listRows(
-  record: ContextWindowRecord,
-  filterSlot: number,
-  t: TranslateFn
-): ContextListRow[] {
-  const rows: ContextListRow[] = [];
-  if (filterSlot !== 0) {
-    const part = record.parts.find((entry) => entry.slot === filterSlot);
-    rows.push(...(part ? rowsOfPart(part, t) : []));
-  } else {
-    const head: ContextListRow[] = [];
-    const talk: ContextListRow[] = [];
-    record.parts.forEach((part) => {
-      const rows = rowsOfPart(part, t);
-      if (part.slot === 4 || part.slot === 5) talk.push(...rows);
-      else head.push(...rows);
-    });
-    if (talk.some((row) => row.order > 0)) {
-      talk.sort((a, b) => a.order - b.order);
-    } else {
-      talk.sort((a, b) => Number(a.slot === 4) - Number(b.slot === 4));
-    }
-    rows.push(...head, ...talk);
-  }
-  const most = Math.max(1, ...rows.map((row) => row.tokens));
-  rows.forEach((row) => {
-    row.ratio = Math.min(1, row.tokens / most);
-  });
-  return rows;
-}
-
 export type ContextLegendRow = {
   slot: number;
   kind: string;
@@ -297,150 +218,6 @@ export const findListedItem = (
 ): ContextWindowItemRow | undefined =>
   listedItems(part).find((item) => item.tag === tag && item.name === name && item.count === count);
 
-// ---- 400-cell grid: one cell per quarter percent of the window ------------
-
-export const GRID_CELLS = 400;
-
-export type ContextCell = {
-  slot: number;
-  /** Rank among the part's size-sorted items; -1 means the part as a whole. */
-  item: number;
-};
-
-/** Wide card: 50 columns × 8 rows; narrow card: 25 × 16. */
-export const gridLayout = (cardWidth: number): { columns: number; rows: number } => {
-  const columns = cardWidth < 520 ? 25 : 50;
-  const rows = columns === 50 ? 8 : 16;
-  return { columns, rows };
-};
-
-const cellItems = (
-  part: ContextWindowPartRow,
-  sorted: ContextWindowItemRow[],
-  cells: number
-): number[] => {
-  if (cells === 0) return [];
-  if (sorted.length === 0) return Array<number>(cells).fill(-1);
-  if (part.slot === 5 && cells >= part.items.length && part.items.length > 0) {
-    const listed = listedItems(part);
-    const count = listed.length;
-    const extra = cells - count;
-    const sum = listed.reduce((acc, item) => acc + Math.max(0, item.tokens), 0);
-    const bonus = Array<number>(count).fill(0);
-    if (extra > 0 && sum > 0) {
-      const remainders: Array<[number, number]> = [];
-      listed.forEach((item, index) => {
-        const exact = (Math.max(0, item.tokens) / sum) * extra;
-        bonus[index] = Math.floor(exact);
-        remainders.push([exact - Math.floor(exact), index]);
-      });
-      let assigned = bonus.reduce((acc, value) => acc + value, 0);
-      remainders.sort((a, b) => b[0] - a[0] || b[1] - a[1]);
-      let at = 0;
-      while (assigned < extra && remainders.length > 0) {
-        bonus[remainders[at % remainders.length][1]] += 1;
-        assigned += 1;
-        at += 1;
-      }
-    } else if (extra > 0) {
-      bonus[count - 1] = extra;
-    }
-    const ranks = sizeRanks(listed);
-    const out: number[] = [];
-    listed.forEach((item, index) => {
-      const rank = ranks.get(item) ?? 0;
-      for (let repeat = 0; repeat < 1 + bonus[index]; repeat += 1) out.push(rank);
-    });
-    return out;
-  }
-  const itemSum = Math.max(1, sorted.reduce((acc, item) => acc + item.tokens, 0));
-  let itemAt = 0;
-  let acc = 0;
-  const out: number[] = [];
-  for (let cell = 0; cell < cells; cell += 1) {
-    const middle = ((cell + 0.5) / cells) * itemSum;
-    while (itemAt + 1 < sorted.length && acc + sorted[itemAt].tokens < middle) {
-      acc += sorted[itemAt].tokens;
-      itemAt += 1;
-    }
-    out.push(itemAt);
-  }
-  return out;
-};
-
-/** The window as 400 cells; free cells carry slot 0 / item -1. */
-export function gridCells(record: ContextWindowRecord): ContextCell[] {
-  const out: ContextCell[] = Array<ContextCell>(GRID_CELLS)
-    .fill(null)
-    .map(() => ({ slot: 0, item: -1 }));
-  if (!hasContextData(record)) return out;
-  const scale = Math.max(1, Math.max(record.window, record.tokens));
-  const used = Math.round((record.tokens / scale) * GRID_CELLS);
-  const usedClamped = Math.min(GRID_CELLS, Math.max(0, used));
-  if (usedClamped === 0) return out;
-
-  const parts = record.parts.filter((part) => part.tokens > 0);
-  const sum = Math.max(1, parts.reduce((acc, part) => acc + part.tokens, 0));
-  const want = parts.map((part) => (part.tokens / sum) * usedClamped);
-  const minimum = parts.map(() => 1);
-  const chatIndex = parts.findIndex((part) => part.slot === 5);
-  if (chatIndex >= 0) {
-    const room = Math.max(1, usedClamped - (parts.length - 1));
-    minimum[chatIndex] = Math.min(parts[chatIndex].items.length, room);
-  }
-  const got = want.map((value, index) => Math.max(Math.floor(value), minimum[index]));
-  let left = usedClamped - got.reduce((acc, value) => acc + value, 0);
-  const order = want
-    .map((value, index) => [value - Math.floor(value), index] as [number, number])
-    .sort((a, b) => b[0] - a[0]);
-  let at = 0;
-  while (left > 0 && order.length > 0) {
-    got[order[at % order.length][1]] += 1;
-    at += 1;
-    left -= 1;
-  }
-  let fromEnd = got.length;
-  while (left < 0 && fromEnd > 0) {
-    fromEnd -= 1;
-    while (left < 0 && got[fromEnd] > minimum[fromEnd]) {
-      got[fromEnd] -= 1;
-      left += 1;
-    }
-  }
-
-  const head: ContextCell[] = [];
-  const talk: ContextCell[] = [];
-  parts.forEach((part, partIndex) => {
-    const sorted = sortedItems(part);
-    for (const itemRank of cellItems(part, sorted, got[partIndex])) {
-      const cell: ContextCell = { slot: part.slot, item: itemRank };
-      if (part.slot === 4 || part.slot === 5) talk.push(cell);
-      else head.push(cell);
-    }
-  });
-  talk.sort((a, b) => {
-    const orderOf = (cell: ContextCell): number => {
-      const part = parts.find((entry) => entry.slot === cell.slot);
-      const sorted = part ? sortedItems(part) : [];
-      const item = cell.item >= 0 ? sorted[cell.item] : undefined;
-      return item?.order ?? 0;
-    };
-    const ao = orderOf(a);
-    const bo = orderOf(b);
-    if (ao > 0 || bo > 0) return ao - bo;
-    return Number(a.slot === 4) - Number(b.slot === 4);
-  });
-
-  let fill = 0;
-  for (const cell of [...head, ...talk]) {
-    if (fill < out.length) {
-      out[fill] = cell;
-      fill += 1;
-    }
-  }
-  return out;
-}
-
 // ---- Two-level treemap: part blocks, item blocks, free remainder ---------
 
 const TILE_BARE_W = 54;
@@ -451,7 +228,6 @@ const TILE_SIDE = 16;
 const TILE_MIN = 1500;
 const TILE_MAX_ITEMS = 12;
 const TIP_ROWS = 5;
-const GRID_TIP_ROWS = 4;
 
 type Rect = { x: number; y: number; w: number; h: number };
 
@@ -825,58 +601,6 @@ export function layoutTiles(
   return laid;
 }
 
-/** Hover tip for a grid cell: part rows top-listed, the hovered item kept on. */
-export function partTip(
-  record: ContextWindowRecord,
-  part: ContextWindowPartRow,
-  itemRank: number,
-  rows: number = GRID_TIP_ROWS
-): ContextTip {
-  const sorted = sortedItems(part);
-  const tip: ContextTip = {
-    kind: 'part',
-    slot: part.slot,
-    tag: '',
-    name: '',
-    count: 0,
-    value: fmtK(part.tokens),
-    pct: pctText(part.tokens, record.tokens),
-    rows: [],
-    more: 0
-  };
-  const picked: number[] = sorted.map((_, rank) => rank).slice(0, rows);
-  if (itemRank >= 0) {
-    if (!picked.includes(itemRank)) {
-      if (picked.length === rows && rows > 0) picked[rows - 1] = itemRank;
-      else picked.push(itemRank);
-    }
-  }
-  // A new turn is often far smaller than the older turns; keep the latest
-  // turn in the grid tip even when it did not make the size-ranked top rows.
-  if (part.slot === 5 && rows > 0) {
-    const listed = listedItems(part);
-    const latest = listed[listed.length - 1];
-    if (latest) {
-      const at = sorted.findIndex((candidate) => candidate === latest);
-      if (at >= 0 && !picked.includes(at)) picked[rows - 1] = at;
-    }
-  }
-  for (const rank of picked) {
-    const item = sorted[rank];
-    if (item) {
-      tip.rows.push({
-        tag: item.tag,
-        name: item.name,
-        count: item.count,
-        value: fmtK(item.tokens),
-        on: itemRank >= 0 && rank === itemRank
-      });
-    }
-  }
-  tip.more = sorted.length - picked.length;
-  return tip;
-}
-
 // ---- Detail projections ---------------------------------------------------
 
 export type ContextDetailRow = {
@@ -966,22 +690,3 @@ export type PartDetailState = {
 };
 
 export type DetailState = ItemDetailState | PartDetailState;
-
-/** A cell with item >= 0 opens that item; a part-only cell opens the part. */
-export function cellTarget(record: ContextWindowRecord, cell: ContextCell): ContextTarget | null {
-  if (cell.slot === 0) return null;
-  const part = record.parts.find((entry) => entry.slot === cell.slot);
-  if (!part) return null;
-  if (cell.item < 0) return { kind: 'part', slot: cell.slot };
-  const sorted = sortedItems(part);
-  const item = sorted[cell.item];
-  if (!item) return { kind: 'part', slot: cell.slot };
-  return {
-    kind: 'item',
-    slot: part.slot,
-    tag: item.tag,
-    name: item.name,
-    count: item.count,
-    itemRank: cell.item
-  };
-}

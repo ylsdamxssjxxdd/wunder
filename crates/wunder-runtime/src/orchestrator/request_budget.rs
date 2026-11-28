@@ -150,6 +150,7 @@ mod tests {
             content,
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         }

@@ -54,6 +54,7 @@ pub(crate) fn messages(input_tokens: u32) -> Vec<ChatMessage> {
             content: json!(content),
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         })

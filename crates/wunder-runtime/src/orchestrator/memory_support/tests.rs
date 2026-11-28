@@ -96,6 +96,7 @@ fn test_build_compaction_summary_config_disables_reasoning_in_payload() {
             content: json!("compress this"),
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         }],
@@ -717,6 +718,7 @@ fn context_guard_matches_final_request_budget_at_4500_window_boundary() {
             content: message["content"].clone(),
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         })

@@ -9,7 +9,7 @@
     @update:model-value="handleVisibleChange"
   >
     <div class="cx-card">
-      <!-- Head: title, model, badge, view toggle, close -->
+      <!-- Head: title, model, badge, close -->
       <div class="cx-head">
         <span class="cx-title">{{ t('chat.contextWindow.title') }}</span>
         <span class="cx-head-stretch"></span>
@@ -20,24 +20,6 @@
         <span v-if="cardWidth >= 340 && hasData && !unobserved" class="cx-badge">
           {{ record?.measured ? t('chat.contextWindow.measured') : t('chat.contextWindow.estimate') }}
         </span>
-        <div class="cx-toggle" role="tablist" aria-label="view">
-          <button
-            class="cx-toggle-btn"
-            :class="{ 'is-active': mapMode }"
-            type="button"
-            @click="mapMode = true"
-          >
-            <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="0.6" y="5" width="2.4" height="6.5" rx="1.2" fill="currentColor"/><rect x="4.8" y="1.5" width="2.4" height="10" rx="1.2" fill="currentColor"/><rect x="9" y="4" width="2.4" height="7.5" rx="1.2" fill="currentColor"/></svg>
-          </button>
-          <button
-            class="cx-toggle-btn"
-            :class="{ 'is-active': !mapMode }"
-            type="button"
-            @click="mapMode = false"
-          >
-            <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="0.5" y="0.5" width="5" height="5" rx="1.1" fill="currentColor"/><rect x="6.5" y="0.5" width="5" height="5" rx="1.1" fill="currentColor"/><rect x="0.5" y="6.5" width="5" height="5" rx="1.1" fill="currentColor"/><rect x="6.5" y="6.5" width="5" height="5" rx="1.1" fill="currentColor"/></svg>
-          </button>
-        </div>
         <button
           class="cx-close"
           type="button"
@@ -73,51 +55,36 @@
         <div v-if="unobserved" class="cx-note">{{ t('chat.contextWindow.unobserved') }}</div>
 
         <template v-else-if="hasData">
-          <!-- Window map: two-level treemap or 400-cell grid -->
+          <!-- Window map: two-level treemap, fills the remaining card space -->
           <div
             ref="mapRef"
             class="cx-map"
-            :class="{ 'is-grid': !mapMode }"
-            :style="mapStyle"
             @mouseleave="onLeaveMap"
           >
-            <template v-if="mapMode">
-              <button
-                v-for="(tile, index) in laid.tiles"
-                :key="`${tile.slot}-${tile.kind}-${tile.item}-${index}`"
-                class="cx-tile"
-                :class="{ 'is-hatch': tile.kind === 'free' }"
-                :style="tileStyle(tile, index)"
-                type="button"
-                @mouseenter="onTileEnter(index)"
-                @click="onTileClick(index)"
-              >
-                <template v-if="tile.showName">
-                  <span class="cx-tile-label" :style="{ color: tileLabelColor(tile) }">{{ tileLabel(tile) }}</span>
-                  <span v-if="tile.showValue" class="cx-tile-value" :style="{ color: paletteFor(tile.slot).value }">
-                    {{ tileValue(tile) }}
-                  </span>
-                </template>
-              </button>
-            </template>
-            <template v-else>
-              <button
-                v-for="(cell, index) in cells"
-                :key="index"
-                class="cx-cell"
-                :style="cellStyle(cell, index)"
-                type="button"
-                @mouseenter="onCellEnter(index)"
-                @click="onCellClick(index)"
-              ></button>
-            </template>
+            <button
+              v-for="(tile, index) in laid.tiles"
+              :key="`${tile.slot}-${tile.kind}-${tile.item}-${index}`"
+              class="cx-tile"
+              :class="{ 'is-hatch': tile.kind === 'free' }"
+              :style="tileStyle(tile, index)"
+              type="button"
+              @mouseenter="onTileEnter(index)"
+              @click="onTileClick(index)"
+            >
+              <template v-if="tile.showName">
+                <span class="cx-tile-label" :style="{ color: tileLabelColor(tile), width: `${tileTextWidth(tile)}px` }">{{ tileLabel(tile) }}</span>
+                <span v-if="tile.showValue" class="cx-tile-value" :style="{ color: paletteFor(tile.slot).value, width: `${tileTextWidth(tile)}px` }">
+                  {{ tileValue(tile) }}
+                </span>
+              </template>
+            </button>
 
             <ContextHoverTip
               v-if="tip && tipRect"
               :tip="tip"
               :rect="tipRect"
               :map-width="mapWidth"
-              :map-height="mapBoxHeight"
+              :map-height="mapHeight"
             />
           </div>
 
@@ -129,20 +96,6 @@
             @legend-click="onLegendClick"
             @legend-enter="onLegendEnter"
             @legend-free-enter="onLegendFreeEnter"
-          />
-
-          <div class="cx-divider"></div>
-
-          <!-- Contents: section head, filter capsule, internal-scroll list -->
-          <ContextWindowList
-            :rows="rows"
-            :legend="legend"
-            :filter-slot="filterSlot"
-            :wide="cardWidth >= 420"
-            @select-slot="filterSlot = $event"
-            @row-click="onRowClick"
-            @row-enter="onRowEnter"
-            @row-leave="onRowLeave"
           />
         </template>
 
@@ -174,24 +127,17 @@ import {
   contextItemLabel,
   findListedItem,
   fmtK,
-  gridCells,
-  gridLayout,
   hasContextData,
   layoutTiles,
   legendRows,
-  listRows,
   modelLabel,
   normalizeContextWindow,
   paletteFor,
   partDetailRows,
   partLabel,
-  partTip,
   pctText,
-  cellTarget,
   tileTarget,
-  type ContextCell,
   type ContextDetailRow,
-  type ContextListRow,
   type ContextTarget,
   type ContextTip,
   type ContextTile,
@@ -202,7 +148,6 @@ import {
 import ContextHoverTip from '@/components/chat/ContextHoverTip.vue';
 import ContextItemDetail from '@/components/chat/ContextItemDetail.vue';
 import ContextPartDetail from '@/components/chat/ContextPartDetail.vue';
-import ContextWindowList from '@/components/chat/ContextWindowList.vue';
 import ContextWindowLegend from '@/components/chat/ContextWindowLegend.vue';
 
 const props = defineProps<{
@@ -221,15 +166,10 @@ const { t } = useI18n();
 const record = ref<ContextWindowRecord | null>(null);
 const loading = ref(false);
 const loadError = ref('');
-const mapMode = ref(true);
-const filterSlot = ref(0);
 const detail = ref<DetailState | null>(null);
 
 const focusSlot = ref(0);
 const focusItem = ref(-1);
-// Row hover is a separate focus: only the matching tile lights up; the rest of
-// the map keeps its colour instead of being washed out to a faint overlay.
-const rowFocus = ref<{ slot: number; rank: number } | null>(null);
 const hoveredTile = ref(-1);
 const tip = ref<ContextTip | null>(null);
 const tipRect = ref<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -250,11 +190,10 @@ const narrowViewport = computed(() => viewport.value.w <= 420);
 const cardWidth = computed(() =>
   Math.min(920, viewport.value.w - (narrowViewport.value ? 16 : 24))
 );
-const cardHeight = computed(() =>
-  Math.min(720, viewport.value.h - (narrowViewport.value ? 16 : 24))
-);
+
 const mapRef = ref<HTMLElement | null>(null);
 const mapWidth = ref(880);
+const mapHeight = ref(300);
 
 let mapObserver: ResizeObserver | null = null;
 let loadController: AbortController | null = null;
@@ -294,37 +233,9 @@ const legend: ComputedRef<ContextLegendRow[]> = computed(() =>
   record.value ? legendRows(record.value, t) : []
 );
 
-const rows: ComputedRef<ContextListRow[]> = computed(() =>
-  record.value ? listRows(record.value, filterSlot.value, t) : []
-);
-
 const laid = computed(() =>
-  record.value ? layoutTiles(record.value, mapWidth.value, mapBoxHeight.value) : { tiles: [], tips: [] }
+  record.value ? layoutTiles(record.value, mapWidth.value, mapHeight.value) : { tiles: [], tips: [] }
 );
-
-const cells = computed(() => (record.value ? gridCells(record.value) : []));
-
-const grid = computed(() => gridLayout(cardWidth.value));
-const gridSide = computed(() =>
-  Math.floor((mapWidth.value - (grid.value.columns - 1) * 2) / grid.value.columns)
-);
-const gridHeight = computed(() =>
-  grid.value.rows * gridSide.value + (grid.value.rows - 1) * 2
-);
-const gridPadX = computed(() =>
-  Math.max(0, (mapWidth.value - (grid.value.columns * gridSide.value + (grid.value.columns - 1) * 2)) / 2)
-);
-const gridPadY = computed(() => Math.max(0, (gridHeight.value - grid.value.rows * gridSide.value - (grid.value.rows - 1) * 2) / 2));
-
-const mapBoxHeight = computed(() => {
-  if (!mapMode.value) return gridHeight.value;
-  const ratio = cardWidth.value <= 520 ? 2 : 3.1;
-  const byRatio = mapWidth.value / ratio;
-  const byCard = Math.max(0, cardHeight.value - 300);
-  return Math.min(232, Math.max(96, Math.min(byRatio, byCard)));
-});
-
-const mapStyle = computed(() => ({ height: `${mapBoxHeight.value}px` }));
 
 // ---- Loading -------------------------------------------------------------
 
@@ -334,7 +245,6 @@ const load = async (): Promise<void> => {
   loadController = controller;
   loading.value = true;
   detail.value = null;
-  filterSlot.value = 0;
   try {
     if (!props.sessionId.trim()) {
       record.value = null;
@@ -357,7 +267,7 @@ const resolveErrorMessage = (error: unknown): string => {
   return source?.message || t('chat.contextWindow.loadError');
 };
 
-// ---- Map / grid hover -----------------------------------------------------
+// ---- Map hover ------------------------------------------------------------
 
 const clearMapFocus = (): void => {
   hoveredTile.value = -1;
@@ -381,49 +291,6 @@ const onTileEnter = (index: number): void => {
   tipRect.value = { x: tile.x, y: tile.y, w: tile.w, h: tile.h };
 };
 
-const freeTip = (): ContextTip => ({
-  kind: 'free',
-  slot: 0,
-  tag: '',
-  name: '',
-  count: 0,
-  value: freeText.value,
-  pct: pctText(freeTokens.value, Math.max(1, Math.max(record.value?.window ?? 0, record.value?.tokens ?? 0))),
-  rows: [],
-  more: 0
-});
-
-const cellRect = (index: number): { x: number; y: number; w: number; h: number } => {
-  const col = index % grid.value.columns;
-  const row = Math.floor(index / grid.value.columns);
-  const x = gridPadX.value + col * (gridSide.value + 2);
-  const y = gridPadY.value + row * (gridSide.value + 2);
-  return {
-    x: x / mapWidth.value,
-    y: y / mapBoxHeight.value,
-    w: gridSide.value / mapWidth.value,
-    h: gridSide.value / mapBoxHeight.value
-  };
-};
-
-const onCellEnter = (index: number): void => {
-  const cell = cells.value[index];
-  if (!cell || !record.value) return;
-  if (cell.slot === 0) {
-    focusSlot.value = -1;
-    focusItem.value = -1;
-    tip.value = freeTip();
-    tipRect.value = cellRect(index);
-    return;
-  }
-  const part = record.value.parts.find((entry) => entry.slot === cell.slot);
-  if (!part) return;
-  focusSlot.value = cell.slot;
-  focusItem.value = cell.item;
-  tip.value = partTip(record.value, part, cell.item);
-  tipRect.value = cellRect(index);
-};
-
 const onLegendEnter = (slot: number): void => {
   focusSlot.value = slot;
   focusItem.value = -1;
@@ -432,15 +299,6 @@ const onLegendEnter = (slot: number): void => {
 const onLegendFreeEnter = (): void => {
   focusSlot.value = -1;
   focusItem.value = -1;
-};
-
-const onRowEnter = (row: ContextListRow): void => {
-  clearMapFocus();
-  rowFocus.value = { slot: row.slot, rank: row.rank };
-};
-
-const onRowLeave = (): void => {
-  rowFocus.value = null;
 };
 
 // ---- Click targets ---------------------------------------------------------
@@ -452,21 +310,7 @@ const onTileClick = (index: number): void => {
   if (target) openTarget(target);
 };
 
-const onCellClick = (index: number): void => {
-  const cell = cells.value[index];
-  if (!cell || !record.value) return;
-  const target = cellTarget(record.value, cell);
-  if (target) openTarget(target);
-};
-
-const onRowClick = (row: ContextListRow): void => {
-  rowFocus.value = null;
-  clearMapFocus();
-  openTarget({ kind: 'item', slot: row.slot, tag: row.tag, name: row.name, count: row.count, itemRank: row.rank });
-};
-
 const onLegendClick = (slot: number): void => {
-  rowFocus.value = null;
   clearMapFocus();
   openPart(slot);
 };
@@ -563,12 +407,11 @@ const togglePartRow = async (row: ContextDetailRow): Promise<void> => {
 
 const closeDetail = (): void => {
   textController?.abort();
-  rowFocus.value = null;
   clearMapFocus();
   detail.value = null;
 };
 
-// ---- Tile / cell rendering helpers ----------------------------------------
+// ---- Tile rendering helpers -----------------------------------------------
 
 const tileLabel = (tile: ContextTile): string => {
   if (tile.kind === 'free') return t('chat.contextWindow.free');
@@ -589,17 +432,8 @@ const tileValue = (tile: ContextTile): string => {
   return tile.tokensText;
 };
 
-const tileRowHit = (tile: ContextTile): boolean => {
-  const focus = rowFocus.value;
-  if (!focus || tile.slot !== focus.slot) return false;
-  if (tile.kind === 'item') return tile.item === focus.rank;
-  if (tile.kind === 'more') return tile.its.includes(focus.rank);
-  return tile.kind === 'part';
-};
-
 const tileOpacity = (tile: ContextTile, index: number): number => {
   if (hoveredTile.value >= 0) return hoveredTile.value === index ? 1 : 0.55;
-  if (rowFocus.value) return tileRowHit(tile) ? 1 : 0.9;
   if (focusSlot.value === 0) return 1;
   if (tile.kind === 'free') return focusSlot.value === -1 ? 1 : 0.55;
   if (tile.slot === focusSlot.value) {
@@ -608,15 +442,20 @@ const tileOpacity = (tile: ContextTile, index: number): number => {
   return 0.55;
 };
 
+// Inner text width follows the measured tile rect minus the 9px horizontal
+// padding on each side (desktop slint rule); no parent flex shrink chain.
+const tileTextWidth = (tile: ContextTile): number => {
+  const width = Math.max(0, tile.w * mapWidth.value - 3);
+  return Math.max(0, Math.round(width - 18));
+};
+
 const tileStyle = (tile: ContextTile, index: number): Record<string, string> => {
   const palette = paletteFor(tile.slot);
   const hover = hoveredTile.value === index;
-  const rowHit = tileRowHit(tile);
-  const active = hover || rowHit;
   const left = tile.x * mapWidth.value + 1.5;
-  const top = tile.y * mapBoxHeight.value + 1.5;
+  const top = tile.y * mapHeight.value + 1.5;
   const width = Math.max(0, tile.w * mapWidth.value - 3);
-  const height = Math.max(0, tile.h * mapBoxHeight.value - 3);
+  const height = Math.max(0, tile.h * mapHeight.value - 3);
   return {
     left: `${left}px`,
     top: `${top}px`,
@@ -624,43 +463,10 @@ const tileStyle = (tile: ContextTile, index: number): Record<string, string> => 
     height: `${height}px`,
     paddingTop: tile.showValue ? '7px' : '5px',
     paddingBottom: tile.showValue ? '7px' : '5px',
-    backgroundColor: tile.kind === 'free' ? '#FAFBFC' : active ? palette.hoverFill : palette.fill,
-    borderColor: tile.kind === 'free' ? '#E6E8EB' : active ? palette.ink : palette.line,
+    backgroundColor: tile.kind === 'free' ? '#FAFBFC' : hover ? palette.hoverFill : palette.fill,
+    borderColor: tile.kind === 'free' ? '#E6E8EB' : hover ? palette.ink : palette.line,
     opacity: String(tileOpacity(tile, index)),
-    boxShadow: rowHit ? `0 0 0 2px ${palette.ink}, 0 0 0 6px ${palette.ink}29` : '',
-    zIndex: rowHit ? '3' : ''
-  };
-};
-
-const cellRowHit = (cell: ContextCell): boolean =>
-  Boolean(rowFocus.value) &&
-  cell.slot === rowFocus.value!.slot &&
-  cell.item === rowFocus.value!.rank;
-
-const cellStyle = (cell: ContextCell, index: number): Record<string, string> => {
-  const col = index % grid.value.columns;
-  const row = Math.floor(index / grid.value.columns);
-  const left = gridPadX.value + col * (gridSide.value + 2);
-  const top = gridPadY.value + row * (gridSide.value + 2);
-  const palette = paletteFor(cell.slot);
-  const hit = cellRowHit(cell);
-  let opacity = 1;
-  if (rowFocus.value) {
-    opacity = hit ? 1 : 0.9;
-  } else if (focusSlot.value !== 0) {
-    if (cell.slot === 0) opacity = focusSlot.value === -1 ? 1 : 0.35;
-    else if (cell.slot === focusSlot.value && (focusItem.value < 0 || cell.item === focusItem.value)) opacity = 1;
-    else opacity = 0.35;
-  }
-  return {
-    left: `${left}px`,
-    top: `${top}px`,
-    width: `${gridSide.value}px`,
-    height: `${gridSide.value}px`,
-    background: cell.slot === 0 ? 'var(--mz-selected, #edeae6)' : palette.ink,
-    opacity: String(opacity),
-    boxShadow: hit ? `0 0 0 2px ${palette.ink}` : '',
-    zIndex: hit ? '3' : ''
+    zIndex: hover ? '3' : ''
   };
 };
 
@@ -673,15 +479,18 @@ onMounted(() => {
 });
 
 // The dialog body is re-created on each open, so observe the map once its
-// ref binds again (lazy mount); the reported client width drives tile layout.
+// ref binds again (lazy mount); the reported client width and height drive
+// tile layout, and the map stretches to fill the remaining card space.
 watch(mapRef, (el) => {
   mapObserver?.disconnect();
   if (!el) return;
   mapObserver = new ResizeObserver(() => {
     if (el.clientWidth > 0) mapWidth.value = el.clientWidth;
+    if (el.clientHeight > 0) mapHeight.value = el.clientHeight;
   });
   mapObserver.observe(el);
   if (el.clientWidth > 0) mapWidth.value = el.clientWidth;
+  if (el.clientHeight > 0) mapHeight.value = el.clientHeight;
 });
 
 onBeforeUnmount(() => {
@@ -695,14 +504,12 @@ watch(
   () => props.open,
   (value) => {
     if (value) {
-      mapMode.value = true;
       void load();
     } else {
       loadController?.abort();
       textController?.abort();
       detail.value = null;
       record.value = null;
-      rowFocus.value = null;
       onLeaveMap();
     }
   }
@@ -768,43 +575,6 @@ watch(
   font-size: 11px;
   font-weight: 600;
   line-height: 17px;
-}
-
-.cx-toggle {
-  display: flex;
-  gap: 2px;
-  width: 56px;
-  height: 24px;
-  padding: 3px 2px;
-  border: 1px solid var(--mz-border, #e8e6e3);
-  border-radius: 7px;
-  background: var(--mz-hover, #f1efec);
-  box-sizing: border-box;
-}
-
-.cx-toggle-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 16px;
-  padding: 0;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--mz-text-muted, #8a8f99);
-  cursor: pointer;
-}
-
-.cx-toggle-btn svg {
-  width: 14px;
-  height: 14px;
-}
-
-.cx-toggle-btn.is-active {
-  background: var(--mz-surface, #ffffff);
-  border: 1px solid var(--mz-border, #e8e6e3);
-  color: var(--mz-text, #1f2329);
 }
 
 .cx-close {
@@ -875,7 +645,8 @@ watch(
 .cx-map {
   position: relative;
   width: 100%;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-height: 240px;
   background-color: var(--mz-surface, #ffffff);
 }
 
@@ -905,8 +676,9 @@ watch(
 }
 
 .cx-tile-label {
+  display: block;
   min-width: 0;
-  max-width: 100%;
+  width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -915,27 +687,15 @@ watch(
 }
 
 .cx-tile-value {
+  display: block;
   min-width: 0;
-  max-width: 100%;
+  width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 10px;
   font-weight: 400;
   font-variant-numeric: tabular-nums;
-}
-
-.cx-cell {
-  position: absolute;
-  border: 0;
-  border-radius: 2px;
-  padding: 0;
-  cursor: pointer;
-}
-
-.cx-divider {
-  height: 1px;
-  background: var(--mz-border, #e8e6e3);
 }
 
 .cx-state {
@@ -996,7 +756,7 @@ watch(
   height: 100%;
   padding: 0;
   overflow: hidden;
-  background-color: var(--mz-surface, #ffffff);
+  background: var(--mz-surface, #ffffff);
 }
 
 @media (max-width: 420px) {

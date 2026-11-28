@@ -491,6 +491,10 @@ pub(crate) fn build_message_from_item(item: &Value, include_reasoning: bool) -> 
         {
             message["anthropic_thinking_blocks"] = thinking.clone();
         }
+        let field = crate::llm::RESPONSES_REASONING_FIELD;
+        if let Some(replay) = item.get(field).or_else(|| item.get("meta")?.get(field)) {
+            message[field] = replay.clone();
+        }
     }
     if role == "assistant" {
         if let Some(tool_calls) = extract_tool_calls_payload(item)
@@ -923,6 +927,12 @@ fn normalize_replacement_history_item(item: &Value) -> Option<Value> {
         .filter(|value| value.as_array().is_some_and(|blocks| !blocks.is_empty()))
     {
         normalized.insert("anthropic_thinking_blocks".to_string(), thinking);
+    }
+    let field = crate::llm::RESPONSES_REASONING_FIELD;
+    if role == "assistant" {
+        if let Some(replay) = item.get(field) {
+            normalized.insert(field.to_string(), replay.clone());
+        }
     }
     if let Some(tool_calls) =
         extract_tool_calls_payload(item).and_then(filter_replay_tool_calls_payload)

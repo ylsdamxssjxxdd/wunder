@@ -3,7 +3,7 @@ use crate::core::tool_args::{
     normalize_tool_arguments_json_with_meta,
 };
 use crate::tools::{extract_freeform_tool_input, is_freeform_tool_name};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 #[derive(Debug, Default, Clone)]
 pub(super) struct StreamToolCall {
@@ -14,12 +14,15 @@ pub(super) struct StreamToolCall {
     pub(super) arguments_delta: String,
     pub(super) arguments_snapshot: Option<String>,
     pub(super) raw_arguments: bool,
+    pub(super) responses_custom_input: bool,
+    pub(super) responses_final_arguments: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum StreamToolFieldMode {
     Delta,
     Snapshot,
+    Final,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -92,7 +95,11 @@ pub(super) fn update_stream_tool_calls_snapshot(acc: &mut Vec<StreamToolCall>, p
     }
 }
 
-pub(super) fn update_responses_tool_call_from_item(acc: &mut Vec<StreamToolCall>, item: &Value) {
+pub(super) fn update_responses_tool_call_from_item(
+    acc: &mut Vec<StreamToolCall>,
+    item: &Value,
+    mode: StreamToolFieldMode,
+) {
     let Value::Object(map) = item else {
         return;
     };
@@ -129,26 +136,25 @@ pub(super) fn update_responses_tool_call_from_item(acc: &mut Vec<StreamToolCall>
         arguments
     };
     let raw_arguments = item_type == "custom_tool_call";
-    upsert_response_tool_call(
-        acc,
-        item_id,
-        call_id,
-        name,
-        arguments,
-        StreamToolFieldMode::Snapshot,
-        raw_arguments,
-    );
+    upsert_response_tool_call(acc, item_id, call_id, name, arguments, mode, raw_arguments);
 }
 
-pub(super) fn update_responses_tool_call_arguments(acc: &mut Vec<StreamToolCall>, payload: &Value) {
+pub(super) fn update_responses_tool_call_arguments(
+    acc: &mut Vec<StreamToolCall>,
+    payload: &Value,
+    mode: StreamToolFieldMode,
+) {
     let item_id = payload.get("item_id").and_then(Value::as_str);
     let call_id = payload
         .get("call_id")
         .or_else(|| payload.get("callId"))
         .and_then(Value::as_str);
     let arguments = payload
-        .get("delta")
-        .or_else(|| payload.get("arguments"))
+        .get(if mode == StreamToolFieldMode::Final {
+            "arguments"
+        } else {
+            "delta"
+        })
         .and_then(Value::as_str);
     if arguments.is_none() && call_id.is_none() && item_id.is_none() {
         return;
@@ -157,9 +163,9 @@ pub(super) fn update_responses_tool_call_arguments(acc: &mut Vec<StreamToolCall>
         acc,
         item_id,
         call_id,
-        None,
+        payload.get("name").and_then(Value::as_str),
         arguments,
-        StreamToolFieldMode::Delta,
+        mode,
         false,
     );
 }
@@ -175,8 +181,11 @@ pub(super) fn update_responses_custom_tool_input(
         .or_else(|| payload.get("callId"))
         .and_then(Value::as_str);
     let input = payload
-        .get("delta")
-        .or_else(|| payload.get("input"))
+        .get(if mode == StreamToolFieldMode::Final {
+            "input"
+        } else {
+            "delta"
+        })
         .and_then(Value::as_str);
     if input.is_none() && call_id.is_none() && item_id.is_none() {
         return;
@@ -186,36 +195,29 @@ pub(super) fn update_responses_custom_tool_input(
     upsert_response_tool_call(acc, item_id, call_id, None, input, mode, true);
 }
 
-pub(super) fn upsert_responses_tool_calls(acc: &mut Vec<StreamToolCall>, tool_calls: &[Value]) {
+pub(super) fn upsert_normalized_tool_calls(acc: &mut Vec<StreamToolCall>, tool_calls: &[Value]) {
     for call in tool_calls {
-        let Value::Object(map) = call else {
-            continue;
-        };
-        let call_id = map
-            .get("id")
-            .or_else(|| map.get("call_id"))
-            .or_else(|| map.get("tool_call_id"))
-            .or_else(|| map.get("toolCallId"))
-            .and_then(Value::as_str);
-        let function = map.get("function").or_else(|| map.get("function_call"));
-        let name = function
-            .and_then(|value| value.get("name"))
-            .and_then(Value::as_str);
-        let arguments = function
-            .and_then(|value| value.get("arguments"))
-            .and_then(Value::as_str);
-        if name.is_none() && arguments.is_none() && call_id.is_none() {
-            continue;
+        let call_id = call.get("id").and_then(Value::as_str);
+        let name = call.pointer("/function/name").and_then(Value::as_str);
+        let arguments = call.pointer("/function/arguments").and_then(Value::as_str);
+        if call_id.is_some() || name.is_some() || arguments.is_some() {
+            upsert_response_tool_call(
+                acc,
+                None,
+                call_id,
+                name,
+                arguments,
+                StreamToolFieldMode::Snapshot,
+                false,
+            );
+            if name.is_some_and(is_freeform_tool_name) {
+                if let Some(slot) = find_response_tool_call_index(acc, None, call_id)
+                    .and_then(|index| acc.get_mut(index))
+                {
+                    slot.raw_arguments = true;
+                }
+            }
         }
-        upsert_response_tool_call(
-            acc,
-            None,
-            call_id,
-            name,
-            arguments,
-            StreamToolFieldMode::Snapshot,
-            name.is_some_and(is_freeform_tool_name),
-        );
     }
 }
 
@@ -249,7 +251,7 @@ fn upsert_response_tool_call(
         apply_stream_text_field(
             match mode {
                 StreamToolFieldMode::Delta => &mut slot.name_delta,
-                StreamToolFieldMode::Snapshot => {
+                StreamToolFieldMode::Snapshot | StreamToolFieldMode::Final => {
                     slot.name_snapshot = Some(name.to_string());
                     &mut slot.name_delta
                 }
@@ -258,13 +260,16 @@ fn upsert_response_tool_call(
             mode,
         );
     }
-    if let Some(arguments) = arguments {
-        apply_stream_arguments_field(slot, arguments, mode);
-    }
-    if raw_arguments
-        || resolve_stream_tool_call_name(slot).is_some_and(|name| is_freeform_tool_name(&name))
-    {
+    slot.responses_custom_input |= raw_arguments;
+    if raw_arguments {
         slot.raw_arguments = true;
+    }
+    if let Some(arguments) = arguments {
+        if mode == StreamToolFieldMode::Delta {
+            slot.arguments_delta.push_str(arguments);
+        } else {
+            apply_stream_arguments_field(slot, arguments, mode);
+        }
     }
 }
 
@@ -384,7 +389,7 @@ fn apply_function_fragment(slot: &mut StreamToolCall, function: &Value, mode: St
 fn apply_stream_text_field(target: &mut String, fragment: &str, mode: StreamToolFieldMode) {
     match mode {
         StreamToolFieldMode::Delta => merge_stream_delta_field(target, fragment),
-        StreamToolFieldMode::Snapshot => {
+        StreamToolFieldMode::Snapshot | StreamToolFieldMode::Final => {
             target.clear();
             target.push_str(fragment);
         }
@@ -396,12 +401,17 @@ fn apply_stream_arguments_field(
     fragment: &str,
     mode: StreamToolFieldMode,
 ) {
+    if mode == StreamToolFieldMode::Final {
+        slot.responses_final_arguments = Some(fragment.to_string());
+        return;
+    }
     if fragment.is_empty() {
         return;
     }
     match mode {
         StreamToolFieldMode::Delta => merge_stream_delta_field(&mut slot.arguments_delta, fragment),
         StreamToolFieldMode::Snapshot => slot.arguments_snapshot = Some(fragment.to_string()),
+        StreamToolFieldMode::Final => unreachable!(),
     }
 }
 
@@ -571,7 +581,11 @@ fn choose_tool_arguments_candidate<'a>(
         right.normalized.len(),
         matches!(right.source, ToolArgumentsCandidateSource::Snapshot),
     );
-    if right_rank > left_rank { right } else { left }
+    if right_rank > left_rank {
+        right
+    } else {
+        left
+    }
 }
 
 pub(super) fn resolve_stream_tool_call_name(call: &StreamToolCall) -> Option<String> {
@@ -584,6 +598,16 @@ pub(super) fn resolve_stream_tool_call_name(call: &StreamToolCall) -> Option<Str
 }
 
 pub(super) fn resolve_stream_tool_call_arguments(call: &StreamToolCall) -> String {
+    if let Some(arguments) = &call.responses_final_arguments {
+        return arguments.clone();
+    }
+    if call.responses_custom_input {
+        return if call.arguments_delta.is_empty() {
+            call.arguments_snapshot.clone().unwrap_or_default()
+        } else {
+            call.arguments_delta.clone()
+        };
+    }
     if call.raw_arguments {
         let snapshot = call
             .arguments_snapshot
@@ -656,14 +680,17 @@ pub(super) fn finalize_stream_tool_calls(acc: &[StreamToolCall]) -> Option<Value
         // 自定义/语法工具（`custom_tool_call`）的输入是补丁正文本身，流里拿到的
         // 是裸文本；要和 `response_tool_call_to_openai` 的非流式结果保持同一种
         // 形态（`{"input": body}`），补丁工具才认得出参数。
-        let arguments = if is_freeform_tool_name(&name) && call.raw_arguments {
+        let arguments = if call.responses_custom_input {
+            json!({ "input": raw_arguments }).to_string()
+        } else if is_freeform_tool_name(&name) && call.raw_arguments {
             let parsed = serde_json::from_str::<Value>(&raw_arguments);
             if parsed.is_ok_and(|value| value.is_object()) {
                 // ChatCompletions 侧可能带 `dry_run` 等普通参数，保留完整对象；
                 // Responses 回放时只取其中的补丁正文。
                 raw_arguments
             } else {
-                let input = extract_freeform_tool_input(&raw_arguments).unwrap_or(raw_arguments.clone());
+                let input =
+                    extract_freeform_tool_input(&raw_arguments).unwrap_or(raw_arguments.clone());
                 serde_json::to_string(&json!({ "input": input }))
                     .unwrap_or_else(|_| "{}".to_string())
             }
@@ -677,12 +704,9 @@ pub(super) fn finalize_stream_tool_calls(acc: &[StreamToolCall]) -> Option<Value
                 "arguments": arguments,
             }
         });
-        if is_freeform_tool_name(&name) && call.raw_arguments {
+        if call.responses_custom_input || (is_freeform_tool_name(&name) && call.raw_arguments) {
             if let Value::Object(ref mut map) = payload {
-                map.insert(
-                    "input_kind".to_string(),
-                    Value::String("text".to_string()),
-                );
+                map.insert("input_kind".to_string(), Value::String("text".to_string()));
             }
         }
         if let Some(id) = call.id.as_ref().or(call.source_id.as_ref()) {

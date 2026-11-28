@@ -4,6 +4,7 @@
 //! compatibility transport for the server-style desktop and older clients.
 
 pub mod args;
+pub mod context_map;
 pub mod native;
 pub mod native_backup;
 pub mod native_command_tasks;

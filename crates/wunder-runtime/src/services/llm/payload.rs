@@ -149,7 +149,11 @@ pub(super) fn normalize_responses_tool_definition(
     })
 }
 
-pub(super) fn build_responses_input(messages: &[ChatMessage], tools: Option<&[Value]>) -> Value {
+pub(super) fn build_responses_input(
+    messages: &[ChatMessage],
+    tools: Option<&[Value]>,
+    replay_scope: &str,
+) -> Value {
     let declared_tools = declared_tool_kinds(tools);
     let mut input: Vec<Value> = Vec::new();
     let mut custom_tool_call_ids = HashSet::new();
@@ -179,6 +183,11 @@ pub(super) fn build_responses_input(messages: &[ChatMessage], tools: Option<&[Va
         }
 
         let normalized_role = normalize_responses_role(role);
+        if normalized_role == "assistant" {
+            if let Some(replay) = &message.responses_reasoning {
+                input.extend(super::responses::replay_items(replay, replay_scope).cloned());
+            }
+        }
         let content = convert_responses_content(&message.content);
         input.push(json!({
             "role": normalized_role,
@@ -427,6 +436,7 @@ pub(super) fn sanitize_chat_messages(messages: &[ChatMessage]) -> Vec<ChatMessag
             content: sanitize_message_content(&message.content),
             reasoning_content: message.reasoning_content.clone(),
             anthropic_thinking_blocks: message.anthropic_thinking_blocks.clone(),
+            responses_reasoning: None,
             tool_calls: message
                 .tool_calls
                 .as_ref()
@@ -613,6 +623,7 @@ mod tests {
             ]),
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -768,6 +779,7 @@ mod tests {
             content: json!(""),
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: Some(json!([{
                 "id": "call_patch",
                 "type": "function",
@@ -798,6 +810,7 @@ mod tests {
             content: json!(""),
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: Some(json!([{
                 "id": "call_patch",
                 "type": "function",
@@ -831,6 +844,7 @@ mod tests {
             content: json!(""),
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: Some(json!([{
                 "type": "function_call",
                 "call_id": "call_edit",
@@ -865,6 +879,7 @@ mod tests {
                 content: json!(""),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: Some(json!([{
                     "id": "call_patch",
                     "type": "function",
@@ -880,12 +895,13 @@ mod tests {
                 content: json!("applied"),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: None,
                 tool_call_id: Some("call_patch".to_string()),
             },
         ];
 
-        let input = build_responses_input(&messages, None);
+        let input = build_responses_input(&messages, None, "test-scope");
         let items = input.as_array().expect("responses input array");
 
         assert_eq!(items[1]["type"], "custom_tool_call");

@@ -13,6 +13,8 @@ pub(crate) struct OutputDiagnostics {
     pub thinking_disabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anthropic_thinking_blocks: Option<Value>,
+    #[serde(skip)]
+    pub responses_reasoning: Option<Value>,
     /// Set when the transport layer already resent this request once with
     /// thinking disabled, consuming the turn's output-recovery budget.
     pub transport_recovery_used: bool,
@@ -38,6 +40,7 @@ impl OutputDiagnostics {
             thinking_token_budget: resolved_thinking_token_budget(config),
             thinking_disabled: disable_thinking_requested(config),
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             transport_recovery_used: false,
         }
     }

@@ -35,6 +35,8 @@ export component ContextDetailPanel inherits Rectangle {
     // 行内 parent.width 全部失效（与桌面 detail-text-width 同一口径）。
     private property <length> detail-text-width: root.width - 32px;
 
+    TouchArea {}
+
     VerticalLayout {
         spacing: 8px;
         padding-left: 12px;
@@ -155,77 +157,64 @@ export component ContextDetailPanel inherits Rectangle {
                         width: 100%;
                         border-radius: 6px;
                         background: row-hit.has-hover || root.detail-row-open == row.item ? Theme.hover : transparent;
-                        Image {
-                            x: 7px;
-                            y: (parent.height - 9px) / 2;
-                            width: 9px;
-                            height: 9px;
-                            source: root.detail-row-open == row.item
-                                ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-down.svg")
-                                : @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-right.svg");
-                            colorize: Theme.muted;
-                            image-fit: contain;
-                        }
-                        Rectangle {
-                            x: 22px;
-                            y: (parent.height - 6px) / 2;
-                            width: 6px;
-                            height: 6px;
-                            border-radius: 3px;
-                            background: CtxColors.ink(row.slot);
-                        }
-                        Text {
-                            x: 34px;
-                            y: 0px;
-                            width: root.detail-text-width - 210px;
-                            height: parent.height;
-                            text: row.tag == "tool" && row.name != "" ? row.name + " · " + I18n.cx_item_tool
-                                : row.tag == "result" && row.name != "" ? row.name + " · " + I18n.cx_part_results
-                                : row.tag == "turn" ? I18n.cx_turn(row.count)
-                                : row.tag == "image" ? I18n.cx_image(row.count)
-                                : row.name != "" ? row.name
-                                : row.tag == "prompt" ? I18n.cx_item_prompt
-                                : row.tag == "reminder" ? I18n.cx_item_reminder
-                                : I18n.cx_item_other;
-                            color: Theme.text;
-                            font-size: Theme.font-sm;
-                            font-weight: 500;
-                            vertical-alignment: center;
-                            overflow: elide;
-                        }
-                        if row.count > 1 && (row.tag == "tool" || row.tag == "result") : Text {
-                            x: root.detail-text-width - 178px;
-                            y: 0px;
-                            height: parent.height;
-                            text: "×" + row.count;
-                            color: Theme.muted;
-                            font-size: Theme.font-xs;
-                            vertical-alignment: center;
-                        }
-                        if root.width >= 420px : Rectangle {
-                            x: root.detail-text-width - 150px;
-                            y: (parent.height - 4px) / 2;
-                            width: 72px;
-                            height: 4px;
-                            border-radius: 2px;
-                            background: Theme.selected;
+                        HorizontalLayout {
+                            padding-left: 7px;
+                            padding-right: 12px;
+                            spacing: 8px;
+                            cross-axis-alignment: center;
+                            Image {
+                                width: 9px;
+                                height: 9px;
+                                source: root.detail-row-open == row.item
+                                    ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-down.svg")
+                                    : @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-right.svg");
+                                colorize: Theme.muted;
+                                image-fit: contain;
+                            }
                             Rectangle {
-                                width: max(2px, parent.width * row.ratio);
-                                height: parent.height;
-                                border-radius: 2px;
+                                width: 6px;
+                                height: 6px;
+                                border-radius: 3px;
                                 background: CtxColors.ink(row.slot);
                             }
-                        }
-                        Text {
-                            x: root.detail-text-width - 72px;
-                            y: 0px;
-                            width: 72px;
-                            height: parent.height;
-                            text: row.tokens-text;
-                            color: Theme.text-secondary;
-                            font-size: Theme.font-xs;
-                            vertical-alignment: center;
-                            horizontal-alignment: right;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: CtxText.item(row.tag, row.name, row.count);
+                                color: Theme.text;
+                                font-size: Theme.font-sm;
+                                font-weight: 500;
+                                vertical-alignment: center;
+                                wrap: no-wrap;
+                                overflow: elide;
+                            }
+                            if row.count > 1 && (row.tag == "tool" || row.tag == "result") : Text {
+                                width: 34px;
+                                text: "×" + row.count;
+                                color: Theme.muted;
+                                font-size: Theme.font-xs;
+                                vertical-alignment: center;
+                                horizontal-alignment: right;
+                            }
+                            if root.width >= 420px : Rectangle {
+                                width: 72px;
+                                height: 4px;
+                                border-radius: 2px;
+                                background: Theme.selected;
+                                Rectangle {
+                                    width: max(2px, parent.width * row.ratio);
+                                    height: parent.height;
+                                    border-radius: 2px;
+                                    background: CtxColors.ink(row.slot);
+                                }
+                            }
+                            Text {
+                                width: 72px;
+                                text: row.tokens-text;
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-xs;
+                                vertical-alignment: center;
+                                horizontal-alignment: right;
+                            }
                         }
                         row-hit := TouchArea {
                             clicked => {
@@ -234,7 +223,7 @@ export component ContextDetailPanel inherits Rectangle {
                         }
                     }
                     if root.detail-row-open == row.item : Rectangle {
-                        width: 100%;
+                        width: root.detail-text-width;
                         border-radius: 6px;
                         background: Theme.hover;
                         VerticalLayout {

@@ -33,7 +33,7 @@ import { MobileChannelAccount, MobileChannelCatalog, MobileChannelBinding, Mobil
 export { MobileChannelAccount, MobileChannelCatalog, MobileChannelBinding, MobileChannelLog, MobileChannelDraft }
 import { MobileActivityBlock } from "activity.slint";
 import {
-    ContextWindowPage, CtxPartRow, CtxItemRow, CtxCell, CtxTile,
+    ContextWindowPage, CtxPartRow, CtxItemRow, ContextTile,
 } from "context_window.slint";
 import { ListView, ScrollView } from "std-widgets.slint";
 
@@ -451,11 +451,7 @@ export component MobileWindow inherits Window {
     // ---- 上下文窗口卡片 ---------------------------------------------
     in-out property <bool> context-window-open: false;
     in property <[CtxPartRow]> context-window-parts: [];
-    in property <[CtxPartRow]> context-window-legend-a: [];
-    in property <[CtxPartRow]> context-window-legend-b: [];
-    in property <[CtxItemRow]> context-window-items: [];
-    in property <[CtxCell]> context-window-cells: [];
-    in property <[CtxTile]> context-window-tiles: [];
+    in property <[ContextTile]> context-window-tiles: [];
     in property <bool> context-window-has-data: false;
     in property <bool> context-window-measured: false;
     in property <string> context-window-used-text: "—";
@@ -464,8 +460,6 @@ export component MobileWindow inherits Window {
     in property <string> context-window-pct-text: "";
     in property <string> context-window-model-label: "";
     in property <string> context-window-turns-text: "";
-    in-out property <int> context-window-tab: 0;
-    in-out property <bool> context-window-look-map: true;
     // 详情面板投影。
     in property <bool> context-detail-open: false;
     in property <string> context-detail-kind: "";
@@ -496,11 +490,8 @@ export component MobileWindow inherits Window {
     callback stop-subagent(string);
     callback open-context-window();
     callback close-context-window();
-    callback context-filter-changed(int);
-    callback context-row-open(int, string, string, int);
     callback context-legend-open(int);
-    callback context-cell-open(int);
-    callback context-tile-open(int);
+    callback context-tile-open(int, string, string, int);
     callback context-map-resized(length, length);
     callback context-detail-row-toggle(int, int, string, string, int);
     callback context-detail-dismissed();
@@ -3426,10 +3417,6 @@ export component MobileWindow inherits Window {
             inset-top: root.inset-top;
             inset-bottom: root.inset-bottom;
             parts: root.context-window-parts;
-            legend-a: root.context-window-legend-a;
-            legend-b: root.context-window-legend-b;
-            items: root.context-window-items;
-            cells: root.context-window-cells;
             tiles: root.context-window-tiles;
             has-data: root.context-window-has-data;
             measured: root.context-window-measured;
@@ -3439,8 +3426,6 @@ export component MobileWindow inherits Window {
             pct-text: root.context-window-pct-text;
             model-label: root.context-window-model-label;
             turns-text: root.context-window-turns-text;
-            tab <=> root.context-window-tab;
-            look-map <=> root.context-window-look-map;
             detail-open: root.context-detail-open;
             detail-kind: root.context-detail-kind;
             detail-slot: root.context-detail-slot;
@@ -3454,12 +3439,8 @@ export component MobileWindow inherits Window {
             detail-row-open: root.context-detail-row-open;
             detail-row-text: root.context-detail-row-text;
             back() => { root.close-context-window(); }
-            set-tab(slot) => { root.context-filter-changed(slot); }
-            toggle-look() => { root.context-window-look-map = !root.context-window-look-map; }
             legend-open(slot) => { root.context-legend-open(slot); }
-            row-open(slot, tag, name, count) => { root.context-row-open(slot, tag, name, count); }
-            cell-open(index) => { root.context-cell-open(index); }
-            tile-open(index) => { root.context-tile-open(index); }
+            tile-open(slot, tag, name, count) => { root.context-tile-open(slot, tag, name, count); }
             map-resized(w, h) => { root.context-map-resized(w, h); }
             detail-row-toggle(index, slot, tag, name, count) => {
                 root.context-detail-row-toggle(index, slot, tag, name, count);

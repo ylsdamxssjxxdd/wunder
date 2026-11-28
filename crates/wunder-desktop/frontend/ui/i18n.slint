@@ -385,7 +385,7 @@ export global I18n {
     out property <string> cx_title: zh ? "上下文窗口" : "Context window";
     out property <string> cx_estimate: zh ? "估算" : "Estimated";
     out property <string> cx_measured: zh ? "已计量" : "Measured";
-    public pure function cx_summary(pct: string, free: string) -> string { return zh ? "已用 " + pct + " · 剩余 " + free + "" : "" + pct + " used · " + free + " free"; }
+    public pure function cx_summary(pct: string, free: string, turns: string) -> string { return zh ? "已用 " + pct + " · 剩余 " + free + " · 承载 " + turns + " 轮对话" : "" + pct + " used · " + free + " free · " + turns + " turns"; }
     out property <string> cx_free: zh ? "剩余" : "Free";
     public pure function cx_more_items(count: string) -> string { return zh ? "另外 " + count + " 项" : "" + count + " more"; }
     out property <string> cx_item_prompt: zh ? "提示词" : "Prompt";
@@ -399,9 +399,6 @@ export global I18n {
     out property <string> cx_part_files: zh ? "图片" : "Images";
     out property <string> cx_part_results: zh ? "结果" : "Results";
     out property <string> cx_part_chat: zh ? "会话" : "Chat";
-    out property <string> cx_contents: zh ? "内容" : "Contents";
-    out property <string> cx_all: zh ? "全部" : "All";
-    out property <string> cx_nothing: zh ? "这里没有内容" : "Nothing here";
     out property <string> cx_no_request: zh ? "本线程还没有发出请求；第一次发送后，这里显示它实际占用的构成。" : "This thread hasn't sent a request yet. After the first send this shows what it was made of.";
     out property <string> cx_open: zh ? "查看上下文" : "Open context";
     out property <string> cx_text_released: zh ? "正文只保留在当前进程内，重启或释放后不可查看。" : "Text lives only in this process; it is gone after a restart or release.";

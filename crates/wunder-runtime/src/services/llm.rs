@@ -31,6 +31,10 @@ mod payload;
 mod prompt_cache;
 mod provider;
 mod response;
+mod responses;
+pub(crate) use responses::REPLAY_FIELD as RESPONSES_REASONING_FIELD;
+#[cfg(test)]
+mod responses_tests;
 mod usage;
 #[cfg(test)]
 use prompt_cache::apply_anthropic_prompt_cache;
@@ -72,7 +76,7 @@ use stream_tool::{
     resolve_stream_tool_call_arguments, resolve_stream_tool_call_name,
     update_responses_custom_tool_input, update_responses_tool_call_arguments,
     update_responses_tool_call_from_item,
-    update_stream_tool_calls_delta, update_stream_tool_calls_snapshot, upsert_responses_tool_calls,
+    update_stream_tool_calls_delta, update_stream_tool_calls_snapshot, upsert_normalized_tool_calls,
 };
 
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
@@ -614,6 +618,8 @@ pub struct ChatMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anthropic_thinking_blocks: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub responses_reasoning: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
@@ -627,6 +633,7 @@ pub struct LlmResponse {
     pub usage: Option<TokenUsage>,
     pub tool_calls: Option<Value>,
     pub anthropic_thinking_blocks: Option<Value>,
+    pub responses_reasoning: Option<Value>,
     /// A streaming attempt whose thinking budget was exhausted already
     /// resent the request once with thinking disabled. Recovery is a
     /// once-per-turn budget shared with `EmptyOutputGuard`, so the
@@ -647,6 +654,7 @@ struct StreamOutputState {
     displayed: String,
     displayed_tail: String,
     anthropic_thinking_blocks: BTreeMap<usize, Value>,
+    responses_reasoning: responses::ReasoningItems,
 }
 
 impl StreamOutputState {
@@ -760,6 +768,9 @@ fn extract_final_response_preview_tail_delta(
         if !is_final_response_tool_name(name.as_str()) {
             continue;
         }
+        if call.responses_final_arguments.is_some() {
+            continue;
+        }
         let delta = extract_final_response_argument_tail_fragment(call.arguments_delta.as_str())?;
         if !delta.is_empty() {
             return Some(delta);
@@ -776,6 +787,9 @@ fn is_final_response_tool_name(name: &str) -> bool {
 }
 
 fn extract_final_response_argument_text(call: &StreamToolCall) -> Option<String> {
+    if let Some(arguments) = call.responses_final_arguments.as_deref() {
+        return extract_final_response_text_from_arguments(arguments);
+    }
     let mut candidates: Vec<String> = Vec::new();
     let resolved = resolve_stream_tool_call_arguments(call);
     if !resolved.trim().is_empty() {
@@ -1406,6 +1420,10 @@ impl LlmClient {
             } else {
                 None
             },
+            responses_reasoning: (!self.is_anthropic_provider()
+                && api_mode == OpenAiApiMode::Responses)
+                .then(|| responses::ReasoningItems::from_body(&body, self.responses_replay_scope()))
+                .flatten(),
             transport_recovery_used: false,
         })
     }
@@ -1716,12 +1734,19 @@ impl LlmClient {
                 usage,
                 tool_calls,
                 anthropic_thinking_blocks,
+                responses_reasoning: final_response_preview
+                    .responses_reasoning
+                    .into_replay(self.responses_replay_scope()),
                 transport_recovery_used: false,
             }));
         }
     }
     fn api_mode(&self) -> OpenAiApiMode {
         resolve_openai_api_mode(&self.config)
+    }
+
+    fn responses_replay_scope(&self) -> String {
+        responses::replay_scope(&self.endpoint(), &self.config)
     }
     fn endpoint(&self) -> String {
         let base =
@@ -1803,7 +1828,7 @@ impl LlmClient {
         }
         match self.api_mode() {
             OpenAiApiMode::Responses => {
-                self.build_responses_payload(messages, stream, include_usage, tools)
+                self.build_responses_payload(messages, stream, tools)
             }
             OpenAiApiMode::ChatCompletions => {
                 self.build_chat_payload(messages, stream, include_usage, tools)
@@ -1941,32 +1966,37 @@ impl LlmClient {
         &self,
         messages: &[ChatMessage],
         stream: bool,
-        include_usage: bool,
         tools: Option<&[Value]>,
     ) -> Value {
         let openai_top_level_schema_guard =
             should_strip_openai_tool_schema(self.config.provider.as_deref());
-        let temperature = round_f32(self.config.temperature.unwrap_or(0.7));
-        let input = build_responses_input(messages, tools);
+        let official = responses::is_official_endpoint(&self.config);
+        let effort = normalize_reasoning_effort(self.config.reasoning_effort.as_deref());
+        let input = build_responses_input(messages, tools, &self.responses_replay_scope());
         let mut payload = json!({
             "model": self.config.model.clone().unwrap_or_else(|| "gpt-4".to_string()),
             "input": input,
-            "temperature": temperature,
             "stream": stream,
         });
-        if let Some(reasoning_effort) =
-            normalize_reasoning_effort(self.config.reasoning_effort.as_deref())
-        {
+        if official {
+            payload["store"] = json!(false);
+            payload["include"] = json!(["reasoning.encrypted_content"]);
+            if let Some(temperature) = self.config.temperature.filter(|_| {
+                responses::supports_temperature(self.config.model.as_deref(), effort.as_deref())
+            }) {
+                payload["temperature"] = json!(round_f32(temperature));
+            }
+        } else {
+            payload["temperature"] = json!(round_f32(self.config.temperature.unwrap_or(0.7)));
+        }
+        if let Some(reasoning_effort) = effort {
             payload["reasoning"] = json!({ "effort": reasoning_effort });
         }
         apply_disable_thinking_controls(&mut payload, &self.config);
-        if stream && include_usage {
-            payload["stream_options"] = json!({ "include_usage": true });
-        }
         payload["max_output_tokens"] = json!(resolved_max_output(&self.config));
-        apply_thinking_budget(&mut payload, &self.config);
-        if let Some(stop) = &self.config.stop {
-            if !stop.is_empty() {
+        if !official {
+            apply_thinking_budget(&mut payload, &self.config);
+            if let Some(stop) = self.config.stop.as_ref().filter(|stop| !stop.is_empty()) {
                 payload["stop"] = json!(stop);
             }
         }
@@ -1976,7 +2006,19 @@ impl LlmClient {
                     tool_defs
                         .iter()
                         .map(|tool| {
-                            normalize_responses_tool_definition(tool, openai_top_level_schema_guard)
+                            let mut normalized = normalize_responses_tool_definition(
+                                tool,
+                                openai_top_level_schema_guard || official,
+                            );
+                            if official && normalized["type"] == "function" {
+                                normalized["strict"] = tool
+                                    .get("strict")
+                                    .or_else(|| tool.pointer("/function/strict"))
+                                    .filter(|value| value.is_boolean())
+                                    .cloned()
+                                    .unwrap_or(json!(false));
+                            }
+                            normalized
                         })
                         .collect(),
                 );
@@ -2672,7 +2714,7 @@ where
                 on_delta(String::new(), reasoning).await?;
             }
             if let Some(Value::Array(items)) = tool_calls {
-                upsert_responses_tool_calls(tool_calls_accumulator, &items);
+                upsert_normalized_tool_calls(tool_calls_accumulator, &items);
                 if let Some(preview_delta) = sync_visible_final_response_tool_delta(
                     combined,
                     reasoning_combined,
@@ -2745,7 +2787,7 @@ where
         }
         "response.output_item.added" => {
             if let Some(item) = payload.get("item") {
-                update_responses_tool_call_from_item(tool_calls_accumulator, item);
+                update_responses_tool_call_from_item(tool_calls_accumulator, item, StreamToolFieldMode::Snapshot);
                 if let Some(preview_delta) = sync_visible_final_response_tool_delta(
                     combined,
                     reasoning_combined,
@@ -2760,7 +2802,10 @@ where
         }
         "response.output_item.done" => {
             if let Some(item) = payload.get("item") {
-                update_responses_tool_call_from_item(tool_calls_accumulator, item);
+                if let Some(index) = payload.get("output_index").and_then(Value::as_u64) {
+                    final_response_preview.responses_reasoning.record(index as usize, item);
+                }
+                update_responses_tool_call_from_item(tool_calls_accumulator, item, StreamToolFieldMode::Final);
             }
         }
         "response.custom_tool_call_input.delta" => {
@@ -2774,11 +2819,11 @@ where
             update_responses_custom_tool_input(
                 tool_calls_accumulator,
                 payload,
-                StreamToolFieldMode::Snapshot,
+                StreamToolFieldMode::Final,
             );
         }
         "response.function_call_arguments.delta" => {
-            update_responses_tool_call_arguments(tool_calls_accumulator, payload);
+            update_responses_tool_call_arguments(tool_calls_accumulator, payload, StreamToolFieldMode::Delta);
             if let Some(preview_delta) = sync_visible_final_response_tool_delta(
                 combined,
                 reasoning_combined,
@@ -2791,7 +2836,7 @@ where
             }
         }
         "response.function_call_arguments.done" => {
-            update_responses_tool_call_arguments(tool_calls_accumulator, payload);
+            update_responses_tool_call_arguments(tool_calls_accumulator, payload, StreamToolFieldMode::Final);
             if let Some(preview_delta) = sync_visible_final_response_tool_delta(
                 combined,
                 reasoning_combined,
@@ -2808,6 +2853,7 @@ where
                 if let Some(new_usage) = normalize_usage(response.get("usage")) {
                     *usage = Some(new_usage);
                 }
+                final_response_preview.responses_reasoning.record_response(response);
                 let (text, reasoning, tool_calls) = extract_responses_output(response);
                 if combined.is_empty() && !text.is_empty() {
                     combined.push_str(&text);
@@ -2818,7 +2864,7 @@ where
                     on_delta(String::new(), reasoning).await?;
                 }
                 if !tool_calls.is_empty() {
-                    upsert_responses_tool_calls(tool_calls_accumulator, &tool_calls);
+                    sync_responses_final_tool_calls(tool_calls_accumulator, response);
                     if let Some(preview_delta) = sync_visible_final_response_tool_delta(
                         combined,
                         reasoning_combined,
@@ -2837,6 +2883,7 @@ where
     }
 
     if payload_type.is_empty() && payload.get("output").is_some() {
+        final_response_preview.responses_reasoning.record_response(payload);
         let (text, reasoning, tool_calls) = extract_responses_output(payload);
         if combined.is_empty() && !text.is_empty() {
             combined.push_str(&text);
@@ -2847,7 +2894,7 @@ where
             on_delta(String::new(), reasoning).await?;
         }
         if !tool_calls.is_empty() {
-            upsert_responses_tool_calls(tool_calls_accumulator, &tool_calls);
+            sync_responses_final_tool_calls(tool_calls_accumulator, payload);
             if let Some(preview_delta) = sync_visible_final_response_tool_delta(
                 combined,
                 reasoning_combined,
@@ -2866,6 +2913,14 @@ where
     }
 
     Ok(false)
+}
+
+fn sync_responses_final_tool_calls(calls: &mut Vec<StreamToolCall>, response: &Value) {
+    if let Some(items) = response.get("output").and_then(Value::as_array) {
+        for item in items {
+            update_responses_tool_call_from_item(calls, item, StreamToolFieldMode::Final);
+        }
+    }
 }
 
 fn round_f32(value: f32) -> f64 {
@@ -2941,6 +2996,7 @@ mod tests {
                 content: Value::String("You are a test assistant.".to_string()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: None,
                 tool_call_id: None,
             },
@@ -2949,6 +3005,7 @@ mod tests {
                 content: Value::String("list files".to_string()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: None,
                 tool_call_id: None,
             },
@@ -2959,6 +3016,7 @@ mod tests {
                 anthropic_thinking_blocks: Some(json!([
                     {"type": "thinking", "thinking": "step 1", "signature": "signed-abc"}
                 ])),
+                responses_reasoning: None,
                 tool_calls: Some(json!([{
                     "id": "call_1",
                     "type": "function",
@@ -2974,6 +3032,7 @@ mod tests {
                 content: Value::String("[\"src\",\"Cargo.toml\"]".to_string()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: None,
                 tool_call_id: Some("call_1".to_string()),
             },
@@ -3820,6 +3879,7 @@ mod tests {
                 "name": "apply_patch",
                 "input": ""
             }),
+            StreamToolFieldMode::Snapshot,
         );
         update_responses_tool_call_from_item(
             &mut acc,
@@ -3830,6 +3890,7 @@ mod tests {
                 "name": "apply_patch",
                 "input": "*** Begin Patch\n*** Add File: hello.txt\n+hello world\n*** End Patch"
             }),
+            StreamToolFieldMode::Final,
         );
 
         assert_eq!(acc.len(), 1);
@@ -4473,6 +4534,7 @@ mod tests {
             content: Value::String("hello".to_string()),
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -4539,6 +4601,7 @@ mod tests {
             content: Value::String("hello".into()),
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -4629,6 +4692,7 @@ mod tests {
             content: Value::String("hello".into()),
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -4837,6 +4901,7 @@ mod tests {
             content: Value::String("hello".to_string()),
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -4945,6 +5010,7 @@ mod tests {
             content: Value::String("hello".to_string()),
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -5039,6 +5105,7 @@ mod tests {
             content: Value::String("hello".to_string()),
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -5157,6 +5224,7 @@ mod tests {
             content: Value::String("hello".to_string()),
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -5235,6 +5303,7 @@ mod tests {
             content: Value::String("hello".to_string()),
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -5327,6 +5396,7 @@ mod tests {
             content: Value::String("hello".to_string()),
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -5457,6 +5527,7 @@ mod tests {
             content: Value::String("hello".to_string()),
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -5497,6 +5568,7 @@ mod tests {
                 content: Value::String("go".to_string()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: None,
                 tool_call_id: None,
             },
@@ -5505,6 +5577,7 @@ mod tests {
                 content: Value::String(String::new()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: Some(json!([{
                     "id": "call_1",
                     "type": "function",
@@ -5517,6 +5590,7 @@ mod tests {
                 content: Value::String("answer".to_string()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: None,
                 tool_call_id: None,
             },
@@ -5561,6 +5635,7 @@ mod tests {
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -5641,6 +5716,7 @@ mod tests {
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -5691,6 +5767,7 @@ mod tests {
                     content: Value::String("hello".to_string()),
                     reasoning_content: None,
                     anthropic_thinking_blocks: None,
+                    responses_reasoning: None,
                     tool_calls: None,
                     tool_call_id: None,
                 }],
@@ -5743,6 +5820,7 @@ mod tests {
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -5899,6 +5977,7 @@ mod tests {
             content: Value::String("hello".to_string()),
             reasoning_content: None,
             anthropic_thinking_blocks: None,
+            responses_reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -5949,6 +6028,7 @@ mod tests {
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -5995,6 +6075,7 @@ mod tests {
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -6042,6 +6123,7 @@ mod tests {
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -6089,6 +6171,7 @@ mod tests {
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -6181,6 +6264,7 @@ mod tests {
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -6228,6 +6312,7 @@ mod tests {
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -6273,6 +6358,7 @@ mod tests {
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],
@@ -6317,6 +6403,7 @@ mod tests {
                 content: Value::String("You are a test assistant.".to_string()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: None,
                 tool_call_id: None,
             },
@@ -6325,6 +6412,7 @@ mod tests {
                 content: Value::String("list files".to_string()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: None,
                 tool_call_id: None,
             },
@@ -6333,6 +6421,7 @@ mod tests {
                 content: Value::String(String::new()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: Some(json!([{
                     "id": "call_1",
                     "type": "function",
@@ -6345,6 +6434,7 @@ mod tests {
                 content: Value::String("[\"src\",\"Cargo.toml\"]".to_string()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: None,
                 tool_call_id: Some("call_1".to_string()),
             },
@@ -6475,6 +6565,7 @@ mod tests {
                 content: Value::String("hello".to_string()),
                 reasoning_content: None,
                 anthropic_thinking_blocks: None,
+                responses_reasoning: None,
                 tool_calls: None,
                 tool_call_id: None,
             }],

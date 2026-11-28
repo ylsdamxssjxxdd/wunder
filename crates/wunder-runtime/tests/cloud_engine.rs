@@ -237,6 +237,7 @@ fn test_message() -> ChatMessage {
         content: Value::String("ping".to_string()),
         reasoning_content: None,
         anthropic_thinking_blocks: None,
+        responses_reasoning: None,
         tool_calls: None,
         tool_call_id: None,
     }
