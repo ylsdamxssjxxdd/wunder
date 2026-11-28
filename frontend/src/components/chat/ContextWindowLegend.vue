@@ -53,8 +53,10 @@ const { t } = useI18n();
   display: flex;
   align-items: center;
   flex-wrap: nowrap;
+  flex: 0 0 auto;
   gap: 0 14px;
   height: 20px;
+  min-height: 20px;
   min-width: 0;
   overflow: hidden;
 }

@@ -359,12 +359,16 @@ const resolveErrorMessage = (error: unknown): string => {
 
 // ---- Map / grid hover -----------------------------------------------------
 
-const onLeaveMap = (): void => {
+const clearMapFocus = (): void => {
   hoveredTile.value = -1;
   focusSlot.value = 0;
   focusItem.value = -1;
   tip.value = null;
   tipRect.value = null;
+};
+
+const onLeaveMap = (): void => {
+  clearMapFocus();
 };
 
 const onTileEnter = (index: number): void => {
@@ -431,6 +435,7 @@ const onLegendFreeEnter = (): void => {
 };
 
 const onRowEnter = (row: ContextListRow): void => {
+  clearMapFocus();
   rowFocus.value = { slot: row.slot, rank: row.rank };
 };
 
@@ -455,10 +460,14 @@ const onCellClick = (index: number): void => {
 };
 
 const onRowClick = (row: ContextListRow): void => {
+  rowFocus.value = null;
+  clearMapFocus();
   openTarget({ kind: 'item', slot: row.slot, tag: row.tag, name: row.name, count: row.count, itemRank: row.rank });
 };
 
 const onLegendClick = (slot: number): void => {
+  rowFocus.value = null;
+  clearMapFocus();
   openPart(slot);
 };
 
@@ -554,6 +563,8 @@ const togglePartRow = async (row: ContextDetailRow): Promise<void> => {
 
 const closeDetail = (): void => {
   textController?.abort();
+  rowFocus.value = null;
+  clearMapFocus();
   detail.value = null;
 };
 
@@ -817,6 +828,7 @@ watch(
 .cx-occupancy {
   display: flex;
   flex-direction: column;
+  flex: 0 0 auto;
   gap: 2px;
 }
 

@@ -1,0 +1,23 @@
+import { ContextWindowPage, CtxPartRow } from "context_window.slint";
+
+export component CtxPreview inherits Window {
+    width: 390px;
+    height: 844px;
+    background: white;
+    ContextWindowPage {
+        has-data: true;
+        measured: true;
+        look-map: false;
+        used-text: "12.3K";
+        capacity-text: "128K";
+        free-text: "115.7K";
+        pct-text: "10%";
+        turns-text: "承载 6 轮对话";
+        parts: [
+            { slot: 1, tokens: 2100, tokens-text: "2.1K", pct-text: "17%" },
+            { slot: 2, tokens: 3400, tokens-text: "3.4K", pct-text: "28%" },
+            { slot: 4, tokens: 1800, tokens-text: "1.8K", pct-text: "15%" },
+            { slot: 5, tokens: 3800, tokens-text: "3.8K", pct-text: "30%" },
+        ];
+    }
+}
