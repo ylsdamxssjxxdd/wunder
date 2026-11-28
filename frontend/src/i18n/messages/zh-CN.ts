@@ -2293,7 +2293,7 @@ export default {
   'chat.composer.filePicker.up': '返回上级',
   'chat.composer.filePicker.root': '工作目录根',
   'chat.composer.filePicker.truncated': '仅显示前 {count} 项，可进入子目录或搜索',
-  'chat.contextWindow.title': '上下文窗口',
+  'chat.contextWindow.title': '脑图',
   'chat.contextWindow.estimate': '估算',
   'chat.contextWindow.measured': '已计量',
   'chat.contextWindow.free': '剩余',

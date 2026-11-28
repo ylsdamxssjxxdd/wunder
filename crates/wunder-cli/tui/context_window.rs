@@ -313,9 +313,9 @@ pub(crate) fn item_label(tag: &str, name: &str, count: i64, is_zh: bool) -> Stri
 
 pub(crate) fn title(is_zh: bool) -> &'static str {
     if is_zh {
-        "上下文窗口"
+        "脑图"
     } else {
-        "Context window"
+        "Mind map"
     }
 }
 

@@ -6,6 +6,7 @@
 import { Theme, ModelCard, CommandTask, SubagentItem } from "theme.slint";
 import { I18n } from "i18n.slint";
 import { Action } from "components.slint";
+import { ContextText } from "context_tile.slint";
 import { ListView } from "std-widgets.slint";
 
 // Occupancy tone shared with the composer's liquid brain: amber in the safe
@@ -22,6 +23,7 @@ export component NarrowHeader inherits Rectangle {
     in property <int> model-count: 0;
     in property <bool> model-saving: false;
     in property <float> context-usage: 0.0;
+    in property <bool> context-known: false;
     in property <bool> context-compacted: false;
     callback open-drawer();
     callback open-model();
@@ -120,6 +122,7 @@ export component NarrowHeader inherits Rectangle {
                         height: parent.height;
                         mouse-cursor: pointer;
                         clicked => { root.open-context(); }
+                        Tooltip { text: @markdown("\{ContextText.usage-hint(root.context-known, root.context-usage)}"); }
                     }
                 }
 
@@ -152,6 +155,7 @@ export component NarrowHeader inherits Rectangle {
                         height: parent.height;
                         mouse-cursor: pointer;
                         clicked => { root.open-model(); }
+                        Tooltip { text: @markdown("\{I18n.cp_model_choose}"); }
                     }
                 }
 

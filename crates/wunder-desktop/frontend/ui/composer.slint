@@ -1,6 +1,7 @@
 import { I18n } from "i18n.slint";
 import { Theme, ChatAttachment, CommandTask, SubagentItem, ModelCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall } from "theme.slint";
 import { Action } from "components.slint";
+import { ContextText } from "context_tile.slint";
 import { HostHud } from "host_hud.slint";
 import { ListView, ScrollView } from "std-widgets.slint";
 import { TextEditBase } from "textedit-base.slint";
@@ -42,6 +43,7 @@ component ModelPicker inherits Rectangle {
     in property <bool> cloud-ready: true;
     // Context gauge of the active thread: the trigger's brain fills with it.
     in property <float> context-usage: 0.0;
+    in property <bool> context-known: false;
     // The thread's history is a compaction summary. Red is not a warning here,
     // it is a marker: the brain stays red so the user can see at a glance that
     // earlier turns were folded into a summary.
@@ -116,6 +118,7 @@ component ModelPicker inherits Rectangle {
                 x: 0px; y: 0px; width: parent.width; height: parent.height;
                 mouse-cursor: pointer;
                 clicked => { root.open = false; root.open-context(); }
+                Tooltip { text: @markdown("\{ContextText.usage-hint(root.context-known, root.context-usage)}"); }
             }
         }
 
@@ -163,6 +166,7 @@ component ModelPicker inherits Rectangle {
                     root.open = !root.open;
                     if root.open { root.opened(); }
                 }
+                if !root.open : Tooltip { text: @markdown("\{I18n.cp_model_choose}"); }
             }
         }
     }
@@ -1580,6 +1584,7 @@ export component Composer inherits Rectangle {
     // Alternating phase from the capture clock; drives the breathing outline.
     in property <bool> recording-pulse: false;
     in property <float> context-usage: 0.0;
+    in property <bool> context-known: false;
     // The active thread's history is a compaction summary: the gauge stays red
     // so the user can tell at a glance that earlier turns were folded away.
     in property <bool> context-compacted: false;
@@ -2370,6 +2375,7 @@ export component Composer inherits Rectangle {
                 current-key: root.model-key;
                 cloud-ready: root.cloud-ready;
                 context-usage: root.context-usage;
+                context-known: root.context-known;
                 context-compacted: root.context-compacted;
                 saving: root.model-saving;
                 open <=> root.model-open;

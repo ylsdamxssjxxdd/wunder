@@ -2,7 +2,7 @@
 # The context window card opened from the composer's model trigger.
 
 ENTRIES = [
-    ("cx_title", "上下文窗口", "Context window"),
+    ("cx_title", "脑图", "Mind map"),
     ("cx_estimate", "估算", "Estimated"),
     ("cx_measured", "已计量", "Measured"),
     ("cx_summary", "已用 {} · 剩余 {} · 承载 {} 轮对话", "{} used · {} free · {} turns", ["pct", "free", "turns"]),

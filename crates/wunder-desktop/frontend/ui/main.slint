@@ -1464,6 +1464,7 @@ export component MainWindow inherits Window {
                 : root.model-catalogue-count;
             model-saving: root.saving;
             context-usage: root.context-usage;
+            context-known: root.context-known;
             context-compacted: root.context-compacted;
             open-drawer => {
                 root.sidebar-collapsed = false;
@@ -1626,7 +1627,9 @@ export component MainWindow inherits Window {
                                     editor-max-height: root.narrow ? min(160px, root.height * 0.3) : 200px;
                                 launch-cli => { root.launch-cli(); }
                                 send-key: root.runtime-send-key;
-                                context-usage: root.context-usage; context-compacted: root.context-compacted;
+                                context-usage: root.context-usage;
+                                context-known: root.context-known;
+                                context-compacted: root.context-compacted;
                                 models: root.cloud-chat-active ? root.cloud-thread-models : root.composer-models;
                                 // The local built-in agent owns the saved quick prompts; a
                                 // cloud thread keeps its service-side composer scope.

@@ -86,6 +86,10 @@ export global ContextColors {
 
 // Names shared by the legend, the tiles, the tabs and the rows.
 export global ContextText {
+    public pure function usage-hint(known: bool, usage: float) -> string {
+        return known ? I18n.cp_usage_prefix + round(usage.clamp(0.0, 1.0) * 100.0) + "%"
+            : I18n.cp_usage_empty;
+    }
     public pure function part(slot: int) -> string {
         return slot == 1 ? I18n.cx_part_system
             : slot == 2 ? I18n.cx_part_tools

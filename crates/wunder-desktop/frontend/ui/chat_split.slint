@@ -102,6 +102,7 @@ component SplitPane inherits Rectangle {
                 show-host-hud: false;
                 show-cli-action: false;
                 context-usage: root.context.usage;
+                context-known: root.context.known;
                 context-compacted: root.context.compacted;
                 send => { root.send(); }
                 stop => { root.stop(); }

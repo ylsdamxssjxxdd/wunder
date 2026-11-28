@@ -2325,7 +2325,7 @@ export default {
   'chat.composer.filePicker.up': 'Up one level',
   'chat.composer.filePicker.root': 'Workspace root',
   'chat.composer.filePicker.truncated': 'Showing the first {count} items — open a subdirectory or search',
-  'chat.contextWindow.title': 'Context window',
+  'chat.contextWindow.title': 'Mind map',
   'chat.contextWindow.estimate': 'Estimated',
   'chat.contextWindow.measured': 'Measured',
   'chat.contextWindow.free': 'Free',
