@@ -341,16 +341,16 @@ impl GenericToolLogEntry {
 
     fn header_parts(&self) -> (&'static str, Style, Style) {
         match self.status {
-            GenericToolLogStatus::Pending => ("●", theme::tool_pending_marker(), theme::tool_title()),
+            GenericToolLogStatus::Pending => ("•", theme::tool_pending_marker(), theme::tool_title()),
             GenericToolLogStatus::Success => (
-                "●",
+                "•",
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
                 theme::tool_title(),
             ),
             GenericToolLogStatus::Failure => (
-                "●",
+                "•",
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                 theme::danger_text(),
             ),
@@ -498,7 +498,7 @@ impl CommandLogEntry {
             .map(format_elapsed_ms)
     }
 
-    /// `● <cmd>`: the bullet carries the whole state — breathing while the process runs,
+    /// `• <cmd>`: the bullet carries the whole state — breathing while the process runs,
     /// green once it lands, red when it comes back nonzero — and a nonzero exit code rides
     /// along as a dim tail. The card used to spell the state out in front of the command
     /// ("running", "ran", "failed (exit 1)"), which repeated what the bullet already said
@@ -509,7 +509,7 @@ impl CommandLogEntry {
             pending_status_icon_span()
         } else {
             status_icon_span(
-                "●",
+                "•",
                 Style::default()
                     .fg(if self.success {
                         Color::Green
@@ -3552,7 +3552,7 @@ mod tests {
         let rendered = flat_command_lines(&entry, 80, false);
         // The head is the command with its state on the bullet: a failed process is a red
         // bullet and the exit code in the tail, not the word "failed" in front.
-        assert_eq!(rendered[0], "● Ran echo first … (exit 1)");
+        assert_eq!(rendered[0], "• Ran echo first … (exit 1)");
         assert!(
             !rendered[0].contains("28ms"),
             "the elapsed time is not a header detail: {rendered:?}"

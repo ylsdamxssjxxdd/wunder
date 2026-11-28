@@ -666,6 +666,8 @@ fn dump_frame_png(frame: &screen_capture::ScreenCapture, name: &str) {
 
 thread_local! {
     static OVERLAY: RefCell<Option<ScreenshotOverlay>> = const { RefCell::new(None) };
+    static PENDING_HIDDEN_MAIN: RefCell<Option<PendingHiddenMain>> =
+        const { RefCell::new(None) };
     /// The frozen frame the selector is drawing over, kept only while the
     /// selector is open. The selector returns the crop rectangle already
     /// converted to this frame's physical pixels, so no scale factor has to be
@@ -698,6 +700,29 @@ thread_local! {
     /// rectangles back into frame-local pixels.
     #[cfg(windows)]
     static PROBE_ORIGIN: std::cell::Cell<(i32, i32)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+struct PendingHiddenMain {
+    app: slint::Weak<MainWindow>,
+    state: Option<HideState>,
+}
+
+fn defer_hidden_main_restore(app: slint::Weak<MainWindow>, state: Option<HideState>) {
+    PENDING_HIDDEN_MAIN.with(|pending| {
+        *pending.borrow_mut() = Some(PendingHiddenMain { app, state });
+    });
+}
+
+fn restore_pending_hidden_main() {
+    let pending = PENDING_HIDDEN_MAIN.with(|slot| slot.borrow_mut().take());
+    let Some(PendingHiddenMain { app, state }) = pending else {
+        return;
+    };
+    if let Some(state) = state.as_ref() {
+        restore_hidden_window(&app, state);
+    } else if let Some(window) = app.upgrade() {
+        let _ = window.show();
+    }
 }
 
 /// Move one window tree into frame-local coordinates: the selector lays out in
@@ -774,17 +799,24 @@ pub fn capture(app: slint::Weak<MainWindow>, hide_window: bool) {
         };
         let result = captured;
         let _ = slint::invoke_from_event_loop(move || {
-            if hidden {
-                if let Some(state) = proof.as_ref() {
-                    restore_hidden_window(&app, state);
-                } else if let Some(window) = app.upgrade() {
-                    let _ = window.show();
-                }
-            }
             CAPTURE_IN_FLIGHT.store(false, Ordering::Release);
             match result {
-                Ok(frame) => show_selector(app, frame),
-                Err(error) => report(&app, format!("截图失败：{error}")),
+                Ok(frame) => {
+                    if hidden {
+                        defer_hidden_main_restore(app.clone(), proof);
+                    }
+                    show_selector(app, frame);
+                }
+                Err(error) => {
+                    if hidden {
+                        if let Some(state) = proof.as_ref() {
+                            restore_hidden_window(&app, state);
+                        } else if let Some(window) = app.upgrade() {
+                            let _ = window.show();
+                        }
+                    }
+                    report(&app, format!("截图失败：{error}"));
+                }
             }
         });
     });
@@ -1045,6 +1077,7 @@ fn hide_selector() {
     });
     HIT_REGIONS.with(|slot| slot.borrow_mut().clear());
     HIT_REGIONS_READY.with(|ready| ready.set(false));
+    restore_pending_hidden_main();
     #[cfg(windows)]
     PROBE_EPOCH.with(|epoch| epoch.set(epoch.get().wrapping_add(1)));
 }

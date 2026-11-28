@@ -303,4 +303,15 @@ const buildPlaceholderExtension = (value: string) => (value ? placeholder(value)
 .code-mirror-editor-host :deep(.cm-placeholder) {
   color: var(--chat-muted);
 }
+
+:global(:root[data-user-accent='deep-sea']) .code-mirror-editor-host :deep(.cm-editor),
+:global(:root[data-user-accent='deep-sea']) .code-mirror-editor-host :deep(.cm-scroller),
+:global(:root[data-user-accent='deep-sea']) .code-mirror-editor-host :deep(.cm-content),
+:global(:root[data-user-accent='deep-sea']) .code-mirror-editor-host :deep(.cm-line) {
+  color: var(--mz-text, #e7edf2) !important;
+}
+
+:global(:root[data-user-accent='deep-sea']) .code-mirror-editor-host :deep(.cm-editor) {
+  background: var(--mz-surface, #121a22) !important;
+}
 </style>

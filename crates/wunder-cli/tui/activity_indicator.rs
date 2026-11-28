@@ -132,13 +132,13 @@ mod tests {
     #[test]
     fn resting_dots_take_the_live_colour() {
         let mut lines = vec![Line::from(vec![
-            Span::styled("● ".to_string(), pending_indicator_base_style()),
+            Span::styled("• ".to_string(), pending_indicator_base_style()),
             Span::raw("ran the tool"),
         ])];
         // A finished row keeps its own colour: only the running dot animates.
         let mut settled = vec![Line::from(vec![
             Span::styled(
-                "● ".to_string(),
+                "• ".to_string(),
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn the_command_header_dot_without_a_separator_animates_too() {
         let mut lines = vec![Line::from(vec![
-            Span::styled("●".to_string(), pending_indicator_base_style()),
+            Span::styled("•".to_string(), pending_indicator_base_style()),
             Span::raw("Ran cargo test"),
         ])];
         paint_pending_dots(&mut lines);

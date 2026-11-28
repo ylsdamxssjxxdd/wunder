@@ -36,6 +36,8 @@ pub(crate) struct PartRow {
     pub label: String,
     pub tokens_text: String,
     pub pct_text: String,
+    /// Raw tokens, the number the treemap lays tiles by.
+    pub tokens: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -47,6 +49,8 @@ pub(crate) struct ItemRow {
     pub order: i64,
     pub label: String,
     pub tokens_text: String,
+    /// Raw tokens, so a part's children can be laid out by share.
+    pub tokens: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -140,6 +144,7 @@ pub(crate) fn project(
                         label: part_label(kind, is_zh).to_string(),
                         tokens_text: fmt_k(tokens),
                         pct_text: pct(tokens, recorded.tokens),
+                        tokens,
                     }
                 })
                 .collect();
@@ -188,6 +193,7 @@ fn order_items(items: &[(i32, ContextItem)], is_zh: bool) -> Vec<ItemRow> {
             order: item.order,
             label: item_label(&item.tag, &item.name, item.count, is_zh),
             tokens_text: fmt_k(item.tokens),
+            tokens: item.tokens,
         };
         if talk_slots.contains(slot) {
             talk.push(row);
@@ -375,8 +381,11 @@ pub(crate) fn plain_text(view: &ContextWindowView, is_zh: bool) -> String {
             lines.push(String::new());
             for part in &view.parts {
                 lines.push(format!(
-                    "  {}  {}  {}",
-                    part.label, part.tokens_text, part.pct_text
+                    "  {}  {}  {}  {}",
+                    share_bar(part.tokens, view.used, 12),
+                    part.label,
+                    part.tokens_text,
+                    part.pct_text
                 ));
             }
             lines.push(String::new());
@@ -397,20 +406,18 @@ pub(crate) fn model_row(model: &str, provider: &str) -> String {
     }
 }
 
+/// Whether the reading came back from the provider or is a local estimate.
+pub(crate) fn measurement_mark(measured: bool, is_zh: bool) -> &'static str {
+    match (measured, is_zh) {
+        (true, true) => "已计量",
+        (true, false) => "Measured",
+        (false, true) => "估算",
+        (false, false) => "Estimated",
+    }
+}
+
 pub(crate) fn summary_line(used: i64, window: i64, measured: bool, is_zh: bool) -> String {
-    let mark = if measured {
-        if is_zh {
-            "已计量"
-        } else {
-            "Measured"
-        }
-    } else {
-        if is_zh {
-            "估算"
-        } else {
-            "Estimated"
-        }
-    };
+    let mark = measurement_mark(measured, is_zh);
     if window > 0 {
         let pct = pct(used, window);
         if is_zh {
@@ -423,6 +430,21 @@ pub(crate) fn summary_line(used: i64, window: i64, measured: bool, is_zh: bool) 
     } else {
         format!("{} used · {mark}", fmt_k(used))
     }
+}
+
+/// A one-row share bar (`███░░░░`) for the plain-text renderer and the panel's
+/// capacity line. A part that is present but rounds to nothing still keeps one
+/// cell, so the bar never claims it is absent.
+pub(crate) fn share_bar(value: i64, total: i64, width: usize) -> String {
+    let width = width.max(1);
+    let filled = if value > 0 && total > 0 {
+        ((value as f64 / total as f64) * width as f64)
+            .round()
+            .clamp(1.0, width as f64) as usize
+    } else {
+        0
+    };
+    format!("{}{}", "█".repeat(filled), "░".repeat(width - filled))
 }
 
 pub(crate) fn window_line(window: i64, is_zh: bool) -> String {
@@ -565,5 +587,15 @@ mod tests {
         assert_eq!(item_label("reminder", "", 0, true), "提醒");
         assert_eq!(item_label("turn", "", 2, false), "Turn 2");
         assert_eq!(item_label("image", "", 4, false), "Images ×4");
+    }
+
+    #[test]
+    fn share_bars_keep_a_visible_cell_for_a_tiny_part() {
+        assert_eq!(share_bar(50, 100, 10), "█████░░░░░");
+        assert_eq!(share_bar(0, 100, 10), "░░░░░░░░░░");
+        // A part that rounds to nothing still shows it is there.
+        assert_eq!(share_bar(1, 10_000, 12), "█░░░░░░░░░░░");
+        assert_eq!(share_bar(10_000, 10_000, 4), "████");
+        assert_eq!(share_bar(5, 0, 3), "░░░");
     }
 }

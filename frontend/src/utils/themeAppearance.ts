@@ -36,17 +36,17 @@ export const THEME_PALETTE_LABEL_KEYS: Partial<Record<ThemePalette, string>> = {
   'eva-orange': 'messenger.settingsPage.general.themeParchment'
 };
 
-/** 预览卡取的两档色值，与 base.css 里同名 `data-user-accent` 块的
- *  `--ui-accent` / `--ui-accent-soft` 一致；改色板时两处一起改。
- *  橙汁（eva-orange）的色值以桌面版 crates/wunder-desktop/frontend/ui/design_tokens.slint 的
- *  terracotta 为准：accent #F58A24、soft #FDF0DE。 */
+/** 预览卡只取主题强调色，与 base.css 里同名 `data-user-accent` 块的
+ *  `--ui-accent` 一致；卡片底色始终跟随当前页面的浅/深中性面。
+ *  橙汁（eva-orange）的强调色以桌面版 crates/wunder-desktop/frontend/ui/design_tokens.slint 的
+ *  terracotta 为准：accent #F58A24。 */
 export type ThemeSwatchPalette = (typeof SELECTABLE_THEME_PALETTES)[number];
 
-export const THEME_PALETTE_SWATCHES: Record<ThemeSwatchPalette, { accent: string; tint: string }> = {
-  forest: { accent: '#16ad8d', tint: '#e7f7f2' },
-  mountain: { accent: '#7c878c', tint: '#eef1f2' },
-  'deep-sea': { accent: '#5fa8cf', tint: '#122b3b' },
-  'eva-orange': { accent: '#f58a24', tint: '#fef7ee' }
+export const THEME_PALETTE_SWATCHES: Record<ThemeSwatchPalette, { accent: string }> = {
+  forest: { accent: '#16ad8d' },
+  mountain: { accent: '#7c878c' },
+  'deep-sea': { accent: '#5fa8cf' },
+  'eva-orange': { accent: '#f58a24' }
 };
 
 export const normalizeThemePalette = (value: unknown): ThemePalette => {

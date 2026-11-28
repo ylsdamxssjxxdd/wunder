@@ -5,8 +5,8 @@ use std::sync::OnceLock;
 
 use super::app::LogKind;
 
-pub(crate) const STATUS_DOT: &str = "●";
-pub(crate) const STATUS_PREFIX: &str = "● ";
+pub(crate) const STATUS_DOT: &str = "•";
+pub(crate) const STATUS_PREFIX: &str = "• ";
 
 /// `NO_COLOR` is the de-facto switch for "this terminal cannot carry meaning in
 /// hue". Read once so no frame pays for the lookup.
@@ -90,12 +90,90 @@ const SLOT_INK_ANSI: [Color; 5] = [
 ];
 
 pub(crate) fn slot_ink(slot: i32) -> Color {
-    let index = ((slot.clamp(1, 5) - 1) as usize).min(4);
+    let index = slot_index(slot);
     if rich_color_supported() {
         let (r, g, b) = SLOT_INK_RGB[index];
         Color::Rgb(r, g, b)
     } else {
         SLOT_INK_ANSI[index]
+    }
+}
+
+fn slot_index(slot: i32) -> usize {
+    ((slot.clamp(1, 5) - 1) as usize).min(4)
+}
+
+/// Whether the terminal may carry meaning in hue at all. The context map reads
+/// this: without colour a tile becomes a shaded texture instead of a fill.
+pub(crate) fn color_permitted() -> bool {
+    !colorless()
+}
+
+/// A solid treemap tile: fill plus a text colour that stays readable on it.
+///
+/// The five inks are mid-tone, so white text wins on all of them; the terminal
+/// that cannot report truecolor still gets its nearest ANSI slot with black.
+pub(crate) fn slot_fill(slot: i32) -> (Color, Color) {
+    if colorless() {
+        return (Color::Reset, Color::Reset);
+    }
+    let index = slot_index(slot);
+    if rich_color_supported() {
+        let (r, g, b) = SLOT_INK_RGB[index];
+        (Color::Rgb(r, g, b), readable_on(r, g, b))
+    } else {
+        (SLOT_INK_ANSI[index], Color::Black)
+    }
+}
+
+/// The same tile while another part is in focus: the hue stays as a hint, sunk
+/// three quarters into the panel, so only the chosen part reads as lit.
+pub(crate) fn slot_fill_muted(slot: i32) -> (Color, Color) {
+    if colorless() {
+        return (Color::Reset, Color::Reset);
+    }
+    if rich_color_supported() {
+        let (r, g, b) = SLOT_INK_RGB[slot_index(slot)];
+        (Color::Rgb(r / 4, g / 4, b / 4), Color::Rgb(120, 128, 140))
+    } else {
+        (Color::DarkGray, Color::Gray)
+    }
+}
+
+/// A tile one level down: the same hue sunk away from its parent, so the part
+/// still reads as the frame around its rows. Unlit parents take the muted ink.
+pub(crate) fn slot_fill_child(slot: i32, lit: bool) -> (Color, Color) {
+    if colorless() {
+        return (Color::Reset, Color::Reset);
+    }
+    let index = slot_index(slot);
+    if rich_color_supported() {
+        let (r, g, b) = SLOT_INK_RGB[index];
+        if lit {
+            (
+                Color::Rgb(
+                    (r as u16 * 7 / 10) as u8,
+                    (g as u16 * 7 / 10) as u8,
+                    (b as u16 * 7 / 10) as u8,
+                ),
+                Color::White,
+            )
+        } else {
+            (Color::Rgb(r / 7, g / 7, b / 7), Color::Rgb(150, 156, 168))
+        }
+    } else if lit {
+        (SLOT_INK_ANSI[index], Color::White)
+    } else {
+        (Color::DarkGray, Color::Gray)
+    }
+}
+
+fn readable_on(r: u8, g: u8, b: u8) -> Color {
+    let luminance = 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32;
+    if luminance > 150.0 {
+        Color::Black
+    } else {
+        Color::White
     }
 }
 
@@ -113,7 +191,11 @@ pub(crate) fn slot_ink_text(slot: i32, bold: bool) -> Style {
 /// lives in the leading bullet, and the target next to it stays plain, which is
 /// what kept the whole title from reading as one loud alert.
 pub(crate) fn tool_title() -> Style {
-    degrade(Style::default().fg(accent_color()).add_modifier(Modifier::BOLD))
+    degrade(
+        Style::default()
+            .fg(accent_color())
+            .add_modifier(Modifier::BOLD),
+    )
 }
 
 /// What the tool acted on: a path, a command, a query. Same weight as the name, no
@@ -124,7 +206,11 @@ pub(crate) fn tool_subject() -> Style {
 
 /// A running card's bullet, in the accent instead of a saturated cyan.
 pub(crate) fn tool_pending_marker() -> Style {
-    degrade(Style::default().fg(accent_color()).add_modifier(Modifier::BOLD))
+    degrade(
+        Style::default()
+            .fg(accent_color())
+            .add_modifier(Modifier::BOLD),
+    )
 }
 
 /// The row that offers or closes a fold. Codex tints it only while the activity

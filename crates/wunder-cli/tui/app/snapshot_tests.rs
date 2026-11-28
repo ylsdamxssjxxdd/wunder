@@ -519,7 +519,7 @@ async fn malformed_patch_arguments_use_one_tool_card_without_a_duplicate_marker(
         .map(|line| line.to_string())
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(!pending.contains("● ●"), "{pending}");
+    assert!(!pending.contains("• •"), "{pending}");
     assert!(app.logs[0].special.is_some());
 
     feed_stream_event(
@@ -1337,7 +1337,7 @@ async fn workspace_reads_stay_individual_timeline_entries() {
         !frame.contains("Explored"),
         "no synthetic group header: {frame}"
     );
-    assert!(frame.contains("● Read"), "{frame}");
+    assert!(frame.contains("• Read"), "{frame}");
 }
 #[tokio::test]
 async fn the_warning_notice_and_its_panel_reach_the_frame() {
@@ -1489,6 +1489,207 @@ fn draw_buffer(app: &mut TuiApp, width: u16, height: u16) -> ratatui::buffer::Bu
         .draw(|frame| crate::tui::ui::draw(frame, app))
         .expect("draw");
     terminal.backend().buffer().clone()
+}
+
+/// `/context` opens as the 脑图: five coloured tiles laid out by share, then the
+/// rows that make them up. The card has to stay readable when the terminal
+/// cannot carry hue, and the part filter must leave one tile lit.
+#[tokio::test]
+async fn the_context_card_paints_a_treemap_and_keeps_the_rows() {
+    use ratatui::style::Color;
+
+    let root = TempRoot::new("context_treemap");
+    let mut app = fixture_app(root.path()).await;
+    app.context_panel = Some(crate::tui::app::context_panel::ContextPanelState {
+        view: context_treemap_view(false),
+        filter: 0,
+        selected: 0,
+        detail: None,
+    });
+
+    let (width, height) = (90u16, 26u16);
+    let buffer = draw_buffer(&mut app, width, height);
+    let frame = (0..height)
+        .map(|row| {
+            (0..width)
+                .map(|column| buffer[(column, row)].symbol().to_string())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(frame.contains("Mind map · All"), "{frame}");
+    assert!(frame.contains("System"), "{frame}");
+    assert!(frame.contains("62%"), "{frame}");
+    assert!(frame.contains("Measured"), "{frame}");
+    assert!(frame.contains("Turn 1"), "{frame}");
+
+    // The map is painted, not described: a field of cells carries a fill, and
+    // the five parts are told apart by more than one tint.
+    let mut tinted = 0;
+    let mut tints = std::collections::HashSet::new();
+    for row in 0..height {
+        for column in 0..width {
+            let background = buffer[(column, row)].bg;
+            if background != Color::Reset {
+                tinted += 1;
+                tints.insert(format!("{background:?}"));
+            }
+        }
+    }
+    // `NO_COLOR` swaps the fill for a shaded texture on purpose; either way the
+    // map has to carry the shape, so the assertion follows the same switch.
+    if std::env::var_os("NO_COLOR").is_some() {
+        assert!(
+            frame.contains('▒'),
+            "a colorless map keeps its texture: {frame}"
+        );
+    } else {
+        assert!(
+            tinted > 300,
+            "expected a filled treemap, got {tinted}: {frame}"
+        );
+        assert!(tints.len() >= 3, "one tint per part: {tints:?}");
+    }
+
+    // Tab onto one part: the header follows, and the other tiles stay painted
+    // so the map keeps its shape instead of collapsing to a single block.
+    if let Some(panel) = app.context_panel.as_mut() {
+        panel.filter = 2;
+    }
+    let buffer = draw_buffer(&mut app, width, height);
+    let frame = (0..height)
+        .map(|row| {
+            (0..width)
+                .map(|column| buffer[(column, row)].symbol().to_string())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(frame.contains("Mind map · Tools"), "{frame}");
+    let dimmed = (0..height)
+        .flat_map(|row| (0..width).map(move |column| (column, row)))
+        .filter(|(column, row)| buffer[(*column, *row)].bg != Color::Reset)
+        .count();
+    if std::env::var_os("NO_COLOR").is_none() {
+        assert!(dimmed > 300, "filtered map still paints: {dimmed}");
+    }
+
+    // A narrow terminal keeps the card legible: labels drop out of the slivers
+    // rather than spilling over the tiles.
+    if let Some(panel) = app.context_panel.as_mut() {
+        panel.filter = 0;
+    }
+    let buffer = draw_buffer(&mut app, 48, 15);
+    let frame = (0..15)
+        .map(|row| {
+            (0..48)
+                .map(|column| buffer[(column, row)].symbol().to_string())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(frame.contains("Mind map · All"), "{frame}");
+    assert!(frame.contains("System"), "{frame}");
+}
+
+fn context_treemap_view(is_zh: bool) -> crate::tui::context_window::ContextWindowView {
+    use crate::tui::context_window::{ContextState, ContextWindowView, ItemRow, PartRow};
+
+    let name = |en: &str, zh: &str| {
+        if is_zh {
+            zh.to_string()
+        } else {
+            en.to_string()
+        }
+    };
+    let part =
+        |slot: i32, kind: &str, label: &str, tokens: i64, tokens_text: &str, pct: &str| PartRow {
+            slot,
+            kind: kind.to_string(),
+            label: label.to_string(),
+            tokens_text: tokens_text.to_string(),
+            pct_text: pct.to_string(),
+            tokens,
+        };
+    ContextWindowView {
+        state: ContextState::Observed,
+        model: "gpt-test".to_string(),
+        provider: "vendor".to_string(),
+        window: 128_000,
+        used: 8_300,
+        measured: true,
+        turns: 2,
+        parts: vec![
+            part(1, "system", &name("System", "系统"), 5_146, "5.1K", "62%"),
+            part(2, "tools", &name("Tools", "工具"), 2_490, "2.5K", "30%"),
+            part(3, "files", &name("Images", "图片"), 120, "120", "1%"),
+            part(4, "results", &name("Results", "结果"), 300, "300", "4%"),
+            part(5, "chat", &name("Chat", "会话"), 244, "244", "3%"),
+        ],
+        items: vec![
+            ItemRow {
+                slot: 1,
+                tag: "prompt".to_string(),
+                name: String::new(),
+                count: 0,
+                order: 0,
+                label: name("Prompt", "提示词"),
+                tokens_text: "5.1K".to_string(),
+                tokens: 5146,
+            },
+            ItemRow {
+                slot: 5,
+                tag: "turn".to_string(),
+                name: String::new(),
+                count: 1,
+                order: 1,
+                label: name("Turn 1", "第 1 轮"),
+                tokens_text: "244".to_string(),
+                tokens: 244,
+            },
+            ItemRow {
+                slot: 2,
+                tag: "tool".to_string(),
+                name: "read_file".to_string(),
+                count: 1,
+                order: 2,
+                label: name("read_file · Tool definition", "read_file · 工具定义"),
+                tokens_text: "1.2K".to_string(),
+                tokens: 1200,
+            },
+            ItemRow {
+                slot: 4,
+                tag: "result".to_string(),
+                name: "read_file".to_string(),
+                count: 1,
+                order: 3,
+                label: name("read_file · Result", "read_file · 结果"),
+                tokens_text: "860".to_string(),
+                tokens: 860,
+            },
+            ItemRow {
+                slot: 5,
+                tag: "turn".to_string(),
+                name: String::new(),
+                count: 2,
+                order: 4,
+                label: name("Turn 2", "第 2 轮"),
+                tokens_text: "320".to_string(),
+                tokens: 320,
+            },
+            ItemRow {
+                slot: 2,
+                tag: "tool".to_string(),
+                name: "bash".to_string(),
+                count: 1,
+                order: 5,
+                label: name("bash · Tool definition", "bash · 工具定义"),
+                tokens_text: "540".to_string(),
+                tokens: 540,
+            },
+        ],
+    }
 }
 
 /// The composer is the one editable region: codex paints its band and keeps the
@@ -5321,14 +5522,14 @@ async fn the_transcript_and_the_draft_share_one_left_edge() {
     let gutter = usize::from(CONTENT_GUTTER_COLS);
     let card = rows
         .iter()
-        .position(|row| row.trim_start().starts_with('●'))
+        .position(|row| row.trim_start().starts_with('•'))
         .expect("a card is on screen");
     let prompt = rows
         .iter()
         .position(|row| row.trim_start().starts_with('›'))
         .expect("the draft is on screen");
     assert_eq!(
-        rows[card].find('●'),
+        rows[card].find('•'),
         Some(gutter),
         "the bullet sits one gutter in: {:?}",
         rows[card]

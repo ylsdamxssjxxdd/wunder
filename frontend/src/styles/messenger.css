@@ -4093,11 +4093,11 @@
   background: #fbeff1;
 }
 
-/* 主题模式：四张预览卡（迷你聊天窗 + 名称）。每张卡自带 --tile-accent /
-   --tile-tint，未选中的色板也能显示自己的强调色。 */
+/* 主题模式：四张预览卡（迷你聊天窗 + 名称）。每张卡只自带自己的强调色，
+   中性背景跟随当前页面，避免浅深主题混杂。 */
 .messenger-settings-theme-block {
   padding: 12px 0;
-  border-bottom: 1px solid #ececec;
+  border-bottom: 1px solid var(--mz-border);
 }
 
 .messenger-settings-theme-head {
@@ -4122,9 +4122,10 @@
   gap: 8px;
   width: 100%;
   padding: 10px 10px 12px;
-  border: 1px solid #e2e0dc;
+  border: 1px solid var(--mz-border);
   border-radius: 12px;
   background: var(--mz-surface);
+  color: var(--mz-text);
   font: inherit;
   cursor: pointer;
 }
@@ -4137,41 +4138,15 @@
   border-color: var(--tile-accent);
 }
 
-/* Deep-sea is the only dark palette: its cabinet stays dark even while the
-   settings page is light, so the tile previews what selecting it will do. */
-.messenger-theme-tile.is-dark {
-  background: #10161c;
-  border-color: #3a4652;
-}
-
-.messenger-theme-tile.is-dark .messenger-theme-tile-mock {
-  border-color: #3a4652;
-}
-
-.messenger-theme-tile.is-dark .messenger-theme-tile-sub,
-.messenger-theme-tile.is-dark .messenger-theme-tile-line {
-  background: #465664;
-}
-
-.messenger-theme-tile.is-dark .messenger-theme-tile-avatar,
-.messenger-theme-tile.is-dark .messenger-theme-tile-body {
-  background: #121a22;
-  border-color: #3a4652;
-}
-
-.messenger-theme-tile.is-dark .messenger-theme-tile-name {
-  color: #e7edf2;
-}
-
 .messenger-theme-tile-mock {
   position: relative;
   display: block;
   overflow: hidden;
   width: 100%;
   height: 74px;
-  border: 1px solid #eceae6;
+  border: 1px solid var(--mz-border);
   border-radius: 9px;
-  background: var(--tile-tint);
+  background: var(--mz-surface-soft);
 }
 
 .messenger-theme-tile-bar {
@@ -4191,7 +4166,7 @@
   width: 30%;
   height: 5px;
   border-radius: 3px;
-  background: #dcd8d2;
+  background: var(--mz-text-muted);
 }
 
 .messenger-theme-tile-avatar {
@@ -4200,7 +4175,7 @@
   right: 12px;
   width: 15px;
   height: 15px;
-  border: 1px solid #e2e0dc;
+  border: 1px solid var(--mz-border-strong);
   border-radius: 50%;
   background: var(--mz-surface);
 }
@@ -4219,7 +4194,7 @@
   flex-direction: column;
   gap: 5px;
   padding: 6px 10px;
-  border: 1px solid #eceae6;
+  border: 1px solid var(--mz-border);
   border-radius: 7px;
   background: var(--mz-surface);
 }
@@ -4229,7 +4204,7 @@
   width: 70%;
   height: 5px;
   border-radius: 3px;
-  background: #d8d4ce;
+  background: var(--mz-border-strong);
 }
 
 .messenger-theme-tile-line.is-short {
@@ -6655,6 +6630,17 @@ body.desktop-shell-active .workspace-editor-shell {
   border: 1px solid var(--mz-border);
   border-radius: 10px;
   background: var(--mz-surface);
+}
+
+:root[data-user-accent='deep-sea'] .workspace-dialog--file-preview .workspace-text-preview-shell .cm-editor,
+:root[data-user-accent='deep-sea'] .workspace-dialog--file-preview .workspace-text-preview-shell .cm-scroller,
+:root[data-user-accent='deep-sea'] .workspace-dialog--file-preview .workspace-text-preview-shell .cm-content,
+:root[data-user-accent='deep-sea'] .workspace-dialog--file-preview .workspace-text-preview-shell .cm-line {
+  color: #e7edf2 !important;
+}
+
+:root[data-user-accent='deep-sea'] .workspace-dialog--file-preview .workspace-text-preview-shell .cm-editor {
+  background: #121a22 !important;
 }
 
 .system-prompt-dialog .el-dialog__body {

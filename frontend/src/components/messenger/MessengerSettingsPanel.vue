@@ -137,7 +137,7 @@
             <li v-for="option in themeOptions" :key="option.palette">
               <button
                 class="messenger-theme-tile"
-                :class="{ 'is-active': option.palette === themePalette, 'is-dark': option.palette === 'deep-sea' }"
+                :class="{ 'is-active': option.palette === themePalette }"
                 type="button"
                 :aria-pressed="option.palette === themePalette"
                 :data-testid="`settings-theme-${option.palette}`"
@@ -460,8 +460,7 @@ const themeOptions = computed(() =>
     palette,
     label: t(THEME_PALETTE_LABEL_KEYS[palette] ?? ''),
     mockStyle: {
-      '--tile-accent': THEME_PALETTE_SWATCHES[palette].accent,
-      '--tile-tint': THEME_PALETTE_SWATCHES[palette].tint
+      '--tile-accent': THEME_PALETTE_SWATCHES[palette].accent
     }
   }))
 );
